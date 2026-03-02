@@ -14,7 +14,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==========================================
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit?gid=588079479#gid=588079479"
-TARGET_PERCENT = 0.0  
+TARGET_PERCENT = 5.0  
 # ★ 클라우드 서버용 한국 시간(KST) 세팅
 KST = datetime.timezone(datetime.timedelta(hours=9))
 # ==========================================
