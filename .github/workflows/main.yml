@@ -1,10 +1,8 @@
 name: Stock Omakase Auto Scraper
 
 on:
-  schedule:
-    # 한국시간(KST) 오전 9시 ~ 오후 4시 50분까지 (월~금 평일에만 10분마다 실행)
-    # UTC 기준으로는 0시 ~ 7시입니다.
-    - cron: '*/10 0-7 * * 1-5'
+schedule:
+    - cron: '0,10,20,30,40,50 0-7 * * 1-5'
   workflow_dispatch: # 내가 버튼 눌러서 강제 실행하는 기능
 
 jobs:
