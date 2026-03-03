@@ -2,7 +2,7 @@ name: Stock Omakase Auto Scraper
 
 on:
   schedule:
-    - cron: '0,10,20,30,40,50 0-7 * * 1-5'
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 jobs:
