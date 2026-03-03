@@ -2,7 +2,6 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 import time
-import os
 import urllib3
 import datetime
 import gspread
@@ -15,7 +14,6 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # ==========================================
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit?gid=588079479#gid=588079479"
 TARGET_PERCENT = 5.0  
-# ★ 클라우드 서버용 한국 시간(KST) 세팅
 KST = datetime.timezone(datetime.timedelta(hours=9))
 # ==========================================
 
@@ -107,9 +105,30 @@ def get_real_money_themes():
         
     if not theme_data_list: return pd.DataFrame(), is_market_closed
     
-    theme_data_list = sorted(theme_data_list, key=lambda x: x['theme_sum'], reverse=True)[:10]
+    # 🌟 [핵심 업데이트] 테마 중복 필터링 로직 🌟
+    theme_data_list = sorted(theme_data_list, key=lambda x: x['theme_sum'], reverse=True)
+    filtered_themes = []
+    
+    for t_data in theme_data_list:
+        current_codes = set([s['code'] for s in t_data['stocks']])
+        is_duplicate = False
+        
+        # 이미 랭킹에 올라간 테마들과 대장주 구성 비교
+        for f_data in filtered_themes:
+            f_codes = set([s['code'] for s in f_data['stocks']])
+            # 겹치는 종목이 2개 이상이면 사실상 같은 테마로 간주하고 과감히 버림!
+            if len(current_codes.intersection(f_codes)) >= 2:
+                is_duplicate = True
+                break
+                
+        if not is_duplicate:
+            filtered_themes.append(t_data)
+            
+        if len(filtered_themes) >= 10: # 다양하게 10개가 채워지면 멈춤
+            break
+            
     final_rows = []
-    for rank, t_data in enumerate(theme_data_list, start=1):
+    for rank, t_data in enumerate(filtered_themes, start=1):
         for s in t_data['stocks']:
             row_data = {'날짜': now.strftime('%Y-%m-%d')}
             if not is_market_closed: row_data['시간'] = time_str
