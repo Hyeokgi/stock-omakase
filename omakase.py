@@ -48,32 +48,28 @@ def update_google_sheet(df_theme, df_news, is_market_closed):
             if not is_market_closed:
                 sheet = doc.worksheet("수급_실시간")
                 sheet.clear() 
-                sheet.update("A1", [df_theme.columns.values.tolist()] + df_theme.values.tolist())
+                sheet.update("A1", [df_theme.columns.values.tolist()] + df_theme.values.tolist(), value_input_option="USER_ENTERED")
             else:
                 sheet = doc.worksheet("수급_Raw")
                 today_str = df_theme.iloc[0]['날짜'] 
                 all_data = sheet.get_all_values()
                 
-                # --- [업그레이드: 최신 날짜 맨 위로 자동 정렬] ---
                 headers = all_data[0] if len(all_data) > 0 else df_theme.columns.values.tolist()
                 past_data = [row for row in all_data[1:] if len(row) > 0 and row[0] != today_str]
                 new_data = df_theme.values.tolist()
                 
                 combined_data = new_data + past_data
                 
-                # 1차: 순위를 1위부터 오름차순 정렬
                 combined_data.sort(key=lambda x: int(x[1]) if str(x[1]).isdigit() else 999)
-                # 2차: 날짜를 최신순(내림차순) 정렬
                 combined_data.sort(key=lambda x: x[0], reverse=True)
                 
                 sheet.clear()
-                sheet.update("A1", [headers] + combined_data)
-                # ------------------------------------------------
+                sheet.update("A1", [headers] + combined_data, value_input_option="USER_ENTERED")
                 
         if not df_news.empty:
             sheet_news = doc.worksheet("뉴스_키워드")
             sheet_news.clear()
-            sheet_news.update("A1", [df_news.columns.values.tolist()] + df_news.values.tolist())
+            sheet_news.update("A1", [df_news.columns.values.tolist()] + df_news.values.tolist(), value_input_option="USER_ENTERED")
             
     except Exception as e:
         print(f"❌ Error: {e}")
