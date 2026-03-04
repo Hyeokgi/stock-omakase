@@ -75,8 +75,8 @@ def update_google_sheet(df_theme, df_news, is_market_closed):
         print(f"❌ Error: {e}")
 
 def get_real_money_themes():
-    now = datetime.datetime.now(KST)
-    is_market_closed = now.hour > 15 or (now.hour == 15 and now.minute >= 40)
+now = datetime.datetime.now(KST)
+    is_market_closed = now.hour < 9 or now.hour > 15 or (now.hour == 15 and now.minute >= 40)
     time_str = now.strftime('%H:%M')
     
     headers = {'User-Agent': 'Mozilla/5.0'}
