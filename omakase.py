@@ -176,14 +176,16 @@ def get_real_money_themes():
             
     return pd.DataFrame(final_rows), is_market_closed
 
-df_themes, is_closed = get_real_money_themes()
-df_news = get_news_keywords()
-if not df_themes.empty or not df_news.empty:
-    update_google_sheet(df_themes, df_news, is_closed)
-  if __name__ == "__main__":
+# ==========================================
+# 🚀 심장(Main) 엔진: 로봇이 깨어나서 해야 할 일들
+# ==========================================
+if __name__ == "__main__":
+    print("🤖 1. 데이터 수집 시작...")
     df_theme, is_market_closed = get_real_money_themes()
     df_news = get_news_keywords()
-    df_naver = get_naver_search_ranking() # 👈 네이버 엔진 가동!
+    df_naver = get_naver_search_ranking()
     
-    # 👈 아래 괄호 안에 df_naver를 꼭 추가해 주세요!
+    print("🤖 2. 구글 시트로 전송 시작...")
     update_google_sheet(df_theme, df_news, df_naver, is_market_closed)
+    
+    print("✅ 모든 작업이 완료되었습니다!")
