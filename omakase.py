@@ -23,18 +23,38 @@ STOPWORDS = ['코스피', '코스닥', '증시', '상승', '하락', '마감', '
              '시장', '지수', '오늘', '내일', '이번', '주간', '월간', '분기', '실적', '발표', '목표가', '상향']
 
 def get_news_keywords():
-    url = "https://finance.naver.com/news/mainnews.naver"
-    headers = {'User-Agent': 'Mozilla/5.0'}
     try:
+        url = "https://finance.naver.com/news/mainnews.naver"
+        headers = {'User-Agent': 'Mozilla/5.0'}
         res = requests.get(url, headers=headers, verify=False)
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
         titles = soup.find_all(['dt', 'dd'], {'class': 'articleSubject'})
-        words = re.findall(r'[가-힣]+', " ".join([t.text.strip() for t in titles]))
-        cleaned_words = [w for w in words if len(w) > 1 and w not in STOPWORDS]
-        top_10 = Counter(cleaned_words).most_common(10)
+        
+        # 기사 제목들을 하나로 뭉치기
+        full_text = " ".join([t.text.strip() for t in titles])
+        
+        # 🧠 인공지능 형태소 분석기(Kiwi) 가동
+        from kiwipiepy import Kiwi
+        kiwi = Kiwi()
+        
+        # 명사만 쏙쏙 담을 바구니
+        nouns = []
+        
+        # 문장을 형태소 단위로 쪼개기
+        for token in kiwi.tokenize(full_text):
+            # 'NNG'(일반 명사) 또는 'NNP'(고유 명사) 이면서, 
+            # 1글자짜리(예: 것, 수, 등)가 아니고, 불용어(STOPWORDS)에 없는 단어만 추출!
+            if token.tag in ['NNG', 'NNP'] and len(token.form) > 1 and token.form not in STOPWORDS:
+                nouns.append(token.form)
+                
+        # 가장 많이 나온 명사 10개 줄 세우기
+        top_10 = Counter(nouns).most_common(10)
         now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M')
+        
         return pd.DataFrame([[now_str, rank, word, count] for rank, (word, count) in enumerate(top_10, 1)], columns=['업데이트시간', '순위', '키워드', '언급횟수'])
+        
     except Exception as e:
+        print(f"❌ 뉴스 키워드 추출 에러: {e}")
         return pd.DataFrame()
 
 def get_naver_search_ranking():
