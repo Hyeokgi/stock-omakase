@@ -41,20 +41,34 @@ def get_naver_search_ranking():
     try:
         url = "https://finance.naver.com/sise/lastsearch2.naver"
         headers = {'User-Agent': 'Mozilla/5.0'}
-        res = requests.get(url, headers=headers)
+        # 튼튼한 BeautifulSoup 엔진으로 직접 추출!
+        res = requests.get(url, headers=headers, verify=False)
+        soup = BeautifulSoup(res.content, 'html.parser', from_encoding='euc-kr')
         
-        tables = pd.read_html(res.text, encoding='euc-kr') 
-        df = tables[1] # 검색 상위 표
+        table = soup.find('table', {'class': 'type_5'})
+        rows = table.find_all('tr')
         
-        df = df.dropna(how='all')
-        df = df[['순위', '종목명', '현재가', '등락률']]
-        df = df.dropna()
-        df['순위'] = df['순위'].astype(int)
-        df = df.head(10)
-        
+        data = []
+        for row in rows:
+            tds = row.find_all('td')
+            # 정상적인 데이터가 있는 줄인지 확인 (빈 줄 패스)
+            if len(tds) >= 6:
+                rank_text = tds[0].text.strip()
+                if rank_text.isdigit(): # 순위가 숫자인 진짜 데이터만 추출
+                    name = tds[1].text.strip()
+                    price = tds[3].text.strip()
+                    rate = tds[5].text.strip()
+                    
+                    data.append([int(rank_text), name, price, rate])
+                    
+                    if len(data) >= 10: # 딱 10위까지만 수집하고 멈춤
+                        break
+                        
+        df = pd.DataFrame(data, columns=['순위', '종목명', '현재가', '등락률(%)'])
         return df
+        
     except Exception as e:
-        print(f"네이버 실시간 검색어 수집 실패: {e}")
+        print(f"❌ 네이버 실시간 검색어 수집 실패: {e}")
         return pd.DataFrame()
       
 def update_google_sheet(df_theme, df_news, df_naver, is_market_closed):
