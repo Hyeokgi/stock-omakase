@@ -17,37 +17,39 @@ TARGET_PERCENT = 5.0
 KST = datetime.timezone(datetime.timedelta(hours=9))
 # ==========================================
 
+# 🗑️ [업그레이드 1] 강력해진 쓰레기통 (매크로, 일반 경제 단어 싹 다 차단!)
 STOPWORDS = ['코스피', '코스닥', '증시', '상승', '하락', '마감', '특징주', '강세', '약세', '급등', '급락',
              '주식', '투자', '종목', '외인', '기관', '개인', '매수', '매도', '순매수', '순매도', '전망',
              '수혜', '주가', '대비', '돌파', '우려', '기대', '연속', '최고', '최저', '대형주', '중소형주',
-             '시장', '지수', '오늘', '내일', '이번', '주간', '월간', '분기', '실적', '발표', '목표가', '상향']
+             '시장', '지수', '오늘', '내일', '이번', '주간', '월간', '분기', '실적', '발표', '목표가', '상향',
+             '경고', '정부', '자산', '머니', '폭락', '변수', '게임', '한국', '미국', '국내', '외국인', '글로벌',
+             '경제', '금융', '기업', '회장', '대표', '임원', '주주', '총회', '속보', '단독', '이유', '때문',
+             '대금', '거래', '신고가', '신저가', '시간', '하루', '하루만', '올해', '내년', '만원', '천원',
+             '조원', '억원', '달러', '금리', '인상', '인하', '동결', '연준', '파월', '물가', '지표', '고용']
 
+# 🎯 [업그레이드 2] 타겟 조준점 변경 (거시경제 ➡️ 실시간 시황/테마 전용 게시판)
 def get_news_keywords():
     try:
-        url = "https://finance.naver.com/news/mainnews.naver"
+        # 네이버 금융 '시황/전망' 전용 최신 뉴스 페이지로 타겟 변경!
+        url = "https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258"
         headers = {'User-Agent': 'Mozilla/5.0'}
         res = requests.get(url, headers=headers, verify=False)
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
-        titles = soup.find_all(['dt', 'dd'], {'class': 'articleSubject'})
         
-        # 기사 제목들을 하나로 뭉치기
+        # 뉴스 리스트의 제목들만 싹쓸이
+        titles = soup.find_all(['dt', 'dd'], {'class': 'articleSubject'})
         full_text = " ".join([t.text.strip() for t in titles])
         
         # 🧠 인공지능 형태소 분석기(Kiwi) 가동
         from kiwipiepy import Kiwi
         kiwi = Kiwi()
         
-        # 명사만 쏙쏙 담을 바구니
         nouns = []
-        
-        # 문장을 형태소 단위로 쪼개기
         for token in kiwi.tokenize(full_text):
-            # 'NNG'(일반 명사) 또는 'NNP'(고유 명사) 이면서, 
-            # 1글자짜리(예: 것, 수, 등)가 아니고, 불용어(STOPWORDS)에 없는 단어만 추출!
+            # 명사이면서, 1글자 제외, 그리고 강력한 STOPWORDS(쓰레기통)에 없는 진짜 테마 단어만!
             if token.tag in ['NNG', 'NNP'] and len(token.form) > 1 and token.form not in STOPWORDS:
                 nouns.append(token.form)
                 
-        # 가장 많이 나온 명사 10개 줄 세우기
         top_10 = Counter(nouns).most_common(10)
         now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M')
         
