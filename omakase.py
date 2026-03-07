@@ -37,7 +37,27 @@ def get_news_keywords():
     except Exception as e:
         return pd.DataFrame()
 
-def update_google_sheet(df_theme, df_news, is_market_closed):
+def get_naver_search_ranking():
+    try:
+        url = "https://finance.naver.com/sise/lastsearch2.naver"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        res = requests.get(url, headers=headers)
+        
+        tables = pd.read_html(res.text, encoding='euc-kr') 
+        df = tables[1] # 검색 상위 표
+        
+        df = df.dropna(how='all')
+        df = df[['순위', '종목명', '현재가', '등락률']]
+        df = df.dropna()
+        df['순위'] = df['순위'].astype(int)
+        df = df.head(10)
+        
+        return df
+    except Exception as e:
+        print(f"네이버 실시간 검색어 수집 실패: {e}")
+        return pd.DataFrame()
+      
+def update_google_sheet(df_theme, df_news, df_naver, is_market_closed):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
@@ -70,7 +90,12 @@ def update_google_sheet(df_theme, df_news, is_market_closed):
             sheet_news = doc.worksheet("뉴스_키워드")
             sheet_news.clear()
             sheet_news.update("A1", [df_news.columns.values.tolist()] + df_news.values.tolist(), value_input_option="USER_ENTERED")
-            
+
+        if not df_naver.empty:
+            sheet_naver = doc.worksheet("네이버_검색상위")
+            sheet_naver.clear()
+            sheet_naver.update("A1", [df_naver.columns.values.tolist()] + df_naver.values.tolist(), value_input_option="USER_ENTERED")  
+          
     except Exception as e:
         print(f"❌ Error: {e}")
 
@@ -155,3 +180,10 @@ df_themes, is_closed = get_real_money_themes()
 df_news = get_news_keywords()
 if not df_themes.empty or not df_news.empty:
     update_google_sheet(df_themes, df_news, is_closed)
+  if __name__ == "__main__":
+    df_theme, is_market_closed = get_real_money_themes()
+    df_news = get_news_keywords()
+    df_naver = get_naver_search_ranking() # 👈 네이버 엔진 가동!
+    
+    # 👈 아래 괄호 안에 df_naver를 꼭 추가해 주세요!
+    update_google_sheet(df_theme, df_news, df_naver, is_market_closed)
