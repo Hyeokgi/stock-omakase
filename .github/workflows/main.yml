@@ -20,7 +20,7 @@ jobs:
       - name: 라이브러리 설치하기
         run: |
           python -m pip install --upgrade pip
-          pip install requests beautifulsoup4 pandas gspread oauth2client
+          pip install requests beautifulsoup4 pandas gspread oauth2client kiwipiepy
 
       - name: 비밀번호 파일(secret.json) 만들기
         run: |
