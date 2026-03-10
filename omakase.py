@@ -185,9 +185,14 @@ def get_real_money_themes():
                     except: continue
             stocks = sorted(stocks, key=lambda x: x['value'], reverse=True)[:3]
             if stocks:
+                # 🚨 [착시 테마 제거 엔진] 1위가 2위보다 거래대금이 10배 이상 크면 가짜 테마로 간주!
+                if len(stocks) >= 2 and stocks[0]['value'] >= (stocks[1]['value'] * 10):
+                    print(f"🚫 착시 테마 제외: {theme['name']} (1위 {stocks[0]['name']} 독주로 인한 왜곡)")
+                    continue  # 바구니에 담지 않고 바로 다음 테마로 가차 없이 패스!
+                    
                 theme_data_list.append({'theme_name': theme['name'], 'theme_sum': sum([s['value'] for s in stocks]), 'stocks': stocks})
         except: continue
-        time.sleep(0.5) 
+        time.sleep(0.5)
         
     if not theme_data_list: return pd.DataFrame(), is_market_closed
     
