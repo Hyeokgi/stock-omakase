@@ -38,20 +38,44 @@ STOPWORDS = ['코스피', '코스닥', '증시', '상승', '하락', '마감', '
              '수준', '예상', '반사이익', '사업', '추진', '공급', '관련', '관련주', '테마', '장세', '박살', 
              '주의', '변동', '킬러', '테마주']
 
-# 🎯 [업그레이드 2] 타겟 조준점 변경 (거시경제 ➡️ 실시간 시황/테마 전용 게시판)
+# 🎯 [업그레이드 2] 타겟 조준점 변경 (뉴스 제목 + 본문 싹쓸이 심층 분석)
 def get_news_keywords():
     try:
-        # 네이버 금융 '시황/전망' 전용 최신 뉴스 페이지로 타겟 변경!
-        url = "https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258"
+        # 1. 뉴스 리스트 페이지 접속
+        list_url = "https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258"
         headers = {'User-Agent': 'Mozilla/5.0'}
-        res = requests.get(url, headers=headers, verify=False)
+        res = requests.get(list_url, headers=headers, verify=False)
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
         
-        # 뉴스 리스트의 제목들만 싹쓸이
-        titles = soup.find_all(['dt', 'dd'], {'class': 'articleSubject'})
-        full_text = " ".join([t.text.strip() for t in titles])
+        # 2. 개별 뉴스 기사들의 링크(URL) 수집 (최대 15개)
+        article_links = []
+        for a_tag in soup.find_all('a', href=True):
+            if '/news/news_read.naver' in a_tag['href']:
+                full_link = "https://finance.naver.com" + a_tag['href']
+                if full_link not in article_links:
+                    article_links.append(full_link)
+        article_links = article_links[:15] # 15개 기사만 집중 분석
         
-        # 🧠 인공지능 형태소 분석기(Kiwi) 가동
+        full_text = ""
+        
+        # 3. 개별 기사 본문으로 쳐들어가서 내용 싹쓸이!
+        for link in article_links:
+            try:
+                a_res = requests.get(link, headers=headers, verify=False)
+                a_soup = BeautifulSoup(a_res.content, 'html.parser', from_encoding='cp949')
+                
+                # 네이버 금융 뉴스 본문 영역 (div class='articleCont')
+                content_div = a_soup.find('div', {'class': 'articleCont'})
+                if content_div:
+                    # 불필요한 태그 지우고 순수 텍스트만 추출
+                    full_text += content_div.text.strip() + " "
+            except Exception as e:
+                continue
+            time.sleep(0.3) # 네이버 서버가 화내지 않게 0.3초 쉬어주기
+            
+        print(f"📊 수집된 전체 뉴스 텍스트 길이: {len(full_text)}자")
+        
+        # 4. 🧠 인공지능 형태소 분석기(Kiwi) 가동
         from kiwipiepy import Kiwi
         kiwi = Kiwi()
         
@@ -61,10 +85,11 @@ def get_news_keywords():
             if token.tag in ['NNG', 'NNP'] and len(token.form) > 1 and token.form not in STOPWORDS:
                 nouns.append(token.form)
                 
-        top_10 = Counter(nouns).most_common(10)
+        # 5. 핵심 키워드 TOP 15 추출 (본문을 긁었으니 횟수가 압도적으로 많아집니다!)
+        top_15 = Counter(nouns).most_common(15)
         now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M')
         
-        return pd.DataFrame([[now_str, rank, word, count] for rank, (word, count) in enumerate(top_10, 1)], columns=['업데이트시간', '순위', '키워드', '언급횟수'])
+        return pd.DataFrame([[now_str, rank, word, count] for rank, (word, count) in enumerate(top_15, 1)], columns=['업데이트시간', '순위', '키워드', '언급횟수'])
         
     except Exception as e:
         print(f"❌ 뉴스 키워드 추출 에러: {e}")
