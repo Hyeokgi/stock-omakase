@@ -38,7 +38,7 @@ STOPWORDS = ['코스피', '코스닥', '증시', '상승', '하락', '마감', '
              '수준', '예상', '반사이익', '사업', '추진', '공급', '관련', '관련주', '테마', '장세', '박살', 
              '주의', '변동', '킬러', '테마주']
 
-# 🎯 [업그레이드 2] 타겟 조준점 변경 (뉴스 제목 + 본문 싹쓸이 심층 분석)
+# 🎯 [업그레이드 3] 무적의 네이버 뉴스 본문 크롤러 (인코딩 & 리다이렉트 완벽 대응)
 def get_news_keywords():
     try:
         print("▶️ 뉴스 키워드 수집 시작...")
@@ -48,17 +48,19 @@ def get_news_keywords():
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
         
         article_links = []
-        # 💡 링크 수집 조건을 훨씬 유연하게 변경!
-        for a_tag in soup.find_all('a', href=True):
-            href = a_tag['href']
-            if 'news_read.naver' in href:
+        # 💡 예전처럼 기사 목록의 제목 영역(dt, dd)에서 직접 링크를 뽑아옵니다. (가장 정확한 방법!)
+        subjects = soup.find_all(['dt', 'dd'], {'class': 'articleSubject'})
+        for sub in subjects:
+            a_tag = sub.find('a', href=True)
+            if a_tag:
+                href = a_tag['href']
                 if href.startswith('/'):
                     full_link = "https://finance.naver.com" + href
                 elif href.startswith('http'):
                     full_link = href
                 else:
                     full_link = "https://finance.naver.com/news/" + href
-                    
+                
                 if full_link not in article_links:
                     article_links.append(full_link)
                     
@@ -73,12 +75,24 @@ def get_news_keywords():
         for link in article_links:
             try:
                 a_res = requests.get(link, headers=headers, verify=False)
-                a_soup = BeautifulSoup(a_res.content, 'html.parser', from_encoding='cp949')
                 
-                # 💡 네이버 금융 뉴스 본문 (articleCont 또는 content)
-                content_div = a_soup.find('div', {'class': 'articleCont'}) or a_soup.find('div', {'id': 'content'})
-                if content_div:
-                    full_text += content_div.text.strip() + " "
+                # 💡 핵심 마법: 네이버 금융(cp949)과 일반 네이버 뉴스(utf-8) 인코딩 자동 호환 처리
+                if 'finance.naver.com' in a_res.url:
+                    a_soup = BeautifulSoup(a_res.content, 'html.parser', from_encoding='cp949')
+                else:
+                    a_soup = BeautifulSoup(a_res.content, 'html.parser', from_encoding='utf-8')
+                
+                # 💡 수많은 종류의 네이버 뉴스 본문 태그를 한 번에 싹쓸이 대응!
+                article_body = a_soup.select_one('#dic_area, #newsct_article, #content, .articleCont, #articleBodyContents')
+                
+                if article_body:
+                    # 불필요한 스크립트나 태그 제외하고 순수 텍스트만 추출
+                    full_text += article_body.get_text(separator=' ', strip=True) + " "
+                else:
+                    # 만약 위 태그마저 없다면 <p> 태그라도 다 긁어오기 (최후의 보루)
+                    for p in a_soup.find_all('p'):
+                        full_text += p.get_text(strip=True) + " "
+                        
             except Exception as e:
                 print(f"개별 기사 수집 중 에러: {e}")
                 continue
@@ -87,7 +101,7 @@ def get_news_keywords():
         print(f"▶️ 전체 뉴스 텍스트 길이: {len(full_text)}자")
         
         if len(full_text) < 100:
-            print("❌ 기사 본문을 충분히 가져오지 못했습니다.")
+            print("❌ 기사 본문을 충분히 가져오지 못했습니다. 네이버 구조 변경 의심.")
             return pd.DataFrame()
             
         # 🧠 형태소 분석기 가동
@@ -103,7 +117,7 @@ def get_news_keywords():
         now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M')
         
         df = pd.DataFrame([[now_str, rank, word, count] for rank, (word, count) in enumerate(top_15, 1)], columns=['업데이트시간', '순위', '키워드', '언급횟수'])
-        print(f"▶️ 키워드 추출 성공! (1위: {top_15[0][0]})")
+        print(f"▶️ 키워드 추출 성공! (1위: {top_15[0][0]}, 언급횟수: {top_15[0][1]}회)")
         return df
         
     except Exception as e:
