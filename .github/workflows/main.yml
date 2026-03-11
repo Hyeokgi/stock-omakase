@@ -8,9 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:  # 👈 [경고창 박멸 마법 추가!]
+    env:  # 👈 충돌나는 브레이크를 빼고, '최신 강제 적용' 가속 페달 딱 하나만 남겼습니다!
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
     steps:
       - name: 코드 가져오기
         uses: actions/checkout@v4
