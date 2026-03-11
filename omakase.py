@@ -39,17 +39,22 @@ STOPWORDS = ['코스피', '코스닥', '증시', '상승', '하락', '마감', '
              '주의', '변동', '킬러', '페이지', '주소', '입력', '방문', '삭제', '요청', '정확', '확인', '문의',
              '사항', '고객', '센터', '안내', '감사', '테마주']
 
-# 🎯 [업그레이드 3] 무적의 네이버 뉴스 본문 크롤러 (인코딩 & 리다이렉트 완벽 대응)
+# 🎯 [업그레이드 4] 네이버 로봇 방어막 완벽 우회 + 에러 페이지 원천 차단
 def get_news_keywords():
     try:
         print("▶️ 뉴스 키워드 수집 시작...")
         list_url = "https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258"
-        headers = {'User-Agent': 'Mozilla/5.0'}
+        
+        # 🛡️ [핵심 마법] 일반 사람의 최신 크롬 브라우저인 것처럼 완벽 위장!
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Referer': 'https://finance.naver.com/news/'
+        }
+        
         res = requests.get(list_url, headers=headers, verify=False)
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
         
         article_links = []
-        # 💡 예전처럼 기사 목록의 제목 영역(dt, dd)에서 직접 링크를 뽑아옵니다. (가장 정확한 방법!)
         subjects = soup.find_all(['dt', 'dd'], {'class': 'articleSubject'})
         for sub in subjects:
             a_tag = sub.find('a', href=True)
@@ -75,34 +80,34 @@ def get_news_keywords():
         full_text = ""
         for link in article_links:
             try:
+                # 개별 기사에 들어갈 때도 위장 신분증 제시!
                 a_res = requests.get(link, headers=headers, verify=False)
                 
-                # 💡 핵심 마법: 네이버 금융(cp949)과 일반 네이버 뉴스(utf-8) 인코딩 자동 호환 처리
                 if 'finance.naver.com' in a_res.url:
                     a_soup = BeautifulSoup(a_res.content, 'html.parser', from_encoding='cp949')
                 else:
                     a_soup = BeautifulSoup(a_res.content, 'html.parser', from_encoding='utf-8')
                 
-                # 💡 수많은 종류의 네이버 뉴스 본문 태그를 한 번에 싹쓸이 대응!
+                # 🚨 [에러 페이지 방어 로직] 네이버가 차단 페이지를 주면 가차 없이 패스!
+                if "요청하신 페이지를 찾을 수 없습니다" in a_soup.text or "주소가 잘못 입력되었거나" in a_soup.text:
+                    continue
+
                 article_body = a_soup.select_one('#dic_area, #newsct_article, #content, .articleCont, #articleBodyContents')
                 
                 if article_body:
-                    # 불필요한 스크립트나 태그 제외하고 순수 텍스트만 추출
                     full_text += article_body.get_text(separator=' ', strip=True) + " "
                 else:
-                    # 만약 위 태그마저 없다면 <p> 태그라도 다 긁어오기 (최후의 보루)
                     for p in a_soup.find_all('p'):
                         full_text += p.get_text(strip=True) + " "
                         
             except Exception as e:
-                print(f"개별 기사 수집 중 에러: {e}")
                 continue
-            time.sleep(0.3)
+            time.sleep(0.5) # 사람이 읽는 것처럼 조금 더 여유롭게 0.5초 휴식
             
         print(f"▶️ 전체 뉴스 텍스트 길이: {len(full_text)}자")
         
         if len(full_text) < 100:
-            print("❌ 기사 본문을 충분히 가져오지 못했습니다. 네이버 구조 변경 의심.")
+            print("❌ 기사 본문을 충분히 가져오지 못했습니다. 네이버 차단 의심.")
             return pd.DataFrame()
             
         # 🧠 형태소 분석기 가동
