@@ -38,75 +38,42 @@ STOPWORDS = ['코스피', '코스닥', '증시', '상승', '하락', '마감', '
              '수준', '예상', '반사이익', '사업', '추진', '공급', '관련', '관련주', '테마', '장세', '박살', 
              '주의', '변동', '킬러', '테마주']
 
-# 🎯 [업그레이드 4] 네이버 로봇 방어막 완벽 우회 + 에러 페이지 원천 차단
+# 🎯 [업그레이드 5] 스텔스 모드 (기사 클릭 없이 리스트에서 3페이지 요약본 싹쓸이!)
 def get_news_keywords():
     try:
-        print("▶️ 뉴스 키워드 수집 시작...")
-        list_url = "https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258"
-        
-        # 🛡️ [핵심 마법] 일반 사람의 최신 크롬 브라우저인 것처럼 완벽 위장!
+        print("▶️ 뉴스 키워드 수집 시작 (스텔스 모드)...")
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Referer': 'https://finance.naver.com/news/'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
         
-        res = requests.get(list_url, headers=headers, verify=False)
-        soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
-        
-        article_links = []
-        subjects = soup.find_all(['dt', 'dd'], {'class': 'articleSubject'})
-        for sub in subjects:
-            a_tag = sub.find('a', href=True)
-            if a_tag:
-                href = a_tag['href']
-                if href.startswith('/'):
-                    full_link = "https://finance.naver.com" + href
-                elif href.startswith('http'):
-                    full_link = href
-                else:
-                    full_link = "https://finance.naver.com/news/" + href
-                
-                if full_link not in article_links:
-                    article_links.append(full_link)
-                    
-        article_links = article_links[:15]
-        print(f"▶️ 찾은 뉴스 기사 개수: {len(article_links)}개")
-        
-        if not article_links:
-            print("❌ 뉴스 링크를 찾지 못했습니다!")
-            return pd.DataFrame()
-
         full_text = ""
-        for link in article_links:
-            try:
-                # 개별 기사에 들어갈 때도 위장 신분증 제시!
-                a_res = requests.get(link, headers=headers, verify=False)
-                
-                if 'finance.naver.com' in a_res.url:
-                    a_soup = BeautifulSoup(a_res.content, 'html.parser', from_encoding='cp949')
-                else:
-                    a_soup = BeautifulSoup(a_res.content, 'html.parser', from_encoding='utf-8')
-                
-                # 🚨 [에러 페이지 방어 로직] 네이버가 차단 페이지를 주면 가차 없이 패스!
-                if "요청하신 페이지를 찾을 수 없습니다" in a_soup.text or "주소가 잘못 입력되었거나" in a_soup.text:
-                    continue
-
-                article_body = a_soup.select_one('#dic_area, #newsct_article, #content, .articleCont, #articleBodyContents')
-                
-                if article_body:
-                    full_text += article_body.get_text(separator=' ', strip=True) + " "
-                else:
-                    for p in a_soup.find_all('p'):
-                        full_text += p.get_text(strip=True) + " "
-                        
-            except Exception as e:
-                continue
-            time.sleep(0.5) # 사람이 읽는 것처럼 조금 더 여유롭게 0.5초 휴식
+        
+        # 💡 핵심 마법: 기사를 클릭하다가 차단당하는 것을 피하기 위해, 
+        # 뉴스 게시판 1페이지부터 3페이지까지의 '제목'과 '요약본'만 밖에서 빠르게 쓸어 담습니다!
+        for page in range(1, 4):
+            url = f"https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258&page={page}"
+            res = requests.get(url, headers=headers, verify=False)
+            soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
             
-        print(f"▶️ 전체 뉴스 텍스트 길이: {len(full_text)}자")
+            # 1. 기사 제목 싹쓸이
+            subjects = soup.find_all(['dt', 'dd'], {'class': 'articleSubject'})
+            for sub in subjects:
+                full_text += sub.get_text(strip=True) + " "
+                
+            # 2. 기사 본문 요약(Summary) 싹쓸이
+            summaries = soup.find_all('dd', {'class': 'articleSummary'})
+            for summary in summaries:
+                # 쓸데없는 언론사 이름(span)은 지워버리기
+                for span in summary.find_all('span'):
+                    span.decompose()
+                full_text += summary.get_text(strip=True) + " "
+                
+            time.sleep(0.5) # 페이지 넘길 때 0.5초 휴식
+            
+        print(f"▶️ 수집된 전체 텍스트 길이: {len(full_text)}자")
         
         if len(full_text) < 100:
-            print("❌ 기사 본문을 충분히 가져오지 못했습니다. 네이버 차단 의심.")
+            print("❌ 텍스트 수집 실패!")
             return pd.DataFrame()
             
         # 🧠 형태소 분석기 가동
