@@ -8,12 +8,15 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:  # 👈 [경고창 박멸 마법 추가!]
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
     steps:
       - name: 코드 가져오기
-        uses: actions/checkout@v4  # 👈 기존 v3를 v4로 수정했습니다!
+        uses: actions/checkout@v4
 
       - name: 파이썬 설치하기
-        uses: actions/setup-python@v5  # 👈 기존 v4를 v5로 수정했습니다!
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
