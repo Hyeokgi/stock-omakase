@@ -172,12 +172,39 @@ def update_google_sheet(df_theme, df_news, df_naver, is_market_closed):
     except Exception as e:
         print(f"❌ Error: {e}")
 
+# ==========================================
+# 🛡️ [업그레이드: 시가총액 1,000억 미만 잡주 차단기]
+# ==========================================
+def get_market_cap(code):
+    try:
+        url = f"https://finance.naver.com/item/main.naver?code={code}"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'}
+        res = requests.get(url, headers=headers, verify=False, timeout=3)
+        soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
+        
+        # 네이버 금융의 시가총액 위치를 정확히 찌릅니다! (예: "3조 4,567" 또는 "8,500")
+        market_sum_tag = soup.find('em', id='_market_sum')
+        if not market_sum_tag: return 999999 
+            
+        market_sum_str = market_sum_tag.text.replace(',', '').replace('\t', '').replace('\n', '').strip()
+        
+        # "조" 단위가 있는 튼튼한 대형주 처리
+        if '조' in market_sum_str:
+            parts = market_sum_str.split('조')
+            jo = int(parts[0].strip())
+            eok = int(parts[1].strip()) if len(parts) > 1 and parts[1].strip() else 0
+            return jo * 10000 + eok
+        # "조" 단위가 없는 1조 미만 중소형주 처리
+        else:
+            return int(market_sum_str.strip())
+    except Exception as e:
+        return 999999 # 통신 장애 시에는 스킵하지 않고 안전하게 통과시킴
+
 def get_real_money_themes():
     now = datetime.datetime.now(KST)
     is_market_closed = now.hour < 9 or now.hour > 15 or (now.hour == 15 and now.minute >= 40)
     is_weekend = now.weekday() >= 5
     
-    # 🛑 [24시간 분리 엔진] 주말이거나, 오후 4시 ~ 다음날 아침 9시 이전이면 테마는 수집 종료!
     if is_weekend or now.hour >= 16 or now.hour < 9:
         return pd.DataFrame(), True
         
@@ -191,6 +218,8 @@ def get_real_money_themes():
     themes = [{'name': a.text.strip(), 'url': base_url + a['href']} for tds in [tr.find_all('td') for tr in soup.find('table', {'class': 'type_1'}).find_all('tr')] if len(tds) > 1 for a in [tds[0].find('a')] if a][:30]
                     
     theme_data_list = []
+    print("▶️ 실시간 주도 테마 및 튼튼한 대장주 수집 시작...")
+    
     for theme in themes:
         try:
             res = requests.get(theme['url'], headers=headers, verify=False)
@@ -206,15 +235,25 @@ def get_real_money_themes():
                         if '%' not in rate_str or '-' in rate_str or '0.00' in rate_str: continue
                         rate_num = float(rate_str.replace('%', '').replace('+', '').replace(',', '').strip())
                         val_num = int(val_str.replace(',', '').strip())
+                        
                         if rate_num >= TARGET_PERCENT and val_num > 0:
-                            stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
+                            actual_code = s_code.replace("'", "")
+                            
+                            # 🛡️ 스파이 함수 호출! 시가총액 검사
+                            market_cap = get_market_cap(actual_code)
+                            
+                            # 시가총액 1,000억 이상인 튼튼한 종목만 통과!
+                            if market_cap >= 1000:
+                                stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
+                            else:
+                                print(f"   🗑️ 잡주 차단 완료: {s_name} (시총 {market_cap}억)")
                     except: continue
+            
             stocks = sorted(stocks, key=lambda x: x['value'], reverse=True)[:3]
             if stocks:
-                # 🚨 [착시 테마 제거 엔진] 1위가 2위보다 거래대금이 10배 이상 크면 가짜 테마로 간주!
                 if len(stocks) >= 2 and stocks[0]['value'] >= (stocks[1]['value'] * 10):
-                    print(f"🚫 착시 테마 제외: {theme['name']} (1위 {stocks[0]['name']} 독주로 인한 왜곡)")
-                    continue  # 바구니에 담지 않고 바로 다음 테마로 가차 없이 패스!
+                    print(f"🚫 착시 테마 제외: {theme['name']} (1위 독주 왜곡)")
+                    continue 
                     
                 theme_data_list.append({'theme_name': theme['name'], 'theme_sum': sum([s['value'] for s in stocks]), 'stocks': stocks})
         except: continue
@@ -222,26 +261,20 @@ def get_real_money_themes():
         
     if not theme_data_list: return pd.DataFrame(), is_market_closed
     
-    # 🌟 [핵심 업데이트] 테마 중복 필터링 로직 🌟
     theme_data_list = sorted(theme_data_list, key=lambda x: x['theme_sum'], reverse=True)
     filtered_themes = []
     
     for t_data in theme_data_list:
         current_codes = set([s['code'] for s in t_data['stocks']])
         is_duplicate = False
-        
-        # 이미 랭킹에 올라간 테마들과 대장주 구성 비교
         for f_data in filtered_themes:
             f_codes = set([s['code'] for s in f_data['stocks']])
-            # 겹치는 종목이 2개 이상이면 사실상 같은 테마로 간주하고 과감히 버림!
             if len(current_codes.intersection(f_codes)) >= 2:
                 is_duplicate = True
                 break
-                
         if not is_duplicate:
             filtered_themes.append(t_data)
-            
-        if len(filtered_themes) >= 10: # 다양하게 10개가 채워지면 멈춤
+        if len(filtered_themes) >= 10:
             break
             
     final_rows = []
