@@ -13,12 +13,11 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==========================================
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit?gid=588079479#gid=588079479"
-TARGET_PERCENT = 5.0  
+TARGET_PERCENT = 5.0
 KST = datetime.timezone(datetime.timedelta(hours=9))
 # ==========================================
 
-# 🗑️ [업그레이드 1] 강력해진 쓰레기통 (매크로, 일반 경제 단어 싹 다 차단!)
-# 🗑️ [업그레이드 완결판] 초강력 쓰레기통 (기자들의 습관성 단어 완벽 차단!)
+# 🗑️ 회원님의 훌륭한 추가 단어들이 포함된 쓰레기통
 STOPWORDS = ['코스피', '코스닥', '증시', '상승', '하락', '마감', '특징주', '강세', '약세', '급등', '급락',
              '주식', '투자', '종목', '외인', '기관', '개인', '매수', '매도', '순매수', '순매도', '전망',
              '수혜', '주가', '대비', '돌파', '우려', '기대', '연속', '최고', '최저', '대형주', '중소형주',
@@ -39,7 +38,6 @@ STOPWORDS = ['코스피', '코스닥', '증시', '상승', '하락', '마감', '
              '주의', '변동', '목표', '분석', '이익', '지난해', '전문', '킬러', '초반', '운용', '자사', '오전', 
              '성장', '이날', '밸류', '테마주']
 
-# 🎯 [업그레이드 5] 스텔스 모드 (기사 클릭 없이 리스트에서 3페이지 요약본 싹쓸이!)
 def get_news_keywords():
     try:
         print("▶️ 뉴스 키워드 수집 시작 (스텔스 모드)...")
@@ -48,39 +46,29 @@ def get_news_keywords():
         }
         
         full_text = ""
-        
-        # 💡 핵심 마법: 기사를 클릭하다가 차단당하는 것을 피하기 위해, 
-        # 뉴스 게시판 1페이지부터 3페이지까지의 '제목'과 '요약본'만 밖에서 빠르게 쓸어 담습니다!
         for page in range(1, 4):
             url = f"https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258&page={page}"
             res = requests.get(url, headers=headers, verify=False)
             soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
             
-            # 1. 기사 제목 싹쓸이
             subjects = soup.find_all(['dt', 'dd'], {'class': 'articleSubject'})
             for sub in subjects:
                 full_text += sub.get_text(strip=True) + " "
                 
-            # 2. 기사 본문 요약(Summary) 싹쓸이
             summaries = soup.find_all('dd', {'class': 'articleSummary'})
             for summary in summaries:
-                # 쓸데없는 언론사 이름(span)은 지워버리기
                 for span in summary.find_all('span'):
                     span.decompose()
                 full_text += summary.get_text(strip=True) + " "
-                
-            time.sleep(0.5) # 페이지 넘길 때 0.5초 휴식
+            time.sleep(0.5)
             
         print(f"▶️ 수집된 전체 텍스트 길이: {len(full_text)}자")
-        
         if len(full_text) < 100:
             print("❌ 텍스트 수집 실패!")
             return pd.DataFrame()
             
-        # 🧠 형태소 분석기 가동
         from kiwipiepy import Kiwi
         kiwi = Kiwi()
-        
         nouns = []
         for token in kiwi.tokenize(full_text):
             if token.tag in ['NNG', 'NNP'] and len(token.form) > 1 and token.form not in STOPWORDS:
@@ -88,103 +76,14 @@ def get_news_keywords():
                 
         top_15 = Counter(nouns).most_common(15)
         now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M')
-        
         df = pd.DataFrame([[now_str, rank, word, count] for rank, (word, count) in enumerate(top_15, 1)], columns=['업데이트시간', '순위', '키워드', '언급횟수'])
         print(f"▶️ 키워드 추출 성공! (1위: {top_15[0][0]}, 언급횟수: {top_15[0][1]}회)")
         return df
-        
     except Exception as e:
         print(f"❌ 뉴스 키워드 추출 에러: {e}")
         return pd.DataFrame()
 
-def get_naver_search_ranking():
-    try:
-        url = "https://finance.naver.com/sise/lastsearch2.naver"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        # 튼튼한 BeautifulSoup 엔진으로 직접 추출!
-        res = requests.get(url, headers=headers, verify=False)
-        soup = BeautifulSoup(res.content, 'html.parser', from_encoding='euc-kr')
-        
-        table = soup.find('table', {'class': 'type_5'})
-        rows = table.find_all('tr')
-        
-        data = []
-        for row in rows:
-            tds = row.find_all('td')
-            # 정상적인 데이터가 있는 줄인지 확인 (빈 줄 패스)
-            if len(tds) >= 6:
-                rank_text = tds[0].text.strip()
-                if rank_text.isdigit(): # 순위가 숫자인 진짜 데이터만 추출
-                    a_tag = tds[1].find('a')
-                    name = a_tag.text.strip()
-                    s_code = a_tag['href'].split('code=')[-1] # 종목 코드 추출
-                    price = tds[3].text.strip()
-                    rate = tds[5].text.strip()
-                    
-                    # 🛡️ 스파이 함수 호출! 여기서도 시가총액 1,000억 검사!
-                    market_cap = get_market_cap(s_code)
-                    
-                    if market_cap >= 1000:
-                        data.append([int(rank_text), name, price, rate])
-                    else:
-                        print(f"   🗑️ 검색어 잡주 차단: {name} (시총 {market_cap}억)")
-                    
-                    # 튼튼한 종목으로만 10위까지 꽉꽉 채우면 종료!
-                    if len(data) >= 10: 
-                        break
-                        
-        df = pd.DataFrame(data, columns=['순위', '종목명', '현재가', '등락률(%)'])
-        return df
-        
-    except Exception as e:
-        print(f"❌ 네이버 실시간 검색어 수집 실패: {e}")
-        return pd.DataFrame()
-      
-def update_google_sheet(df_theme, df_news, df_naver, is_market_closed):
-    try:
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
-        client = gspread.authorize(creds)
-        doc = client.open_by_url(SHEET_URL)
-        
-        if not df_theme.empty:
-            if not is_market_closed:
-                sheet = doc.worksheet("수급_실시간")
-                sheet.clear() 
-                sheet.update("A1", [df_theme.columns.values.tolist()] + df_theme.values.tolist(), value_input_option="USER_ENTERED")
-            else:
-                sheet = doc.worksheet("수급_Raw")
-                today_str = df_theme.iloc[0]['날짜'] 
-                all_data = sheet.get_all_values()
-                
-                headers = all_data[0] if len(all_data) > 0 else df_theme.columns.values.tolist()
-                past_data = [row for row in all_data[1:] if len(row) > 0 and row[0] != today_str]
-                new_data = df_theme.values.tolist()
-                
-                combined_data = new_data + past_data
-                
-                combined_data.sort(key=lambda x: int(x[1]) if str(x[1]).isdigit() else 999)
-                combined_data.sort(key=lambda x: x[0], reverse=True)
-                
-                sheet.clear()
-                sheet.update("A1", [headers] + combined_data, value_input_option="USER_ENTERED")
-                
-        if not df_news.empty:
-            sheet_news = doc.worksheet("뉴스_키워드")
-            sheet_news.clear()
-            sheet_news.update("A1", [df_news.columns.values.tolist()] + df_news.values.tolist(), value_input_option="USER_ENTERED")
-
-        if not df_naver.empty:
-            sheet_naver = doc.worksheet("네이버_검색상위")
-            sheet_naver.clear()
-            sheet_naver.update("A1", [df_naver.columns.values.tolist()] + df_naver.values.tolist(), value_input_option="USER_ENTERED")  
-          
-    except Exception as e:
-        print(f"❌ Error: {e}")
-
-# ==========================================
-# 🛡️ [업그레이드: 시가총액 1,000억 미만 잡주 차단기]
-# ==========================================
+# 🛡️ 1,000억 필터링 방패 (검색어 랭킹에도 완벽 장착됨!)
 def get_market_cap(code):
     try:
         url = f"https://finance.naver.com/item/main.naver?code={code}"
@@ -192,23 +91,55 @@ def get_market_cap(code):
         res = requests.get(url, headers=headers, verify=False, timeout=3)
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
         
-        # 네이버 금융의 시가총액 위치를 정확히 찌릅니다! (예: "3조 4,567" 또는 "8,500")
         market_sum_tag = soup.find('em', id='_market_sum')
         if not market_sum_tag: return 999999 
             
         market_sum_str = market_sum_tag.text.replace(',', '').replace('\t', '').replace('\n', '').strip()
-        
-        # "조" 단위가 있는 튼튼한 대형주 처리
         if '조' in market_sum_str:
             parts = market_sum_str.split('조')
             jo = int(parts[0].strip())
             eok = int(parts[1].strip()) if len(parts) > 1 and parts[1].strip() else 0
             return jo * 10000 + eok
-        # "조" 단위가 없는 1조 미만 중소형주 처리
         else:
             return int(market_sum_str.strip())
     except Exception as e:
-        return 999999 # 통신 장애 시에는 스킵하지 않고 안전하게 통과시킴
+        return 999999 
+
+def get_naver_search_ranking():
+    try:
+        url = "https://finance.naver.com/sise/lastsearch2.naver"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        res = requests.get(url, headers=headers, verify=False)
+        soup = BeautifulSoup(res.content, 'html.parser', from_encoding='euc-kr')
+        
+        table = soup.find('table', {'class': 'type_5'})
+        rows = table.find_all('tr')
+        data = []
+        for row in rows:
+            tds = row.find_all('td')
+            if len(tds) >= 6:
+                rank_text = tds[0].text.strip()
+                if rank_text.isdigit(): 
+                    a_tag = tds[1].find('a')
+                    name = a_tag.text.strip()
+                    s_code = a_tag['href'].split('code=')[-1] 
+                    price = tds[3].text.strip()
+                    rate = tds[5].text.strip()
+                    
+                    market_cap = get_market_cap(s_code)
+                    if market_cap >= 1000:
+                        data.append([int(rank_text), name, price, rate])
+                    else:
+                        print(f"   🗑️ 검색어 잡주 차단: {name} (시총 {market_cap}억)")
+                        
+                    if len(data) >= 10: 
+                        break
+                        
+        df = pd.DataFrame(data, columns=['순위', '종목명', '현재가', '등락률(%)'])
+        return df
+    except Exception as e:
+        print(f"❌ 네이버 실시간 검색어 수집 실패: {e}")
+        return pd.DataFrame()
 
 def get_real_money_themes():
     now = datetime.datetime.now(KST)
@@ -219,7 +150,6 @@ def get_real_money_themes():
         return pd.DataFrame(), True
         
     time_str = now.strftime('%H:%M')
-    
     headers = {'User-Agent': 'Mozilla/5.0'}
     base_url = "https://finance.naver.com"
     res = requests.get(base_url + "/sise/theme.naver", headers=headers, verify=False)
@@ -248,11 +178,7 @@ def get_real_money_themes():
                         
                         if rate_num >= TARGET_PERCENT and val_num > 0:
                             actual_code = s_code.replace("'", "")
-                            
-                            # 🛡️ 스파이 함수 호출! 시가총액 검사
                             market_cap = get_market_cap(actual_code)
-                            
-                            # 시가총액 1,000억 이상인 튼튼한 종목만 통과!
                             if market_cap >= 1000:
                                 stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
                             else:
@@ -264,7 +190,6 @@ def get_real_money_themes():
                 if len(stocks) >= 2 and stocks[0]['value'] >= (stocks[1]['value'] * 10):
                     print(f"🚫 착시 테마 제외: {theme['name']} (1위 독주 왜곡)")
                     continue 
-                    
                 theme_data_list.append({'theme_name': theme['name'], 'theme_sum': sum([s['value'] for s in stocks]), 'stocks': stocks})
         except: continue
         time.sleep(0.5)
@@ -273,7 +198,6 @@ def get_real_money_themes():
     
     theme_data_list = sorted(theme_data_list, key=lambda x: x['theme_sum'], reverse=True)
     filtered_themes = []
-    
     for t_data in theme_data_list:
         current_codes = set([s['code'] for s in t_data['stocks']])
         is_duplicate = False
@@ -296,6 +220,47 @@ def get_real_money_themes():
             final_rows.append(row_data)
             
     return pd.DataFrame(final_rows), is_market_closed
+
+def update_google_sheet(df_theme, df_news, df_naver, is_market_closed):
+    try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
+        client = gspread.authorize(creds)
+        doc = client.open_by_url(SHEET_URL)
+        
+        if not df_theme.empty:
+            if not is_market_closed:
+                sheet = doc.worksheet("수급_실시간")
+                sheet.clear() 
+                sheet.update("A1", [df_theme.columns.values.tolist()] + df_theme.values.tolist(), value_input_option="USER_ENTERED")
+            else:
+                sheet = doc.worksheet("수급_Raw")
+                today_str = df_theme.iloc[0]['날짜'] 
+                all_data = sheet.get_all_values()
+                
+                headers = all_data[0] if len(all_data) > 0 else df_theme.columns.values.tolist()
+                past_data = [row for row in all_data[1:] if len(row) > 0 and row[0] != today_str]
+                new_data = df_theme.values.tolist()
+                
+                combined_data = new_data + past_data
+                combined_data.sort(key=lambda x: int(x[1]) if str(x[1]).isdigit() else 999)
+                combined_data.sort(key=lambda x: x[0], reverse=True)
+                
+                sheet.clear()
+                sheet.update("A1", [headers] + combined_data, value_input_option="USER_ENTERED")
+                
+        if not df_news.empty:
+            sheet_news = doc.worksheet("뉴스_키워드")
+            sheet_news.clear()
+            sheet_news.update("A1", [df_news.columns.values.tolist()] + df_news.values.tolist(), value_input_option="USER_ENTERED")
+
+        if not df_naver.empty:
+            sheet_naver = doc.worksheet("네이버_검색상위")
+            sheet_naver.clear()
+            sheet_naver.update("A1", [df_naver.columns.values.tolist()] + df_naver.values.tolist(), value_input_option="USER_ENTERED")  
+          
+    except Exception as e:
+        print(f"❌ Error: {e}")
 
 # ==========================================
 # 🚀 심장(Main) 엔진: 로봇이 깨어나서 해야 할 일들
