@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:  # 👈 충돌나는 브레이크를 빼고, '최신 강제 적용' 가속 페달 딱 하나만 남겼습니다!
+    env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - name: 코드 가져오기
