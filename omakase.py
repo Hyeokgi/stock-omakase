@@ -86,6 +86,9 @@ def get_news_keywords():
 # 🛡️ 1,000억 필터링 방패 + 캐싱(기억력) 마법 장착!
 market_cap_cache = {} # 한 번 검색한 종목 시총을 기억하는 메모장!
 
+# 🛡️ 1,000억 필터링 방패 + 캐싱(기억력) 마법 장착!
+market_cap_cache = {} # 한 번 검색한 종목 시총을 기억하는 메모장!
+
 def get_market_cap(code):
     # 메모장에 이미 있는 종목이면 0.001초 만에 바로 대답!
     if code in market_cap_cache:
