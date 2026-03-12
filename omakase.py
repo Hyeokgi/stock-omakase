@@ -183,7 +183,8 @@ def get_real_money_themes():
                                 stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
                             else:
                                 print(f"   🗑️ 잡주 차단 완료: {s_name} (시총 {market_cap}억)")
-                    except: continue
+                    except: 
+                        continue
             
             stocks = sorted(stocks, key=lambda x: x['value'], reverse=True)[:3]
             if stocks:
@@ -191,7 +192,8 @@ def get_real_money_themes():
                     print(f"🚫 착시 테마 제외: {theme['name']} (1위 독주 왜곡)")
                     continue 
                 theme_data_list.append({'theme_name': theme['name'], 'theme_sum': sum([s['value'] for s in stocks]), 'stocks': stocks})
-        except: continue
+        except: 
+            continue
         time.sleep(0.5)
         
     if not theme_data_list: return pd.DataFrame(), is_market_closed
