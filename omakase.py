@@ -83,8 +83,14 @@ def get_news_keywords():
         print(f"❌ 뉴스 키워드 추출 에러: {e}")
         return pd.DataFrame()
 
-# 🛡️ 1,000억 필터링 방패 (검색어 랭킹에도 완벽 장착됨!)
+# 🛡️ 1,000억 필터링 방패 + 캐싱(기억력) 마법 장착!
+market_cap_cache = {} # 한 번 검색한 종목 시총을 기억하는 메모장!
+
 def get_market_cap(code):
+    # 메모장에 이미 있는 종목이면 0.001초 만에 바로 대답!
+    if code in market_cap_cache:
+        return market_cap_cache[code]
+        
     try:
         url = f"https://finance.naver.com/item/main.naver?code={code}"
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'}
@@ -92,18 +98,108 @@ def get_market_cap(code):
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
         
         market_sum_tag = soup.find('em', id='_market_sum')
-        if not market_sum_tag: return 999999 
+        if not market_sum_tag: 
+            market_cap_cache[code] = 999999
+            return 999999 
             
         market_sum_str = market_sum_tag.text.replace(',', '').replace('\t', '').replace('\n', '').strip()
         if '조' in market_sum_str:
             parts = market_sum_str.split('조')
             jo = int(parts[0].strip())
             eok = int(parts[1].strip()) if len(parts) > 1 and parts[1].strip() else 0
-            return jo * 10000 + eok
+            final_cap = jo * 10000 + eok
         else:
-            return int(market_sum_str.strip())
+            final_cap = int(market_sum_str.strip())
+            
+        # 새로 알게 된 시총을 메모장에 기록!
+        market_cap_cache[code] = final_cap
+        return final_cap
+        
     except Exception as e:
         return 999999 
+
+def get_real_money_themes():
+    now = datetime.datetime.now(KST)
+    is_market_closed = now.hour < 9 or now.hour > 15 or (now.hour == 15 and now.minute >= 40)
+    is_weekend = now.weekday() >= 5
+    
+    if is_weekend or now.hour >= 16 or now.hour < 9:
+        return pd.DataFrame(), True
+        
+    time_str = now.strftime('%H:%M')
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    base_url = "https://finance.naver.com"
+    res = requests.get(base_url + "/sise/theme.naver", headers=headers, verify=False)
+    soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
+    
+    # ⚡ [터보 엔진] 테마 수집 대상을 30개에서 20개로 압축! (시간 1/3 단축)
+    themes = [{'name': a.text.strip(), 'url': base_url + a['href']} for tds in [tr.find_all('td') for tr in soup.find('table', {'class': 'type_1'}).find_all('tr')] if len(tds) > 1 for a in [tds[0].find('a')] if a][:20]
+                    
+    theme_data_list = []
+    print("▶️ 실시간 주도 테마 및 튼튼한 대장주 수집 시작 (터보 모드)...")
+    
+    for theme in themes:
+        try:
+            res = requests.get(theme['url'], headers=headers, verify=False)
+            soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
+            stocks = []
+            for tr in soup.find('table', {'class': 'type_5'}).find_all('tr'):
+                tds = tr.find_all('td')
+                if len(tds) >= 9:
+                    try:
+                        s_name = tds[0].find('a').text.strip()
+                        s_code = f"'{tds[0].find('a')['href'].split('code=')[-1]}"
+                        rate_str, val_str = tds[4].text.strip(), tds[8].text.strip()
+                        if '%' not in rate_str or '-' in rate_str or '0.00' in rate_str: continue
+                        rate_num = float(rate_str.replace('%', '').replace('+', '').replace(',', '').strip())
+                        val_num = int(val_str.replace(',', '').strip())
+                        
+                        if rate_num >= TARGET_PERCENT and val_num > 0:
+                            actual_code = s_code.replace("'", "")
+                            market_cap = get_market_cap(actual_code)
+                            if market_cap >= 1000:
+                                stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
+                            else:
+                                pass # 터보 모드에서는 잡주 로그 생략으로 속도 향상
+                    except: 
+                        continue
+            
+            stocks = sorted(stocks, key=lambda x: x['value'], reverse=True)[:3]
+            if stocks:
+                if len(stocks) >= 2 and stocks[0]['value'] >= (stocks[1]['value'] * 10):
+                    continue 
+                theme_data_list.append({'theme_name': theme['name'], 'theme_sum': sum([s['value'] for s in stocks]), 'stocks': stocks})
+        except: 
+            continue
+        # 쉬는 시간도 0.5초에서 0.3초로 약간 단축
+        time.sleep(0.3)
+        
+    if not theme_data_list: return pd.DataFrame(), is_market_closed
+    
+    theme_data_list = sorted(theme_data_list, key=lambda x: x['theme_sum'], reverse=True)
+    filtered_themes = []
+    for t_data in theme_data_list:
+        current_codes = set([s['code'] for s in t_data['stocks']])
+        is_duplicate = False
+        for f_data in filtered_themes:
+            f_codes = set([s['code'] for s in f_data['stocks']])
+            if len(current_codes.intersection(f_codes)) >= 2:
+                is_duplicate = True
+                break
+        if not is_duplicate:
+            filtered_themes.append(t_data)
+        if len(filtered_themes) >= 10:
+            break
+            
+    final_rows = []
+    for rank, t_data in enumerate(filtered_themes, start=1):
+        for s in t_data['stocks']:
+            row_data = {'날짜': now.strftime('%Y-%m-%d')}
+            if not is_market_closed: row_data['시간'] = time_str
+            row_data.update({'순위': rank, '테마명': t_data['theme_name'], '종목명': s['name'], '종목코드': s['code'], '등락률(%)': s['rate'], '거래대금(억원)': int(s['value']/100)})
+            final_rows.append(row_data)
+            
+    return pd.DataFrame(final_rows), is_market_closed
 
 def get_naver_search_ranking():
     try:
@@ -140,88 +236,6 @@ def get_naver_search_ranking():
     except Exception as e:
         print(f"❌ 네이버 실시간 검색어 수집 실패: {e}")
         return pd.DataFrame()
-
-def get_real_money_themes():
-    now = datetime.datetime.now(KST)
-    is_market_closed = now.hour < 9 or now.hour > 15 or (now.hour == 15 and now.minute >= 40)
-    is_weekend = now.weekday() >= 5
-    
-    if is_weekend or now.hour >= 16 or now.hour < 9:
-        return pd.DataFrame(), True
-        
-    time_str = now.strftime('%H:%M')
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    base_url = "https://finance.naver.com"
-    res = requests.get(base_url + "/sise/theme.naver", headers=headers, verify=False)
-    soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
-    
-    themes = [{'name': a.text.strip(), 'url': base_url + a['href']} for tds in [tr.find_all('td') for tr in soup.find('table', {'class': 'type_1'}).find_all('tr')] if len(tds) > 1 for a in [tds[0].find('a')] if a][:30]
-                    
-    theme_data_list = []
-    print("▶️ 실시간 주도 테마 및 튼튼한 대장주 수집 시작...")
-    
-    for theme in themes:
-        try:
-            res = requests.get(theme['url'], headers=headers, verify=False)
-            soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
-            stocks = []
-            for tr in soup.find('table', {'class': 'type_5'}).find_all('tr'):
-                tds = tr.find_all('td')
-                if len(tds) >= 9:
-                    try:
-                        s_name = tds[0].find('a').text.strip()
-                        s_code = f"'{tds[0].find('a')['href'].split('code=')[-1]}"
-                        rate_str, val_str = tds[4].text.strip(), tds[8].text.strip()
-                        if '%' not in rate_str or '-' in rate_str or '0.00' in rate_str: continue
-                        rate_num = float(rate_str.replace('%', '').replace('+', '').replace(',', '').strip())
-                        val_num = int(val_str.replace(',', '').strip())
-                        
-                        if rate_num >= TARGET_PERCENT and val_num > 0:
-                            actual_code = s_code.replace("'", "")
-                            market_cap = get_market_cap(actual_code)
-                            if market_cap >= 1000:
-                                stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
-                            else:
-                                print(f"   🗑️ 잡주 차단 완료: {s_name} (시총 {market_cap}억)")
-                    except: 
-                        continue
-            
-            stocks = sorted(stocks, key=lambda x: x['value'], reverse=True)[:3]
-            if stocks:
-                if len(stocks) >= 2 and stocks[0]['value'] >= (stocks[1]['value'] * 10):
-                    print(f"🚫 착시 테마 제외: {theme['name']} (1위 독주 왜곡)")
-                    continue 
-                theme_data_list.append({'theme_name': theme['name'], 'theme_sum': sum([s['value'] for s in stocks]), 'stocks': stocks})
-        except: 
-            continue
-        time.sleep(0.5)
-        
-    if not theme_data_list: return pd.DataFrame(), is_market_closed
-    
-    theme_data_list = sorted(theme_data_list, key=lambda x: x['theme_sum'], reverse=True)
-    filtered_themes = []
-    for t_data in theme_data_list:
-        current_codes = set([s['code'] for s in t_data['stocks']])
-        is_duplicate = False
-        for f_data in filtered_themes:
-            f_codes = set([s['code'] for s in f_data['stocks']])
-            if len(current_codes.intersection(f_codes)) >= 2:
-                is_duplicate = True
-                break
-        if not is_duplicate:
-            filtered_themes.append(t_data)
-        if len(filtered_themes) >= 10:
-            break
-            
-    final_rows = []
-    for rank, t_data in enumerate(filtered_themes, start=1):
-        for s in t_data['stocks']:
-            row_data = {'날짜': now.strftime('%Y-%m-%d')}
-            if not is_market_closed: row_data['시간'] = time_str
-            row_data.update({'순위': rank, '테마명': t_data['theme_name'], '종목명': s['name'], '종목코드': s['code'], '등락률(%)': s['rate'], '거래대금(억원)': int(s['value']/100)})
-            final_rows.append(row_data)
-            
-    return pd.DataFrame(final_rows), is_market_closed
 
 def update_google_sheet(df_theme, df_news, df_naver, is_market_closed):
     try:
