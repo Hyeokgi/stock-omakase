@@ -36,7 +36,8 @@ STOPWORDS = ['코스피', '코스닥', '증시', '상승', '하락', '마감', '
              '수익', '매출', '적자', '흑자', '배당', '지분', '인수', '합병', '분할', '상폐', '공모', 
              '특징', '전일', '전주', '전월', '동기', '경신', '증권', '증권사', '개장', '출발', '사태', 
              '수준', '예상', '반사이익', '사업', '추진', '공급', '관련', '관련주', '테마', '장세', '박살', 
-             '주의', '변동', '목표', '분석', '이익', '지난해', '전문', '킬러', '테마주']
+             '주의', '변동', '목표', '분석', '이익', '지난해', '전문', '킬러', '초반', '운용', '자사', '오전', 
+             '성장', '이날', '밸류', '테마주']
 
 # 🎯 [업그레이드 5] 스텔스 모드 (기사 클릭 없이 리스트에서 3페이지 요약본 싹쓸이!)
 def get_news_keywords():
@@ -114,13 +115,22 @@ def get_naver_search_ranking():
             if len(tds) >= 6:
                 rank_text = tds[0].text.strip()
                 if rank_text.isdigit(): # 순위가 숫자인 진짜 데이터만 추출
-                    name = tds[1].text.strip()
+                    a_tag = tds[1].find('a')
+                    name = a_tag.text.strip()
+                    s_code = a_tag['href'].split('code=')[-1] # 종목 코드 추출
                     price = tds[3].text.strip()
                     rate = tds[5].text.strip()
                     
-                    data.append([int(rank_text), name, price, rate])
+                    # 🛡️ 스파이 함수 호출! 여기서도 시가총액 1,000억 검사!
+                    market_cap = get_market_cap(s_code)
                     
-                    if len(data) >= 10: # 딱 10위까지만 수집하고 멈춤
+                    if market_cap >= 1000:
+                        data.append([int(rank_text), name, price, rate])
+                    else:
+                        print(f"   🗑️ 검색어 잡주 차단: {name} (시총 {market_cap}억)")
+                    
+                    # 튼튼한 종목으로만 10위까지 꽉꽉 채우면 종료!
+                    if len(data) >= 10: 
                         break
                         
         df = pd.DataFrame(data, columns=['순위', '종목명', '현재가', '등락률(%)'])
