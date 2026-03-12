@@ -2,7 +2,8 @@ name: Stock Omakase Auto Scraper
 
 on:
   schedule:
-    - cron: '*/10 * * * *'
+    # 한국시간 평일(월~금) 오전 9시 ~ 오후 3시 59분까지만 15분 간격으로 알뜰하게 실행!
+    - cron: '*/15 0-6 * * 1-5'
   workflow_dispatch:
 
 jobs:
