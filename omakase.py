@@ -259,6 +259,10 @@ def get_naver_search_ranking():
         table = soup.find('table', {'class': 'type_5'})
         rows = table.find_all('tr')
         data = []
+        
+        # 🛡️ 초대형주 및 지수 확인용 블랙리스트 (스캐너의 노이즈 제거)
+        search_blacklist = ['삼성전자', 'SK하이닉스', '현대차', '기아', 'LG에너지솔루션', 'POSCO홀딩스', '셀트리온', 'NAVER', '카카오']
+        
         for row in rows:
             tds = row.find_all('td')
             if len(tds) >= 6:
@@ -266,13 +270,21 @@ def get_naver_search_ranking():
                 if rank_text.isdigit(): 
                     a_tag = tds[1].find('a')
                     name = a_tag.text.strip()
+                    
+                    # 💡 1. 블랙리스트에 있는 종목이면 수집하지 않고 바로 다음으로 패스!
+                    if name in search_blacklist:
+                        continue
+                        
                     s_code = a_tag['href'].split('code=')[-1] 
                     price = tds[3].text.strip()
                     rate = tds[5].text.strip()
                     
                     market_cap = get_market_cap(s_code)
+                    
+                    # 💡 2. 시총 1,000억 이상인 알짜 종목만 10개 채우기
                     if market_cap >= 1000:
-                        data.append([int(rank_text), name, price, rate])
+                        # 순위는 블랙리스트가 빠진 상태에서 우리만의 진짜 순위(1, 2, 3...)로 재정렬합니다!
+                        data.append([len(data) + 1, name, price, rate]) 
                     else:
                         pass
                         
