@@ -18,35 +18,25 @@ KST = datetime.timezone(datetime.timedelta(hours=9))
 # ==========================================
 
 # 🗑️ 회원님의 훌륭한 추가 단어들이 포함된 쓰레기통
-# 🗑️ [최종 완결판] 초강력 쓰레기통 (중복 제거 + 기사 껍데기/모호한 명사 대거 추가)
 STOPWORDS = [
-    # 📈 1. 증시/주식/시황 기본 단어
     '코스피', '코스닥', '증시', '주식', '투자', '종목', '시장', '지수', '대형주', '중소형주', 
     '외인', '기관', '개인', '외국인', '매수', '매도', '순매수', '순매도', '거래', '대금', 
     '주가', '펀드', '사모', '상장', '상폐', '공모', '특징주', '테마', '테마주', '관련', '관련주', 
     '수혜', '수혜주', '장세', '개장', '출발', '마감', '초반', '후반', '오전', '오후', '장중',
     '증권', '증권사', '운용', '자사', '괴리', '프리미어', '가치', '밸류', '공시', '병합', '분할',
-
-    # 🎢 2. 방향/추세/가격 관련 단어
     '상승', '하락', '급등', '급락', '강세', '약세', '폭락', '반등', '조정', '랠리', '위축', 
     '냉각', '훈풍', '안도', '불안', '쇼크', '서프라이즈', '돌파', '경신', '연속', '최고', '최저', 
     '신고가', '신저가', '최고치', '최저치', '최고가', '최저가', '급증', '급감', '확산', '진정', 
     '완화', '악화', '개선', '회복', '최대', '사상', '역대', '최초', '최신', '규모', '수준', '가격', 
     '목표가', '상향', '하향', '박살', '킬러', '대규모', '변동', '오픈', '호재', '연계', '대비',
-
-    # 🏢 3. 기업/경제/거시경제 단어
     '경제', '금융', '기업', '정부', '자산', '머니', '한국', '미국', '국내', '글로벌', '뉴욕', 
     '회장', '대표', '임원', '주주', '총회', '이유', '때문', '달러', '금리', '인상', '인하', '동결', 
     '연준', '파월', '물가', '지표', '고용', '기름값', '주유소', '석유', '신용', '수익', '매출', 
     '적자', '흑자', '배당', '지분', '인수', '합병', '사업', '추진', '공급', '계약', '체결', 
     '실적', '발표', '이익', '반사이익', '현금', '자회사', '계열사', '지주사', '관계사', '기내식', '서비스',
-
-    # 🗓️ 4. 시간/날짜/기간 단어
     '오늘', '내일', '이번', '주간', '월간', '분기', '시간', '하루', '하루만', '올해', '내년', 
     '지난해', '전일', '전주', '전월', '동기', '내달', '연말', '연초', '이날', '당일', '최근', 
     '현재', '이후', '이전', '상반기', '하반기', '당분간',
-
-    # 🚨 5. [핵심 추가] 모호한 명사 / 행정 / 기사 껍데기 / 단위
     '예상', '전망', '기대', '우려', '경고', '목표', '분석', '평가', '결정', '검토', '참여', 
     '진출', '포기', '중단', '재개', '완료', '시작', '종료', '영향', '타격', '피해', '직격탄', 
     '부양', '지원', '규제', '단속', '강화', '철폐', '폐지', '유지', '보류', '달성', '기준',
@@ -56,8 +46,6 @@ STOPWORDS = [
     '우려감', '불확실성', '가능성', '움직임', '분위기', '흐름', '국면', '대목', '차원', '입장',
     '배경', '결과', '모습', '모멘텀', '현상', '차이', '비중', '비율', '단계', '목적', '대상',
     '조원', '억원', '만원', '천원', '전문',
-
-    # 🗑️ 6. 뉴스 사이트/봇 차단 페이지 찌꺼기
     '속보', '단독', '기자', '특파원', '앵커', '저작권', '무단', '전재', '재배포', '금지', '뉴스',
     '보도', '자료', '사진', '관계자', '주장', '설명', '강조', '위원회', '법안', '회의', '통과',
     '정책', '의원', '장관', '페이지', '주소', '입력', '방문', '삭제', '요청', '정확', '확인',
@@ -88,9 +76,7 @@ def get_news_keywords():
                 full_text += summary.get_text(strip=True) + " "
             time.sleep(0.5)
             
-        print(f"▶️ 수집된 전체 텍스트 길이: {len(full_text)}자")
         if len(full_text) < 100:
-            print("❌ 텍스트 수집 실패!")
             return pd.DataFrame()
             
         from kiwipiepy import Kiwi
@@ -103,20 +89,15 @@ def get_news_keywords():
         top_15 = Counter(nouns).most_common(15)
         now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M')
         df = pd.DataFrame([[now_str, rank, word, count] for rank, (word, count) in enumerate(top_15, 1)], columns=['업데이트시간', '순위', '키워드', '언급횟수'])
-        print(f"▶️ 키워드 추출 성공! (1위: {top_15[0][0]}, 언급횟수: {top_15[0][1]}회)")
         return df
     except Exception as e:
         print(f"❌ 뉴스 키워드 추출 에러: {e}")
         return pd.DataFrame()
 
 # 🛡️ 1,000억 필터링 방패 + 캐싱(기억력) 마법 장착!
-market_cap_cache = {} # 한 번 검색한 종목 시총을 기억하는 메모장!
-
-# 🛡️ 1,000억 필터링 방패 + 캐싱(기억력) 마법 장착!
-market_cap_cache = {} # 한 번 검색한 종목 시총을 기억하는 메모장!
+market_cap_cache = {} 
 
 def get_market_cap(code):
-    # 메모장에 이미 있는 종목이면 0.001초 만에 바로 대답!
     if code in market_cap_cache:
         return market_cap_cache[code]
         
@@ -140,7 +121,6 @@ def get_market_cap(code):
         else:
             final_cap = int(market_sum_str.strip())
             
-        # 새로 알게 된 시총을 메모장에 기록!
         market_cap_cache[code] = final_cap
         return final_cap
         
@@ -161,11 +141,10 @@ def get_real_money_themes():
     res = requests.get(base_url + "/sise/theme.naver", headers=headers, verify=False)
     soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
     
-    # ⚡ [터보 엔진] 테마 수집 대상을 30개에서 20개로 압축! (시간 1/3 단축)
     themes = [{'name': a.text.strip(), 'url': base_url + a['href']} for tds in [tr.find_all('td') for tr in soup.find('table', {'class': 'type_1'}).find_all('tr')] if len(tds) > 1 for a in [tds[0].find('a')] if a][:20]
                     
     theme_data_list = []
-    print("▶️ 실시간 주도 테마 및 튼튼한 대장주 수집 시작 (터보 모드)...")
+    print("▶️ 실시간 주도 테마 및 튼튼한 대장주 수집 시작 (터보 모드 + 대장주 그룹핑)...")
     
     for theme in themes:
         try:
@@ -188,8 +167,6 @@ def get_real_money_themes():
                             market_cap = get_market_cap(actual_code)
                             if market_cap >= 1000:
                                 stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
-                            else:
-                                pass # 터보 모드에서는 잡주 로그 생략으로 속도 향상
                     except: 
                         continue
             
@@ -197,31 +174,73 @@ def get_real_money_themes():
             if stocks:
                 if len(stocks) >= 2 and stocks[0]['value'] >= (stocks[1]['value'] * 10):
                     continue 
-                theme_data_list.append({'theme_name': theme['name'], 'theme_sum': sum([s['value'] for s in stocks]), 'stocks': stocks})
+                theme_data_list.append({'theme_name': theme['name'], 'stocks': stocks})
         except: 
             continue
-        # 쉬는 시간도 0.5초에서 0.3초로 약간 단축
         time.sleep(0.3)
         
     if not theme_data_list: return pd.DataFrame(), is_market_closed
     
-    theme_data_list = sorted(theme_data_list, key=lambda x: x['theme_sum'], reverse=True)
-    filtered_themes = []
+    # 💡 [해결책 B] 대장주(1위 종목) 기준 그룹핑 및 텍스트 병합 알고리즘
+    grouped_themes = {}
     for t_data in theme_data_list:
-        current_codes = set([s['code'] for s in t_data['stocks']])
+        top_code = t_data['stocks'][0]['code'] # 1위 종목(대장주) 코드 추출
+        if top_code not in grouped_themes:
+            grouped_themes[top_code] = []
+        grouped_themes[top_code].append(t_data)
+        
+    merged_themes = []
+    for top_code, t_list in grouped_themes.items():
+        # 1. 중복 테마명 깔끔하게 합치기
+        theme_names = []
+        for t in t_list:
+            if t['theme_name'] not in theme_names:
+                theme_names.append(t['theme_name'])
+                
+        top_stock_name = t_list[0]['stocks'][0]['name']
+        
+        if len(theme_names) > 1:
+            merged_name = " / ".join(theme_names) + f" (대장: {top_stock_name})"
+        else:
+            merged_name = theme_names[0]
+            
+        # 2. 속한 종목들 중복 제거하고 하나로 합치기
+        unique_stocks = {}
+        for t in t_list:
+            for s in t['stocks']:
+                unique_stocks[s['code']] = s
+                
+        # 3. 다시 거래대금 순으로 정렬해서 Top 3만 추출
+        merged_stocks = sorted(unique_stocks.values(), key=lambda x: x['value'], reverse=True)[:3]
+        
+        # 4. 거품(중복)이 제거된 진짜 테마 거래대금 총합 계산
+        merged_sum = sum(s['value'] for s in merged_stocks)
+        
+        merged_themes.append({
+            'theme_name': merged_name,
+            'theme_sum': merged_sum,
+            'stocks': merged_stocks
+        })
+        
+    # 5. 거래대금 총합 순으로 정렬 후, 혹시 모를 종목 2개 이상 겹치는 테마 차단 (기존 철벽 방패)
+    merged_themes = sorted(merged_themes, key=lambda x: x['theme_sum'], reverse=True)
+    final_themes = []
+    for m_data in merged_themes:
+        current_codes = set([s['code'] for s in m_data['stocks']])
         is_duplicate = False
-        for f_data in filtered_themes:
+        for f_data in final_themes:
             f_codes = set([s['code'] for s in f_data['stocks']])
             if len(current_codes.intersection(f_codes)) >= 2:
                 is_duplicate = True
                 break
         if not is_duplicate:
-            filtered_themes.append(t_data)
-        if len(filtered_themes) >= 10:
+            final_themes.append(m_data)
+        if len(final_themes) >= 10:
             break
             
+    # 6. 최종 시트 입력용 데이터 생성
     final_rows = []
-    for rank, t_data in enumerate(filtered_themes, start=1):
+    for rank, t_data in enumerate(final_themes, start=1):
         for s in t_data['stocks']:
             row_data = {'날짜': now.strftime('%Y-%m-%d')}
             if not is_market_closed: row_data['시간'] = time_str
@@ -255,7 +274,7 @@ def get_naver_search_ranking():
                     if market_cap >= 1000:
                         data.append([int(rank_text), name, price, rate])
                     else:
-                        print(f"   🗑️ 검색어 잡주 차단: {name} (시총 {market_cap}억)")
+                        pass
                         
                     if len(data) >= 10: 
                         break
@@ -308,7 +327,7 @@ def update_google_sheet(df_theme, df_news, df_naver, is_market_closed):
         print(f"❌ Error: {e}")
 
 # ==========================================
-# 🚀 심장(Main) 엔진: 로봇이 깨어나서 해야 할 일들
+# 🚀 심장(Main) 엔진
 # ==========================================
 if __name__ == "__main__":
     print("🤖 1. 데이터 수집 시작...")
