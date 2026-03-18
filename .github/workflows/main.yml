@@ -1,12 +1,7 @@
 name: Stock Omakase Auto Scraper
 
 on:
-  schedule:
-    # 💡 깃허브 시간표 버그 완벽 차단! 1년 365일 24시간 내내 10분마다 무조건 쏘기!
-    # (밤이나 주말에는 파이썬이 알아서 차단하고 0.1초 만에 퇴근하므로 아주 안전합니다)
-    - cron: '*/10 * * * *'
-    
-  workflow_dispatch:
+  workflow_dispatch: # 💡 게으른 깃허브 알람은 삭제! 오직 구글의 원격 명령만 받는다!
 
 jobs:
   build:
