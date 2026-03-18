@@ -132,7 +132,8 @@ def get_real_money_themes():
     is_market_closed = now.hour < 9 or now.hour > 15 or (now.hour == 15 and now.minute >= 40)
     is_weekend = now.weekday() >= 5
     
-    if is_weekend or now.hour >= 16 or now.hour < 9:
+    # 💡 깃허브 스케줄에 맞춰 아침 7시 ~ 저녁 8시(20시)까지 파이썬의 작업 시간을 연장합니다!
+    if is_weekend or now.hour >= 20 or now.hour < 7:
         return pd.DataFrame(), True
         
     time_str = now.strftime('%H:%M')
