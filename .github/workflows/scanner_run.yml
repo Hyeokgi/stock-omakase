@@ -2,9 +2,8 @@ name: 🎯 오후 3시 15분 종가베팅 스캐너
 
 on:
   schedule:
-    # 🎯 원래의 스나이퍼 시간표 복구! (KST 15시 05분)
+    # 🎯 하루 딱 한 번! KST 15시 05분에만 출동!
     - cron: '05 6 * * 1-5'
-    
   workflow_dispatch:
 
 jobs:
@@ -12,7 +11,6 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    # 💡 Node.js 경고를 없애는 최신 버전(v4, v5) 업그레이드!
     - name: Checkout code
       uses: actions/checkout@v4
       
@@ -33,4 +31,3 @@ jobs:
         
     - name: Run Scanner Bot
       run: python scanner_bot.py
-
