@@ -30,8 +30,9 @@ jobs:
           pip install requests beautifulsoup4 pandas gspread oauth2client kiwipiepy
 
       - name: 비밀번호 파일(secret.json) 만들기
-        run: |
-          echo '${{ secrets.GCP_CREDENTIALS }}' > secret.json
+        env:
+          GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }} 
+        run: echo "$GCP_CREDENTIALS" > secret.json
 
       - name: 파이썬 실행!
         run: python omakase.py
