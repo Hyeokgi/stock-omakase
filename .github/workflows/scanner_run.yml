@@ -2,13 +2,11 @@ name: 🎯 오후 3시 15분 종가베팅 스캐너
 
 on:
   schedule:
-    # 🌅 [아침 출근조] KST 월~금 오전 7시 ~ 8시 55분 (UTC 일~목 22시~23시)
-    - cron: '5,15,25,35,45,55 22-23 * * 0-4'
-    
-    # ☀️ [주간/야간조] KST 월~금 오전 9시 ~ 오후 7시 55분 (UTC 월~금 0시~10시)
-    - cron: '5,15,25,35,45,55 0-10 * * 1-5'
+    # 🎯 원래의 스나이퍼 시간표 복구! (KST 15시 05분)
+    - cron: '05 6 * * 1-5'
     
   workflow_dispatch:
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -28,8 +26,6 @@ jobs:
         python -m pip install --upgrade pip
         pip install requests gspread oauth2client beautifulsoup4
         
-    # 🚨🚨 [중요] 기존 yml 파일에서 secret.json을 만드는 코드를 확인하고 여기에 맞춰주세요!
-    # (아래는 가장 일반적인 예시입니다. 회원님의 환경에 맞게 변수명(GCP_CREDENTIALS)을 확인해 주세요.)
     - name: Create secret.json
       env:
         GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }} 
@@ -37,3 +33,4 @@ jobs:
         
     - name: Run Scanner Bot
       run: python scanner_bot.py
+
