@@ -6,6 +6,7 @@ import urllib3
 import datetime
 import gspread
 import re
+import xml.etree.ElementTree as ET
 from collections import Counter
 from oauth2client.service_account import ServiceAccountCredentials
 
@@ -132,7 +133,6 @@ def get_real_money_themes():
     is_market_closed = now.hour < 9 or now.hour > 15 or (now.hour == 15 and now.minute >= 40)
     is_weekend = now.weekday() >= 5
     
-    # 💡 깃허브 스케줄에 맞춰 아침 7시 ~ 저녁 8시(20시)까지 파이썬의 작업 시간을 연장합니다!
     if is_weekend or now.hour >= 20 or now.hour < 7:
         return pd.DataFrame(), True
         
@@ -182,17 +182,15 @@ def get_real_money_themes():
         
     if not theme_data_list: return pd.DataFrame(), is_market_closed
     
-    # 💡 [해결책 B] 대장주(1위 종목) 기준 그룹핑 및 텍스트 병합 알고리즘
     grouped_themes = {}
     for t_data in theme_data_list:
-        top_code = t_data['stocks'][0]['code'] # 1위 종목(대장주) 코드 추출
+        top_code = t_data['stocks'][0]['code'] 
         if top_code not in grouped_themes:
             grouped_themes[top_code] = []
         grouped_themes[top_code].append(t_data)
         
     merged_themes = []
     for top_code, t_list in grouped_themes.items():
-        # 1. 중복 테마명 깔끔하게 합치기
         theme_names = []
         for t in t_list:
             if t['theme_name'] not in theme_names:
@@ -205,16 +203,12 @@ def get_real_money_themes():
         else:
             merged_name = theme_names[0]
             
-        # 2. 속한 종목들 중복 제거하고 하나로 합치기
         unique_stocks = {}
         for t in t_list:
             for s in t['stocks']:
                 unique_stocks[s['code']] = s
                 
-        # 3. 다시 거래대금 순으로 정렬해서 Top 3만 추출
         merged_stocks = sorted(unique_stocks.values(), key=lambda x: x['value'], reverse=True)[:3]
-        
-        # 4. 거품(중복)이 제거된 진짜 테마 거래대금 총합 계산
         merged_sum = sum(s['value'] for s in merged_stocks)
         
         merged_themes.append({
@@ -223,7 +217,6 @@ def get_real_money_themes():
             'stocks': merged_stocks
         })
         
-    # 5. 거래대금 총합 순으로 정렬 후, 혹시 모를 종목 2개 이상 겹치는 테마 차단 (기존 철벽 방패)
     merged_themes = sorted(merged_themes, key=lambda x: x['theme_sum'], reverse=True)
     final_themes = []
     for m_data in merged_themes:
@@ -239,7 +232,6 @@ def get_real_money_themes():
         if len(final_themes) >= 10:
             break
             
-    # 6. 최종 시트 입력용 데이터 생성
     final_rows = []
     for rank, t_data in enumerate(final_themes, start=1):
         for s in t_data['stocks']:
@@ -261,7 +253,6 @@ def get_naver_search_ranking():
         rows = table.find_all('tr')
         data = []
         
-        # 🛡️ 초대형주 및 지수 확인용 블랙리스트 (스캐너의 노이즈 제거)
         search_blacklist = ['삼성전자', 'SK하이닉스', '현대차', '기아', 'LG에너지솔루션', 'POSCO홀딩스', '셀트리온', 'NAVER', '카카오']
         
         for row in rows:
@@ -272,27 +263,26 @@ def get_naver_search_ranking():
                     a_tag = tds[1].find('a')
                     name = a_tag.text.strip()
                     
-                    # 💡 1. 블랙리스트에 있는 종목이면 수집하지 않고 바로 다음으로 패스!
                     if name in search_blacklist:
                         continue
                         
                     s_code = a_tag['href'].split('code=')[-1] 
                     price = tds[3].text.strip()
                     rate = tds[5].text.strip()
-                    
                     market_cap = get_market_cap(s_code)
                     
-                    # 💡 2. 시총 1,000억 이상인 알짜 종목만 10개 채우기
                     if market_cap >= 1000:
-                        # 순위는 블랙리스트가 빠진 상태에서 우리만의 진짜 순위(1, 2, 3...)로 재정렬합니다!
-                        data.append([len(data) + 1, name, price, rate]) 
+                        # 💡 종목코드를 6자리로 규격화해서 데이터에 포함시킵니다!
+                        formatted_code = f"{s_code:0>6}" 
+                        data.append([len(data) + 1, name, price, rate, formatted_code]) 
                     else:
                         pass
                         
                     if len(data) >= 10: 
                         break
                         
-        df = pd.DataFrame(data, columns=['순위', '종목명', '현재가', '등락률(%)'])
+        # 💡 컬럼에 '종목코드'를 추가했습니다!
+        df = pd.DataFrame(data, columns=['순위', '종목명', '현재가', '등락률(%)', '종목코드'])
         return df
     except Exception as e:
         print(f"❌ 네이버 실시간 검색어 수집 실패: {e}")
@@ -339,6 +329,78 @@ def update_google_sheet(df_theme, df_news, df_naver, is_market_closed):
     except Exception as e:
         print(f"❌ Error: {e}")
 
+# 💡 새롭게 추가된 기술적 지표 초고속 수집 엔진
+def update_technical_data():
+    try:
+        print("▶️ 기술적 지표 (5일선/20일선/거래량) 파이썬 엔진 가동...")
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
+        client = gspread.authorize(creds)
+        doc = client.open_by_url(SHEET_URL)
+        
+        # 1. 기업정보 탭에서 종목코드 매핑
+        info_sheet = doc.worksheet("기업정보")
+        info_data = info_sheet.get_all_values()
+        name_to_code = {row[0]: str(row[2]).zfill(6) for row in info_data[1:] if len(row) >= 3 and row[0] and row[2]}
+        
+        # 2. 스캐너와 대시보드에 있는 종목 이름만 쏙쏙 골라내기
+        scanner_names = [row[0] for row in doc.worksheet("스캐너_마스터").col_values(1)[1:] if row[0]]
+        dash_names = [row[2] for row in doc.worksheet("대시보드").get_all_values()[49:] if len(row) > 2 and row[2]]
+        
+        target_names = list(set(scanner_names + dash_names))
+        results = []
+        
+        for name in target_names:
+            code = name_to_code.get(name)
+            if not code: continue
+            
+            # 네이버 차트 API에서 20일치 과거 데이터 수집
+            url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=25&requestType=0"
+            res = requests.get(url, verify=False, timeout=3)
+            root = ET.fromstring(res.text)
+            
+            history = []
+            for item in root.findall(".//item"):
+                data = item.get("data").split("|") # 날짜, 시가, 고가, 저가, 종가, 거래량
+                history.append({"close": int(data[4]), "volume": int(data[5])})
+                
+            if len(history) < 20: continue
+                
+            df_hist = pd.DataFrame(history)
+            current_price = df_hist['close'].iloc[-1]
+            today_vol = df_hist['volume'].iloc[-1]
+            
+            # 이동평균선 계산
+            ma5 = df_hist['close'].tail(5).mean()
+            ma20 = df_hist['close'].tail(20).mean()
+            
+            # 전일 기준 과거 10일 평균 거래량
+            avg_vol_10 = df_hist['volume'].tail(11).head(10).mean()
+            vol_ratio = (today_vol / avg_vol_10) * 100 if avg_vol_10 > 0 else 0
+            
+            # AI 턴어라운드 신호 판독
+            if abs(ma5 - ma20) / ma20 <= 0.035:
+                signal = "🚀 2차랠리 초입 (이평돌파)" if current_price > ma20 else "👀 에너지 응축 (수렴중)"
+            else:
+                signal = "🟢 낙폭과대 (과매도)" if current_price < ma20 * 0.9 else "⏳ 관망 (이격발생)"
+                
+            results.append([name, code, int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal])
+            
+        # 3. 주가데이터_보조 탭에 결과 덮어쓰기
+        if results:
+            try:
+                helper_sheet = doc.worksheet("주가데이터_보조")
+            except:
+                helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="100", cols="20")
+                
+            helper_sheet.clear()
+            headers = ["종목명", "종목코드", "5일선", "20일선", "거래량비율", "AI신호"]
+            helper_sheet.update("A1", [headers] + results, value_input_option="USER_ENTERED")
+            print(f"✅ 총 {len(results)}개 종목 기술적 지표 업데이트 완료! (로딩 딜레이 0%)")
+            
+    except Exception as e:
+        print(f"❌ 기술적 지표 업데이트 에러: {e}")
+
 # ==========================================
 # 🚀 심장(Main) 엔진
 # ==========================================
@@ -350,5 +412,9 @@ if __name__ == "__main__":
     
     print("🤖 2. 구글 시트로 전송 시작...")
     update_google_sheet(df_theme, df_news, df_naver, is_market_closed)
+    
+    # 💡 3. 새로 만든 기술적 지표 로봇을 이곳에서 마지막에 실행합니다!
+    print("🤖 3. 주가 보조데이터(이평선) 계산 시작...")
+    update_technical_data()
     
     print("✅ 모든 작업이 완료되었습니다!")
