@@ -379,10 +379,10 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
     except Exception as e:
         print(f"❌ Error: {e}")
 
-# 💡 새롭게 추가된 기술적 지표 + 잡주 필터링 + 쌍끌이 수급 엔진
-def update_technical_data():
+# 💡 새롭게 추가된 100점 만점 스코어링 엔진
+def update_technical_data(df_theme): # 👈 테마 데이터를 받아오도록 수정됨
     try:
-        print("▶️ 기술적 지표, 잡주 필터링, 수급 분석 파이썬 엔진 가동...")
+        print("▶️ 기술적 지표, 수급, 💯스코어링 파이썬 엔진 가동...")
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
         client = gspread.authorize(creds)
@@ -396,6 +396,12 @@ def update_technical_data():
         dash_names = [str(row[2]).strip() for row in doc.worksheet("대시보드").get_all_values()[49:] if len(row) > 2 and str(row[2]).strip()]
         
         target_names = list(set(scanner_names + dash_names))
+        
+        # ⭐️ [핵심] 오늘 시장을 주도하는 TOP 3 테마 소속 종목명 추출 (가산점 부여용)
+        top_theme_stocks = []
+        if not df_theme.empty:
+            top_theme_stocks = df_theme[df_theme['순위'] <= 3]['종목명'].tolist()
+            
         results = []
         
         for name in target_names:
@@ -403,7 +409,6 @@ def update_technical_data():
                 code = name_to_code.get(name)
                 if not code or code == "000000": continue
                 
-                # 1. 네이버 차트 과거 데이터 수집
                 url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=25&requestType=0"
                 res = requests.get(url, verify=False, timeout=3)
                 root = ET.fromstring(res.text)
@@ -415,7 +420,6 @@ def update_technical_data():
                     
                 if len(history) < 20: continue
                     
-                # 2. 지뢰(잡주) 철벽 방어 스캐너
                 risk_url = f"https://finance.naver.com/item/main.naver?code={code}"
                 risk_res = requests.get(risk_url, verify=False, timeout=3)
                 risk_soup = BeautifulSoup(risk_res.content, 'html.parser', from_encoding='cp949')
@@ -424,7 +428,6 @@ def update_technical_data():
                 if risk_soup.find('img', alt=re.compile('관리종목|환기종목|거래정지|투자위험')):
                     is_junk = True
                     
-                # 🕵️‍♂️ 3. [신규 장착] 메이저 수급 (외인/기관 쌍끌이) 추적기
                 inv_url = f"https://m.stock.naver.com/api/stock/{code}/investor/trend"
                 inv_res = requests.get(inv_url, headers={'User-Agent': 'Mozilla/5.0'}, verify=False, timeout=3)
                 
@@ -433,21 +436,20 @@ def update_technical_data():
                 try:
                     inv_data = inv_res.json()
                     if 'investorTrendList' in inv_data and len(inv_data['investorTrendList']) > 0:
-                        today_trend = inv_data['investorTrendList'][0] # 가장 최근 거래일 수급
+                        today_trend = inv_data['investorTrendList'][0]
                         f_buy = int(str(today_trend.get('foreignerStraightPurchasePrice', '0')).replace(',', ''))
                         i_buy = int(str(today_trend.get('institutionStraightPurchasePrice', '0')).replace(',', ''))
                         
                         if f_buy > 0 and i_buy > 0:
                             is_dual_buy = True
-                            supply_text = " (외인+기관 쌍끌이🔥)"
+                            supply_text = " (쌍끌이🔥)"
                         elif f_buy > 0:
-                            supply_text = " (외인 매수)"
+                            supply_text = " (외인매수)"
                         elif i_buy > 0:
-                            supply_text = " (기관 매수)"
+                            supply_text = " (기관매수)"
                 except:
                     pass
 
-                # 기술적 지표 계산
                 df_hist = pd.DataFrame(history)
                 current_price = df_hist['close'].iloc[-1]
                 today_vol = df_hist['volume'].iloc[-1]
@@ -463,12 +465,10 @@ def update_technical_data():
                 avg_vol_10 = df_hist['volume'].tail(11).head(10).mean()
                 vol_ratio = (today_vol / avg_vol_10) * 100 if avg_vol_10 > 0 else 0
                 
-                # 🎯 4. AI 턴어라운드 신호 (✨ 쌍끌이 모아가기 프리패스 적용!)
                 is_converging = (band_width <= 0.20) or (ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035)
                 
                 if is_junk:
                     signal = "🚨 [위험] 매매금지 (잡주/경고)"
-                # ✨ 핵심: 수렴 구간에서 쌍끌이가 포착되면 무조건 A급 모아가기 신호 발동!
                 elif is_dual_buy and is_converging:
                     signal = "🌟 A급 스윙 (쌍끌이 모아가기)"
                 elif band_width <= 0.20 and current_price >= ma20:
@@ -481,13 +481,24 @@ def update_technical_data():
                 else:
                     signal = "🟢 낙폭과대 (과매도)" + supply_text if current_price < lower_band else "⚡ 관망 (이격발생)" + supply_text
                     
-                results.append([name, f"'{code}", int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal])
+                # 💯 [신규 장착] 100점 만점 퀀트 스코어 계산기
+                score = 0
+                if not is_junk:
+                    if band_width <= 0.15: score += 20         # 1. 완벽한 수렴 (박스권)
+                    if is_dual_buy: score += 30                # 2. 메이저 세력 매집
+                    if vol_ratio >= 300: score += 20           # 3. 거래량 폭발
+                    if name in top_theme_stocks: score += 20   # 4. 주도 테마 소속
+                    if ma5 > ma20: score += 10                 # 5. 정배열 유지
+                    
+                results.append([name, f"'{code}", int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, score])
                 
             except Exception as e:
                 print(f"⚠️ [{name}] 종목 처리 중 건너뜀 (사유: {e})")
                 continue
 
-        # 5. 주가데이터_보조 탭에 결과 덮어쓰기
+        # ⭐️ 점수(score)를 기준으로 1등부터 내림차순 정렬!
+        results.sort(key=lambda x: x[6], reverse=True)
+
         if results:
             try:
                 helper_sheet = doc.worksheet("주가데이터_보조")
@@ -495,9 +506,9 @@ def update_technical_data():
                 helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="100", cols="20")
                 
             helper_sheet.clear()
-            headers = ["종목명", "종목코드", "5일선", "20일선", "거래량비율", "AI신호"]
+            headers = ["종목명", "종목코드", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수"] # 점수 헤더 추가
             helper_sheet.update("A1", [headers] + results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(results)}개 종목 수급 및 지표 업데이트 완료!")
+            print(f"✅ 총 {len(results)}개 종목 퀀트 스코어링 및 업데이트 완료!")
             
     except Exception as e:
         print(f"❌ 기술적 지표 전체 업데이트 에러: {e}")
@@ -510,15 +521,13 @@ if __name__ == "__main__":
     df_theme, is_market_closed = get_real_money_themes()
     df_news = get_news_keywords()
     df_naver = get_naver_search_ranking()
-    
-    # 💡 방금 만든 주요 뉴스 함수를 여기서 실행합니다!
     df_main_news = get_naver_main_news()
     
     print("🤖 2. 구글 시트로 전송 시작...")
-    # 💡 df_main_news 도 구글 시트로 쏴주도록 포함시켰습니다.
     update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_closed)
     
-    print("🤖 3. 주가 보조데이터(이평선) 계산 시작...")
-    update_technical_data()
+    print("🤖 3. 주가 보조데이터 및 스코어링 계산 시작...")
+    # 👇 분석에 쓸 수 있도록 테마 데이터를 넘겨줍니다!
+    update_technical_data(df_theme) 
     
     print("✅ 모든 작업이 완료되었습니다!")
