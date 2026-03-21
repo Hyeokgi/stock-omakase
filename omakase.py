@@ -420,23 +420,39 @@ def update_technical_data():
             current_price = df_hist['close'].iloc[-1]
             today_vol = df_hist['volume'].iloc[-1]
             
-            # 이동평균선 계산
-            ma5 = df_hist['close'].tail(5).mean()
-            ma20 = df_hist['close'].tail(20).mean()
-            
-            # 전일 기준 과거 10일 평균 거래량
-            avg_vol_10 = df_hist['volume'].tail(11).head(10).mean()
-            vol_ratio = (today_vol / avg_vol_10) * 100 if avg_vol_10 > 0 else 0
-            
-            # AI 턴어라운드 신호 판독
-            if abs(ma5 - ma20) / ma20 <= 0.035:
-                signal = "🚀 2차랠리 초입 (이평돌파)" if current_price > ma20 else "👀 에너지 응축 (수렴중)"
+           # 이동평균선 계산
+        ma5 = df_hist['close'].tail(5).mean()
+        ma20 = df_hist['close'].tail(20).mean()
+        
+        # ✨ [핵심 무기 장착] 볼린저 밴드 (20일 표준편차) 계산
+        std20 = df_hist['close'].tail(20).std(ddof=0) 
+        upper_band = ma20 + (std20 * 2) # 상한선
+        lower_band = ma20 - (std20 * 2) # 하한선
+        band_width = (upper_band - lower_band) / ma20 # 밴드폭 (에너지 응축 정도)
+        
+        # 전일 기준 과거 10일 평균 거래량
+        avg_vol_10 = df_hist['volume'].tail(11).head(10).mean()
+        vol_ratio = (today_vol / avg_vol_10) * 100 if avg_vol_10 > 0 else 0
+        
+        # 🎯 한층 더 정교해진 AI 턴어라운드 신호 판독 로직
+        # 1. 에너지가 꽉 응축된 상태(밴드폭 20% 이내)에서 20일선 위로 고개를 드는 진짜 N자 파동
+        if band_width <= 0.20 and current_price >= ma20:
+            if current_price >= upper_band * 0.98: # 볼린저 밴드 상단 돌파 직전이거나 뚫었을 때
+                signal = "🚀 N자파동 (밴드돌파)"
             else:
-                signal = "🟢 낙폭과대 (과매도)" if current_price < ma20 * 0.9 else "⏳ 관망 (이격발생)"
-                
-            results.append([name, code, int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal])
+                signal = "👀 N자파동 (에너지응축)"
+        
+        # 2. 밴드폭이 넓은 일반적인 이평선 기준 판독
+        elif abs(ma5 - ma20) / ma20 <= 0.035:
+            signal = "📈 2차랠리 (이평수렴)" if current_price > ma20 else "⏳ 이평선 저항"
             
-        # 3. 주가데이터_보조 탭에 결과 덮어쓰기
+        # 3. 과매도 및 이격 과다 (단타용)
+        else:
+            signal = "🟢 낙폭과대 (과매도)" if current_price < lower_band else "⚡ 관망 (이격발생)"
+            
+        results.append([name, code, int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal])
+
+        # 4. 주가데이터_보조 탭에 결과 덮어쓰기
         if results:
             try:
                 helper_sheet = doc.worksheet("주가데이터_보조")
