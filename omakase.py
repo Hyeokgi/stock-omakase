@@ -379,21 +379,21 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
     except Exception as e:
         print(f"❌ Error: {e}")
 
-# 💡 새롭게 추가된 기술적 지표 초고속 수집 엔진 (에러 방어력 MAX)
+# 💡 새롭게 추가된 기술적 지표 + 잡주 필터링 초고속 엔진
 def update_technical_data():
     try:
-        print("▶️ 기술적 지표 (5일선/20일선/거래량) 파이썬 엔진 가동...")
+        print("▶️ 기술적 지표 및 잡주 필터링 파이썬 엔진 가동...")
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
         client = gspread.authorize(creds)
         doc = client.open_by_url(SHEET_URL)
         
-        # 1. 기업정보 탭에서 종목코드 매핑 (공백 완벽 제거)
+        # 1. 기업정보 탭에서 종목코드 매핑
         info_sheet = doc.worksheet("기업정보")
         info_data = info_sheet.get_all_values()
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in info_data[1:] if len(row) >= 3 and str(row[0]).strip() and str(row[2]).strip()}
         
-        # 2. 스캐너와 대시보드에 있는 종목 이름만 쏙쏙 골라내기 (글자 토막나는 버그 완벽 수정!)
+        # 2. 스캐너와 대시보드에 있는 종목 이름만 쏙쏙 골라내기
         scanner_names = [str(name).strip() for name in doc.worksheet("스캐너_마스터").col_values(1)[1:] if str(name).strip()]
         dash_names = [str(row[2]).strip() for row in doc.worksheet("대시보드").get_all_values()[49:] if len(row) > 2 and str(row[2]).strip()]
         
@@ -403,10 +403,9 @@ def update_technical_data():
         for name in target_names:
             try:
                 code = name_to_code.get(name)
-                # 코드가 없거나 잘못된 번호면 쿨하게 패스!
                 if not code or code == "000000": continue
                 
-                # 네이버 차트 API에서 20일치 과거 데이터 수집
+                # 1. 네이버 차트 API에서 20일치 과거 데이터 수집
                 url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=25&requestType=0"
                 res = requests.get(url, verify=False, timeout=3)
                 root = ET.fromstring(res.text)
@@ -418,6 +417,16 @@ def update_technical_data():
                     
                 if len(history) < 20: continue
                     
+                # 🛡️ 2. [신규 장착] 지뢰(잡주) 철벽 방어 스캐너
+                risk_url = f"https://finance.naver.com/item/main.naver?code={code}"
+                risk_res = requests.get(risk_url, verify=False, timeout=3)
+                risk_soup = BeautifulSoup(risk_res.content, 'html.parser', from_encoding='cp949')
+                
+                is_junk = False
+                # 관리종목, 환기종목, 거래정지, 투자위험 뱃지가 하나라도 있으면 잡주로 판정!
+                if risk_soup.find('img', alt=re.compile('관리종목|환기종목|거래정지|투자위험')):
+                    is_junk = True
+                    
                 df_hist = pd.DataFrame(history)
                 current_price = df_hist['close'].iloc[-1]
                 today_vol = df_hist['volume'].iloc[-1]
@@ -426,18 +435,20 @@ def update_technical_data():
                 ma5 = df_hist['close'].tail(5).mean()
                 ma20 = df_hist['close'].tail(20).mean()
                 
-                # ✨ 볼린저 밴드 (20일 표준편차) 계산
+                # 볼린저 밴드 계산
                 std20 = df_hist['close'].tail(20).std(ddof=0) 
                 upper_band = ma20 + (std20 * 2) 
                 lower_band = ma20 - (std20 * 2) 
                 band_width = (upper_band - lower_band) / ma20 if ma20 > 0 else 0 
                 
-                # 전일 기준 과거 10일 평균 거래량
+                # 거래량 폭발 비율
                 avg_vol_10 = df_hist['volume'].tail(11).head(10).mean()
                 vol_ratio = (today_vol / avg_vol_10) * 100 if avg_vol_10 > 0 else 0
                 
-                # 🎯 AI 턴어라운드 신호 판독 로직
-                if band_width <= 0.20 and current_price >= ma20:
+                # 🎯 3. AI 턴어라운드 신호 판독 로직 (🚨 잡주 최우선 필터링 🚨)
+                if is_junk:
+                    signal = "🚨 [위험] 매매금지 (잡주/경고)"
+                elif band_width <= 0.20 and current_price >= ma20:
                     if current_price >= upper_band * 0.98:
                         signal = "🚀 N자파동 (밴드돌파)"
                     else:
@@ -447,7 +458,6 @@ def update_technical_data():
                 else:
                     signal = "🟢 낙폭과대 (과매도)" if current_price < lower_band else "⚡ 관망 (이격발생)"
                     
-                # 코드가 엑셀에서 숫자로 깨지지 않게 앞에 ' 기호 추가
                 results.append([name, f"'{code}", int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal])
                 
             except Exception as e:
@@ -464,7 +474,7 @@ def update_technical_data():
             helper_sheet.clear()
             headers = ["종목명", "종목코드", "5일선", "20일선", "거래량비율", "AI신호"]
             helper_sheet.update("A1", [headers] + results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(results)}개 종목 기술적 지표 업데이트 완료! (로딩 딜레이 0%)")
+            print(f"✅ 총 {len(results)}개 종목 기술적 지표 및 철벽 필터링 업데이트 완료!")
             
     except Exception as e:
         print(f"❌ 기술적 지표 전체 업데이트 에러: {e}")
