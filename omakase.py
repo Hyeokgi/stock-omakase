@@ -370,6 +370,11 @@ def update_google_sheet(df_theme, df_news, df_naver, is_market_closed):
             sheet_naver = doc.worksheet("네이버_검색상위")
             sheet_naver.clear()
             sheet_naver.update("A1", [df_naver.columns.values.tolist()] + df_naver.values.tolist(), value_input_option="USER_ENTERED")  
+
+        if not df_main_news.empty:
+            sheet_main_news = doc.worksheet("네이버_주요뉴스")
+            sheet_main_news.clear()
+            sheet_main_news.update("A1", [df_main_news.columns.values.tolist()] + df_main_news.values.tolist(), value_input_option="USER_ENTERED")
           
     except Exception as e:
         print(f"❌ Error: {e}")
@@ -455,10 +460,13 @@ if __name__ == "__main__":
     df_news = get_news_keywords()
     df_naver = get_naver_search_ranking()
     
-    print("🤖 2. 구글 시트로 전송 시작...")
-    update_google_sheet(df_theme, df_news, df_naver, is_market_closed)
+    # 💡 방금 만든 주요 뉴스 함수를 여기서 실행합니다!
+    df_main_news = get_naver_main_news()
     
-    # 💡 3. 새로 만든 기술적 지표 로봇을 이곳에서 마지막에 실행합니다!
+    print("🤖 2. 구글 시트로 전송 시작...")
+    # 💡 df_main_news 도 구글 시트로 쏴주도록 포함시켰습니다.
+    update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_closed)
+    
     print("🤖 3. 주가 보조데이터(이평선) 계산 시작...")
     update_technical_data()
     
