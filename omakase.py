@@ -333,7 +333,7 @@ def get_naver_main_news():
         print(f"❌ 네이버 주요 뉴스 수집 에러: {e}")
         return pd.DataFrame()
 
-def update_google_sheet(df_theme, df_news, df_naver, is_market_closed):
+def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_closed):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
