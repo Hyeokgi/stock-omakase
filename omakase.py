@@ -287,6 +287,51 @@ def get_naver_search_ranking():
     except Exception as e:
         print(f"❌ 네이버 실시간 검색어 수집 실패: {e}")
         return pd.DataFrame()
+def get_naver_main_news():
+    try:
+        print("▶️ 네이버 주요 뉴스 수집 시작...")
+        url = "https://finance.naver.com/news/mainnews.naver"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+        res = requests.get(url, headers=headers, verify=False, timeout=5)
+        soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
+        
+        news_list = []
+        
+        # 기사 제목이 있는 dt 또는 dd 태그 찾기
+        subjects = soup.find_all(['dt', 'dd'], {'class': 'articleSubject'})
+        
+        for sub in subjects:
+            a_tag = sub.find('a')
+            if not a_tag: continue
+            
+            title = a_tag.text.strip()
+            link = "https://finance.naver.com" + a_tag['href']
+            
+            # 요약 내용은 형제 노드에 있음
+            summary_tag = sub.find_next_sibling('dd', {'class': 'articleSummary'})
+            
+            press = "언론사"
+            summary = ""
+            if summary_tag:
+                press_tag = summary_tag.find('span', {'class': 'press'})
+                if press_tag: press = press_tag.text.strip()
+                
+                # span 태그들(언론사, 날짜 등)을 제거하고 순수 텍스트만 남김
+                for span in summary_tag.find_all('span'):
+                    span.decompose()
+                summary = summary_tag.text.strip()
+                
+            now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
+            news_list.append([now_str, press, title, summary, link])
+            
+            if len(news_list) >= 20: # 주요뉴스 20개 추출
+                break
+                
+        df = pd.DataFrame(news_list, columns=['업데이트 시간', '언론사', '기사 제목', '요약 내용', '기사 링크'])
+        return df
+    except Exception as e:
+        print(f"❌ 네이버 주요 뉴스 수집 에러: {e}")
+        return pd.DataFrame()
 
 def update_google_sheet(df_theme, df_news, df_naver, is_market_closed):
     try:
