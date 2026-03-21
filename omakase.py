@@ -378,10 +378,10 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
     except Exception as e:
         print(f"❌ Error: {e}")
 
-# 💡 새롭게 추가된 100점 만점 세분화(그라데이션) 스코어링 엔진
+# 💡 현재가와 등락률까지 완벽하게 쏴주는 100점 만점 엔진
 def update_technical_data(df_theme):
     try:
-        print("▶️ 기술적 지표, 수급, 💯세부 스코어링 파이썬 엔진 가동...")
+        print("▶️ 기술적 지표, 수급, 💯스코어링 파이썬 엔진 가동...")
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
         client = gspread.authorize(creds)
@@ -396,7 +396,6 @@ def update_technical_data(df_theme):
         
         target_names = list(set(scanner_names + dash_names))
         
-        # ⭐️ [핵심] 테마 점수 세분화 (TOP 3와 TOP 10 분리 추출)
         top_3_themes = []
         top_10_themes = []
         if not df_theme.empty:
@@ -455,7 +454,12 @@ def update_technical_data(df_theme):
                     pass
 
                 df_hist = pd.DataFrame(history)
-                current_price = df_hist['close'].iloc[-1]
+                
+                # 💡 [신규 장착] 현재가와 어제 종가를 비교해 등락률 계산
+                current_price = int(df_hist['close'].iloc[-1])
+                prev_price = int(df_hist['close'].iloc[-2]) if len(df_hist) > 1 else current_price
+                change_rate = (current_price - prev_price) / prev_price if prev_price > 0 else 0.0
+                
                 today_vol = df_hist['volume'].iloc[-1]
                 
                 ma5 = df_hist['close'].tail(5).mean()
@@ -485,40 +489,36 @@ def update_technical_data(df_theme):
                 else:
                     signal = "🟢 낙폭과대 (과매도)" + supply_text if current_price < lower_band else "⚡ 관망 (이격발생)" + supply_text
                     
-                # 💯 [세분화 장착] 100점 만점 퀀트 스코어 계산기
                 score = 0
                 if not is_junk:
-                    # 1. 밴드폭 (최대 20점)
                     if band_width <= 0.10: score += 20
                     elif band_width <= 0.15: score += 15
                     elif band_width <= 0.20: score += 10
                     
-                    # 2. 수급 (최대 25점)
                     if is_dual_buy: score += 25
                     elif f_buy > 0 or i_buy > 0: score += 10
                     
-                    # 3. 거래량 (최대 20점)
                     if vol_ratio >= 500: score += 20
                     elif vol_ratio >= 300: score += 15
                     elif vol_ratio >= 200: score += 10
                     elif vol_ratio >= 100: score += 5
                     
-                    # 4. 테마 (최대 20점) - 5일치 과거를 조회하면 속도가 느려지므로, 당일 TOP10까지 범위를 넓혀 가산점을 줍니다!
                     if name in top_3_themes: score += 20
                     elif name in top_10_themes: score += 10
                     
-                    # 5. 추세 정배열 (최대 15점)
                     if ma5 > ma20 and current_price >= ma5: score += 15
                     elif ma5 > ma20: score += 10
                     elif current_price >= ma20: score += 5
                     
-                results.append([name, f"'{code}", int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, score])
+                # 💡 [핵심] 현재가(3)와 등락률(4) 열이 추가되었습니다!
+                results.append([name, f"'{code}", current_price, change_rate, int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, score])
                 
             except Exception as e:
                 print(f"⚠️ [{name}] 종목 처리 중 건너뜀 (사유: {e})")
                 continue
 
-        results.sort(key=lambda x: x[6], reverse=True)
+        # 점수 기준 정렬
+        results.sort(key=lambda x: x[8], reverse=True)
 
         if results:
             try:
@@ -527,9 +527,10 @@ def update_technical_data(df_theme):
                 helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="100", cols="20")
                 
             helper_sheet.clear()
-            headers = ["종목명", "종목코드", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수"]
+            # 💡 헤더에 현재가와 등락률이 들어갔습니다!
+            headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수"]
             helper_sheet.update("A1", [headers] + results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(results)}개 종목 세부 스코어링 업데이트 완료!")
+            print(f"✅ 총 {len(results)}개 종목 현재가/등락률 포함 업데이트 완료!")
             
     except Exception as e:
         print(f"❌ 기술적 지표 전체 업데이트 에러: {e}")
