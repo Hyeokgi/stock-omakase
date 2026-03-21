@@ -511,7 +511,7 @@ def update_technical_data(df_theme):
                     elif current_price >= ma20: score += 5
                     
                 # 💡 [핵심] 현재가(3)와 등락률(4) 열이 추가되었습니다!
-                results.append([name, f"'{code}", current_price, change_rate, int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, score])
+                results.append([name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, score])
                 
             except Exception as e:
                 print(f"⚠️ [{name}] 종목 처리 중 건너뜀 (사유: {e})")
