@@ -379,7 +379,7 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
     except Exception as e:
         print(f"❌ Error: {e}")
 
-# 💡 새롭게 추가된 기술적 지표 초고속 수집 엔진
+# 💡 새롭게 추가된 기술적 지표 초고속 수집 엔진 (에러 방어력 MAX)
 def update_technical_data():
     try:
         print("▶️ 기술적 지표 (5일선/20일선/거래량) 파이썬 엔진 가동...")
@@ -388,67 +388,73 @@ def update_technical_data():
         client = gspread.authorize(creds)
         doc = client.open_by_url(SHEET_URL)
         
-        # 1. 기업정보 탭에서 종목코드 매핑
+        # 1. 기업정보 탭에서 종목코드 매핑 (공백 완벽 제거)
         info_sheet = doc.worksheet("기업정보")
         info_data = info_sheet.get_all_values()
-        name_to_code = {row[0]: str(row[2]).zfill(6) for row in info_data[1:] if len(row) >= 3 and row[0] and row[2]}
+        name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in info_data[1:] if len(row) >= 3 and str(row[0]).strip() and str(row[2]).strip()}
         
-        # 2. 스캐너와 대시보드에 있는 종목 이름만 쏙쏙 골라내기
-        scanner_names = [row[0] for row in doc.worksheet("스캐너_마스터").col_values(1)[1:] if row[0]]
-        dash_names = [row[2] for row in doc.worksheet("대시보드").get_all_values()[49:] if len(row) > 2 and row[2]]
+        # 2. 스캐너와 대시보드에 있는 종목 이름만 쏙쏙 골라내기 (글자 토막나는 버그 완벽 수정!)
+        scanner_names = [str(name).strip() for name in doc.worksheet("스캐너_마스터").col_values(1)[1:] if str(name).strip()]
+        dash_names = [str(row[2]).strip() for row in doc.worksheet("대시보드").get_all_values()[49:] if len(row) > 2 and str(row[2]).strip()]
         
         target_names = list(set(scanner_names + dash_names))
         results = []
         
         for name in target_names:
-            code = name_to_code.get(name)
-            if not code: continue
-            
-            # 네이버 차트 API에서 20일치 과거 데이터 수집
-            url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=25&requestType=0"
-            res = requests.get(url, verify=False, timeout=3)
-            root = ET.fromstring(res.text)
-            
-            history = []
-            for item in root.findall(".//item"):
-                data = item.get("data").split("|") # 날짜, 시가, 고가, 저가, 종가, 거래량
-                history.append({"close": int(data[4]), "volume": int(data[5])})
+            try:
+                code = name_to_code.get(name)
+                # 코드가 없거나 잘못된 번호면 쿨하게 패스!
+                if not code or code == "000000": continue
                 
-            if len(history) < 20: continue
+                # 네이버 차트 API에서 20일치 과거 데이터 수집
+                url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=25&requestType=0"
+                res = requests.get(url, verify=False, timeout=3)
+                root = ET.fromstring(res.text)
                 
-            df_hist = pd.DataFrame(history)
-            current_price = df_hist['close'].iloc[-1]
-            today_vol = df_hist['volume'].iloc[-1]
-            
-            # 💡 [수정됨] 이평선 계산이 for 루프 안쪽으로 정상적으로 들어왔습니다!
-            ma5 = df_hist['close'].tail(5).mean()
-            ma20 = df_hist['close'].tail(20).mean()
-            
-            # ✨ [핵심 무기 장착] 볼린저 밴드 (20일 표준편차) 계산
-            std20 = df_hist['close'].tail(20).std(ddof=0) 
-            upper_band = ma20 + (std20 * 2) # 상한선
-            lower_band = ma20 - (std20 * 2) # 하한선
-            band_width = (upper_band - lower_band) / ma20 # 밴드폭 (에너지 응축 정도)
-            
-            # 전일 기준 과거 10일 평균 거래량
-            avg_vol_10 = df_hist['volume'].tail(11).head(10).mean()
-            vol_ratio = (today_vol / avg_vol_10) * 100 if avg_vol_10 > 0 else 0
-            
-            # 🎯 한층 더 정교해진 AI 턴어라운드 신호 판독 로직
-            if band_width <= 0.20 and current_price >= ma20:
-                if current_price >= upper_band * 0.98: # 볼린저 밴드 상단 돌파 직전이거나 뚫었을 때
-                    signal = "🚀 N자파동 (밴드돌파)"
+                history = []
+                for item in root.findall(".//item"):
+                    data = item.get("data").split("|") # 날짜, 시가, 고가, 저가, 종가, 거래량
+                    history.append({"close": int(data[4]), "volume": int(data[5])})
+                    
+                if len(history) < 20: continue
+                    
+                df_hist = pd.DataFrame(history)
+                current_price = df_hist['close'].iloc[-1]
+                today_vol = df_hist['volume'].iloc[-1]
+                
+                # 이동평균선 계산
+                ma5 = df_hist['close'].tail(5).mean()
+                ma20 = df_hist['close'].tail(20).mean()
+                
+                # ✨ 볼린저 밴드 (20일 표준편차) 계산
+                std20 = df_hist['close'].tail(20).std(ddof=0) 
+                upper_band = ma20 + (std20 * 2) 
+                lower_band = ma20 - (std20 * 2) 
+                band_width = (upper_band - lower_band) / ma20 if ma20 > 0 else 0 
+                
+                # 전일 기준 과거 10일 평균 거래량
+                avg_vol_10 = df_hist['volume'].tail(11).head(10).mean()
+                vol_ratio = (today_vol / avg_vol_10) * 100 if avg_vol_10 > 0 else 0
+                
+                # 🎯 AI 턴어라운드 신호 판독 로직
+                if band_width <= 0.20 and current_price >= ma20:
+                    if current_price >= upper_band * 0.98:
+                        signal = "🚀 N자파동 (밴드돌파)"
+                    else:
+                        signal = "👀 N자파동 (에너지응축)"
+                elif ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035:
+                    signal = "📈 2차랠리 (이평수렴)" if current_price > ma20 else "⏳ 이평선 저항"
                 else:
-                    signal = "👀 N자파동 (에너지응축)"
-            elif abs(ma5 - ma20) / ma20 <= 0.035:
-                signal = "📈 2차랠리 (이평수렴)" if current_price > ma20 else "⏳ 이평선 저항"
-            else:
-                signal = "🟢 낙폭과대 (과매도)" if current_price < lower_band else "⚡ 관망 (이격발생)"
+                    signal = "🟢 낙폭과대 (과매도)" if current_price < lower_band else "⚡ 관망 (이격발생)"
+                    
+                # 코드가 엑셀에서 숫자로 깨지지 않게 앞에 ' 기호 추가
+                results.append([name, f"'{code}", int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal])
                 
-            # 💡 [수정됨] 결과 저장도 for 루프 안쪽에서 반복되도록 수정!
-            results.append([name, code, int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal])
+            except Exception as e:
+                print(f"⚠️ [{name}] 종목 처리 중 건너뜀 (사유: {e})")
+                continue
 
-        # 4. 주가데이터_보조 탭에 결과 덮어쓰기 (이 부분은 루프 밖에서 딱 1번만 실행)
+        # 4. 주가데이터_보조 탭에 결과 덮어쓰기
         if results:
             try:
                 helper_sheet = doc.worksheet("주가데이터_보조")
@@ -461,7 +467,7 @@ def update_technical_data():
             print(f"✅ 총 {len(results)}개 종목 기술적 지표 업데이트 완료! (로딩 딜레이 0%)")
             
     except Exception as e:
-        print(f"❌ 기술적 지표 업데이트 에러: {e}")
+        print(f"❌ 기술적 지표 전체 업데이트 에러: {e}")
 
 # ==========================================
 # 🚀 심장(Main) 엔진
