@@ -298,7 +298,6 @@ def get_naver_main_news():
         
         news_list = []
         
-        # 💡 [수정됨] 기사를 감싸는 dl 태그를 통째로 잡아서 순회 (누락 완벽 방지)
         for dl in soup.find_all('dl'):
             subject_tag = dl.find(['dt', 'dd'], {'class': 'articleSubject'})
             summary_tag = dl.find('dd', {'class': 'articleSummary'})
@@ -306,7 +305,17 @@ def get_naver_main_news():
             if subject_tag and subject_tag.find('a'):
                 a_tag = subject_tag.find('a')
                 title = a_tag.text.strip()
-                link = "https://finance.naver.com" + a_tag['href']
+                href = a_tag['href']
+                
+                # 💡 [신규 장착] PC 링크를 모바일/PC 통합 링크로 변환!
+                article_match = re.search(r'article_id=(\d+)', href)
+                office_match = re.search(r'office_id=(\d+)', href)
+                
+                if article_match and office_match:
+                    # 폰에서도 튕기지 않는 완벽한 통합 주소 생성
+                    link = f"https://n.news.naver.com/mnews/article/{office_match.group(1)}/{article_match.group(1)}"
+                else:
+                    link = "https://finance.naver.com" + href
                 
                 press = "언론사"
                 summary = ""
@@ -315,7 +324,6 @@ def get_naver_main_news():
                     if press_tag: 
                         press = press_tag.text.strip()
                         
-                    # span 태그들(언론사, 날짜 등) 제거 후 순수 텍스트 추출
                     for span in summary_tag.find_all('span'):
                         span.decompose()
                     summary = summary_tag.text.strip()
@@ -323,7 +331,7 @@ def get_naver_main_news():
                 now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
                 news_list.append([now_str, press, title, summary, link])
                 
-                if len(news_list) >= 20: # 20개 꽉 채워서 가져오기
+                if len(news_list) >= 20: 
                     break
                     
         df = pd.DataFrame(news_list, columns=['업데이트 시간', '언론사', '기사 제목', '요약 내용', '기사 링크'])
