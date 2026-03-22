@@ -400,7 +400,7 @@ def update_technical_data(df_theme):
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in info_data[1:] if len(row) >= 3 and str(row[0]).strip() and str(row[2]).strip()}
         
         scanner_names = [str(name).strip() for name in doc.worksheet("스캐너_마스터").col_values(1)[1:] if str(name).strip()]
-        dash_names = [str(row[2]).strip() for row in doc.worksheet("대시보드").get_all_values()[49:] if len(row) > 2 and str(row[2]).strip()]
+        dash_names = [str(row[2]).strip() for row in doc.worksheet("대시보드").get_all_values()[4:] if len(row) > 2 and str(row[2]).strip()]
         
         target_names = list(set(scanner_names + dash_names))
         
