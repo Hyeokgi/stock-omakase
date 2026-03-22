@@ -378,10 +378,10 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
     except Exception as e:
         print(f"❌ Error: {e}")
 
-# 💡 현재가와 등락률까지 완벽하게 쏴주는 100점 만점 엔진
+# 💡 현재가, 등락률, 스코어링에 이어 '마스터 타점' 판독기까지 장착된 최종 완성형 엔진
 def update_technical_data(df_theme):
     try:
-        print("▶️ 기술적 지표, 수급, 💯스코어링 파이썬 엔진 가동...")
+        print("▶️ 기술적 지표, 수급, 💯스코어링, 🎯타점 판독 파이썬 엔진 가동...")
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
         client = gspread.authorize(creds)
@@ -455,7 +455,6 @@ def update_technical_data(df_theme):
 
                 df_hist = pd.DataFrame(history)
                 
-                # 💡 [신규 장착] 현재가와 어제 종가를 비교해 등락률 계산
                 current_price = int(df_hist['close'].iloc[-1])
                 prev_price = int(df_hist['close'].iloc[-2]) if len(df_hist) > 1 else current_price
                 change_rate = (current_price - prev_price) / prev_price if prev_price > 0 else 0.0
@@ -510,15 +509,34 @@ def update_technical_data(df_theme):
                     elif ma5 > ma20: score += 10
                     elif current_price >= ma20: score += 5
                     
-                # 💡 [핵심] 현재가(3)와 등락률(4) 열이 추가되었습니다!
-                results.append([name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, score])
+                # 💡 [핵심 추가] 회원님의 마스터 타점 로직 완벽 이식!
+                # 1. 어제 거래량 가져오기 (v_yest_ratio 계산)
+                yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) > 1 else 0
+                v_yest_ratio = (yest_vol / avg_vol_10) * 100 if avg_vol_10 > 0 else 0
+                
+                # 2. 로직 판독
+                master_tajeom = "⏸️ 관망 및 대기"
+                if is_junk:
+                    master_tajeom = "🚨 매매금지"
+                elif "🌟" in signal:
+                    master_tajeom = "🌟 [VIP] 쌍끌이 모아가기" # 새 기능 추가분
+                elif ("👀" in signal or "🚀" in signal) and vol_ratio <= 50 and v_yest_ratio >= 150:
+                    master_tajeom = "👑 [SS급] N자 단봉눌림 (종가베팅)"
+                elif "🚀" in signal and vol_ratio >= 150:
+                    master_tajeom = "🎯 [S급] 2차랠리 돌파 (1차 진입)"
+                elif "👀" in signal and vol_ratio <= 60:
+                    master_tajeom = "⏳ [A급] 바닥 매집 (종가베팅)"
+                elif "🟢" in signal and vol_ratio <= 40:
+                    master_tajeom = "📉 [B급] 투매 소화 (종가베팅)"
+
+                # 💡 10번째 데이터(마스터타점)가 추가되었습니다.
+                results.append([name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, score, master_tajeom])
                 
             except Exception as e:
                 print(f"⚠️ [{name}] 종목 처리 중 건너뜀 (사유: {e})")
                 continue
 
-        # 점수 기준 정렬
-        results.sort(key=lambda x: x[8], reverse=True)
+        results.sort(key=lambda x: x[8], reverse=True) # 점수 기준 정렬
 
         if results:
             try:
@@ -527,10 +545,10 @@ def update_technical_data(df_theme):
                 helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="100", cols="20")
                 
             helper_sheet.clear()
-            # 💡 헤더에 현재가와 등락률이 들어갔습니다!
-            headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수"]
+            # 💡 10번째 헤더 추가
+            headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수", "마스터타점"]
             helper_sheet.update("A1", [headers] + results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(results)}개 종목 현재가/등락률 포함 업데이트 완료!")
+            print(f"✅ 총 {len(results)}개 종목 타점판독 업데이트 완료!")
             
     except Exception as e:
         print(f"❌ 기술적 지표 전체 업데이트 에러: {e}")
