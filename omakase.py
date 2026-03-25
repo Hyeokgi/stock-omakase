@@ -340,11 +340,12 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
         client = gspread.authorize(creds)
         doc = client.open_by_url(SHEET_URL)
         
+        # 💡 [경고 해결] gspread 최신 문법 반영: range_name=, values= 파라미터 명시
         if not df_theme.empty:
             if not is_market_closed:
                 sheet = doc.worksheet("수급_실시간")
                 sheet.clear() 
-                sheet.update("A1", [df_theme.columns.values.tolist()] + df_theme.values.tolist(), value_input_option="USER_ENTERED")
+                sheet.update(range_name="A1", values=[df_theme.columns.values.tolist()] + df_theme.values.tolist(), value_input_option="USER_ENTERED")
             else:
                 sheet = doc.worksheet("수급_Raw")
                 today_str = df_theme.iloc[0]['날짜'] 
@@ -359,27 +360,26 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
                 combined_data.sort(key=lambda x: x[0], reverse=True)
                 
                 sheet.clear()
-                sheet.update("A1", [headers] + combined_data, value_input_option="USER_ENTERED")
+                sheet.update(range_name="A1", values=[headers] + combined_data, value_input_option="USER_ENTERED")
                 
         if not df_news.empty:
             sheet_news = doc.worksheet("뉴스_키워드")
             sheet_news.clear()
-            sheet_news.update("A1", [df_news.columns.values.tolist()] + df_news.values.tolist(), value_input_option="USER_ENTERED")
+            sheet_news.update(range_name="A1", values=[df_news.columns.values.tolist()] + df_news.values.tolist(), value_input_option="USER_ENTERED")
 
         if not df_naver.empty:
             sheet_naver = doc.worksheet("네이버_검색상위")
             sheet_naver.clear()
-            sheet_naver.update("A1", [df_naver.columns.values.tolist()] + df_naver.values.tolist(), value_input_option="USER_ENTERED")  
+            sheet_naver.update(range_name="A1", values=[df_naver.columns.values.tolist()] + df_naver.values.tolist(), value_input_option="USER_ENTERED")  
 
         if not df_main_news.empty:
             sheet_main_news = doc.worksheet("네이버_주요뉴스")
             sheet_main_news.clear()
-            sheet_main_news.update("A1", [df_main_news.columns.values.tolist()] + df_main_news.values.tolist(), value_input_option="USER_ENTERED")
+            sheet_main_news.update(range_name="A1", values=[df_main_news.columns.values.tolist()] + df_main_news.values.tolist(), value_input_option="USER_ENTERED")
           
     except Exception as e:
         print(f"❌ Error: {e}")
 
-# 💡 [업그레이드] 60일 데이터 수집 및 고가/저가/최고가 추출 기능 추가
 def update_technical_data(df_theme):
     try:
         print("▶️ 기술적 지표, 수급, 💯스코어링, 🎯타점 판독 파이썬 엔진 가동...")
@@ -413,27 +413,27 @@ def update_technical_data(df_theme):
                 code = name_to_code.get(name)
                 if not code or code == "000000": continue
                 
-                # 🚨 [핵심 수정] 60일치 데이터를 가져오도록 count=60 으로 변경
                 url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=60&requestType=1"
                 res = requests.get(url, verify=False, timeout=3)
-                root = ET.fromstring(res.text)
+                
+                # 🚨 [치명적 버그 해결] res.text 뒤에 .strip()을 추가해 네이버의 쓸데없는 공백/엔터 완벽 제거!
+                root = ET.fromstring(res.text.strip())
                 
                 history = []
-                high_prices = [] # 60일 최고가를 담을 바구니
+                high_prices = [] 
                 
                 for item in root.findall(".//item"):
                     data = item.get("data").split("|")
                     history.append({
                         "close": int(data[4]), 
                         "volume": int(data[5]),
-                        "high": int(data[2]),  # 고가 추가
-                        "low": int(data[3])    # 저가 추가
+                        "high": int(data[2]),  
+                        "low": int(data[3])    
                     })
                     high_prices.append(int(data[2]))
                     
                 if len(history) < 20: continue
                     
-                # 오늘 고가, 저가, 60일 최고가 계산
                 today_high = history[-1]["high"]
                 today_low = history[-1]["low"]
                 high_60d = max(high_prices)
@@ -543,7 +543,6 @@ def update_technical_data(df_theme):
                 elif "🟢" in signal and vol_ratio <= 40:
                     master_tajeom = "📉 [B급] 투매 소화 (종가베팅)"
 
-                # 💡 [핵심 추가] 오늘 고가, 오늘 저가, 60일 최고가 열 추가 (총 13개 열)
                 results.append([
                     name, 
                     f"'{code}", 
@@ -571,9 +570,10 @@ def update_technical_data(df_theme):
                 helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="100", cols="20")
                 
             helper_sheet.clear()
-            # 💡 헤더에도 3가지 항목 추가
             headers = ["종목명", "종목코드", "현재가", "오늘 고가", "오늘 저가", "60일 최고가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수", "마스터타점"]
-            helper_sheet.update("A1", [headers] + results, value_input_option="USER_ENTERED")
+            
+            # 💡 [경고 해결] gspread 최신 문법 반영
+            helper_sheet.update(range_name="A1", values=[headers] + results, value_input_option="USER_ENTERED")
             print(f"✅ 총 {len(results)}개 종목 타점판독 및 가격 업데이트 완료!")
             
     except Exception as e:
