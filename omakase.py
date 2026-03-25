@@ -122,7 +122,6 @@ def get_market_cap(code):
             
         market_cap_cache[code] = final_cap
         return final_cap
-        
     except Exception as e:
         return 999999 
 
@@ -143,7 +142,7 @@ def get_real_money_themes():
     themes = [{'name': a.text.strip(), 'url': base_url + a['href']} for tds in [tr.find_all('td') for tr in soup.find('table', {'class': 'type_1'}).find_all('tr')] if len(tds) > 1 for a in [tds[0].find('a')] if a][:20]
                     
     theme_data_list = []
-    print("▶️ 실시간 주도 테마 및 튼튼한 대장주 수집 시작 (터보 모드 + 대장주 그룹핑)...")
+    print("▶️ 실시간 주도 테마 및 튼튼한 대장주 수집 시작...")
     
     for theme in themes:
         try:
@@ -314,7 +313,6 @@ def get_naver_main_news():
                     press_tag = summary_tag.find('span', {'class': 'press'})
                     if press_tag: 
                         press = press_tag.text.strip()
-                        
                     for span in summary_tag.find_all('span'):
                         span.decompose()
                     summary = summary_tag.text.strip()
@@ -389,23 +387,18 @@ def update_technical_data(df_theme):
         info_data = info_sheet.get_all_values()
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in info_data[1:] if len(row) >= 3 and str(row[0]).strip() and str(row[2]).strip()}
         
+        # 💡 [안전 생명줄 탑재] 스캐너 시트가 망가져도 수급_Raw에서 종목을 억지로 가져와서 복구시킵니다.
         scanner_names = [str(name).strip() for name in doc.worksheet("스캐너_마스터").col_values(1)[1:] if str(name).strip()]
         dash_names = [str(row[2]).strip() for row in doc.worksheet("대시보드").get_all_values()[4:] if len(row) > 2 and str(row[2]).strip()]
-        
         try:
             raw_names = [str(row[3]).strip() for row in doc.worksheet("수급_Raw").get_all_values()[1:] if len(row) > 3 and str(row[3]).strip()]
         except:
             raw_names = []
             
-        top_3_themes = []
-        top_10_themes = []
-        if not df_theme.empty:
-            top_3_themes = df_theme[df_theme['순위'] <= 3]['종목명'].tolist()
-            top_10_themes = df_theme[df_theme['순위'] <= 10]['종목명'].tolist()
-            
         target_names = []
-        for name in (scanner_names + dash_names + top_10_themes + raw_names):
+        for name in (scanner_names + dash_names + raw_names):
             clean_name = str(name).strip()
+            # 중복 제거 및 #REF! 오류값 무시
             if clean_name and clean_name != "#REF!" and clean_name not in target_names:
                 target_names.append(clean_name)
         
@@ -418,31 +411,18 @@ def update_technical_data(df_theme):
                 
                 url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=60&requestType=1"
                 res = requests.get(url, verify=False, timeout=3)
-                
                 root = ET.fromstring(res.text.strip())
                 
                 history = []
-                high_prices = [] 
-                
                 for item in root.findall(".//item"):
                     data = item.get("data").split("|")
                     history.append({
                         "close": int(data[4]), 
-                        "volume": int(data[5]),
-                        "high": int(data[2]),  
-                        "low": int(data[3])    
+                        "volume": int(data[5])
                     })
-                    high_prices.append(int(data[2]))
                     
                 if len(history) < 20: continue
                     
-                today_high = history[-1]["high"]
-                today_low = history[-1]["low"]
-                high_60d = max(high_prices)
-                
-                # 💡 [추가된 부분] 시가총액 구하기 (느려터진 구글파이낸스 대체용)
-                market_cap = get_market_cap(code)
-                
                 risk_url = f"https://finance.naver.com/item/main.naver?code={code}"
                 risk_res = requests.get(risk_url, verify=False, timeout=3)
                 risk_soup = BeautifulSoup(risk_res.content, 'html.parser', from_encoding='cp949')
@@ -524,9 +504,6 @@ def update_technical_data(df_theme):
                     elif vol_ratio >= 200: score += 10
                     elif vol_ratio >= 100: score += 5
                     
-                    if name in top_3_themes: score += 20
-                    elif name in top_10_themes: score += 10
-                    
                     if ma5 > ma20 and current_price >= ma5: score += 15
                     elif ma5 > ma20: score += 10
                     elif current_price >= ma20: score += 5
@@ -548,6 +525,7 @@ def update_technical_data(df_theme):
                 elif "🟢" in signal and vol_ratio <= 40:
                     master_tajeom = "📉 [B급] 투매 소화 (종가베팅)"
 
+                # [최종본] 10개의 깔끔한 오리지널 컬럼
                 results.append([
                     name, 
                     f"'{code}", 
@@ -558,11 +536,7 @@ def update_technical_data(df_theme):
                     f"{int(vol_ratio):,}% 폭발🔥", 
                     signal, 
                     score, 
-                    master_tajeom,
-                    today_high,   # 11번째 열
-                    today_low,    # 12번째 열
-                    high_60d,     # 13번째 열
-                    market_cap    # 💡 14번째 열 (시가총액 추가!)
+                    master_tajeom
                 ])
                 
             except Exception as e:
@@ -573,13 +547,12 @@ def update_technical_data(df_theme):
             try:
                 helper_sheet = doc.worksheet("주가데이터_보조")
             except:
-                helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="100", cols="20")
+                helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="100", cols="10")
                 
             helper_sheet.clear()
             headers = [
                 "종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", 
-                "거래량비율", "AI신호", "오마카세점수", "마스터타점", 
-                "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)"
+                "거래량비율", "AI신호", "오마카세점수", "마스터타점"
             ]
             
             helper_sheet.update(range_name="A1", values=[headers] + results, value_input_option="USER_ENTERED")
