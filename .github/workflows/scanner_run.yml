@@ -22,12 +22,13 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install requests gspread oauth2client beautifulsoup4
+        pip install requests beautifulsoup4 pandas gspread oauth2client kiwipiepy
         
     - name: Create secret.json
       env:
         GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }} 
       run: echo "$GCP_CREDENTIALS" > secret.json
         
-    - name: Run Scanner Bot
-      run: python scanner_bot.py
+    # 💡 [핵심 변경] 구버전 scanner_bot.py 대신 완벽하게 통합된 omakase.py를 실행합니다.
+    - name: Run Main Engine
+      run: python omakase.py
