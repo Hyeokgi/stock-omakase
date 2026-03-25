@@ -379,7 +379,7 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
     except Exception as e:
         print(f"❌ Error: {e}")
 
-# 💡 [핵심 버그 수정 구역] 정렬 꼬임 방지 & 수정주가 반영 완벽 패치!
+# 💡 [업그레이드] 60일 데이터 수집 및 고가/저가/최고가 추출 기능 추가
 def update_technical_data(df_theme):
     try:
         print("▶️ 기술적 지표, 수급, 💯스코어링, 🎯타점 판독 파이썬 엔진 가동...")
@@ -395,7 +395,6 @@ def update_technical_data(df_theme):
         scanner_names = [str(name).strip() for name in doc.worksheet("스캐너_마스터").col_values(1)[1:] if str(name).strip()]
         dash_names = [str(row[2]).strip() for row in doc.worksheet("대시보드").get_all_values()[4:] if len(row) > 2 and str(row[2]).strip()]
         
-        # 🚨 [수정 1] set을 쓰면 순서가 뒤죽박죽 섞이므로, 원래 순서를 완벽하게 유지하면서 중복만 제거합니다!
         target_names = []
         for name in (scanner_names + dash_names):
             if name not in target_names:
@@ -414,18 +413,31 @@ def update_technical_data(df_theme):
                 code = name_to_code.get(name)
                 if not code or code == "000000": continue
                 
-                # 🚨 [수정 2] requestType=1 로 변경하여 액면분할 등 '수정주가'를 완벽히 반영합니다. (이평선 꼬임 방지)
-                url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=25&requestType=1"
+                # 🚨 [핵심 수정] 60일치 데이터를 가져오도록 count=60 으로 변경
+                url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=60&requestType=1"
                 res = requests.get(url, verify=False, timeout=3)
                 root = ET.fromstring(res.text)
                 
                 history = []
+                high_prices = [] # 60일 최고가를 담을 바구니
+                
                 for item in root.findall(".//item"):
                     data = item.get("data").split("|")
-                    history.append({"close": int(data[4]), "volume": int(data[5])})
+                    history.append({
+                        "close": int(data[4]), 
+                        "volume": int(data[5]),
+                        "high": int(data[2]),  # 고가 추가
+                        "low": int(data[3])    # 저가 추가
+                    })
+                    high_prices.append(int(data[2]))
                     
                 if len(history) < 20: continue
                     
+                # 오늘 고가, 저가, 60일 최고가 계산
+                today_high = history[-1]["high"]
+                today_low = history[-1]["low"]
+                high_60d = max(high_prices)
+                
                 risk_url = f"https://finance.naver.com/item/main.naver?code={code}"
                 risk_res = requests.get(risk_url, verify=False, timeout=3)
                 risk_soup = BeautifulSoup(risk_res.content, 'html.parser', from_encoding='cp949')
@@ -466,7 +478,6 @@ def update_technical_data(df_theme):
                 change_rate = (current_price - prev_price) / prev_price if prev_price > 0 else 0.0
                 
                 today_vol = df_hist['volume'].iloc[-1]
-                
                 ma5 = df_hist['close'].tail(5).mean()
                 ma20 = df_hist['close'].tail(20).mean()
                 
@@ -532,14 +543,26 @@ def update_technical_data(df_theme):
                 elif "🟢" in signal and vol_ratio <= 40:
                     master_tajeom = "📉 [B급] 투매 소화 (종가베팅)"
 
-                results.append([name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, score, master_tajeom])
+                # 💡 [핵심 추가] 오늘 고가, 오늘 저가, 60일 최고가 열 추가 (총 13개 열)
+                results.append([
+                    name, 
+                    f"'{code}", 
+                    current_price, 
+                    today_high, 
+                    today_low, 
+                    high_60d, 
+                    f"{change_rate * 100:.2f}%", 
+                    int(ma5), 
+                    int(ma20), 
+                    f"{int(vol_ratio):,}% 폭발🔥", 
+                    signal, 
+                    score, 
+                    master_tajeom
+                ])
                 
             except Exception as e:
                 print(f"⚠️ [{name}] 종목 처리 중 건너뜀 (사유: {e})")
                 continue
-
-        # 🚨 [수정 3] 점수순으로 마음대로 뒤섞던 정렬 코드를 삭제합니다.
-        # results.sort(key=lambda x: x[8], reverse=True) <- 이 녀석이 스캐너_마스터의 수식을 꼬이게 만든 주범입니다!
 
         if results:
             try:
@@ -548,9 +571,10 @@ def update_technical_data(df_theme):
                 helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="100", cols="20")
                 
             helper_sheet.clear()
-            headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수", "마스터타점"]
+            # 💡 헤더에도 3가지 항목 추가
+            headers = ["종목명", "종목코드", "현재가", "오늘 고가", "오늘 저가", "60일 최고가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수", "마스터타점"]
             helper_sheet.update("A1", [headers] + results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(results)}개 종목 타점판독 업데이트 완료!")
+            print(f"✅ 총 {len(results)}개 종목 타점판독 및 가격 업데이트 완료!")
             
     except Exception as e:
         print(f"❌ 기술적 지표 전체 업데이트 에러: {e}")
