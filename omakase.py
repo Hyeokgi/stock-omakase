@@ -52,6 +52,18 @@ STOPWORDS = [
     '문의', '사항', '고객', '센터', '안내', '감사', '반대', '선임', '공개', '자본', '공개'
 ]
 
+# 💡 [업그레이드 부활] 네이버 종목 검색 API (기업정보 누락, #REF! 오류 완벽 방어용)
+def search_code_from_naver(stock_name):
+    try:
+        url = f"https://m.stock.naver.com/api/search/all?keyword={stock_name}"
+        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'})
+        data = res.json()
+        if data.get('result') and data['result'].get('stocks'):
+            return data['result']['stocks'][0]['itemCode']
+    except Exception:
+        pass
+    return None
+
 def get_news_keywords():
     try:
         print("▶️ 뉴스 키워드 수집 시작 (스텔스 모드)...")
@@ -128,10 +140,10 @@ def get_market_cap(code):
 def get_real_money_themes():
     now = datetime.datetime.now(KST)
     is_market_closed = now.hour < 9 or now.hour > 15 or (now.hour == 15 and now.minute >= 40)
-    is_weekend = now.weekday() >= 5
     
-    if is_weekend or now.hour >= 20 or now.hour < 7:
-        return pd.DataFrame(), True
+    # 💡 [시간 차단 해제] 주말이든 새벽 2시든 언제든 강제로 수집하도록 족쇄를 풀었습니다!
+    # if is_weekend or now.hour >= 20 or now.hour < 7:
+    #     return pd.DataFrame(), True
         
     time_str = now.strftime('%H:%M')
     headers = {'User-Agent': 'Mozilla/5.0'}
@@ -387,18 +399,25 @@ def update_technical_data(df_theme):
         info_data = info_sheet.get_all_values()
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in info_data[1:] if len(row) >= 3 and str(row[0]).strip() and str(row[2]).strip()}
         
-        # 💡 [안전 생명줄 탑재] 스캐너 시트가 망가져도 수급_Raw에서 종목을 억지로 가져와서 복구시킵니다.
+        # 💡 [핵심 방어막] 시트가 깨졌을 때를 대비해 수급_Raw에서 코드까지 직접 가져옵니다.
+        try:
+            raw_data = doc.worksheet("수급_Raw").get_all_values()
+            raw_stocks = {str(row[3]).strip(): str(row[4]).strip().replace("'", "").zfill(6) for row in raw_data[1:] if len(row) > 4 and str(row[3]).strip()}
+        except:
+            raw_stocks = {}
+
         scanner_names = [str(name).strip() for name in doc.worksheet("스캐너_마스터").col_values(1)[1:] if str(name).strip()]
         dash_names = [str(row[2]).strip() for row in doc.worksheet("대시보드").get_all_values()[4:] if len(row) > 2 and str(row[2]).strip()]
-        try:
-            raw_names = [str(row[3]).strip() for row in doc.worksheet("수급_Raw").get_all_values()[1:] if len(row) > 3 and str(row[3]).strip()]
-        except:
-            raw_names = []
+            
+        top_3_themes = []
+        top_10_themes = []
+        if not df_theme.empty:
+            top_3_themes = df_theme[df_theme['순위'] <= 3]['종목명'].tolist()
+            top_10_themes = df_theme[df_theme['순위'] <= 10]['종목명'].tolist()
             
         target_names = []
-        for name in (scanner_names + dash_names + raw_names):
+        for name in (scanner_names + dash_names + top_10_themes + list(raw_stocks.keys())):
             clean_name = str(name).strip()
-            # 중복 제거 및 #REF! 오류값 무시
             if clean_name and clean_name != "#REF!" and clean_name not in target_names:
                 target_names.append(clean_name)
         
@@ -406,8 +425,22 @@ def update_technical_data(df_theme):
         
         for name in target_names:
             try:
+                # 1. 기업정보에서 찾기
                 code = name_to_code.get(name)
-                if not code or code == "000000": continue
+                
+                # 2. 없으면 수급_Raw에서 찾기
+                if not code or code == "000000":
+                    code = raw_stocks.get(name)
+                
+                # 3. 그래도 없으면 네이버 API로 실시간 검색! (절대 놓치지 않음)
+                if not code or code == "000000":
+                    code = search_code_from_naver(name)
+                    if code:
+                        name_to_code[name] = code # 캐싱
+                
+                if not code or code == "000000":
+                    print(f"❌ [{name}] 종목코드를 찾을 수 없어 건너뜁니다.")
+                    continue
                 
                 url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=60&requestType=1"
                 res = requests.get(url, verify=False, timeout=3)
@@ -525,7 +558,6 @@ def update_technical_data(df_theme):
                 elif "🟢" in signal and vol_ratio <= 40:
                     master_tajeom = "📉 [B급] 투매 소화 (종가베팅)"
 
-                # [최종본] 10개의 깔끔한 오리지널 컬럼
                 results.append([
                     name, 
                     f"'{code}", 
