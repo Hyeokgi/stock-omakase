@@ -52,7 +52,6 @@ STOPWORDS = [
     '문의', '사항', '고객', '센터', '안내', '감사', '반대', '선임', '공개', '자본', '공개'
 ]
 
-# 💡 기업정보 누락 대비 네이버 검색 API
 def search_code_from_naver(stock_name):
     try:
         url = f"https://m.stock.naver.com/api/search/all?keyword={stock_name}"
@@ -60,14 +59,12 @@ def search_code_from_naver(stock_name):
         data = res.json()
         if data.get('result') and data['result'].get('stocks'):
             return data['result']['stocks'][0]['itemCode']
-    except:
-        pass
+    except: pass
     return None
 
 def get_news_keywords():
     try:
-        print("▶️ 뉴스 키워드 수집 시작 (스텔스 모드)...")
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        headers = {'User-Agent': 'Mozilla/5.0'}
         full_text = ""
         for page in range(1, 4):
             url = f"https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258&page={page}"
@@ -85,63 +82,41 @@ def get_news_keywords():
             
         from kiwipiepy import Kiwi
         kiwi = Kiwi()
-        nouns = []
-        for token in kiwi.tokenize(full_text):
-            if token.tag in ['NNG', 'NNP'] and len(token.form) > 1 and token.form not in STOPWORDS:
-                nouns.append(token.form)
-                
+        nouns = [token.form for token in kiwi.tokenize(full_text) if token.tag in ['NNG', 'NNP'] and len(token.form) > 1 and token.form not in STOPWORDS]
         top_15 = Counter(nouns).most_common(15)
         now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M')
-        df = pd.DataFrame([[now_str, rank, word, count] for rank, (word, count) in enumerate(top_15, 1)], columns=['업데이트시간', '순위', '키워드', '언급횟수'])
-        return df
-    except Exception as e:
-        print(f"❌ 뉴스 키워드 추출 에러: {e}")
-        return pd.DataFrame()
+        return pd.DataFrame([[now_str, rank, word, count] for rank, (word, count) in enumerate(top_15, 1)], columns=['업데이트시간', '순위', '키워드', '언급횟수'])
+    except: return pd.DataFrame()
 
 market_cap_cache = {} 
 def get_market_cap(code):
     if code in market_cap_cache: return market_cap_cache[code]
     try:
         url = f"https://finance.naver.com/item/main.naver?code={code}"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        res = requests.get(url, headers=headers, verify=False, timeout=3)
+        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, verify=False, timeout=3)
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
-        
         market_sum_tag = soup.find('em', id='_market_sum')
         if not market_sum_tag: return 999999 
-            
-        market_sum_str = market_sum_tag.text.replace(',', '').replace('\t', '').replace('\n', '').strip()
+        market_sum_str = market_sum_tag.text.replace(',', '').strip()
         if '조' in market_sum_str:
             parts = market_sum_str.split('조')
-            jo = int(parts[0].strip())
-            eok = int(parts[1].strip()) if len(parts) > 1 and parts[1].strip() else 0
-            final_cap = jo * 10000 + eok
-        else:
-            final_cap = int(market_sum_str.strip())
+            final_cap = int(parts[0].strip()) * 10000 + (int(parts[1].strip()) if len(parts)>1 and parts[1].strip() else 0)
+        else: final_cap = int(market_sum_str)
         market_cap_cache[code] = final_cap
         return final_cap
-    except Exception as e:
-        return 999999 
+    except: return 999999 
 
 def get_real_money_themes():
     now = datetime.datetime.now(KST)
     is_market_closed = now.hour < 9 or now.hour > 15 or (now.hour == 15 and now.minute >= 40)
-    
-    # 💡 [핵심 수정 1] 시간 차단막(족쇄) 제거! 언제든 실시간 테마를 수집하도록 허용합니다.
-    # if now.weekday() >= 5 or now.hour >= 20 or now.hour < 7:
-    #     return pd.DataFrame(), True
-        
     time_str = now.strftime('%H:%M')
     headers = {'User-Agent': 'Mozilla/5.0'}
-    base_url = "https://finance.naver.com"
-    res = requests.get(base_url + "/sise/theme.naver", headers=headers, verify=False)
+    res = requests.get("https://finance.naver.com/sise/theme.naver", headers=headers, verify=False)
     soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
     
-    themes = [{'name': a.text.strip(), 'url': base_url + a['href']} for tds in [tr.find_all('td') for tr in soup.find('table', {'class': 'type_1'}).find_all('tr')] if len(tds) > 1 for a in [tds[0].find('a')] if a][:20]
+    themes = [{'name': a.text.strip(), 'url': "https://finance.naver.com" + a['href']} for tds in [tr.find_all('td') for tr in soup.find('table', {'class': 'type_1'}).find_all('tr')] if len(tds) > 1 for a in [tds[0].find('a')] if a][:20]
                     
     theme_data_list = []
-    print("▶️ 실시간 주도 테마 및 튼튼한 대장주 수집 시작...")
-    
     for theme in themes:
         try:
             res = requests.get(theme['url'], headers=headers, verify=False)
@@ -157,99 +132,59 @@ def get_real_money_themes():
                         if '%' not in rate_str or '-' in rate_str or '0.00' in rate_str: continue
                         rate_num = float(rate_str.replace('%', '').replace('+', '').replace(',', '').strip())
                         val_num = int(val_str.replace(',', '').strip())
-                        
-                        if rate_num >= TARGET_PERCENT and val_num > 0:
-                            actual_code = s_code.replace("'", "")
-                            market_cap = get_market_cap(actual_code)
-                            if market_cap >= 1000:
-                                stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
-                    except: 
-                        continue
-            
+                        if rate_num >= TARGET_PERCENT and val_num > 0 and get_market_cap(s_code.replace("'", "")) >= 1000:
+                            stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
+                    except: continue
             stocks = sorted(stocks, key=lambda x: x['value'], reverse=True)[:3]
-            if stocks:
-                if len(stocks) >= 2 and stocks[0]['value'] >= (stocks[1]['value'] * 10): continue 
+            if stocks and not (len(stocks) >= 2 and stocks[0]['value'] >= stocks[1]['value'] * 10):
                 theme_data_list.append({'theme_name': theme['name'], 'stocks': stocks})
-        except: 
-            continue
+        except: continue
         time.sleep(0.3)
         
     if not theme_data_list: return pd.DataFrame(), is_market_closed
     
     grouped_themes = {}
     for t_data in theme_data_list:
-        top_code = t_data['stocks'][0]['code'] 
-        if top_code not in grouped_themes: grouped_themes[top_code] = []
-        grouped_themes[top_code].append(t_data)
+        grouped_themes.setdefault(t_data['stocks'][0]['code'], []).append(t_data)
         
     merged_themes = []
     for top_code, t_list in grouped_themes.items():
-        theme_names = []
-        for t in t_list:
-            if t['theme_name'] not in theme_names: theme_names.append(t['theme_name'])
-        top_stock_name = t_list[0]['stocks'][0]['name']
-        if len(theme_names) > 1: merged_name = " / ".join(theme_names) + f" (대장: {top_stock_name})"
-        else: merged_name = theme_names[0]
-            
-        unique_stocks = {}
-        for t in t_list:
-            for s in t['stocks']: unique_stocks[s['code']] = s
-                
+        theme_names = list(dict.fromkeys(t['theme_name'] for t in t_list))
+        merged_name = " / ".join(theme_names) + f" (대장: {t_list[0]['stocks'][0]['name']})" if len(theme_names) > 1 else theme_names[0]
+        unique_stocks = {s['code']: s for t in t_list for s in t['stocks']}
         merged_stocks = sorted(unique_stocks.values(), key=lambda x: x['value'], reverse=True)[:3]
-        merged_sum = sum(s['value'] for s in merged_stocks)
-        
-        merged_themes.append({'theme_name': merged_name, 'theme_sum': merged_sum, 'stocks': merged_stocks})
+        merged_themes.append({'theme_name': merged_name, 'theme_sum': sum(s['value'] for s in merged_stocks), 'stocks': merged_stocks})
         
     merged_themes = sorted(merged_themes, key=lambda x: x['theme_sum'], reverse=True)
     final_themes = []
     for m_data in merged_themes:
-        current_codes = set([s['code'] for s in m_data['stocks']])
-        is_duplicate = False
-        for f_data in final_themes:
-            f_codes = set([s['code'] for s in f_data['stocks']])
-            if len(current_codes.intersection(f_codes)) >= 2:
-                is_duplicate = True
-                break
-        if not is_duplicate: final_themes.append(m_data)
+        if not any(len(set(s['code'] for s in m_data['stocks']).intersection(set(s['code'] for s in f_data['stocks']))) >= 2 for f_data in final_themes):
+            final_themes.append(m_data)
         if len(final_themes) >= 10: break
             
-    final_rows = []
-    for rank, t_data in enumerate(final_themes, start=1):
-        for s in t_data['stocks']:
-            row_data = {'날짜': now.strftime('%Y-%m-%d')}
-            if not is_market_closed: row_data['시간'] = time_str
-            row_data.update({'순위': rank, '테마명': t_data['theme_name'], '종목명': s['name'], '종목코드': s['code'], '등락률(%)': s['rate'], '거래대금(억원)': int(s['value']/100)})
-            final_rows.append(row_data)
-            
+    final_rows = [{'날짜': now.strftime('%Y-%m-%d'), **({'시간': time_str} if not is_market_closed else {}), '순위': rank, '테마명': t_data['theme_name'], '종목명': s['name'], '종목코드': s['code'], '등락률(%)': s['rate'], '거래대금(억원)': int(s['value']/100)} for rank, t_data in enumerate(final_themes, 1) for s in t_data['stocks']]
     return pd.DataFrame(final_rows), is_market_closed
 
 def get_naver_search_ranking():
     try:
-        url = "https://finance.naver.com/sise/lastsearch2.naver"
-        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, verify=False)
+        res = requests.get("https://finance.naver.com/sise/lastsearch2.naver", headers={'User-Agent': 'Mozilla/5.0'}, verify=False)
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='euc-kr')
         data = []
-        search_blacklist = ['삼성전자', 'SK하이닉스', '현대차', '기아', 'LG에너지솔루션', 'POSCO홀딩스', '셀트리온', 'NAVER', '카카오']
         for row in soup.find('table', {'class': 'type_5'}).find_all('tr'):
             tds = row.find_all('td')
             if len(tds) >= 6 and tds[0].text.strip().isdigit():
-                a_tag = tds[1].find('a')
-                name = a_tag.text.strip()
-                if name in search_blacklist: continue
-                s_code = a_tag['href'].split('code=')[-1] 
+                name = tds[1].find('a').text.strip()
+                if name in ['삼성전자', 'SK하이닉스', '현대차', '기아', 'LG에너지솔루션', 'POSCO홀딩스', '셀트리온', 'NAVER', '카카오']: continue
+                s_code = tds[1].find('a')['href'].split('code=')[-1] 
                 if get_market_cap(s_code) >= 1000:
                     data.append([len(data) + 1, name, tds[3].text.strip(), tds[5].text.strip(), f"{s_code:0>6}"]) 
                 if len(data) >= 10: break
         return pd.DataFrame(data, columns=['순위', '종목명', '현재가', '등락률(%)', '종목코드'])
-    except Exception as e:
-        print(f"❌ 네이버 실시간 검색어 수집 실패: {e}")
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
 def get_naver_main_news():
     try:
-        print("▶️ 네이버 주요 뉴스 수집 시작...")
-        url = "https://finance.naver.com/news/mainnews.naver"
-        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, verify=False, timeout=5)
+        res = requests.get("https://finance.naver.com/news/mainnews.naver", headers={'User-Agent': 'Mozilla/5.0'}, verify=False, timeout=5)
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
         news_list = []
         for dl in soup.find_all('dl'):
@@ -257,153 +192,90 @@ def get_naver_main_news():
             summary_tag = dl.find('dd', {'class': 'articleSummary'})
             if subject_tag and subject_tag.find('a'):
                 a_tag = subject_tag.find('a')
-                title = a_tag.text.strip()
                 href = a_tag['href']
-                article_match = re.search(r'article_id=(\d+)', href)
-                office_match = re.search(r'office_id=(\d+)', href)
+                article_match, office_match = re.search(r'article_id=(\d+)', href), re.search(r'office_id=(\d+)', href)
                 link = f"https://n.news.naver.com/mnews/article/{office_match.group(1)}/{article_match.group(1)}" if article_match and office_match else "https://finance.naver.com" + href
                 press = summary_tag.find('span', {'class': 'press'}).text.strip() if summary_tag and summary_tag.find('span', {'class': 'press'}) else "언론사"
-                if summary_tag:
-                    for span in summary_tag.find_all('span'): span.decompose()
-                summary = summary_tag.text.strip() if summary_tag else ""
-                news_list.append([datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S'), press, title, summary, link])
+                if summary_tag: [span.decompose() for span in summary_tag.find_all('span')]
+                news_list.append([datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S'), press, a_tag.text.strip(), summary_tag.text.strip() if summary_tag else "", link])
                 if len(news_list) >= 20: break
         return pd.DataFrame(news_list, columns=['업데이트 시간', '언론사', '기사 제목', '요약 내용', '기사 링크'])
-    except Exception as e:
-        print(f"❌ 네이버 주요 뉴스 수집 에러: {e}")
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
 def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_closed):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
-        client = gspread.authorize(creds)
-        doc = client.open_by_url(SHEET_URL)
+        doc = gspread.authorize(creds).open_by_url(SHEET_URL)
         
         if not df_theme.empty:
-            if not is_market_closed:
-                sheet = doc.worksheet("수급_실시간")
-                sheet.clear() 
-                sheet.update(range_name="A1", values=[df_theme.columns.values.tolist()] + df_theme.values.tolist(), value_input_option="USER_ENTERED")
-            else:
-                sheet = doc.worksheet("수급_Raw")
+            sheet = doc.worksheet("수급_Raw" if is_market_closed else "수급_실시간")
+            if is_market_closed:
                 today_str = df_theme.iloc[0]['날짜'] 
                 all_data = sheet.get_all_values()
-                headers = all_data[0] if len(all_data) > 0 else df_theme.columns.values.tolist()
-                past_data = [row for row in all_data[1:] if len(row) > 0 and row[0] != today_str]
-                combined_data = df_theme.values.tolist() + past_data
+                combined_data = df_theme.values.tolist() + [row for row in all_data[1:] if len(row) > 0 and row[0] != today_str]
                 combined_data.sort(key=lambda x: int(x[1]) if str(x[1]).isdigit() else 999)
                 combined_data.sort(key=lambda x: x[0], reverse=True)
                 sheet.clear()
-                sheet.update(range_name="A1", values=[headers] + combined_data, value_input_option="USER_ENTERED")
+                sheet.update(range_name="A1", values=[all_data[0] if all_data else df_theme.columns.values.tolist()] + combined_data, value_input_option="USER_ENTERED")
+            else:
+                sheet.clear() 
+                sheet.update(range_name="A1", values=[df_theme.columns.values.tolist()] + df_theme.values.tolist(), value_input_option="USER_ENTERED")
                 
-        if not df_news.empty:
-            sheet_news = doc.worksheet("뉴스_키워드")
-            sheet_news.clear()
-            sheet_news.update(range_name="A1", values=[df_news.columns.values.tolist()] + df_news.values.tolist(), value_input_option="USER_ENTERED")
-
-        if not df_naver.empty:
-            sheet_naver = doc.worksheet("네이버_검색상위")
-            sheet_naver.clear()
-            sheet_naver.update(range_name="A1", values=[df_naver.columns.values.tolist()] + df_naver.values.tolist(), value_input_option="USER_ENTERED")  
-
-        if not df_main_news.empty:
-            sheet_main_news = doc.worksheet("네이버_주요뉴스")
-            sheet_main_news.clear()
-            sheet_main_news.update(range_name="A1", values=[df_main_news.columns.values.tolist()] + df_main_news.values.tolist(), value_input_option="USER_ENTERED")
-    except Exception as e:
-        print(f"❌ Error: {e}")
+        for df, sheet_name in [(df_news, "뉴스_키워드"), (df_naver, "네이버_검색상위"), (df_main_news, "네이버_주요뉴스")]:
+            if not df.empty:
+                sheet = doc.worksheet(sheet_name)
+                sheet.clear()
+                sheet.update(range_name="A1", values=[df.columns.values.tolist()] + df.values.tolist(), value_input_option="USER_ENTERED")
+    except: pass
 
 def update_technical_data(df_theme):
     try:
-        print("▶️ 기술적 지표, 수급, 💯스코어링, 🎯타점 판독 파이썬 엔진 가동...")
+        print("▶️ 기술적 지표, 스코어링 계산 시작...")
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
-        client = gspread.authorize(creds)
-        doc = client.open_by_url(SHEET_URL)
+        doc = gspread.authorize(creds).open_by_url(SHEET_URL)
         
-        info_sheet = doc.worksheet("기업정보")
-        info_data = info_sheet.get_all_values()
-        name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in info_data[1:] if len(row) >= 3 and str(row[0]).strip() and str(row[2]).strip()}
+        name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
         
-        # 💡 [핵심 수정 2] #REF! 에러 완벽 회피를 위한 수급_Raw 우선 참조
+        # 💡 시트가 박살났을 때를 대비해 수급_Raw에서 종목 추출 (생명줄)
+        target_names = set()
         try:
-            raw_data = doc.worksheet("수급_Raw").get_all_values()
-            raw_stocks = {str(row[3]).strip(): str(row[4]).strip().replace("'", "").zfill(6) for row in raw_data[1:] if len(row) > 4 and str(row[3]).strip()}
-        except:
-            raw_stocks = {}
+            for row in doc.worksheet("수급_Raw").get_all_values()[1:]:
+                if len(row) > 3 and row[3].strip() and row[3].strip() != "#REF!": target_names.add(row[3].strip())
+        except: pass
 
-        scanner_names = [str(name).strip() for name in doc.worksheet("스캐너_마스터").col_values(1)[1:] if str(name).strip()]
-        dash_names = [str(row[2]).strip() for row in doc.worksheet("대시보드").get_all_values()[4:] if len(row) > 2 and str(row[2]).strip()]
-            
-        top_3_themes = []
-        top_10_themes = []
-        if not df_theme.empty:
-            top_3_themes = df_theme[df_theme['순위'] <= 3]['종목명'].tolist()
-            top_10_themes = df_theme[df_theme['순위'] <= 10]['종목명'].tolist()
-            
-        target_names = []
-        # 수급_Raw의 종목들까지 합쳐서 파이썬이 분석할 종목을 무조건 확보합니다.
-        for name in (scanner_names + dash_names + top_10_themes + list(raw_stocks.keys())):
-            clean_name = str(name).strip()
-            if clean_name and clean_name != "#REF!" and clean_name not in target_names:
-                target_names.append(clean_name)
-        
-        results = []
-        
-        for name in target_names:
+        for sheet_name in ["스캐너_마스터", "대시보드"]:
             try:
-                code = name_to_code.get(name)
-                if not code or code == "000000": code = raw_stocks.get(name)
-                if not code or code == "000000":
-                    code = search_code_from_naver(name)
-                    if code: name_to_code[name] = code 
-                
-                if not code or code == "000000": continue
+                for name in doc.worksheet(sheet_name).col_values(1)[1:]:
+                    if str(name).strip() and str(name).strip() != "#REF!": target_names.add(str(name).strip())
+            except: pass
+            
+        top_3_themes = df_theme[df_theme['순위'] <= 3]['종목명'].tolist() if not df_theme.empty else []
+        top_10_themes = df_theme[df_theme['순위'] <= 10]['종목명'].tolist() if not df_theme.empty else []
+        for t in top_10_themes: target_names.add(t)
+
+        results = []
+        for name in list(target_names):
+            try:
+                code = name_to_code.get(name) or search_code_from_naver(name)
+                if not code: continue
                 
                 url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=60&requestType=1"
                 res = requests.get(url, verify=False, timeout=3)
-                root = ET.fromstring(res.text.strip())
-                
-                history = []
-                high_prices = [] 
-                for item in root.findall(".//item"):
-                    data = item.get("data").split("|")
-                    history.append({"close": int(data[4]), "volume": int(data[5]), "high": int(data[2]), "low": int(data[3])})
-                    high_prices.append(int(data[2]))
-                    
+                history = [{"close": int(i.get("data").split("|")[4]), "volume": int(i.get("data").split("|")[5])} for i in ET.fromstring(res.text.strip()).findall(".//item")]
                 if len(history) < 20: continue
                     
-                today_high = history[-1]["high"]
-                today_low = history[-1]["low"]
-                high_60d = max(high_prices)
-                market_cap = get_market_cap(code)
-                
-                risk_url = f"https://finance.naver.com/item/main.naver?code={code}"
-                risk_res = requests.get(risk_url, verify=False, timeout=3)
-                risk_soup = BeautifulSoup(risk_res.content, 'html.parser', from_encoding='cp949')
-                
-                is_junk = False
-                if risk_soup.find('img', alt=re.compile('관리종목|환기종목|거래정지|투자위험')): is_junk = True
+                risk_soup = BeautifulSoup(requests.get(f"https://finance.naver.com/item/main.naver?code={code}", verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
+                is_junk = bool(risk_soup.find('img', alt=re.compile('관리종목|환기종목|거래정지|투자위험')))
                     
-                inv_url = f"https://m.stock.naver.com/api/stock/{code}/investor/trend"
-                inv_res = requests.get(inv_url, headers={'User-Agent': 'Mozilla/5.0'}, verify=False, timeout=3)
-                
-                is_dual_buy = False
-                f_buy = 0
-                i_buy = 0
-                supply_text = ""
-                
+                is_dual_buy, f_buy, i_buy, supply_text = False, 0, 0, ""
                 try:
-                    inv_data = inv_res.json()
-                    if 'investorTrendList' in inv_data and len(inv_data['investorTrendList']) > 0:
-                        today_trend = inv_data['investorTrendList'][0]
-                        f_buy = int(str(today_trend.get('foreignerStraightPurchasePrice', '0')).replace(',', ''))
-                        i_buy = int(str(today_trend.get('institutionStraightPurchasePrice', '0')).replace(',', ''))
-                        if f_buy > 0 and i_buy > 0:
-                            is_dual_buy = True; supply_text = " (쌍끌이🔥)"
-                        elif f_buy > 0: supply_text = " (외인매수)"
-                        elif i_buy > 0: supply_text = " (기관매수)"
+                    today_trend = requests.get(f"https://m.stock.naver.com/api/stock/{code}/investor/trend", headers={'User-Agent': 'Mozilla/5.0'}, verify=False, timeout=3).json().get('investorTrendList', [{}])[0]
+                    f_buy, i_buy = int(str(today_trend.get('foreignerStraightPurchasePrice', '0')).replace(',', '')), int(str(today_trend.get('institutionStraightPurchasePrice', '0')).replace(',', ''))
+                    if f_buy > 0 and i_buy > 0: is_dual_buy, supply_text = True, " (쌍끌이🔥)"
+                    elif f_buy > 0: supply_text = " (외인매수)"
+                    elif i_buy > 0: supply_text = " (기관매수)"
                 except: pass
 
                 df_hist = pd.DataFrame(history)
@@ -412,12 +284,9 @@ def update_technical_data(df_theme):
                 change_rate = (current_price - prev_price) / prev_price if prev_price > 0 else 0.0
                 
                 today_vol = df_hist['volume'].iloc[-1]
-                ma5 = df_hist['close'].tail(5).mean()
-                ma20 = df_hist['close'].tail(20).mean()
-                
+                ma5, ma20 = df_hist['close'].tail(5).mean(), df_hist['close'].tail(20).mean()
                 std20 = df_hist['close'].tail(20).std(ddof=0) 
-                upper_band = ma20 + (std20 * 2) 
-                lower_band = ma20 - (std20 * 2) 
+                upper_band, lower_band = ma20 + (std20 * 2), ma20 - (std20 * 2) 
                 band_width = (upper_band - lower_band) / ma20 if ma20 > 0 else 0 
                 
                 avg_vol_10 = df_hist['volume'].tail(11).head(10).mean()
@@ -426,37 +295,28 @@ def update_technical_data(df_theme):
                 
                 if is_junk: signal = "🚨 [위험] 매매금지 (잡주/경고)"
                 elif is_dual_buy and is_converging: signal = "🌟 A급 스윙 (쌍끌이 모아가기)"
-                elif band_width <= 0.20 and current_price >= ma20:
-                    if current_price >= upper_band * 0.98: signal = "🚀 N자파동 (밴드돌파)" + supply_text
-                    else: signal = "👀 N자파동 (에너지응축)" + supply_text
-                elif ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035:
-                    signal = "📈 2차랠리 (이평수렴)" + supply_text if current_price > ma20 else "⏳ 이평선 저항" + supply_text
-                else:
-                    signal = "🟢 낙폭과대 (과매도)" + supply_text if current_price < lower_band else "⚡ 관망 (이격발생)" + supply_text
+                elif band_width <= 0.20 and current_price >= ma20: signal = "🚀 N자파동 (밴드돌파)" + supply_text if current_price >= upper_band * 0.98 else "👀 N자파동 (에너지응축)" + supply_text
+                elif ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035: signal = "📈 2차랠리 (이평수렴)" + supply_text if current_price > ma20 else "⏳ 이평선 저항" + supply_text
+                else: signal = "🟢 낙폭과대 (과매도)" + supply_text if current_price < lower_band else "⚡ 관망 (이격발생)" + supply_text
                     
                 score = 0
                 if not is_junk:
                     if band_width <= 0.10: score += 20
                     elif band_width <= 0.15: score += 15
                     elif band_width <= 0.20: score += 10
-                    
                     if is_dual_buy: score += 25
                     elif f_buy > 0 or i_buy > 0: score += 10
-                    
                     if vol_ratio >= 500: score += 20
                     elif vol_ratio >= 300: score += 15
                     elif vol_ratio >= 200: score += 10
                     elif vol_ratio >= 100: score += 5
-                    
                     if name in top_3_themes: score += 20
                     elif name in top_10_themes: score += 10
-                    
                     if ma5 > ma20 and current_price >= ma5: score += 15
                     elif ma5 > ma20: score += 10
                     elif current_price >= ma20: score += 5
                     
-                yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) > 1 else 0
-                v_yest_ratio = (yest_vol / avg_vol_10) * 100 if avg_vol_10 > 0 else 0
+                v_yest_ratio = (int(df_hist['volume'].iloc[-2]) / avg_vol_10) * 100 if len(df_hist) > 1 and avg_vol_10 > 0 else 0
                 
                 master_tajeom = "⏸️ 관망 및 대기"
                 if is_junk: master_tajeom = "🚨 매매금지"
@@ -466,61 +326,18 @@ def update_technical_data(df_theme):
                 elif "👀" in signal and vol_ratio <= 60: master_tajeom = "⏳ [A급] 바닥 매집 (종가베팅)"
                 elif "🟢" in signal and vol_ratio <= 40: master_tajeom = "📉 [B급] 투매 소화 (종가베팅)"
 
-                # 💡 [핵심 수정 3] 열 순서 재배치 (1~10열은 예전 그대로, 11~14열에 새 데이터 추가)
-                results.append([
-                    name,                         # 1. 종목명
-                    f"'{code}",                   # 2. 종목코드
-                    current_price,                # 3. 현재가
-                    f"{change_rate * 100:.2f}%",  # 4. 등락률
-                    int(ma5),                     # 5. 5일선
-                    int(ma20),                    # 6. 20일선
-                    f"{int(vol_ratio):,}% 폭발🔥", # 7. 거래량비율
-                    signal,                       # 8. AI신호
-                    score,                        # 9. 퀀트스코어
-                    master_tajeom,                # 10. 마스터타점
-                    today_high,                   # 11. 오늘 고가 (추가)
-                    today_low,                    # 12. 오늘 저가 (추가)
-                    high_60d,                     # 13. 60일 최고가 (추가)
-                    market_cap                    # 14. 시가총액(억) (추가)
-                ])
-                
-            except Exception as e:
-                print(f"⚠️ [{name}] 종목 처리 중 건너뜀 (사유: {e})")
-                continue
+                results.append([name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, score, master_tajeom])
+            except: continue
 
         if results:
-            try:
-                helper_sheet = doc.worksheet("주가데이터_보조")
-            except:
-                helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="100", cols="20")
-                
+            try: helper_sheet = doc.worksheet("주가데이터_보조")
+            except: helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="100", cols="10")
             helper_sheet.clear()
-            headers = [
-                "종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", 
-                "거래량비율", "AI신호", "오마카세점수", "마스터타점", 
-                "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)"
-            ]
-            
-            helper_sheet.update(range_name="A1", values=[headers] + results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(results)}개 종목 타점판독 및 가격 업데이트 완료!")
-            
-    except Exception as e:
-        print(f"❌ 기술적 지표 전체 업데이트 에러: {e}")
+            helper_sheet.update(range_name="A1", values=[["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수", "마스터타점"]] + results, value_input_option="USER_ENTERED")
+    except Exception as e: print(f"❌ 기술적 지표 전체 업데이트 에러: {e}")
 
-# ==========================================
-# 🚀 심장(Main) 엔진
-# ==========================================
 if __name__ == "__main__":
-    print("🤖 1. 데이터 수집 시작...")
     df_theme, is_market_closed = get_real_money_themes()
-    df_news = get_news_keywords()
-    df_naver = get_naver_search_ranking()
-    df_main_news = get_naver_main_news()
-    
-    print("🤖 2. 구글 시트로 전송 시작...")
+    df_news, df_naver, df_main_news = get_news_keywords(), get_naver_search_ranking(), get_naver_main_news()
     update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_closed)
-    
-    print("🤖 3. 주가 보조데이터 및 스코어링 계산 시작...")
-    update_technical_data(df_theme) 
-    
-    print("✅ 모든 작업이 완료되었습니다!")
+    update_technical_data(df_theme)
