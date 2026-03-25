@@ -18,7 +18,6 @@ TARGET_PERCENT = 5.0
 KST = datetime.timezone(datetime.timedelta(hours=9))
 # ==========================================
 
-# (기존 STOPWORDS 리스트 유지)
 STOPWORDS = [
     '코스피', '코스닥', '증시', '주식', '투자', '종목', '시장', '지수', '대형주', '중소형주', 
     '외인', '기관', '개인', '외국인', '매수', '매도', '순매수', '순매도', '거래', '대금', 
@@ -53,7 +52,6 @@ STOPWORDS = [
     '문의', '사항', '고객', '센터', '안내', '감사', '반대', '선임', '공개', '자본', '공개'
 ]
 
-# (get_news_keywords 부터 update_google_sheet 까지 기존 함수 동일하므로 생략하지 않고 그대로 포함합니다)
 def get_news_keywords():
     try:
         print("▶️ 뉴스 키워드 수집 시작 (스텔스 모드)...")
@@ -340,7 +338,6 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
         client = gspread.authorize(creds)
         doc = client.open_by_url(SHEET_URL)
         
-        # 💡 [경고 해결] gspread 최신 문법 반영: range_name=, values= 파라미터 명시
         if not df_theme.empty:
             if not is_market_closed:
                 sheet = doc.worksheet("수급_실시간")
@@ -395,17 +392,19 @@ def update_technical_data(df_theme):
         scanner_names = [str(name).strip() for name in doc.worksheet("스캐너_마스터").col_values(1)[1:] if str(name).strip()]
         dash_names = [str(row[2]).strip() for row in doc.worksheet("대시보드").get_all_values()[4:] if len(row) > 2 and str(row[2]).strip()]
         
-        target_names = []
-        for name in (scanner_names + dash_names):
-            if name not in target_names:
-                target_names.append(name)
-        
         top_3_themes = []
         top_10_themes = []
         if not df_theme.empty:
             top_3_themes = df_theme[df_theme['순위'] <= 3]['종목명'].tolist()
             top_10_themes = df_theme[df_theme['순위'] <= 10]['종목명'].tolist()
             
+        # 💡 [버그 해결 1] 시트가 #REF! 로 망가졌을 때를 대비해 실시간 테마주를 강제 주입하는 심폐소생술!
+        target_names = []
+        for name in (scanner_names + dash_names + top_10_themes):
+            clean_name = str(name).strip()
+            if clean_name and clean_name != "#REF!" and clean_name not in target_names:
+                target_names.append(clean_name)
+        
         results = []
         
         for name in target_names:
@@ -416,7 +415,6 @@ def update_technical_data(df_theme):
                 url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=60&requestType=1"
                 res = requests.get(url, verify=False, timeout=3)
                 
-                # 🚨 [치명적 버그 해결] res.text 뒤에 .strip()을 추가해 네이버의 쓸데없는 공백/엔터 완벽 제거!
                 root = ET.fromstring(res.text.strip())
                 
                 history = []
@@ -543,20 +541,21 @@ def update_technical_data(df_theme):
                 elif "🟢" in signal and vol_ratio <= 40:
                     master_tajeom = "📉 [B급] 투매 소화 (종가베팅)"
 
+                # 💡 [버그 해결 2] VLOOKUP 수식 보호를 위해 기존 1~10번 열 순서를 보존하고, 신규 데이터를 맨 뒤로 배치합니다.
                 results.append([
                     name, 
                     f"'{code}", 
                     current_price, 
-                    today_high, 
-                    today_low, 
-                    high_60d, 
                     f"{change_rate * 100:.2f}%", 
                     int(ma5), 
                     int(ma20), 
                     f"{int(vol_ratio):,}% 폭발🔥", 
                     signal, 
                     score, 
-                    master_tajeom
+                    master_tajeom,
+                    today_high,   # 11번째 열
+                    today_low,    # 12번째 열
+                    high_60d      # 13번째 열
                 ])
                 
             except Exception as e:
@@ -570,9 +569,13 @@ def update_technical_data(df_theme):
                 helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="100", cols="20")
                 
             helper_sheet.clear()
-            headers = ["종목명", "종목코드", "현재가", "오늘 고가", "오늘 저가", "60일 최고가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수", "마스터타점"]
+            # 💡 [버그 해결 3] 헤더 순서도 데이터 배열과 동일하게 맨 뒤에 추가
+            headers = [
+                "종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", 
+                "거래량비율", "AI신호", "오마카세점수", "마스터타점", 
+                "오늘 고가", "오늘 저가", "60일 최고가"
+            ]
             
-            # 💡 [경고 해결] gspread 최신 문법 반영
             helper_sheet.update(range_name="A1", values=[headers] + results, value_input_option="USER_ENTERED")
             print(f"✅ 총 {len(results)}개 종목 타점판독 및 가격 업데이트 완료!")
             
