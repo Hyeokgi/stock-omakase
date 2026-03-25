@@ -18,7 +18,7 @@ TARGET_PERCENT = 5.0
 KST = datetime.timezone(datetime.timedelta(hours=9))
 # ==========================================
 
-# 🗑️ 회원님의 훌륭한 추가 단어들이 포함된 쓰레기통
+# (기존 STOPWORDS 리스트 유지)
 STOPWORDS = [
     '코스피', '코스닥', '증시', '주식', '투자', '종목', '시장', '지수', '대형주', '중소형주', 
     '외인', '기관', '개인', '외국인', '매수', '매도', '순매수', '순매도', '거래', '대금', 
@@ -53,6 +53,7 @@ STOPWORDS = [
     '문의', '사항', '고객', '센터', '안내', '감사', '반대', '선임', '공개', '자본', '공개'
 ]
 
+# (get_news_keywords 부터 update_google_sheet 까지 기존 함수 동일하므로 생략하지 않고 그대로 포함합니다)
 def get_news_keywords():
     try:
         print("▶️ 뉴스 키워드 수집 시작 (스텔스 모드)...")
@@ -95,7 +96,6 @@ def get_news_keywords():
         print(f"❌ 뉴스 키워드 추출 에러: {e}")
         return pd.DataFrame()
 
-# 🛡️ 1,000억 필터링 방패 + 캐싱(기억력) 마법 장착!
 market_cap_cache = {} 
 
 def get_market_cap(code):
@@ -272,16 +272,12 @@ def get_naver_search_ranking():
                     market_cap = get_market_cap(s_code)
                     
                     if market_cap >= 1000:
-                        # 💡 종목코드를 6자리로 규격화해서 데이터에 포함시킵니다!
                         formatted_code = f"{s_code:0>6}" 
                         data.append([len(data) + 1, name, price, rate, formatted_code]) 
-                    else:
-                        pass
-                        
+                    
                     if len(data) >= 10: 
                         break
                         
-        # 💡 컬럼에 '종목코드'를 추가했습니다!
         df = pd.DataFrame(data, columns=['순위', '종목명', '현재가', '등락률(%)', '종목코드'])
         return df
     except Exception as e:
@@ -297,7 +293,6 @@ def get_naver_main_news():
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
         
         news_list = []
-        
         for dl in soup.find_all('dl'):
             subject_tag = dl.find(['dt', 'dd'], {'class': 'articleSubject'})
             summary_tag = dl.find('dd', {'class': 'articleSummary'})
@@ -307,12 +302,10 @@ def get_naver_main_news():
                 title = a_tag.text.strip()
                 href = a_tag['href']
                 
-                # 💡 [신규 장착] PC 링크를 모바일/PC 통합 링크로 변환!
                 article_match = re.search(r'article_id=(\d+)', href)
                 office_match = re.search(r'office_id=(\d+)', href)
                 
                 if article_match and office_match:
-                    # 폰에서도 튕기지 않는 완벽한 통합 주소 생성
                     link = f"https://n.news.naver.com/mnews/article/{office_match.group(1)}/{article_match.group(1)}"
                 else:
                     link = "https://finance.naver.com" + href
@@ -386,7 +379,7 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
     except Exception as e:
         print(f"❌ Error: {e}")
 
-# 💡 현재가, 등락률, 스코어링에 이어 '마스터 타점' 판독기까지 장착된 최종 완성형 엔진
+# 💡 [핵심 버그 수정 구역] 정렬 꼬임 방지 & 수정주가 반영 완벽 패치!
 def update_technical_data(df_theme):
     try:
         print("▶️ 기술적 지표, 수급, 💯스코어링, 🎯타점 판독 파이썬 엔진 가동...")
@@ -402,7 +395,11 @@ def update_technical_data(df_theme):
         scanner_names = [str(name).strip() for name in doc.worksheet("스캐너_마스터").col_values(1)[1:] if str(name).strip()]
         dash_names = [str(row[2]).strip() for row in doc.worksheet("대시보드").get_all_values()[4:] if len(row) > 2 and str(row[2]).strip()]
         
-        target_names = list(set(scanner_names + dash_names))
+        # 🚨 [수정 1] set을 쓰면 순서가 뒤죽박죽 섞이므로, 원래 순서를 완벽하게 유지하면서 중복만 제거합니다!
+        target_names = []
+        for name in (scanner_names + dash_names):
+            if name not in target_names:
+                target_names.append(name)
         
         top_3_themes = []
         top_10_themes = []
@@ -417,7 +414,8 @@ def update_technical_data(df_theme):
                 code = name_to_code.get(name)
                 if not code or code == "000000": continue
                 
-                url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=25&requestType=0"
+                # 🚨 [수정 2] requestType=1 로 변경하여 액면분할 등 '수정주가'를 완벽히 반영합니다. (이평선 꼬임 방지)
+                url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=25&requestType=1"
                 res = requests.get(url, verify=False, timeout=3)
                 root = ET.fromstring(res.text)
                 
@@ -517,17 +515,14 @@ def update_technical_data(df_theme):
                     elif ma5 > ma20: score += 10
                     elif current_price >= ma20: score += 5
                     
-                # 💡 [핵심 추가] 회원님의 마스터 타점 로직 완벽 이식!
-                # 1. 어제 거래량 가져오기 (v_yest_ratio 계산)
                 yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) > 1 else 0
                 v_yest_ratio = (yest_vol / avg_vol_10) * 100 if avg_vol_10 > 0 else 0
                 
-                # 2. 로직 판독
                 master_tajeom = "⏸️ 관망 및 대기"
                 if is_junk:
                     master_tajeom = "🚨 매매금지"
                 elif "🌟" in signal:
-                    master_tajeom = "🌟 [VIP] 쌍끌이 모아가기" # 새 기능 추가분
+                    master_tajeom = "🌟 [VIP] 쌍끌이 모아가기" 
                 elif ("👀" in signal or "🚀" in signal) and vol_ratio <= 50 and v_yest_ratio >= 150:
                     master_tajeom = "👑 [SS급] N자 단봉눌림 (종가베팅)"
                 elif "🚀" in signal and vol_ratio >= 150:
@@ -537,14 +532,14 @@ def update_technical_data(df_theme):
                 elif "🟢" in signal and vol_ratio <= 40:
                     master_tajeom = "📉 [B급] 투매 소화 (종가베팅)"
 
-                # 💡 10번째 데이터(마스터타점)가 추가되었습니다.
                 results.append([name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, score, master_tajeom])
                 
             except Exception as e:
                 print(f"⚠️ [{name}] 종목 처리 중 건너뜀 (사유: {e})")
                 continue
 
-        results.sort(key=lambda x: x[8], reverse=True) # 점수 기준 정렬
+        # 🚨 [수정 3] 점수순으로 마음대로 뒤섞던 정렬 코드를 삭제합니다.
+        # results.sort(key=lambda x: x[8], reverse=True) <- 이 녀석이 스캐너_마스터의 수식을 꼬이게 만든 주범입니다!
 
         if results:
             try:
@@ -553,13 +548,13 @@ def update_technical_data(df_theme):
                 helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="100", cols="20")
                 
             helper_sheet.clear()
-            # 💡 10번째 헤더 추가
             headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수", "마스터타점"]
             helper_sheet.update("A1", [headers] + results, value_input_option="USER_ENTERED")
             print(f"✅ 총 {len(results)}개 종목 타점판독 업데이트 완료!")
             
     except Exception as e:
         print(f"❌ 기술적 지표 전체 업데이트 에러: {e}")
+
 # ==========================================
 # 🚀 심장(Main) 엔진
 # ==========================================
@@ -574,7 +569,6 @@ if __name__ == "__main__":
     update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_closed)
     
     print("🤖 3. 주가 보조데이터 및 스코어링 계산 시작...")
-    # 👇 분석에 쓸 수 있도록 테마 데이터를 넘겨줍니다!
     update_technical_data(df_theme) 
     
     print("✅ 모든 작업이 완료되었습니다!")
