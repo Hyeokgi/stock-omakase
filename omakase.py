@@ -392,12 +392,11 @@ def update_technical_data(df_theme):
         scanner_names = [str(name).strip() for name in doc.worksheet("스캐너_마스터").col_values(1)[1:] if str(name).strip()]
         dash_names = [str(row[2]).strip() for row in doc.worksheet("대시보드").get_all_values()[4:] if len(row) > 2 and str(row[2]).strip()]
         
-        # 💡 [추가된 생명줄] 앞의 시트들이 #REF!로 박살나도 절대 깨지지 않는 '수급_Raw'에서 종목명을 강제 추출합니다.
         try:
             raw_names = [str(row[3]).strip() for row in doc.worksheet("수급_Raw").get_all_values()[1:] if len(row) > 3 and str(row[3]).strip()]
         except:
             raw_names = []
-        
+            
         top_3_themes = []
         top_10_themes = []
         if not df_theme.empty:
@@ -405,7 +404,6 @@ def update_technical_data(df_theme):
             top_10_themes = df_theme[df_theme['순위'] <= 10]['종목명'].tolist()
             
         target_names = []
-        # 💡 raw_names를 합쳐서 봇이 항상 수십 개의 종목을 찾을 수 있게 만듭니다.
         for name in (scanner_names + dash_names + top_10_themes + raw_names):
             clean_name = str(name).strip()
             if clean_name and clean_name != "#REF!" and clean_name not in target_names:
@@ -441,6 +439,9 @@ def update_technical_data(df_theme):
                 today_high = history[-1]["high"]
                 today_low = history[-1]["low"]
                 high_60d = max(high_prices)
+                
+                # 💡 [추가된 부분] 시가총액 구하기 (느려터진 구글파이낸스 대체용)
+                market_cap = get_market_cap(code)
                 
                 risk_url = f"https://finance.naver.com/item/main.naver?code={code}"
                 risk_res = requests.get(risk_url, verify=False, timeout=3)
@@ -547,7 +548,6 @@ def update_technical_data(df_theme):
                 elif "🟢" in signal and vol_ratio <= 40:
                     master_tajeom = "📉 [B급] 투매 소화 (종가베팅)"
 
-                # 💡 [버그 해결 2] VLOOKUP 수식 보호를 위해 기존 1~10번 열 순서를 보존하고, 신규 데이터를 맨 뒤로 배치합니다.
                 results.append([
                     name, 
                     f"'{code}", 
@@ -561,7 +561,8 @@ def update_technical_data(df_theme):
                     master_tajeom,
                     today_high,   # 11번째 열
                     today_low,    # 12번째 열
-                    high_60d      # 13번째 열
+                    high_60d,     # 13번째 열
+                    market_cap    # 💡 14번째 열 (시가총액 추가!)
                 ])
                 
             except Exception as e:
@@ -575,11 +576,10 @@ def update_technical_data(df_theme):
                 helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="100", cols="20")
                 
             helper_sheet.clear()
-            # 💡 [버그 해결 3] 헤더 순서도 데이터 배열과 동일하게 맨 뒤에 추가
             headers = [
                 "종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", 
                 "거래량비율", "AI신호", "오마카세점수", "마스터타점", 
-                "오늘 고가", "오늘 저가", "60일 최고가"
+                "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)"
             ]
             
             helper_sheet.update(range_name="A1", values=[headers] + results, value_input_option="USER_ENTERED")
