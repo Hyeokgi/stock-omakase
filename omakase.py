@@ -392,15 +392,21 @@ def update_technical_data(df_theme):
         scanner_names = [str(name).strip() for name in doc.worksheet("스캐너_마스터").col_values(1)[1:] if str(name).strip()]
         dash_names = [str(row[2]).strip() for row in doc.worksheet("대시보드").get_all_values()[4:] if len(row) > 2 and str(row[2]).strip()]
         
+        # 💡 [추가된 생명줄] 앞의 시트들이 #REF!로 박살나도 절대 깨지지 않는 '수급_Raw'에서 종목명을 강제 추출합니다.
+        try:
+            raw_names = [str(row[3]).strip() for row in doc.worksheet("수급_Raw").get_all_values()[1:] if len(row) > 3 and str(row[3]).strip()]
+        except:
+            raw_names = []
+        
         top_3_themes = []
         top_10_themes = []
         if not df_theme.empty:
             top_3_themes = df_theme[df_theme['순위'] <= 3]['종목명'].tolist()
             top_10_themes = df_theme[df_theme['순위'] <= 10]['종목명'].tolist()
             
-        # 💡 [버그 해결 1] 시트가 #REF! 로 망가졌을 때를 대비해 실시간 테마주를 강제 주입하는 심폐소생술!
         target_names = []
-        for name in (scanner_names + dash_names + top_10_themes):
+        # 💡 raw_names를 합쳐서 봇이 항상 수십 개의 종목을 찾을 수 있게 만듭니다.
+        for name in (scanner_names + dash_names + top_10_themes + raw_names):
             clean_name = str(name).strip()
             if clean_name and clean_name != "#REF!" and clean_name not in target_names:
                 target_names.append(clean_name)
