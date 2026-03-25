@@ -17,7 +17,7 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ
 TARGET_PERCENT = 5.0
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
-# 🚀 [속도 최적화] 고속 통신망 세션 유지
+# 🚀 [속도 최적화 패치] 고속 통신망 개통
 session = requests.Session()
 session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'})
 # ==========================================
@@ -67,7 +67,6 @@ def search_code_from_naver(stock_name):
 
 def get_news_keywords():
     try:
-        print("▶️ 뉴스 키워드 수집 시작 (스텔스 모드)...")
         full_text = ""
         for page in range(1, 4):
             url = f"https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258&page={page}"
@@ -79,7 +78,7 @@ def get_news_keywords():
             for summary in summaries:
                 for span in summary.find_all('span'): span.decompose()
                 full_text += summary.get_text(strip=True) + " "
-            time.sleep(0.5)
+            time.sleep(0.3)
             
         if len(full_text) < 100: return pd.DataFrame()
             
@@ -119,7 +118,7 @@ def get_real_money_themes():
     themes = [{'name': a.text.strip(), 'url': "https://finance.naver.com" + a['href']} for tds in [tr.find_all('td') for tr in soup.find('table', {'class': 'type_1'}).find_all('tr')] if len(tds) > 1 for a in [tds[0].find('a')] if a][:20]
                     
     theme_data_list = []
-    print("▶️ 실시간 주도 테마 및 튼튼한 대장주 수집 시작...")
+    print("▶️ 실시간 주도 테마 수집 시작...")
     for theme in themes:
         try:
             soup = BeautifulSoup(session.get(theme['url'], verify=False).content, 'html.parser', from_encoding='cp949')
@@ -196,9 +195,14 @@ def get_naver_main_news():
                 href = a_tag['href']
                 article_match, office_match = re.search(r'article_id=(\d+)', href), re.search(r'office_id=(\d+)', href)
                 link = f"https://n.news.naver.com/mnews/article/{office_match.group(1)}/{article_match.group(1)}" if article_match and office_match else "https://finance.naver.com" + href
-                press = summary_tag.find('span', {'class': 'press'}).text.strip() if summary_tag and summary_tag.find('span', {'class': 'press'}) else "언론사"
-                if summary_tag: [span.decompose() for span in summary_tag.find_all('span')]
-                news_list.append([datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S'), press, a_tag.text.strip(), summary_tag.text.strip() if summary_tag else "", link])
+                press = "언론사"
+                if summary_tag:
+                    press_tag = summary_tag.find('span', {'class': 'press'})
+                    if press_tag: press = press_tag.text.strip()
+                    for span in summary_tag.find_all('span'): span.decompose()
+                summary = summary_tag.text.strip() if summary_tag else ""
+                now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
+                news_list.append([now_str, press, a_tag.text.strip(), summary, link])
                 if len(news_list) >= 20: break
         return pd.DataFrame(news_list, columns=['업데이트 시간', '언론사', '기사 제목', '요약 내용', '기사 링크'])
     except: return pd.DataFrame()
@@ -231,14 +235,15 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
 
 def update_technical_data(df_theme):
     try:
-        print("▶️ 기술적 지표, 수급, 💯스코어링, 🎯타점 판독 엔진 가동...")
+        print("▶️ 기술적 지표, 스코어링, 타점 판독 시작 (초고속 모드)...")
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         doc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)).open_by_url(SHEET_URL)
         
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
+        
         target_names = set()
         
-        # 💡 [핵심] 스캐너_마스터, 대시보드에서만 종목을 추출 (종목 수 최소화)
+        # 💡 [핵심 원상복구] 오직 스캐너_마스터와 대시보드 종목만 분석 (30~40개)
         try:
             for name in doc.worksheet("스캐너_마스터").col_values(1)[1:]:
                 if str(name).strip() and str(name).strip() != "#REF!": target_names.add(str(name).strip())
@@ -246,7 +251,6 @@ def update_technical_data(df_theme):
                 if len(row) > 2 and str(row[2]).strip() and str(row[2]).strip() != "#REF!": target_names.add(str(row[2]).strip())
         except: pass
         
-        # 실시간 주도 테마 10개 추가
         if not df_theme.empty:
             top_3_themes = df_theme[df_theme['순위'] <= 3]['종목명'].tolist()
             top_10_themes = df_theme[df_theme['순위'] <= 10]['종목명'].tolist()
@@ -271,7 +275,7 @@ def update_technical_data(df_theme):
                     
                 if len(history) < 20: continue
                 
-                # 📊 [지표 4가지 추가] 오늘고가, 오늘저가, 60일최고가, 시가총액
+                # 📊 지표 4가지 추가
                 today_data = root.findall(".//item")[-1].get("data").split("|")
                 today_high = int(today_data[2])
                 today_low = int(today_data[3])
@@ -338,7 +342,6 @@ def update_technical_data(df_theme):
                 elif "👀" in signal and vol_ratio <= 60: master_tajeom = "⏳ [A급] 바닥 매집 (종가베팅)"
                 elif "🟢" in signal and vol_ratio <= 40: master_tajeom = "📉 [B급] 투매 소화 (종가베팅)"
 
-                # 💡 14열 배열 완성 (기존 10개 + 신규 4개)
                 results.append([name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, score, master_tajeom, today_high, today_low, high_60d, market_cap])
             except: continue
 
@@ -348,11 +351,10 @@ def update_technical_data(df_theme):
             try: helper_sheet = doc.worksheet("주가데이터_보조")
             except: helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="15")
             helper_sheet.clear()
-            # 💡 14열 헤더
             headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)"]
             helper_sheet.update(range_name="A1", values=[headers] + results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(results)}개 종목 타점판독 업데이트 완료!")
-    except Exception as e: print(f"❌ 기술적 지표 전체 업데이트 에러: {e}")
+            print(f"✅ 총 {len(results)}개 종목 판독 완료! (속도 최적화 완료)")
+    except Exception as e: print(f"❌ 데이터 업데이트 에러: {e}")
 
 if __name__ == "__main__":
     df_theme, is_market_closed = get_real_money_themes()
