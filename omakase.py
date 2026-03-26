@@ -233,7 +233,7 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
 
 def update_technical_data(df_theme):
     try:
-        print("▶️ 기술적 지표, 스코어링, 정밀 타점 판독 시작 (스나이퍼 모드)...")
+        print("▶️ 기술적 지표, 스코어링, 정밀 타점 판독 시작 (스나이퍼 모드 + 재무 경고 태그)...")
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         doc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)).open_by_url(SHEET_URL)
         
@@ -310,16 +310,23 @@ def update_technical_data(df_theme):
                 is_junk = bool(risk_soup.find('img', alt=re.compile('관리종목|환기종목|거래정지|투자위험')))
                 
                 is_financial_risk = False
+                is_chronic_loss = False
                 try:
                     fin_table = risk_soup.find('table', {'class': 'tb_type1 tb_num tb_type1_ifrs'})
                     if fin_table:
+                        op_profits = []
                         total_equity = None
                         capital_stock = None
                         for tr in fin_table.find('tbody').find_all('tr'):
                             th = tr.find('th')
                             if not th: continue
                             title = th.text.strip()
-                            if title == '자본총계':
+                            if title == '영업이익':
+                                for td in tr.find_all('td')[:3]:
+                                    val = td.text.replace(',', '').strip()
+                                    try: op_profits.append(float(val))
+                                    except: pass
+                            elif title == '자본총계':
                                 for td in reversed(tr.find_all('td')):
                                     val = td.text.replace(',', '').strip()
                                     try:
@@ -333,8 +340,14 @@ def update_technical_data(df_theme):
                                         capital_stock = float(val)
                                         break
                                     except: pass
+                        
+                        # 1. 자본잠식 (즉각 아웃 사유)
                         if capital_stock and total_equity and total_equity < capital_stock:
                             is_financial_risk = True
+                        
+                        # 2. 3년 연속 영업이익 적자 (경고 태그용)
+                        if len(op_profits) == 3 and all(p < 0 for p in op_profits):
+                            is_chronic_loss = True
                 except: pass
 
                 is_dual_buy, f_buy, i_buy, supply_text = False, 0, 0, ""
@@ -412,16 +425,17 @@ def update_technical_data(df_theme):
                 
                 elif "🌟" in signal: master_tajeom = "🌟 [VIP] 쌍끌이 모아가기" 
                 
-                # 💡 [핵심 패치] A급/B급 스나이퍼 정밀 필터 적용
-                # A급: 거래량 45% 이하 + 20일선 근처(5% 이내) 지지 + 크게 안 빠짐(-3% 이상 유지)
                 elif vol_ratio <= 45 and (ma20 <= current_price <= ma20 * 1.05) and change_rate >= -0.03: 
                     master_tajeom = "⏳ [A급] 20일선 눌림 (종가베팅)"
                 
-                # B급: 거래량 30% 이하 (완전 마름) + 5일선 이탈 투매 소화 + 폭락 멈춤(-4% 이상 유지)
                 elif vol_ratio <= 30 and current_price < ma5 and change_rate >= -0.04: 
                     master_tajeom = "📉 [B급] 투매 소화 (종가베팅)"
                 
                 elif change_rate >= 0.12 and vol_ratio >= 200: master_tajeom = "⚡ [단타용] 당일 주도주"
+
+                # 💡 [만성 적자 경고 태그 부착] 매매금지는 아니지만, 스캐너에 올라갈 때 꼬리표를 달아줌!
+                if is_chronic_loss and "급]" in master_tajeom:
+                    master_tajeom += " ⚠️(3년적자)"
 
                 results.append([name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, score, master_tajeom, today_high, today_low, high_60d, market_cap, shadow_text, dist_text])
             except Exception as e:
@@ -435,7 +449,7 @@ def update_technical_data(df_theme):
             helper_sheet.clear()
             headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)", "윗꼬리판독", "전고점위치"]
             helper_sheet.update(range_name="A1", values=[headers] + results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(results)}개 종목 (스나이퍼 필터 적용) 판독 완료! 🚀")
+            print(f"✅ 총 {len(results)}개 종목 (스나이퍼 + 적자경고 태그) 판독 완료! 🚀")
             
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
