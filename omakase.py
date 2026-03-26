@@ -233,7 +233,7 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
 
 def update_technical_data(df_theme):
     try:
-        print("▶️ 기술적 지표, 스코어링, 정밀 타점 판독 시작...")
+        print("▶️ 기술적 지표, 스코어링, 정밀 타점 판독 시작 (스나이퍼 모드)...")
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         doc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)).open_by_url(SHEET_URL)
         
@@ -306,7 +306,6 @@ def update_technical_data(df_theme):
                 
                 market_cap = get_market_cap(code)
                 
-                # 💡 [핵심 패치] 상폐 방어막 (바이오 등 기술특례상장 고려하여 적자는 무시, 오직 자본잠식만 판독!)
                 risk_soup = BeautifulSoup(session.get(f"https://finance.naver.com/item/main.naver?code={code}", verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
                 is_junk = bool(risk_soup.find('img', alt=re.compile('관리종목|환기종목|거래정지|투자위험')))
                 
@@ -334,8 +333,6 @@ def update_technical_data(df_theme):
                                         capital_stock = float(val)
                                         break
                                     except: pass
-
-                        # ☠️ 자본잠식 (자본총계 < 자본금) - 이건 바이오든 뭐든 즉각 상폐 사유이므로 남겨둠
                         if capital_stock and total_equity and total_equity < capital_stock:
                             is_financial_risk = True
                 except: pass
@@ -414,8 +411,16 @@ def update_technical_data(df_theme):
                 elif is_4yin_1yang: master_tajeom = "📉 [B급] 4음1양 지지"
                 
                 elif "🌟" in signal: master_tajeom = "🌟 [VIP] 쌍끌이 모아가기" 
-                elif vol_ratio <= 60 and current_price >= ma20: master_tajeom = "⏳ [A급] 바닥 매집 (종가베팅)"
-                elif vol_ratio <= 40: master_tajeom = "📉 [B급] 투매 소화 (종가베팅)"
+                
+                # 💡 [핵심 패치] A급/B급 스나이퍼 정밀 필터 적용
+                # A급: 거래량 45% 이하 + 20일선 근처(5% 이내) 지지 + 크게 안 빠짐(-3% 이상 유지)
+                elif vol_ratio <= 45 and (ma20 <= current_price <= ma20 * 1.05) and change_rate >= -0.03: 
+                    master_tajeom = "⏳ [A급] 20일선 눌림 (종가베팅)"
+                
+                # B급: 거래량 30% 이하 (완전 마름) + 5일선 이탈 투매 소화 + 폭락 멈춤(-4% 이상 유지)
+                elif vol_ratio <= 30 and current_price < ma5 and change_rate >= -0.04: 
+                    master_tajeom = "📉 [B급] 투매 소화 (종가베팅)"
+                
                 elif change_rate >= 0.12 and vol_ratio >= 200: master_tajeom = "⚡ [단타용] 당일 주도주"
 
                 results.append([name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, score, master_tajeom, today_high, today_low, high_60d, market_cap, shadow_text, dist_text])
@@ -430,7 +435,7 @@ def update_technical_data(df_theme):
             helper_sheet.clear()
             headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)", "윗꼬리판독", "전고점위치"]
             helper_sheet.update(range_name="A1", values=[headers] + results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(results)}개 종목 (유연한 바이오 재무 패치 적용) 판독 완료! 🚀")
+            print(f"✅ 총 {len(results)}개 종목 (스나이퍼 필터 적용) 판독 완료! 🚀")
             
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
