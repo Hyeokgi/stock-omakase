@@ -240,7 +240,6 @@ def update_technical_data(df_theme):
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
         target_names = set()
         
-        # 1000억 이상 거래대금 스캔
         try:
             raw_data = doc.worksheet("수급_Raw").get_all_values()
             for row in raw_data[1:]:
@@ -289,19 +288,13 @@ def update_technical_data(df_theme):
                 
                 high_60d = max(high_prices[:-1]) if len(high_prices) > 1 else today_high
                 
-                # 💡 [핵심 패치] 캔들의 비율을 계산하는 진짜배기 윗꼬리 판독 로직
                 body_top = max(current_price, open_price)
                 body_bottom = min(current_price, open_price)
-                
                 upper_shadow = today_high - body_top
                 real_body = body_top - body_bottom
-                
                 upper_shadow_ratio = upper_shadow / current_price if current_price > 0 else 0
                 
-                # 1. 윗꼬리가 절대적으로 5% 이상 길거나 (대형 설거지)
-                # 2. 윗꼬리가 2.5% 이상이면서, 붉은 몸통보다 1.5배 이상 길쭉할 때만 (역망치/비석형) 위험으로 간주!
                 is_long_shadow = (upper_shadow_ratio >= 0.05) or (upper_shadow_ratio >= 0.025 and upper_shadow > real_body * 1.5)
-                
                 shadow_text = "⚠️ 윗꼬리 위험" if is_long_shadow else ("👑 깔끔한 단봉" if upper_shadow_ratio <= 0.015 else "🟡 보통 캔들")
                 
                 df_hist = pd.DataFrame(history)
@@ -374,17 +367,25 @@ def update_technical_data(df_theme):
                 is_squeeze_breakout = band_width <= 0.15 and current_price >= upper_band * 0.98 and vol_ratio >= 150
                 is_ss_breakout = vol_ratio >= 150 and change_rate >= 0.05 and not is_long_shadow and is_near_high
                 
+                # 💡 [핵심 패치] 일반 우량 타점(A, B급) 복구!
                 master_tajeom = "⏸️ 관망 및 대기"
+                
                 if len(history) < 20: master_tajeom = "⚠️ 신규상장 (데이터 부족)"
                 elif is_junk: master_tajeom = "🚨 매매금지"
                 elif is_long_shadow: master_tajeom = "⚠️ 윗꼬리 위험 (매수금지)"
                 elif is_huge_gap: master_tajeom = "⚠️ 갭상승 과다 (추격금지)"
+                
+                # 특수 패턴 우선 부여
                 elif is_ss_breakout: master_tajeom = "👑 [SS급] 전고점 돌파"
                 elif is_doji: master_tajeom = "🎯 [S급] 도지 눌림목"
                 elif is_squeeze_breakout: master_tajeom = "🚀 [A급] 수렴돌파"
                 elif is_4yin_1yang: master_tajeom = "📉 [B급] 4음1양 지지"
-                elif change_rate >= 0.12 and vol_ratio >= 200: master_tajeom = "⚡ [단타용] 당일 주도주"
+                
+                # 일반 우량 타점(안전망) 복원
                 elif "🌟" in signal: master_tajeom = "🌟 [VIP] 쌍끌이 모아가기" 
+                elif vol_ratio <= 60 and current_price >= ma20: master_tajeom = "⏳ [A급] 바닥 매집 (종가베팅)"
+                elif vol_ratio <= 40: master_tajeom = "📉 [B급] 투매 소화 (종가베팅)"
+                elif change_rate >= 0.12 and vol_ratio >= 200: master_tajeom = "⚡ [단타용] 당일 주도주"
 
                 results.append([name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, score, master_tajeom, today_high, today_low, high_60d, market_cap, shadow_text, dist_text])
             except Exception as e:
@@ -398,7 +399,7 @@ def update_technical_data(df_theme):
             helper_sheet.clear()
             headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)", "윗꼬리판독", "전고점위치"]
             helper_sheet.update(range_name="A1", values=[headers] + results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(results)}개 종목 (캔들 비율 판독 탑재) 완료! 🚀")
+            print(f"✅ 총 {len(results)}개 종목 (안전망 복구 완료) 판독 완료! 🚀")
             
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
