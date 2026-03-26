@@ -306,7 +306,7 @@ def update_technical_data(df_theme):
                 
                 market_cap = get_market_cap(code)
                 
-                # 💡 [핵심 패치] 상폐 방어막 (재무제표 퀵 스캔)
+                # 💡 [핵심 패치] 상폐 방어막 (바이오 등 기술특례상장 고려하여 적자는 무시, 오직 자본잠식만 판독!)
                 risk_soup = BeautifulSoup(session.get(f"https://finance.naver.com/item/main.naver?code={code}", verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
                 is_junk = bool(risk_soup.find('img', alt=re.compile('관리종목|환기종목|거래정지|투자위험')))
                 
@@ -314,19 +314,13 @@ def update_technical_data(df_theme):
                 try:
                     fin_table = risk_soup.find('table', {'class': 'tb_type1 tb_num tb_type1_ifrs'})
                     if fin_table:
-                        op_profits = []
                         total_equity = None
                         capital_stock = None
                         for tr in fin_table.find('tbody').find_all('tr'):
                             th = tr.find('th')
                             if not th: continue
                             title = th.text.strip()
-                            if title == '영업이익':
-                                for td in tr.find_all('td')[:3]:
-                                    val = td.text.replace(',', '').strip()
-                                    try: op_profits.append(float(val))
-                                    except: pass
-                            elif title == '자본총계':
+                            if title == '자본총계':
                                 for td in reversed(tr.find_all('td')):
                                     val = td.text.replace(',', '').strip()
                                     try:
@@ -341,11 +335,8 @@ def update_technical_data(df_theme):
                                         break
                                     except: pass
 
-                        # 자본잠식 (자본총계 < 자본금)
+                        # ☠️ 자본잠식 (자본총계 < 자본금) - 이건 바이오든 뭐든 즉각 상폐 사유이므로 남겨둠
                         if capital_stock and total_equity and total_equity < capital_stock:
-                            is_financial_risk = True
-                        # 3년 연속 영업이익 적자
-                        if len(op_profits) == 3 and all(p < 0 for p in op_profits):
                             is_financial_risk = True
                 except: pass
 
@@ -372,7 +363,7 @@ def update_technical_data(df_theme):
                 is_converging = (band_width <= 0.20) or (ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035)
                 
                 if is_junk: signal = "🚨 [위험] 매매금지 (잡주/경고)"
-                elif is_financial_risk: signal = "🚨 [위험] 매매금지 (재무/상폐위험)"
+                elif is_financial_risk: signal = "🚨 [위험] 매매금지 (자본잠식위험)"
                 elif is_dual_buy and is_converging: signal = "🌟 A급 스윙 (쌍끌이 모아가기)"
                 elif band_width <= 0.20 and current_price >= ma20: signal = "🚀 N자파동 (밴드돌파)" + supply_text if current_price >= upper_band * 0.98 else "👀 N자파동 (에너지응축)" + supply_text
                 elif ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035: signal = "📈 2차랠리 (이평수렴)" + supply_text if current_price > ma20 else "⏳ 이평선 저항" + supply_text
@@ -413,7 +404,7 @@ def update_technical_data(df_theme):
                 
                 if len(history) < 20: master_tajeom = "⚠️ 신규상장 (데이터 부족)"
                 elif is_junk: master_tajeom = "🚨 매매금지 (딱지)"
-                elif is_financial_risk: master_tajeom = "🚨 매매금지 (재무위험)"
+                elif is_financial_risk: master_tajeom = "🚨 매매금지 (자본잠식)"
                 elif is_long_shadow: master_tajeom = "⚠️ 윗꼬리 위험 (매수금지)"
                 elif is_huge_gap: master_tajeom = "⚠️ 갭상승 과다 (추격금지)"
                 
@@ -439,7 +430,7 @@ def update_technical_data(df_theme):
             helper_sheet.clear()
             headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)", "윗꼬리판독", "전고점위치"]
             helper_sheet.update(range_name="A1", values=[headers] + results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(results)}개 종목 (재무 상폐 방어막 작동중) 판독 완료! 🚀")
+            print(f"✅ 총 {len(results)}개 종목 (유연한 바이오 재무 패치 적용) 판독 완료! 🚀")
             
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
