@@ -17,7 +17,7 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ
 TARGET_PERCENT = 5.0
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
-# 🚀 [속도 최적화] 고속 통신망 개통
+# 🚀 [속도 최적화 패치] 고속 통신망 개통
 session = requests.Session()
 session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'})
 # ==========================================
@@ -102,8 +102,11 @@ def get_market_cap(code):
         market_sum_str = market_sum_tag.text.replace(',', '').replace('\t', '').replace('\n', '').strip()
         if '조' in market_sum_str:
             parts = market_sum_str.split('조')
-            final_cap = int(parts[0].strip()) * 10000 + (int(parts[1].strip()) if len(parts)>1 and parts[1].strip() else 0)
-        else: final_cap = int(market_sum_str)
+            jo = int(parts[0].strip())
+            eok = int(parts[1].strip()) if len(parts) > 1 and parts[1].strip() else 0
+            final_cap = jo * 10000 + eok
+        else:
+            final_cap = int(market_sum_str.strip())
         market_cap_cache[code] = final_cap
         return final_cap
     except: return 999999 
@@ -235,33 +238,25 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
 
 def update_technical_data(df_theme):
     try:
-        print("▶️ 기술적 지표, 스코어링, 타점 판독 시작 (대시보드 전용 초고속 모드)...")
+        print("▶️ 기술적 지표, 스코어링, 깐깐한 실전 타점 판독 시작...")
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         doc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)).open_by_url(SHEET_URL)
         
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
-        
         target_names = set()
         
-        # 💡 [핵심 원상복구!!] 수급_Raw, 실시간 테마 전체 스캔 기능을 완전히 삭제했습니다.
-        # 오직 '대시보드' 탭에 있는 과거 대장주(C열)만 쏙쏙 뽑아옵니다!
         try:
-            print("▶️ 대시보드 종목만 추출합니다...")
-            dash_data = doc.worksheet("대시보드").get_all_values()
-            for row in dash_data[4:]: # 5번째 줄(인덱스 4)부터 스캔
-                if len(row) > 2:
-                    name = str(row[2]).strip()
-                    # 빈칸이나 에러값 무시
-                    if name and name not in ["#REF!", "로딩중...", "데이터대기", "FALSE"]: 
-                        target_names.add(name)
-            print(f"✅ 대시보드에서 {len(target_names)}개 핵심 종목만 확보 완료!")
-        except Exception as e: 
-            print(f"❌ 대시보드 탭 수집 에러: {e}")
-
-        # 만약 대시보드가 다 지워져서 비상사태일 경우에만 최소 종목 세팅
-        if not target_names:
-            print("⚠️ 대시보드 종목이 없어 비상용 기본 종목으로 진행합니다.")
-            target_names = {"삼성전자", "SK하이닉스", "쏠리드", "LIG넥스원"}
+            for name in doc.worksheet("스캐너_마스터").col_values(1)[1:]:
+                if str(name).strip() and str(name).strip() != "#REF!": target_names.add(str(name).strip())
+            for row in doc.worksheet("대시보드").get_all_values()[4:]:
+                if len(row) > 2 and str(row[2]).strip() and str(row[2]).strip() != "#REF!": target_names.add(str(row[2]).strip())
+        except: pass
+        
+        if not df_theme.empty:
+            top_3_themes = df_theme[df_theme['순위'] <= 3]['종목명'].tolist()
+            top_10_themes = df_theme[df_theme['순위'] <= 10]['종목명'].tolist()
+            for t in top_10_themes: target_names.add(t)
+        else: top_3_themes, top_10_themes = [], []
 
         results = []
         for name in list(target_names):
@@ -270,23 +265,33 @@ def update_technical_data(df_theme):
                 if not code: continue
                 
                 url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=60&requestType=0"
-                res = session.get(url, verify=False, timeout=3)
-                root = ET.fromstring(res.text)
+                root = ET.fromstring(session.get(url, verify=False, timeout=3).text)
                 
                 history = []
                 high_prices = []
-                for item in root.findall(".//item"):
+                items = root.findall(".//item")
+                for item in items:
                     data = item.get("data").split("|")
                     history.append({"close": int(data[4]), "volume": int(data[5])})
                     high_prices.append(int(data[2]))
                     
                 if len(history) < 20: continue
                 
-                # 📊 지표 14개 추출 로직
-                today_data = root.findall(".//item")[-1].get("data").split("|")
+                # 📊 지표 추출 및 [패치 1] 전고점 착시 방지
+                today_data = items[-1].get("data").split("|")
+                open_price = int(today_data[1])
                 today_high = int(today_data[2])
                 today_low = int(today_data[3])
-                high_60d = max(high_prices)
+                current_price = int(today_data[4])
+                
+                # 오늘 고가는 제외하고 60일 최고가를 잡습니다!
+                high_60d = max(high_prices[:-1]) if len(high_prices) > 1 else today_high
+                
+                # 💡 [패치 2] 윗꼬리 판독기 (3.5% 이상 윗꼬리는 위험)
+                body_top = max(current_price, open_price)
+                upper_shadow_ratio = (today_high - body_top) / current_price if current_price > 0 else 0
+                is_long_shadow = upper_shadow_ratio >= 0.035
+                
                 market_cap = get_market_cap(code)
                 
                 risk_soup = BeautifulSoup(session.get(f"https://finance.naver.com/item/main.naver?code={code}", verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
@@ -302,7 +307,6 @@ def update_technical_data(df_theme):
                 except: pass
 
                 df_hist = pd.DataFrame(history)
-                current_price = int(df_hist['close'].iloc[-1])
                 prev_price = int(df_hist['close'].iloc[-2]) if len(df_hist) > 1 else current_price
                 change_rate = (current_price - prev_price) / prev_price if prev_price > 0 else 0.0
                 
@@ -343,13 +347,24 @@ def update_technical_data(df_theme):
                 yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) > 1 else 0
                 v_yest_ratio = (yest_vol / avg_vol_10) * 100 if avg_vol_10 > 0 else 0
                 
+                # 💡 [패치 3] 철통 방어 타점 로직 (윗꼬리 & 추격매수 완전 차단)
                 master_tajeom = "⏸️ 관망 및 대기"
-                if is_junk: master_tajeom = "🚨 매매금지"
-                elif "🌟" in signal: master_tajeom = "🌟 [VIP] 쌍끌이 모아가기" 
-                elif ("👀" in signal or "🚀" in signal) and vol_ratio <= 50 and v_yest_ratio >= 150: master_tajeom = "👑 [SS급] N자 단봉눌림 (종가베팅)"
-                elif "🚀" in signal and vol_ratio >= 150: master_tajeom = "🎯 [S급] 2차랠리 돌파 (1차 진입)"
-                elif "👀" in signal and vol_ratio <= 60: master_tajeom = "⏳ [A급] 바닥 매집 (종가베팅)"
-                elif "🟢" in signal and vol_ratio <= 40: master_tajeom = "📉 [B급] 투매 소화 (종가베팅)"
+                if is_junk: 
+                    master_tajeom = "🚨 매매금지"
+                elif is_long_shadow:
+                    master_tajeom = "⚠️ 윗꼬리 위험 (매수금지)"
+                elif change_rate >= 0.15: # 당일 15% 이상 급등은 기준봉 형성 과정이므로 종베 패스
+                    master_tajeom = "⚠️ 단기 급등 (추격금지)"
+                elif "🌟" in signal: 
+                    master_tajeom = "🌟 [VIP] 쌍끌이 모아가기" 
+                elif ("👀" in signal or "🚀" in signal) and vol_ratio <= 50 and v_yest_ratio >= 150: 
+                    master_tajeom = "👑 [SS급] N자 단봉눌림 (종가베팅)"
+                elif "🚀" in signal and vol_ratio >= 150 and current_price >= high_60d * 0.95: 
+                    master_tajeom = "🎯 [S급] 신고가 돌파 (1차 진입)"
+                elif "👀" in signal and vol_ratio <= 60: 
+                    master_tajeom = "⏳ [A급] 바닥 매집 (종가베팅)"
+                elif "🟢" in signal and vol_ratio <= 40: 
+                    master_tajeom = "📉 [B급] 투매 소화 (종가베팅)"
 
                 results.append([name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, score, master_tajeom, today_high, today_low, high_60d, market_cap])
             except Exception as e:
@@ -363,7 +378,7 @@ def update_technical_data(df_theme):
             helper_sheet.clear()
             headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)"]
             helper_sheet.update(range_name="A1", values=[headers] + results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(results)}개 대시보드 종목 판독 완료! (속도 정상화 완료) 🚀")
+            print(f"✅ 총 {len(results)}개 종목 깐깐한 타점 판독 완료! 🚀")
             
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
@@ -378,6 +393,6 @@ if __name__ == "__main__":
     print("🤖 2. 구글 시트로 전송 시작...")
     update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_closed)
     
-    print("🤖 3. 주가 보조데이터 및 스코어링 계산 시작...")
+    print("🤖 3. 깐깐한 실전 매매 로직 계산 시작...")
     update_technical_data(df_theme) 
     print("✅ 모든 작업이 완료되었습니다!")
