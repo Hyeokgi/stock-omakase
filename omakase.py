@@ -101,11 +101,8 @@ def get_market_cap(code):
         market_sum_str = market_sum_tag.text.replace(',', '').replace('\t', '').replace('\n', '').strip()
         if '조' in market_sum_str:
             parts = market_sum_str.split('조')
-            jo = int(parts[0].strip())
-            eok = int(parts[1].strip()) if len(parts) > 1 and parts[1].strip() else 0
-            final_cap = jo * 10000 + eok
-        else:
-            final_cap = int(market_sum_str.strip())
+            final_cap = int(parts[0].strip()) * 10000 + (int(parts[1].strip()) if len(parts)>1 and parts[1].strip() else 0)
+        else: final_cap = int(market_sum_str)
         market_cap_cache[code] = final_cap
         return final_cap
     except: return 999999 
@@ -186,7 +183,6 @@ def get_naver_search_ranking():
 
 def get_naver_main_news():
     try:
-        print("▶️ 네이버 주요 뉴스 수집 시작...")
         soup = BeautifulSoup(session.get("https://finance.naver.com/news/mainnews.naver", verify=False, timeout=5).content, 'html.parser', from_encoding='cp949')
         news_list = []
         for dl in soup.find_all('dl'):
@@ -244,36 +240,27 @@ def update_technical_data(df_theme):
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
         target_names = set()
         
-        # 💡 [1000억 싹쓸이 패치] 수급_Raw 탭에서 거래대금 1000억 이상 터진 종목을 전부 스캔 대상에 올립니다!
+        # 1000억 이상 거래대금 스캔
         try:
-            print("▶️ 수급_Raw에서 거래대금 1000억 이상 찐 주도주를 찾습니다...")
             raw_data = doc.worksheet("수급_Raw").get_all_values()
             for row in raw_data[1:]:
                 if len(row) >= 7:
-                    # 끝에서 4번째가 종목명, 끝에서 1번째가 거래대금(억원)
                     stock_name = str(row[-4]).strip()
                     val_str = str(row[-1]).replace(',', '').replace('억원', '').replace('"', '').strip()
-                    
                     if val_str.isdigit() and int(val_str) >= 1000:
                         if stock_name and stock_name not in ["#REF!", "로딩중...", "데이터대기", "FALSE"]:
                             target_names.add(stock_name)
-            print(f"✅ 1000억 이상 터진 세력주 {len(target_names)}개 확보 완료!")
-        except Exception as e:
-            print(f"❌ 수급_Raw 1000억 스캔 에러: {e}")
+        except: pass
 
-        # 대시보드 종목도 추가 편입
         try:
             for row in doc.worksheet("대시보드").get_all_values()[4:]:
                 if len(row) > 2 and str(row[2]).strip() and str(row[2]).strip() != "#REF!": 
                     target_names.add(str(row[2]).strip())
         except: pass
         
-        # 오늘 주도 테마 TOP 5 추가
         if not df_theme.empty:
             top_5_themes = df_theme[df_theme['순위'] <= 5]['종목명'].tolist()
             for t in top_5_themes: target_names.add(t)
-
-        print(f"▶️ 최종 정예 스캔 대상: {len(target_names)}개 종목 (1~2분 소요 예상)")
 
         results = []
         for name in list(target_names):
@@ -302,9 +289,19 @@ def update_technical_data(df_theme):
                 
                 high_60d = max(high_prices[:-1]) if len(high_prices) > 1 else today_high
                 
+                # 💡 [핵심 패치] 캔들의 비율을 계산하는 진짜배기 윗꼬리 판독 로직
                 body_top = max(current_price, open_price)
-                upper_shadow_ratio = (today_high - body_top) / current_price if current_price > 0 else 0
-                is_long_shadow = upper_shadow_ratio >= 0.03
+                body_bottom = min(current_price, open_price)
+                
+                upper_shadow = today_high - body_top
+                real_body = body_top - body_bottom
+                
+                upper_shadow_ratio = upper_shadow / current_price if current_price > 0 else 0
+                
+                # 1. 윗꼬리가 절대적으로 5% 이상 길거나 (대형 설거지)
+                # 2. 윗꼬리가 2.5% 이상이면서, 붉은 몸통보다 1.5배 이상 길쭉할 때만 (역망치/비석형) 위험으로 간주!
+                is_long_shadow = (upper_shadow_ratio >= 0.05) or (upper_shadow_ratio >= 0.025 and upper_shadow > real_body * 1.5)
+                
                 shadow_text = "⚠️ 윗꼬리 위험" if is_long_shadow else ("👑 깔끔한 단봉" if upper_shadow_ratio <= 0.015 else "🟡 보통 캔들")
                 
                 df_hist = pd.DataFrame(history)
@@ -375,7 +372,7 @@ def update_technical_data(df_theme):
 
                 is_doji = abs(change_rate) <= 0.03 and vol_ratio <= 60 and v_yest_ratio >= 120 and current_price >= ma5
                 is_squeeze_breakout = band_width <= 0.15 and current_price >= upper_band * 0.98 and vol_ratio >= 150
-                is_ss_breakout = vol_ratio >= 150 and change_rate >= 0.05 and upper_shadow_ratio <= 0.015 and is_near_high
+                is_ss_breakout = vol_ratio >= 150 and change_rate >= 0.05 and not is_long_shadow and is_near_high
                 
                 master_tajeom = "⏸️ 관망 및 대기"
                 if len(history) < 20: master_tajeom = "⚠️ 신규상장 (데이터 부족)"
@@ -401,7 +398,7 @@ def update_technical_data(df_theme):
             helper_sheet.clear()
             headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)", "윗꼬리판독", "전고점위치"]
             helper_sheet.update(range_name="A1", values=[headers] + results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(results)}개 종목 (1000억+ 주도주) 정밀 판독 완료! 🚀")
+            print(f"✅ 총 {len(results)}개 종목 (캔들 비율 판독 탑재) 완료! 🚀")
             
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
