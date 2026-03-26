@@ -52,7 +52,12 @@ STOPWORDS = [
     '속보', '단독', '기자', '특파원', '앵커', '저작권', '무단', '전재', '재배포', '금지', '뉴스',
     '보도', '자료', '사진', '관계자', '주장', '설명', '강조', '위원회', '법안', '회의', '통과',
     '정책', '의원', '장관', '페이지', '주소', '입력', '방문', '삭제', '요청', '정확', '확인',
-    '문의', '사항', '고객', '센터', '안내', '감사', '반대', '선임', '공개', '자본', '공개'
+    '문의', '사항', '고객', '센터', '안내', '감사', '반대', '선임', '공개', '자본', '공개',
+    
+    # 🔥 [핀셋 방어막 추가] 거시경제, 일반 동사, 불필요한 단어 영구 차단
+    '이란', '국민연금', '종전', '전쟁', '트럼프', '제안', '찬성', '대통령', '사내', '협상',
+    '출시', '계좌', '중동', '상품', '체제', '변경', '투자증권', '성장', '시그널', '신규',
+    '정치', '외교', '합의', '수출', '수입', '도입', '본격', '소식', '임박', '부각', '주도'
 ]
 
 def search_code_from_naver(stock_name):
@@ -67,27 +72,35 @@ def search_code_from_naver(stock_name):
 def get_news_keywords():
     try:
         full_text = ""
-        for page in range(1, 4):
-            url = f"https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258&page={page}"
+        # 💡 [핵심 패치] 시황/전망 대신 '특징주' 검색 결과를 1~5페이지 긁어옵니다. (진짜 테마의 뼈대만 잡힙니다)
+        for page in range(1, 6):
+            url = f"https://finance.naver.com/news/news_search.naver?q=%C6%AF%C1%A1%C1%D6&page={page}"
             res = session.get(url, verify=False)
-            soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
-            subjects = soup.find_all(['dt', 'dd'], {'class': 'articleSubject'})
-            for sub in subjects: full_text += sub.get_text(strip=True) + " "
-            summaries = soup.find_all('dd', {'class': 'articleSummary'})
-            for summary in summaries:
-                for span in summary.find_all('span'): span.decompose()
-                full_text += summary.get_text(strip=True) + " "
+            soup = BeautifulSoup(res.content, 'html.parser', from_encoding='euc-kr')
+            
+            # 뉴스 제목만 핀셋 추출 (본문의 불필요한 매크로 설명 차단)
+            subjects = soup.select('.articleSubject a')
+            if not subjects: 
+                subjects = soup.select('.tit')
+                
+            for sub in subjects: 
+                title = sub.get_text(strip=True)
+                title = re.sub(r'\[.*?\]', '', title) # [특징주], [속보] 같은 대괄호 텍스트 날림
+                full_text += title + " "
             time.sleep(0.3)
             
-        if len(full_text) < 100: return pd.DataFrame()
+        if len(full_text) < 50: return pd.DataFrame()
             
         from kiwipiepy import Kiwi
         kiwi = Kiwi()
         nouns = [token.form for token in kiwi.tokenize(full_text) if token.tag in ['NNG', 'NNP'] and len(token.form) > 1 and token.form not in STOPWORDS]
+        
         top_15 = Counter(nouns).most_common(15)
         now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M')
         return pd.DataFrame([[now_str, rank, word, count] for rank, (word, count) in enumerate(top_15, 1)], columns=['업데이트시간', '순위', '키워드', '언급횟수'])
-    except: return pd.DataFrame()
+    except Exception as e:
+        print(f"키워드 에러: {e}")
+        return pd.DataFrame()
 
 market_cap_cache = {} 
 def get_market_cap(code):
@@ -233,7 +246,7 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
 
 def update_technical_data(df_theme):
     try:
-        print("▶️ 기술적 지표, 스코어링, 정밀 타점 판독 시작 (스나이퍼 모드 + 재무 경고 태그)...")
+        print("▶️ 기술적 지표, 스코어링, 정밀 타점 판독 시작...")
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         doc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)).open_by_url(SHEET_URL)
         
@@ -341,11 +354,9 @@ def update_technical_data(df_theme):
                                         break
                                     except: pass
                         
-                        # 1. 자본잠식 (즉각 아웃 사유)
                         if capital_stock and total_equity and total_equity < capital_stock:
                             is_financial_risk = True
                         
-                        # 2. 3년 연속 영업이익 적자 (경고 태그용)
                         if len(op_profits) == 3 and all(p < 0 for p in op_profits):
                             is_chronic_loss = True
                 except: pass
@@ -433,7 +444,6 @@ def update_technical_data(df_theme):
                 
                 elif change_rate >= 0.12 and vol_ratio >= 200: master_tajeom = "⚡ [단타용] 당일 주도주"
 
-                # 💡 [만성 적자 경고 태그 부착] 매매금지는 아니지만, 스캐너에 올라갈 때 꼬리표를 달아줌!
                 if is_chronic_loss and "급]" in master_tajeom:
                     master_tajeom += " ⚠️(3년적자)"
 
@@ -449,7 +459,7 @@ def update_technical_data(df_theme):
             helper_sheet.clear()
             headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)", "윗꼬리판독", "전고점위치"]
             helper_sheet.update(range_name="A1", values=[headers] + results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(results)}개 종목 (스나이퍼 + 적자경고 태그) 판독 완료! 🚀")
+            print(f"✅ 총 {len(results)}개 종목 판독 완료! 🚀")
             
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
