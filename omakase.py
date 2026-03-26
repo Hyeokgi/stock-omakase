@@ -17,7 +17,6 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ
 TARGET_PERCENT = 5.0
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
-# 🚀 [속도 최적화 패치] 고속 통신망 개통
 session = requests.Session()
 session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'})
 # ==========================================
@@ -233,33 +232,30 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
 
 def update_technical_data(df_theme):
     try:
-        print("▶️ 기술적 지표, 스코어링, 정밀 타점 판독 시작...")
+        print("▶️ 기술적 지표, 스코어링, 정밀 타점 판독 시작 (초고속 DB 누적 모드)...")
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         doc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)).open_by_url(SHEET_URL)
         
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
         target_names = set()
         
-        # 💡 [핵심 복구 완료] 오직 "대시보드의 1등 대장주"만 스캔합니다! 스캐너_마스터의 잡종목은 긁어오지 않습니다.
+        # 💡 [핵심 복원] 대시보드(최근 3개월 주도주 전체)와 스캐너 명단을 모두 긁어와 분석합니다!
         try:
-            dash_data = doc.worksheet("대시보드").get_all_values()
-            seen_themes = set()
-            for row in dash_data[4:]:
+            for name in doc.worksheet("스캐너_마스터").col_values(1)[1:]:
+                if str(name).strip() and str(name).strip() not in ["#REF!", "로딩중...", "데이터대기", "FALSE"]: 
+                    target_names.add(str(name).strip())
+            for row in doc.worksheet("대시보드").get_all_values()[4:]:
                 if len(row) > 2:
-                    theme_name = str(row[1]).strip()
-                    stock_name = str(row[2]).strip()
-                    if theme_name and stock_name and stock_name not in ["#REF!", "로딩중...", "데이터대기", "FALSE"]: 
-                        if theme_name not in seen_themes:
-                            target_names.add(stock_name)
-                            seen_themes.add(theme_name)
+                    s_name = str(row[2]).strip()
+                    if s_name and s_name not in ["#REF!", "로딩중...", "데이터대기", "FALSE"]: 
+                        target_names.add(s_name)
         except: pass
         
-        # 💡 주도 테마 TOP 5 추가 (5개 테마 * 3 = 최대 15종목 이내)
         if not df_theme.empty:
             top_5_themes = df_theme[df_theme['순위'] <= 5]['종목명'].tolist()
             for t in top_5_themes: target_names.add(t)
 
-        print(f"▶️ 최종 정예 분석 대상: {len(target_names)}개 종목 (1분 이내 컷)")
+        print(f"▶️ 총 {len(target_names)}개 종목을 고속망으로 스캔합니다. (예상 소요시간: 1~2분)")
 
         results = []
         for name in list(target_names):
@@ -387,7 +383,7 @@ def update_technical_data(df_theme):
             helper_sheet.clear()
             headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)", "윗꼬리판독", "전고점위치"]
             helper_sheet.update(range_name="A1", values=[headers] + results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(results)}개 정예 종목 판독 완료! (속도 정상화) 🚀")
+            print(f"✅ 총 {len(results)}개 종목 정밀 판독 완료! 🚀")
             
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
