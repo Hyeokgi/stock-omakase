@@ -17,7 +17,7 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ
 TARGET_PERCENT = 5.0
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
-# 🚀 [속도 최적화 패치] 고속 통신망 개통
+# 🚀 [속도 최적화] 통신 고속도로 유지
 session = requests.Session()
 session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'})
 # ==========================================
@@ -235,7 +235,7 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
 
 def update_technical_data(df_theme):
     try:
-        print("▶️ 기술적 지표, 스코어링, 타점 판독 시작 (초고속 모드)...")
+        print("▶️ 기술적 지표, 수급, 💯스코어링, 🎯타점 판독 엔진 가동...")
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         doc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)).open_by_url(SHEET_URL)
         
@@ -243,19 +243,36 @@ def update_technical_data(df_theme):
         
         target_names = set()
         
-        # 💡 [핵심 원상복구] 오직 스캐너_마스터와 대시보드 종목만 분석 (30~40개)
+        # 💡 [치명적 버그 수정] 대시보드 종목을 놓치지 않고 "무조건" 확보하는 철통 방어 로직!
         try:
-            for name in doc.worksheet("스캐너_마스터").col_values(1)[1:]:
-                if str(name).strip() and str(name).strip() != "#REF!": target_names.add(str(name).strip())
-            for row in doc.worksheet("대시보드").get_all_values()[4:]:
-                if len(row) > 2 and str(row[2]).strip() and str(row[2]).strip() != "#REF!": target_names.add(str(row[2]).strip())
-        except: pass
+            print("▶️ 대시보드 종목을 최우선으로 수집합니다...")
+            dash_data = doc.worksheet("대시보드").get_all_values()
+            for row in dash_data[4:]: # 5번째 줄(인덱스 4)부터 스캔
+                if len(row) > 2:
+                    name = str(row[2]).strip() # 대시보드 C열 (과거 대장주 명)
+                    if name and name not in ["#REF!", "로딩중...", "데이터대기"]: 
+                        target_names.add(name)
+            print(f"✅ 대시보드에서 {len(target_names)}개 종목 확보 완료!")
+        except Exception as e: 
+            print(f"❌ 대시보드 탭 수집 에러: {e}")
+
+        try:
+            scan_names = doc.worksheet("스캐너_마스터").col_values(1)[1:]
+            for name in scan_names:
+                name_clean = str(name).strip()
+                if name_clean and name_clean not in ["#REF!", "로딩중...", "데이터대기"]: target_names.add(name_clean)
+        except Exception as e: pass
         
+        # 대시보드가 다 비어있는 최악의 상황일 때만 실시간 테마를 수혈합니다.
         if not df_theme.empty:
             top_3_themes = df_theme[df_theme['순위'] <= 3]['종목명'].tolist()
             top_10_themes = df_theme[df_theme['순위'] <= 10]['종목명'].tolist()
-            for t in top_10_themes: target_names.add(t)
+            if len(target_names) < 5: 
+                print("⚠️ 대시보드 종목이 부족하여 오늘 주도테마 종목을 추가합니다.")
+                for t in top_10_themes: target_names.add(t)
         else: top_3_themes, top_10_themes = [], []
+
+        print(f"▶️ 최종 분석 대상 종목 수: {len(target_names)}개")
 
         results = []
         for name in list(target_names):
@@ -275,7 +292,7 @@ def update_technical_data(df_theme):
                     
                 if len(history) < 20: continue
                 
-                # 📊 지표 4가지 추가
+                # 📊 지표 14개 추출 로직
                 today_data = root.findall(".//item")[-1].get("data").split("|")
                 today_high = int(today_data[2])
                 today_low = int(today_data[3])
@@ -332,7 +349,8 @@ def update_technical_data(df_theme):
                     elif ma5 > ma20: score += 10
                     elif current_price >= ma20: score += 5
                     
-                v_yest_ratio = (int(df_hist['volume'].iloc[-2]) / avg_vol_10) * 100 if len(df_hist) > 1 and avg_vol_10 > 0 else 0
+                yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) > 1 else 0
+                v_yest_ratio = (yest_vol / avg_vol_10) * 100 if avg_vol_10 > 0 else 0
                 
                 master_tajeom = "⏸️ 관망 및 대기"
                 if is_junk: master_tajeom = "🚨 매매금지"
@@ -343,7 +361,8 @@ def update_technical_data(df_theme):
                 elif "🟢" in signal and vol_ratio <= 40: master_tajeom = "📉 [B급] 투매 소화 (종가베팅)"
 
                 results.append([name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, score, master_tajeom, today_high, today_low, high_60d, market_cap])
-            except: continue
+            except Exception as e:
+                continue
 
         results.sort(key=lambda x: x[8], reverse=True) 
 
@@ -353,11 +372,17 @@ def update_technical_data(df_theme):
             helper_sheet.clear()
             headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)"]
             helper_sheet.update(range_name="A1", values=[headers] + results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(results)}개 종목 판독 완료! (속도 최적화 완료)")
-    except Exception as e: print(f"❌ 데이터 업데이트 에러: {e}")
+            print(f"✅ 총 {len(results)}개 종목 타점판독 업데이트 완료!")
+    except Exception as e: print(f"❌ 기술적 지표 전체 업데이트 에러: {e}")
 
 if __name__ == "__main__":
+    print("🤖 1. 데이터 수집 시작...")
     df_theme, is_market_closed = get_real_money_themes()
     df_news, df_naver, df_main_news = get_news_keywords(), get_naver_search_ranking(), get_naver_main_news()
+    
+    print("🤖 2. 구글 시트로 전송 시작...")
     update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_closed)
-    update_technical_data(df_theme)
+    
+    print("🤖 3. 주가 보조데이터 및 스코어링 계산 시작...")
+    update_technical_data(df_theme) 
+    print("✅ 모든 작업이 완료되었습니다!")
