@@ -101,8 +101,11 @@ def get_market_cap(code):
         market_sum_str = market_sum_tag.text.replace(',', '').replace('\t', '').replace('\n', '').strip()
         if '조' in market_sum_str:
             parts = market_sum_str.split('조')
-            final_cap = int(parts[0].strip()) * 10000 + (int(parts[1].strip()) if len(parts)>1 and parts[1].strip() else 0)
-        else: final_cap = int(market_sum_str)
+            jo = int(parts[0].strip())
+            eok = int(parts[1].strip()) if len(parts) > 1 and parts[1].strip() else 0
+            final_cap = jo * 10000 + eok
+        else:
+            final_cap = int(market_sum_str.strip())
         market_cap_cache[code] = final_cap
         return final_cap
     except: return 999999 
@@ -117,6 +120,7 @@ def get_real_money_themes():
     themes = [{'name': a.text.strip(), 'url': "https://finance.naver.com" + a['href']} for tds in [tr.find_all('td') for tr in soup.find('table', {'class': 'type_1'}).find_all('tr')] if len(tds) > 1 for a in [tds[0].find('a')] if a][:20]
                     
     theme_data_list = []
+    print("▶️ 실시간 주도 테마 수집 시작...")
     for theme in themes:
         try:
             soup = BeautifulSoup(session.get(theme['url'], verify=False).content, 'html.parser', from_encoding='cp949')
@@ -182,6 +186,7 @@ def get_naver_search_ranking():
 
 def get_naver_main_news():
     try:
+        print("▶️ 네이버 주요 뉴스 수집 시작...")
         soup = BeautifulSoup(session.get("https://finance.naver.com/news/mainnews.naver", verify=False, timeout=5).content, 'html.parser', from_encoding='cp949')
         news_list = []
         for dl in soup.find_all('dl'):
@@ -232,30 +237,43 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
 
 def update_technical_data(df_theme):
     try:
-        print("▶️ 기술적 지표, 스코어링, 정밀 타점 판독 시작 (초고속 DB 누적 모드)...")
+        print("▶️ 기술적 지표, 스코어링, 정밀 타점 판독 시작...")
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         doc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)).open_by_url(SHEET_URL)
         
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
         target_names = set()
         
-        # 💡 [핵심 복원] 대시보드(최근 3개월 주도주 전체)와 스캐너 명단을 모두 긁어와 분석합니다!
+        # 💡 [1000억 싹쓸이 패치] 수급_Raw 탭에서 거래대금 1000억 이상 터진 종목을 전부 스캔 대상에 올립니다!
         try:
-            for name in doc.worksheet("스캐너_마스터").col_values(1)[1:]:
-                if str(name).strip() and str(name).strip() not in ["#REF!", "로딩중...", "데이터대기", "FALSE"]: 
-                    target_names.add(str(name).strip())
+            print("▶️ 수급_Raw에서 거래대금 1000억 이상 찐 주도주를 찾습니다...")
+            raw_data = doc.worksheet("수급_Raw").get_all_values()
+            for row in raw_data[1:]:
+                if len(row) >= 7:
+                    # 끝에서 4번째가 종목명, 끝에서 1번째가 거래대금(억원)
+                    stock_name = str(row[-4]).strip()
+                    val_str = str(row[-1]).replace(',', '').replace('억원', '').replace('"', '').strip()
+                    
+                    if val_str.isdigit() and int(val_str) >= 1000:
+                        if stock_name and stock_name not in ["#REF!", "로딩중...", "데이터대기", "FALSE"]:
+                            target_names.add(stock_name)
+            print(f"✅ 1000억 이상 터진 세력주 {len(target_names)}개 확보 완료!")
+        except Exception as e:
+            print(f"❌ 수급_Raw 1000억 스캔 에러: {e}")
+
+        # 대시보드 종목도 추가 편입
+        try:
             for row in doc.worksheet("대시보드").get_all_values()[4:]:
-                if len(row) > 2:
-                    s_name = str(row[2]).strip()
-                    if s_name and s_name not in ["#REF!", "로딩중...", "데이터대기", "FALSE"]: 
-                        target_names.add(s_name)
+                if len(row) > 2 and str(row[2]).strip() and str(row[2]).strip() != "#REF!": 
+                    target_names.add(str(row[2]).strip())
         except: pass
         
+        # 오늘 주도 테마 TOP 5 추가
         if not df_theme.empty:
             top_5_themes = df_theme[df_theme['순위'] <= 5]['종목명'].tolist()
             for t in top_5_themes: target_names.add(t)
 
-        print(f"▶️ 총 {len(target_names)}개 종목을 고속망으로 스캔합니다. (예상 소요시간: 1~2분)")
+        print(f"▶️ 최종 정예 스캔 대상: {len(target_names)}개 종목 (1~2분 소요 예상)")
 
         results = []
         for name in list(target_names):
@@ -383,7 +401,7 @@ def update_technical_data(df_theme):
             helper_sheet.clear()
             headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)", "윗꼬리판독", "전고점위치"]
             helper_sheet.update(range_name="A1", values=[headers] + results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(results)}개 종목 정밀 판독 완료! 🚀")
+            print(f"✅ 총 {len(results)}개 종목 (1000억+ 주도주) 정밀 판독 완료! 🚀")
             
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
