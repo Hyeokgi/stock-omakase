@@ -17,7 +17,6 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ
 TARGET_PERCENT = 5.0
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
-# 🚀 [속도 최적화 패치] 고속 통신망 개통
 session = requests.Session()
 session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'})
 # ==========================================
@@ -102,11 +101,8 @@ def get_market_cap(code):
         market_sum_str = market_sum_tag.text.replace(',', '').replace('\t', '').replace('\n', '').strip()
         if '조' in market_sum_str:
             parts = market_sum_str.split('조')
-            jo = int(parts[0].strip())
-            eok = int(parts[1].strip()) if len(parts) > 1 and parts[1].strip() else 0
-            final_cap = jo * 10000 + eok
-        else:
-            final_cap = int(market_sum_str.strip())
+            final_cap = int(parts[0].strip()) * 10000 + (int(parts[1].strip()) if len(parts)>1 and parts[1].strip() else 0)
+        else: final_cap = int(market_sum_str)
         market_cap_cache[code] = final_cap
         return final_cap
     except: return 999999 
@@ -163,10 +159,7 @@ def get_real_money_themes():
     for m_data in merged_themes:
         if not any(len(set(s['code'] for s in m_data['stocks']).intersection(set(s['code'] for s in f_data['stocks']))) >= 2 for f_data in final_themes):
             final_themes.append(m_data)
-        
-        # 💡 [핵심 패치] 테마 수집을 10개에서 가장 강력한 '5개'로 컷트합니다!
-        if len(final_themes) >= 5: 
-            break
+        if len(final_themes) >= 5: break
             
     final_rows = [{'날짜': now.strftime('%Y-%m-%d'), **({'시간': time_str} if not is_market_closed else {}), '순위': rank, '테마명': t_data['theme_name'], '종목명': s['name'], '종목코드': s['code'], '등락률(%)': s['rate'], '거래대금(억원)': int(s['value']/100)} for rank, t_data in enumerate(final_themes, 1) for s in t_data['stocks']]
     return pd.DataFrame(final_rows), is_market_closed
@@ -241,7 +234,7 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
 
 def update_technical_data(df_theme):
     try:
-        print("▶️ 기술적 지표, 스코어링, 깐깐한 실전 타점 판독 시작...")
+        print("▶️ 기술적 지표, 스코어링, 정밀 타점 판독 시작...")
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         doc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)).open_by_url(SHEET_URL)
         
@@ -255,12 +248,9 @@ def update_technical_data(df_theme):
                 if len(row) > 2 and str(row[2]).strip() and str(row[2]).strip() != "#REF!": target_names.add(str(row[2]).strip())
         except: pass
         
-        # 💡 [테마 축소] 테마 5개 분량의 종목만 핵심적으로 편입
         if not df_theme.empty:
-            top_3_themes = df_theme[df_theme['순위'] <= 3]['종목명'].tolist()
             top_5_themes = df_theme[df_theme['순위'] <= 5]['종목명'].tolist()
             for t in top_5_themes: target_names.add(t)
-        else: top_3_themes, top_5_themes = [], []
 
         results = []
         for name in list(target_names):
@@ -276,7 +266,7 @@ def update_technical_data(df_theme):
                 items = root.findall(".//item")
                 for item in items:
                     data = item.get("data").split("|")
-                    history.append({"close": int(data[4]), "volume": int(data[5])})
+                    history.append({"close": int(data[4]), "volume": int(data[5]), "open": int(data[1])})
                     high_prices.append(int(data[2]))
                     
                 if len(history) < 20: continue
@@ -287,16 +277,22 @@ def update_technical_data(df_theme):
                 today_low = int(today_data[3])
                 current_price = int(today_data[4])
                 
-                # 🛡️ 1. 전고점 착시 방지
+                # 🛡️ [패치 1] 전고점 착시 방지 (오늘 고가는 제외)
                 high_60d = max(high_prices[:-1]) if len(high_prices) > 1 else today_high
                 
-                # 🛡️ 2. 윗꼬리 판독기 (3.5% 이상)
+                # 🛡️ [패치 2] 윗꼬리 및 갭상승 판독기
                 body_top = max(current_price, open_price)
                 upper_shadow_ratio = (today_high - body_top) / current_price if current_price > 0 else 0
-                is_long_shadow = upper_shadow_ratio >= 0.035
+                is_long_shadow = upper_shadow_ratio >= 0.03 # 3% 이상 윗꼬리 차단
+                
+                df_hist = pd.DataFrame(history)
+                prev_price = int(df_hist['close'].iloc[-2]) if len(df_hist) > 1 else current_price
+                change_rate = (current_price - prev_price) / prev_price if prev_price > 0 else 0.0
+                
+                gap_ratio = (open_price - prev_price) / prev_price if prev_price > 0 else 0
+                is_huge_gap = gap_ratio >= 0.04 # 4% 이상 갭 띄우면 위험
                 
                 market_cap = get_market_cap(code)
-                
                 risk_soup = BeautifulSoup(session.get(f"https://finance.naver.com/item/main.naver?code={code}", verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
                 is_junk = bool(risk_soup.find('img', alt=re.compile('관리종목|환기종목|거래정지|투자위험')))
                 
@@ -309,10 +305,6 @@ def update_technical_data(df_theme):
                     elif i_buy > 0: supply_text = " (기관매수)"
                 except: pass
 
-                df_hist = pd.DataFrame(history)
-                prev_price = int(df_hist['close'].iloc[-2]) if len(df_hist) > 1 else current_price
-                change_rate = (current_price - prev_price) / prev_price if prev_price > 0 else 0.0
-                
                 today_vol = df_hist['volume'].iloc[-1]
                 ma5, ma20 = df_hist['close'].tail(5).mean(), df_hist['close'].tail(20).mean()
                 std20 = df_hist['close'].tail(20).std(ddof=0) 
@@ -325,12 +317,9 @@ def update_technical_data(df_theme):
                 
                 if is_junk: signal = "🚨 [위험] 매매금지 (잡주/경고)"
                 elif is_dual_buy and is_converging: signal = "🌟 A급 스윙 (쌍끌이 모아가기)"
-                elif band_width <= 0.20 and current_price >= ma20:
-                    signal = "🚀 N자파동 (밴드돌파)" + supply_text if current_price >= upper_band * 0.98 else "👀 N자파동 (에너지응축)" + supply_text
-                elif ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035:
-                    signal = "📈 2차랠리 (이평수렴)" + supply_text if current_price > ma20 else "⏳ 이평선 저항" + supply_text
-                else:
-                    signal = "🟢 낙폭과대 (과매도)" + supply_text if current_price < lower_band else "⚡ 관망 (이격발생)" + supply_text
+                elif band_width <= 0.20 and current_price >= ma20: signal = "🚀 N자파동 (밴드돌파)" + supply_text if current_price >= upper_band * 0.98 else "👀 N자파동 (에너지응축)" + supply_text
+                elif ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035: signal = "📈 2차랠리 (이평수렴)" + supply_text if current_price > ma20 else "⏳ 이평선 저항" + supply_text
+                else: signal = "🟢 낙폭과대 (과매도)" + supply_text if current_price < lower_band else "⚡ 관망 (이격발생)" + supply_text
                     
                 score = 0
                 if not is_junk:
@@ -350,23 +339,27 @@ def update_technical_data(df_theme):
                 yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) > 1 else 0
                 v_yest_ratio = (yest_vol / avg_vol_10) * 100 if avg_vol_10 > 0 else 0
                 
-                # 🛡️ 3. 철통 방어 타점 로직 (윗꼬리 & 15% 이상 추격매수 완전 차단)
+                is_near_high = current_price >= (high_60d * 0.90) # 전고점 10% 이내
+                
+                # 🛡️ [패치 3] 철통 방어 타점 로직 (윗꼬리, 갭상승, 추격매수 차단 & 정밀 조건)
                 master_tajeom = "⏸️ 관망 및 대기"
                 if is_junk: 
                     master_tajeom = "🚨 매매금지"
                 elif is_long_shadow:
                     master_tajeom = "⚠️ 윗꼬리 위험 (매수금지)"
-                elif change_rate >= 0.15: 
+                elif is_huge_gap:
+                    master_tajeom = "⚠️ 갭상승 과다 (추격금지)"
+                elif change_rate >= 0.12: 
                     master_tajeom = "⚠️ 단기 급등 (추격금지)"
                 elif "🌟" in signal: 
                     master_tajeom = "🌟 [VIP] 쌍끌이 모아가기" 
-                elif ("👀" in signal or "🚀" in signal) and vol_ratio <= 50 and v_yest_ratio >= 150: 
+                elif vol_ratio <= 60 and v_yest_ratio >= 120 and abs(change_rate) <= 0.04 and is_near_high: 
                     master_tajeom = "👑 [SS급] N자 단봉눌림 (종가베팅)"
-                elif "🚀" in signal and vol_ratio >= 150 and current_price >= high_60d * 0.95: 
+                elif vol_ratio >= 150 and change_rate >= 0.05 and upper_shadow_ratio <= 0.015 and is_near_high: 
                     master_tajeom = "🎯 [S급] 신고가 돌파 (1차 진입)"
-                elif "👀" in signal and vol_ratio <= 60: 
+                elif vol_ratio <= 60 and current_price >= ma20: 
                     master_tajeom = "⏳ [A급] 바닥 매집 (종가베팅)"
-                elif "🟢" in signal and vol_ratio <= 40: 
+                elif vol_ratio <= 40: 
                     master_tajeom = "📉 [B급] 투매 소화 (종가베팅)"
 
                 results.append([name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, score, master_tajeom, today_high, today_low, high_60d, market_cap])
@@ -381,7 +374,7 @@ def update_technical_data(df_theme):
             helper_sheet.clear()
             headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)"]
             helper_sheet.update(range_name="A1", values=[headers] + results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(results)}개 종목 깐깐한 타점 판독 완료! (Top 5 테마 적용) 🚀")
+            print(f"✅ 총 {len(results)}개 종목 깐깐한 타점 판독 완료! 🚀")
             
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
@@ -389,9 +382,7 @@ def update_technical_data(df_theme):
 if __name__ == "__main__":
     print("🤖 1. 데이터 수집 시작...")
     df_theme, is_market_closed = get_real_money_themes()
-    df_news = get_news_keywords()
-    df_naver = get_naver_search_ranking()
-    df_main_news = get_naver_main_news()
+    df_news, df_naver, df_main_news = get_news_keywords(), get_naver_search_ranking(), get_naver_main_news()
     
     print("🤖 2. 구글 시트로 전송 시작...")
     update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_closed)
