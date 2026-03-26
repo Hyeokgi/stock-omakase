@@ -101,8 +101,11 @@ def get_market_cap(code):
         market_sum_str = market_sum_tag.text.replace(',', '').replace('\t', '').replace('\n', '').strip()
         if '조' in market_sum_str:
             parts = market_sum_str.split('조')
-            final_cap = int(parts[0].strip()) * 10000 + (int(parts[1].strip()) if len(parts)>1 and parts[1].strip() else 0)
-        else: final_cap = int(market_sum_str)
+            jo = int(parts[0].strip())
+            eok = int(parts[1].strip()) if len(parts) > 1 and parts[1].strip() else 0
+            final_cap = jo * 10000 + eok
+        else:
+            final_cap = int(market_sum_str.strip())
         market_cap_cache[code] = final_cap
         return final_cap
     except: return 999999 
@@ -269,7 +272,7 @@ def update_technical_data(df_theme):
                     history.append({"close": int(data[4]), "volume": int(data[5]), "open": int(data[1])})
                     high_prices.append(int(data[2]))
                     
-                if len(history) < 20: continue
+                if len(history) < 1: continue
                 
                 today_data = items[-1].get("data").split("|")
                 open_price = int(today_data[1])
@@ -277,20 +280,20 @@ def update_technical_data(df_theme):
                 today_low = int(today_data[3])
                 current_price = int(today_data[4])
                 
-                # 🛡️ [패치 1] 전고점 착시 방지 (오늘 고가는 제외)
                 high_60d = max(high_prices[:-1]) if len(high_prices) > 1 else today_high
                 
-                # 🛡️ [패치 2] 윗꼬리 및 갭상승 판독기
+                # 🛡️ 윗꼬리 판독
                 body_top = max(current_price, open_price)
                 upper_shadow_ratio = (today_high - body_top) / current_price if current_price > 0 else 0
-                is_long_shadow = upper_shadow_ratio >= 0.03 # 3% 이상 윗꼬리 차단
+                is_long_shadow = upper_shadow_ratio >= 0.03
+                shadow_text = "⚠️ 윗꼬리 위험" if is_long_shadow else ("👑 깔끔한 단봉" if upper_shadow_ratio <= 0.015 else "🟡 보통 캔들")
                 
                 df_hist = pd.DataFrame(history)
                 prev_price = int(df_hist['close'].iloc[-2]) if len(df_hist) > 1 else current_price
                 change_rate = (current_price - prev_price) / prev_price if prev_price > 0 else 0.0
                 
                 gap_ratio = (open_price - prev_price) / prev_price if prev_price > 0 else 0
-                is_huge_gap = gap_ratio >= 0.04 # 4% 이상 갭 띄우면 위험
+                is_huge_gap = gap_ratio >= 0.04
                 
                 market_cap = get_market_cap(code)
                 risk_soup = BeautifulSoup(session.get(f"https://finance.naver.com/item/main.naver?code={code}", verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
@@ -306,12 +309,15 @@ def update_technical_data(df_theme):
                 except: pass
 
                 today_vol = df_hist['volume'].iloc[-1]
-                ma5, ma20 = df_hist['close'].tail(5).mean(), df_hist['close'].tail(20).mean()
-                std20 = df_hist['close'].tail(20).std(ddof=0) 
-                upper_band, lower_band = ma20 + (std20 * 2), ma20 - (std20 * 2) 
+                ma5 = int(df_hist['close'].tail(5).mean()) if len(df_hist) >= 5 else current_price
+                ma20 = int(df_hist['close'].tail(20).mean()) if len(df_hist) >= 20 else current_price
+                std20 = df_hist['close'].tail(20).std(ddof=0) if len(df_hist) >= 20 else 0
+                
+                upper_band = ma20 + (std20 * 2) 
+                lower_band = ma20 - (std20 * 2) 
                 band_width = (upper_band - lower_band) / ma20 if ma20 > 0 else 0 
                 
-                avg_vol_10 = df_hist['volume'].tail(11).head(10).mean()
+                avg_vol_10 = df_hist['volume'].tail(11).head(10).mean() if len(df_hist) >= 2 else today_vol
                 vol_ratio = (today_vol / avg_vol_10) * 100 if avg_vol_10 > 0 else 0
                 is_converging = (band_width <= 0.20) or (ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035)
                 
@@ -339,30 +345,35 @@ def update_technical_data(df_theme):
                 yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) > 1 else 0
                 v_yest_ratio = (yest_vol / avg_vol_10) * 100 if avg_vol_10 > 0 else 0
                 
-                is_near_high = current_price >= (high_60d * 0.90) # 전고점 10% 이내
+                # 🎯 전고점 이격도 텍스트 생성
+                is_near_high = current_price >= (high_60d * 0.90)
+                dist_text = "🎯 전고점 턱밑" if is_near_high else ("🟢 매물대 소화중" if current_price >= high_60d * 0.80 else "📉 이격 과다")
                 
-                # 🛡️ [패치 3] 철통 방어 타점 로직 (윗꼬리, 갭상승, 추격매수 차단 & 정밀 조건)
-                master_tajeom = "⏸️ 관망 및 대기"
-                if is_junk: 
-                    master_tajeom = "🚨 매매금지"
-                elif is_long_shadow:
-                    master_tajeom = "⚠️ 윗꼬리 위험 (매수금지)"
-                elif is_huge_gap:
-                    master_tajeom = "⚠️ 갭상승 과다 (추격금지)"
-                elif change_rate >= 0.12: 
-                    master_tajeom = "⚠️ 단기 급등 (추격금지)"
-                elif "🌟" in signal: 
-                    master_tajeom = "🌟 [VIP] 쌍끌이 모아가기" 
-                elif vol_ratio <= 60 and v_yest_ratio >= 120 and abs(change_rate) <= 0.04 and is_near_high: 
-                    master_tajeom = "👑 [SS급] N자 단봉눌림 (종가베팅)"
-                elif vol_ratio >= 150 and change_rate >= 0.05 and upper_shadow_ratio <= 0.015 and is_near_high: 
-                    master_tajeom = "🎯 [S급] 신고가 돌파 (1차 진입)"
-                elif vol_ratio <= 60 and current_price >= ma20: 
-                    master_tajeom = "⏳ [A급] 바닥 매집 (종가베팅)"
-                elif vol_ratio <= 40: 
-                    master_tajeom = "📉 [B급] 투매 소화 (종가베팅)"
+                # 💡 [정밀 캔들 패턴 판독기] - 도지, 4음1양, 수렴돌파, 단타용 분류
+                is_4yin_1yang = False
+                if len(df_hist) >= 5:
+                    c1, c2, c3, c4 = df_hist['close'].iloc[-1], df_hist['close'].iloc[-2], df_hist['close'].iloc[-3], df_hist['close'].iloc[-4]
+                    if c1 > c2 and c2 < c3 and (c3 < c4 or (c4-c2)/c4 > 0.05) and (ma20 * 0.95 <= c1 <= ma20 * 1.05):
+                        is_4yin_1yang = True
 
-                results.append([name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, score, master_tajeom, today_high, today_low, high_60d, market_cap])
+                is_doji = abs(change_rate) <= 0.03 and vol_ratio <= 60 and v_yest_ratio >= 120 and current_price >= ma5
+                is_squeeze_breakout = band_width <= 0.15 and current_price >= upper_band * 0.98 and vol_ratio >= 150
+                is_ss_breakout = vol_ratio >= 150 and change_rate >= 0.05 and upper_shadow_ratio <= 0.015 and is_near_high
+                
+                master_tajeom = "⏸️ 관망 및 대기"
+                if len(history) < 20: master_tajeom = "⚠️ 신규상장 (데이터 부족)"
+                elif is_junk: master_tajeom = "🚨 매매금지"
+                elif is_long_shadow: master_tajeom = "⚠️ 윗꼬리 위험 (매수금지)"
+                elif is_huge_gap: master_tajeom = "⚠️ 갭상승 과다 (추격금지)"
+                elif is_ss_breakout: master_tajeom = "👑 [SS급] 전고점 돌파"
+                elif is_doji: master_tajeom = "🎯 [S급] 도지 눌림목"
+                elif is_squeeze_breakout: master_tajeom = "🚀 [A급] 수렴돌파"
+                elif is_4yin_1yang: master_tajeom = "📉 [B급] 4음1양 지지"
+                elif change_rate >= 0.12 and vol_ratio >= 200: master_tajeom = "⚡ [단타용] 당일 주도주"
+                elif "🌟" in signal: master_tajeom = "🌟 [VIP] 쌍끌이 모아가기" 
+
+                # 💡 데이터를 16열로 보내주어 스캐너_마스터의 모든 정보창을 채웁니다!
+                results.append([name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, score, master_tajeom, today_high, today_low, high_60d, market_cap, shadow_text, dist_text])
             except Exception as e:
                 continue
 
@@ -370,23 +381,17 @@ def update_technical_data(df_theme):
 
         if results:
             try: helper_sheet = doc.worksheet("주가데이터_보조")
-            except: helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="15")
+            except: helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="20")
             helper_sheet.clear()
-            headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)"]
+            headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)", "윗꼬리판독", "전고점위치"]
             helper_sheet.update(range_name="A1", values=[headers] + results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(results)}개 종목 깐깐한 타점 판독 완료! 🚀")
+            print(f"✅ 총 {len(results)}개 종목 정밀 캔들 판독 완료! 🚀")
             
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
 
 if __name__ == "__main__":
-    print("🤖 1. 데이터 수집 시작...")
     df_theme, is_market_closed = get_real_money_themes()
     df_news, df_naver, df_main_news = get_news_keywords(), get_naver_search_ranking(), get_naver_main_news()
-    
-    print("🤖 2. 구글 시트로 전송 시작...")
     update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_closed)
-    
-    print("🤖 3. 깐깐한 실전 매매 로직 계산 시작...")
-    update_technical_data(df_theme) 
-    print("✅ 모든 작업이 완료되었습니다!")
+    update_technical_data(df_theme)
