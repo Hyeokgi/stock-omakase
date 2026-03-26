@@ -17,6 +17,7 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ
 TARGET_PERCENT = 5.0
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
+# 🚀 [속도 최적화 패치] 고속 통신망 개통
 session = requests.Session()
 session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'})
 # ==========================================
@@ -101,11 +102,8 @@ def get_market_cap(code):
         market_sum_str = market_sum_tag.text.replace(',', '').replace('\t', '').replace('\n', '').strip()
         if '조' in market_sum_str:
             parts = market_sum_str.split('조')
-            jo = int(parts[0].strip())
-            eok = int(parts[1].strip()) if len(parts) > 1 and parts[1].strip() else 0
-            final_cap = jo * 10000 + eok
-        else:
-            final_cap = int(market_sum_str.strip())
+            final_cap = int(parts[0].strip()) * 10000 + (int(parts[1].strip()) if len(parts)>1 and parts[1].strip() else 0)
+        else: final_cap = int(market_sum_str)
         market_cap_cache[code] = final_cap
         return final_cap
     except: return 999999 
@@ -120,7 +118,6 @@ def get_real_money_themes():
     themes = [{'name': a.text.strip(), 'url': "https://finance.naver.com" + a['href']} for tds in [tr.find_all('td') for tr in soup.find('table', {'class': 'type_1'}).find_all('tr')] if len(tds) > 1 for a in [tds[0].find('a')] if a][:20]
                     
     theme_data_list = []
-    print("▶️ 실시간 주도 테마 수집 시작...")
     for theme in themes:
         try:
             soup = BeautifulSoup(session.get(theme['url'], verify=False).content, 'html.parser', from_encoding='cp949')
@@ -186,7 +183,6 @@ def get_naver_search_ranking():
 
 def get_naver_main_news():
     try:
-        print("▶️ 네이버 주요 뉴스 수집 시작...")
         soup = BeautifulSoup(session.get("https://finance.naver.com/news/mainnews.naver", verify=False, timeout=5).content, 'html.parser', from_encoding='cp949')
         news_list = []
         for dl in soup.find_all('dl'):
@@ -244,16 +240,26 @@ def update_technical_data(df_theme):
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
         target_names = set()
         
+        # 💡 [핵심 복구 완료] 오직 "대시보드의 1등 대장주"만 스캔합니다! 스캐너_마스터의 잡종목은 긁어오지 않습니다.
         try:
-            for name in doc.worksheet("스캐너_마스터").col_values(1)[1:]:
-                if str(name).strip() and str(name).strip() != "#REF!": target_names.add(str(name).strip())
-            for row in doc.worksheet("대시보드").get_all_values()[4:]:
-                if len(row) > 2 and str(row[2]).strip() and str(row[2]).strip() != "#REF!": target_names.add(str(row[2]).strip())
+            dash_data = doc.worksheet("대시보드").get_all_values()
+            seen_themes = set()
+            for row in dash_data[4:]:
+                if len(row) > 2:
+                    theme_name = str(row[1]).strip()
+                    stock_name = str(row[2]).strip()
+                    if theme_name and stock_name and stock_name not in ["#REF!", "로딩중...", "데이터대기", "FALSE"]: 
+                        if theme_name not in seen_themes:
+                            target_names.add(stock_name)
+                            seen_themes.add(theme_name)
         except: pass
         
+        # 💡 주도 테마 TOP 5 추가 (5개 테마 * 3 = 최대 15종목 이내)
         if not df_theme.empty:
             top_5_themes = df_theme[df_theme['순위'] <= 5]['종목명'].tolist()
             for t in top_5_themes: target_names.add(t)
+
+        print(f"▶️ 최종 정예 분석 대상: {len(target_names)}개 종목 (1분 이내 컷)")
 
         results = []
         for name in list(target_names):
@@ -282,7 +288,6 @@ def update_technical_data(df_theme):
                 
                 high_60d = max(high_prices[:-1]) if len(high_prices) > 1 else today_high
                 
-                # 🛡️ 윗꼬리 판독
                 body_top = max(current_price, open_price)
                 upper_shadow_ratio = (today_high - body_top) / current_price if current_price > 0 else 0
                 is_long_shadow = upper_shadow_ratio >= 0.03
@@ -345,11 +350,9 @@ def update_technical_data(df_theme):
                 yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) > 1 else 0
                 v_yest_ratio = (yest_vol / avg_vol_10) * 100 if avg_vol_10 > 0 else 0
                 
-                # 🎯 전고점 이격도 텍스트 생성
                 is_near_high = current_price >= (high_60d * 0.90)
                 dist_text = "🎯 전고점 턱밑" if is_near_high else ("🟢 매물대 소화중" if current_price >= high_60d * 0.80 else "📉 이격 과다")
                 
-                # 💡 [정밀 캔들 패턴 판독기] - 도지, 4음1양, 수렴돌파, 단타용 분류
                 is_4yin_1yang = False
                 if len(df_hist) >= 5:
                     c1, c2, c3, c4 = df_hist['close'].iloc[-1], df_hist['close'].iloc[-2], df_hist['close'].iloc[-3], df_hist['close'].iloc[-4]
@@ -372,7 +375,6 @@ def update_technical_data(df_theme):
                 elif change_rate >= 0.12 and vol_ratio >= 200: master_tajeom = "⚡ [단타용] 당일 주도주"
                 elif "🌟" in signal: master_tajeom = "🌟 [VIP] 쌍끌이 모아가기" 
 
-                # 💡 데이터를 16열로 보내주어 스캐너_마스터의 모든 정보창을 채웁니다!
                 results.append([name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, score, master_tajeom, today_high, today_low, high_60d, market_cap, shadow_text, dist_text])
             except Exception as e:
                 continue
@@ -385,7 +387,7 @@ def update_technical_data(df_theme):
             helper_sheet.clear()
             headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)", "윗꼬리판독", "전고점위치"]
             helper_sheet.update(range_name="A1", values=[headers] + results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(results)}개 종목 정밀 캔들 판독 완료! 🚀")
+            print(f"✅ 총 {len(results)}개 정예 종목 판독 완료! (속도 정상화) 🚀")
             
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
