@@ -23,7 +23,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "여기에_로컬테스트
 print("🤖 [HYEOKS 리서치 센터] 데이터 수집 및 분석 시작...")
 
 try:
-    # 💡 자동 탐색 엔진
+    # 💡 자동 탐색 엔진 장착
     genai.configure(api_key=GEMINI_API_KEY)
     available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
     
@@ -53,20 +53,20 @@ try:
 
     tech_data = doc.worksheet("주가데이터_보조").get_all_values()[1:30] 
     
-    # 💡 [핵심 패치] AI가 코드를 환각으로 지어내지 못하도록 진짜 코드(r[1])를 매칭해서 던져줍니다!
     stock_candidates = ""
     for r in tech_data:
         if len(r) >= 10:
-            # 구글 시트에 작은따옴표('005930)가 붙어있을 수 있으므로 깔끔하게 제거하고 6자리로 맞춥니다.
             real_code = r[1].replace("'", "").strip().zfill(6)
             stock_candidates += f"종목:{r[0]} ({real_code}), 현재가:{r[2]}, 타점:{r[9]}\n"
 
-    print("🧠 [AI 수석 애널리스트] 입체적 데이터 융합 및 분석 중...")
+    print("🧠 [HYEOKS 수석 애널리스트] 듀얼 전략(단기/중기) 분석을 시작합니다...")
 
-    # 2. 강력한 환각 방지 프롬프트 적용
-    prompt = f"""
-    너는 메리츠증권의 최고 수석 퀀트 애널리스트 'HYEOKS AI'야. 
-    다음 데이터를 바탕으로 오늘 시장의 핵심을 짚고, 가장 유망한 Top Pick 1종목을 골라.
+    # ==========================================
+    # 📝 전략 1: 단기 모멘텀 & 돌파 (Short-Term)
+    # ==========================================
+    prompt_short = f"""
+    너는 HYEOKS 증권의 최고 수석 퀀트 애널리스트야. 
+    다음 데이터를 바탕으로 '단기적인 시세 분출(1일~5일)'이 기대되는 전고점 돌파 또는 단기 깃발형 패턴의 Top Pick 1종목을 골라.
 
     [데이터]
     - 매크로: 나스닥 {nasdaq}, 환율 {exchange_rate}, 유가 {wti_oil}
@@ -75,71 +75,99 @@ try:
     {stock_candidates}
 
     [작성 규칙] 
-    - ⚠️ 아주 중요: 제목의 종목 코드는 반드시 [데이터]에 제공된 진짜 6자리 숫자를 사용해라. 절대 임의로 지어내지 마라!
-    - 2페이지 분량이 되어도 좋으니, 수석 애널리스트의 깊이 있는 통찰력과 구체적인 고찰을 풍부하게 서술할 것.
+    - ⚠️ 제목의 종목 코드는 반드시 [데이터]에 제공된 진짜 6자리 숫자를 사용할 것.
     
-    <div class="broker-name">HYEOKS Securities</div>
+    <div class="broker-name">HYEOKS Securities | Short-Term Strategy</div>
     <div class="header">
         <p class="stock-title">종목명 (종목코드)</p>
-        <p class="subtitle">여기에 시선을 끄는 강력한 1줄 소제목 작성</p>
+        <p class="subtitle">단기 모멘텀 집중 분석: (1줄 소제목)</p>
     </div>
     
     <div class="info-box">
-        <b>Company Brief | 퀀트 분석팀</b><br>
-        현재 매크로(환율, 유가 등) 환경과 테마 순환매를 바탕으로 이 종목을 지금 매수해야 하는 핵심 논리를 요약.
+        <b>Company Brief | HYEOKS 단기 트레이딩 데스크</b><br>
+        현재 수급과 차트 흐름상 단기 슈팅이 임박한 핵심 논리를 명확히 요약.
     </div>
 
-    ## 1. 투자 포인트 및 실적 모멘텀 (Investment Points)
-    이 기업의 비즈니스 모델 개요와 최근 시장에서 기대하고 있는 실적 턴어라운드, 모멘텀, 뉴스를 깊이 있게 고찰하여 서술.
+    ## 1. 단기 수급 및 테마 모멘텀 (Momentum)
+    현재 이 종목에 왜 단기적인 자금이 쏠리고 있는지, 뉴스나 재료를 기반으로 서술.
     
-    ## 2. 매크로 및 테마 순환매 고찰 (Macro & Theme Analysis)
-    현재 지수와 환율 상황 속에서 왜 하필 이 테마(섹터)로 돈이 몰리고 있는지, 시간 조정을 어떻게 거쳤는지 상세히 분석.
-    
-    ## 3. 기술적 분석 및 매매 전략 (Technical Analysis)
-    세력의 깃발형 패턴, 거래량 급감, 이평선 지지 등을 근거로 한 정확하고 구체적인 매수 타점 분석. 왜 지금이 최적의 손익비 자리인지 논증.
-    
-    ## 4. 리스크 팩터 및 손절 라인 (Risk Management)
-    시나리오 이탈 시나 거시경제 악화 시 대응할 수 있는 리스크 관리 방안과 손절 기준.
+    ## 2. 기술적 타점 분석 (Technical Analysis)
+    전고점 돌파, 깃발형 단기 수렴 등 캔들과 거래량 기반의 정확한 단기 매수 타점 분석.
     """
 
-    # 3. AI 리포트 텍스트 생성
-    response = model.generate_content(prompt)
-    ai_report_md = response.text
-    print("✅ AI 텍스트 리포트 생성 완료!")
-
-    # 4. 차트 이미지 로드
-    chart_html = ""
-    match = re.search(r'\((\d{6})\)', ai_report_md) 
-    if match:
-        stock_code = match.group(1)
-        chart_url = f"https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{stock_code}.png"
-        chart_html = f"""
-        <div class="chart-container">
-            <h3>📊 [기술적 분석] 일봉 캔들 차트</h3>
-            <img src="{chart_url}" alt="Stock Chart">
-        </div>
-        """
-        print(f"✅ 일봉 차트 캡처 완료! (정확한 종목코드: {stock_code})")
-    else:
-        print("⚠️ 종목 코드를 찾지 못해 차트를 생략합니다.")
-
-    # 5. 마크다운 -> HTML 변환 (차트 첨부)
-    html_content = markdown.markdown(ai_report_md)
+    response_short = model.generate_content(prompt_short)
+    html_short = markdown.markdown(response_short.text)
     
+    chart_html_short = ""
+    match_short = re.search(r'\((\d{6})\)', response_short.text) 
+    if match_short:
+        code_s = match_short.group(1)
+        chart_html_short = f'<div class="chart-container"><h3>📊 [단기 전략] 일봉 캔들 차트</h3><img src="https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{code_s}.png"></div>'
+
+    # ==========================================
+    # 📝 전략 2: 중기 모아가기 (Mid-Term)
+    # ==========================================
+    prompt_mid = f"""
+    너는 HYEOKS 증권의 최고 수석 퀀트 애널리스트야. 
+    다음 데이터를 바탕으로 '1주~1달 간 천천히 모아갈 수 있는' 중기 스윙 Top Pick 1종목을 골라. (단기 추천 종목과 겹치지 않게 다른 종목을 고를 것)
+
+    [데이터]
+    - 매크로: 나스닥 {nasdaq}, 환율 {exchange_rate}, 유가 {wti_oil}
+    - 테마흐름: {theme_history}
+    - 타점후보: 
+    {stock_candidates}
+
+    [작성 규칙] 
+    - ⚠️ 탄탄한 기업이 주목을 받았다가 충분한 기간/가격 조정을 거치고, 이평선이 밀집되며 이제 막 반등의 기미가 보이는 종목을 찾아낼 것.
+    - 제목의 종목 코드는 반드시 [데이터]에 제공된 6자리 숫자를 사용할 것.
+    
+    <div class="broker-name">HYEOKS Securities | Mid-Term Strategy</div>
+    <div class="header">
+        <p class="stock-title">종목명 (종목코드)</p>
+        <p class="subtitle">중기 스윙 모아가기 전략: (1줄 소제목)</p>
+    </div>
+    
+    <div class="info-box">
+        <b>Company Brief | HYEOKS 밸류에이션 데스크</b><br>
+        실적 기반의 탄탄한 종목이 조정을 끝내고 턴어라운드 할 조짐을 보이는 논리 요약.
+    </div>
+
+    ## 1. 실적 모멘텀 및 턴어라운드 (Fundamentals)
+    우량한 펀더멘털과 향후 1주~1달간 지속될 중기 모멘텀 분석.
+    
+    ## 2. 이평선 밀집 및 모아가기 전략 (Accumulation Strategy)
+    기간/가격 조정을 거친 후 이평선 수렴 상태에서의 분할 매수 전략 및 중기 목표가/손절가 제시.
+    """
+
+    response_mid = model.generate_content(prompt_mid)
+    html_mid = markdown.markdown(response_mid.text)
+    
+    chart_html_mid = ""
+    match_mid = re.search(r'\((\d{6})\)', response_mid.text) 
+    if match_mid:
+        code_m = match_mid.group(1)
+        chart_html_mid = f'<div class="chart-container"><h3>📊 [중기 전략] 일봉 캔들 차트</h3><img src="https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{code_m}.png"></div>'
+
+    print("✅ 단기 & 중기 듀얼 리포트 텍스트 및 차트 생성 완료!")
+
+    # ==========================================
+    # 🎨 PDF 통합 렌더링
+    # ==========================================
     css_style = """
     <style>
-        body { font-family: 'NanumGothic', 'Malgun Gothic', sans-serif; color: #222; line-height: 1.7; padding: 40px; margin: 0; }
-        .broker-name { color: #800000; font-weight: 900; font-size: 22px; margin-bottom: 20px; font-style: italic; }
-        .header { border-bottom: 4px solid #800000; padding-bottom: 15px; margin-bottom: 25px; }
-        .stock-title { font-size: 36px; font-weight: 900; margin: 0; color: #000; }
-        .subtitle { font-size: 20px; color: #004080; margin-top: 8px; font-weight: bold; }
-        .info-box { border-left: 5px solid #800000; background: #f4f4f4; padding: 15px 20px; margin: 25px 0; font-size: 14px; }
-        h2 { color: #800000; font-size: 18px; margin-top: 35px; border-bottom: 1px solid #ddd; padding-bottom: 5px; text-transform: uppercase; }
+        body { font-family: 'NanumGothic', 'Malgun Gothic', sans-serif; color: #222; line-height: 1.6; padding: 40px; margin: 0; }
+        .broker-name { color: #1a365d; font-weight: 900; font-size: 20px; margin-bottom: 20px; text-transform: uppercase; }
+        .header { border-bottom: 4px solid #1a365d; padding-bottom: 15px; margin-bottom: 25px; }
+        .stock-title { font-size: 34px; font-weight: 900; margin: 0; color: #000; }
+        .subtitle { font-size: 18px; color: #2b6cb0; margin-top: 8px; font-weight: bold; }
+        .info-box { border-left: 5px solid #1a365d; background: #f7fafc; padding: 15px 20px; margin: 25px 0; font-size: 14px; }
+        h2 { color: #1a365d; font-size: 17px; margin-top: 35px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px; }
         p { font-size: 14px; text-align: justify; word-break: keep-all; }
-        .chart-container { text-align: center; margin-top: 50px; page-break-inside: avoid; }
-        .chart-container h3 { color: #333; font-size: 16px; margin-bottom: 15px; }
-        .chart-container img { max-width: 90%; border: 1px solid #ccc; padding: 10px; background: #fff; box-shadow: 2px 2px 8px rgba(0,0,0,0.1); }
-        .footer { text-align: center; font-size: 11px; color: #999; margin-top: 50px; border-top: 1px solid #eee; padding-top: 15px; }
+        .chart-container { text-align: center; margin-top: 40px; page-break-inside: avoid; }
+        .chart-container h3 { color: #2d3748; font-size: 15px; margin-bottom: 15px; }
+        .chart-container img { max-width: 90%; border: 1px solid #cbd5e0; padding: 10px; background: #fff; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .page-break { page-break-before: always; }
+        .footer { text-align: center; font-size: 11px; color: #a0aec0; margin-top: 40px; border-top: 1px solid #edf2f7; padding-top: 15px; }
     </style>
     """
     
@@ -148,15 +176,20 @@ try:
     <html>
     <head><meta charset="utf-8">{css_style}</head>
     <body>
-        {html_content}
-        {chart_html} 
-        <div class="footer">본 리포트는 OMAKASE AI 퀀트 시스템에 의해 자동 생성된 투자 참고용 자료입니다. (생성일: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')})</div>
+        {html_short}
+        {chart_html_short}
+        
+        <div class="page-break"></div>
+        
+        {html_mid}
+        {chart_html_mid}
+        
+        <div class="footer">본 리포트는 HYEOKS AI 퀀트 시스템에 의해 자동 생성된 투자 참고용 자료입니다. (생성일: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')})</div>
     </body>
     </html>
     """
 
-    # 6. HTML을 PDF 파일로 굽기
-    pdf_filename = f"Omakase_Report_{datetime.datetime.now().strftime('%Y%m%d')}.pdf"
+    pdf_filename = f"HYEOKS_Research_{datetime.datetime.now().strftime('%Y%m%d')}.pdf"
     
     options = {
         'page-size': 'A4',
@@ -164,9 +197,11 @@ try:
         'encoding': "UTF-8", 'enable-local-file-access': None
     }
     pdfkit.from_string(full_html, pdf_filename, options=options)
-    print("✅ 고급 PDF 리포트 파일 렌더링 완료!")
+    print("✅ HYEOKS 리서치 듀얼 PDF 파일 렌더링 완료!")
 
-    # 7. 텔레그램으로 PDF 전송
+    # ==========================================
+    # 📲 텔레그램 발송 (심플한 메시지 처리)
+    # ==========================================
     if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "여기에_로컬테스트용_토큰입력":
         print("❌ [경고] 텔레그램 토큰을 확인하세요!")
         exit(1)
@@ -175,7 +210,7 @@ try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
         with open(pdf_filename, 'rb') as pdf_file:
             files = {'document': (pdf_filename, pdf_file, 'application/pdf')}
-            data = {'chat_id': TELEGRAM_CHAT_ID, 'caption': "📊 오늘의 [오마카세 리서치] 딥 리서치 PDF (오류 수정 완료)가 도착했습니다!"}
+            data = {'chat_id': TELEGRAM_CHAT_ID, 'caption': "🤖 [HYEOKS 리서치] 일일 딥 리서치 PDF 리포트"}
             
             response = requests.post(url, files=files, data=data)
             if response.status_code == 200:
