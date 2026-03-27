@@ -54,7 +54,6 @@ STOPWORDS = [
     '정책', '의원', '장관', '페이지', '주소', '입력', '방문', '삭제', '요청', '정확', '확인',
     '문의', '사항', '고객', '센터', '안내', '감사', '반대', '선임', '공개', '자본', '공개',
     
-    # 🔥 [핀셋 방어막] 거시경제, 일반 동사, 불필요한 단어 철통 차단!
     '이란', '국민연금', '종전', '전쟁', '트럼프', '제안', '찬성', '대통령', '사내', '협상',
     '출시', '계좌', '중동', '상품', '체제', '변경', '투자증권', '성장', '시그널', '신규',
     '정치', '외교', '합의', '수출', '수입', '도입', '본격', '소식', '임박', '부각', '주도'
@@ -71,32 +70,46 @@ def search_code_from_naver(stock_name):
 
 def get_news_keywords():
     try:
+        theme_phrases = []
         full_text = ""
-        # 💡 [해외 IP 차단 우회] 네이버 금융(차단 안됨)의 '실시간 속보'를 10페이지까지 뒤져서 
-        # 거시경제 뉴스(노이즈)를 버리고, 주도주/테마 관련 뉴스 타이틀만 핀셋으로 뽑습니다.
-        for page in range(1, 10):
-            url = f"https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258&page={page}"
-            res = session.get(url, verify=False, timeout=5)
-            soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
-            
-            subjects = soup.select('.articleSubject a')
-            for sub in subjects:
-                title = sub.text.strip()
-                # 필터링: 특징주, 테마 등 특정 키워드가 있는 개별 종목 뉴스만 줍기
-                if any(k in title for k in ['특징주', '강세', '급등', '상한가', '수혜', '주목', '관련주', '테마']):
-                    clean_title = re.sub(r'\[.*?\]', '', title) # [특징주], [속보] 같은 대괄호 텍스트 날림
-                    full_text += clean_title + " "
-            time.sleep(0.2)
-            
-        if len(full_text) < 20: return pd.DataFrame()
-            
-        from kiwipiepy import Kiwi
-        kiwi = Kiwi()
-        nouns = [token.form for token in kiwi.tokenize(full_text) if token.tag in ['NNG', 'NNP'] and len(token.form) > 1 and token.form not in STOPWORDS]
         
-        top_15 = Counter(nouns).most_common(15)
+        for page in range(1, 6):
+            start = (page - 1) * 10 + 1
+            url = f"https://search.naver.com/search.naver?where=news&query=%ED%8A%B9%EC%A7%95%EC%A3%BC&start={start}"
+            res = session.get(url, verify=False, timeout=5)
+            soup = BeautifulSoup(res.text, 'html.parser')
+            
+            titles = soup.select('.news_tit')
+            for t in titles:
+                title_text = t.get_text(strip=True)
+                full_text += title_text + " "
+                
+                # 💡 [핵심 패치] 기자의 '따옴표' 법칙 활용!
+                # 작은따옴표(' '), 큰따옴표(" ") 안의 강조된 핵심 테마를 통째로 추출합니다.
+                matches = re.findall(r"['\"‘“](.*?)['\"’”]", title_text)
+                for m in matches:
+                    clean_m = m.strip()
+                    # 꼬리표 떼기 (기자들이 따옴표 안에 같이 넣는 불필요한 서술어 제거)
+                    clean_m = re.sub(r'(수혜|관련주|테마주|강세|상한가|특징주|급등|주목|임박|돌파|추진)', '', clean_m).strip()
+                    
+                    # 너무 길거나 짧은 문구 필터링 & 금지어 방어막
+                    if 1 < len(clean_m) <= 15 and clean_m not in STOPWORDS:
+                        theme_phrases.append(clean_m)
+            time.sleep(0.3)
+            
+        # 1차: 따옴표에서 통째로 건진 진짜 테마 키워드들 집계
+        top_words = Counter(theme_phrases).most_common(15)
+        
+        # 2차: 장이 조용해서 따옴표 기사가 너무 적을 경우, 형태소 분석기를 보조 엔진으로 섞어줌
+        if len(top_words) < 7 and len(full_text) > 50:
+            from kiwipiepy import Kiwi
+            kiwi = Kiwi()
+            nouns = [token.form for token in kiwi.tokenize(full_text) if token.tag in ['NNG', 'NNP'] and len(token.form) > 1 and token.form not in STOPWORDS]
+            theme_phrases.extend(nouns)
+            top_words = Counter(theme_phrases).most_common(15)
+            
         now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M')
-        return pd.DataFrame([[now_str, rank, word, count] for rank, (word, count) in enumerate(top_15, 1)], columns=['업데이트시간', '순위', '키워드', '언급횟수'])
+        return pd.DataFrame([[now_str, rank, word, count] for rank, (word, count) in enumerate(top_words, 1)], columns=['업데이트시간', '순위', '키워드', '언급횟수'])
     except Exception as e:
         print(f"키워드 에러: {e}")
         return pd.DataFrame()
