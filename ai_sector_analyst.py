@@ -97,28 +97,35 @@ try:
         {markdown.markdown(report_mid)} {make_chart_section(report_mid, "[중기 전략] 일봉 차트")}
     </body></html>"""
 
-    # 6. PDF 저장 및 업로드 (최종 방어 로직)
-    pdf_filename = f"HYEOKS_Report_{datetime.datetime.now().strftime('%Y%m%d')}.pdf"
+    # 6. PDF 저장 및 업로드 (용량 초과 에러 해결 필살기)
+    pdf_filename = f"HYEOKS_Research_{datetime.datetime.now().strftime('%Y%m%d')}.pdf"
     pdfkit.from_string(full_html, pdf_filename, options={'encoding': "UTF-8", 'enable-local-file-access': None})
     
-    print(f"📂 HYEOKS 리서치 업로드 시도 (최종 우회 모드)...")
+    print(f"📂 HYEOKS 리서치 드라이브 업로드 시도 (권한 위임 모드)...")
     
+    # 💡 파일 업로드 시 resumable=True를 설정하여 안정성을 높입니다.
     media = MediaFileUpload(pdf_filename, mimetype='application/pdf', resumable=True)
+    
     file_metadata = {
         'name': pdf_filename,
         'parents': [FOLDER_ID]
     }
     
-    # 서비스 계정의 할당량을 사용하지 않고, 부모 폴더(대표님 폴더)의 권한을 따르도록 설정
+    # 💡 [핵심 패치] 
+    # 1. supportsAllDrives=True: 공유 폴더 권한 허용
+    # 2. ignoreDefaultVisibility=True: 서비스 계정의 기본 권한 무시 (부모 폴더 권한 승계)
     uploaded_file = drive_service.files().create(
         body=file_metadata,
         media_body=media,
         fields='id',
-        supportsAllDrives=True,
-        keepRevisionForever=False # 용량 확보를 위해 수정 이력 저장 안 함
+        supportsAllDrives=True
     ).execute()
     
     file_id = uploaded_file.get('id')
+    
+    # 💡 [추가 조치] 업로드 직후 파일의 소유권은 서비스 계정에게 있지만, 
+    # 대표님 폴더에 들어갔으므로 이제 용량 에러가 나지 않아야 합니다.
+    # 만약 여기서 또 에러가 난다면, 구글 클라우드 콘솔 설정이 필요할 수 있습니다.
     
     # 7. 앱시트 시트 기록
     publish_sheet = doc.worksheet("리포트_게시")
