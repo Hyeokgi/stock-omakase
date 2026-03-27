@@ -59,7 +59,7 @@ STOPWORDS = [
     '정치', '외교', '합의', '수출', '수입', '도입', '본격', '소식', '임박', '부각', '주도'
 ]
 
-# 🔥 [광고/보도자료/문장형 스팸 2차 필터] 
+# 🔥 [광고/보도자료 스팸 필터]
 AD_FILTER = [
     '펀드', '투어', '캠페인', '서비스', '최초', '강화', '고객', '연금', '마스터', 
     '코리아', '정책', '개최', '박람회', '전시회', '프로모션', '할인', '기획전', 
@@ -92,19 +92,14 @@ def get_news_keywords():
                 title_text = sub.get_text(strip=True)
                 full_text += title_text + " \n "
                 
-                # 💡 1. 따옴표 핀셋 추출 (+ 순수 명사 판독기)
                 matches = re.findall(r"['\"‘“](.*?)['\"’”]", title_text)
                 for m in matches:
                     clean = re.sub(r'(수혜|관련주|테마주|대장주|강세|상한가|특징주|급등|주목|부각)', '', m).strip()
-                    # 특수기호(·, -, ! 등) 싹 제거하고 순수 글자와 공백만 남김
                     clean = re.sub(r'[^\w\s]', '', clean).strip()
-                    
-                    # 문장 컷! 띄어쓰기가 1개 이하(즉, 단어나 짧은 복합명사)일 때만 통과!
                     if 1 < len(clean) <= 12 and clean.count(' ') <= 1:
                         if not any(ad in clean for ad in AD_FILTER):
                             theme_phrases.append(clean)
                 
-                # 💡 2. 주식 시장 꼬리표 추출
                 matches2 = re.findall(r'([가-힣a-zA-Z0-9]+)(?:\s+)?(?:관련주|테마주|수혜주|대장주|섹터|주도주)', title_text)
                 for m in matches2:
                     m = re.sub(r'[^\w\s]', '', m).strip()
@@ -112,7 +107,6 @@ def get_news_keywords():
                         theme_phrases.append(m)
             time.sleep(0.3)
             
-        # 💡 3. 메가 트렌드 핵심어 하드코딩 레이더
         core_keywords = [
             '의료AI', '비만치료제', '전고체', '자율주행', '로봇', '반도체', '바이오시밀러', 
             '원격진료', '탈플라스틱', '신재생', '원전', '우주항공', 'UAM', '메타버스', 
@@ -131,12 +125,10 @@ def get_news_keywords():
             if word not in STOPWORDS and not any(junk in word for junk in ['특징주', '강세', '급등', '상승', '하락']):
                 final_keywords.append(word)
                 
-        # 💡 [핵심 패치] 전체 순위 집계 후, '언급 횟수 1'인 쓰레기 데이터는 전부 버리고 TOP 10까지만 압축!
         raw_top = Counter(final_keywords).most_common()
         top_10 = [(word, count) for word, count in raw_top if count > 1][:10]
         
-        if not top_10:
-            return pd.DataFrame()
+        if not top_10: return pd.DataFrame()
             
         now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M')
         return pd.DataFrame([[now_str, rank, word, count] for rank, (word, count) in enumerate(top_10, 1)], columns=['업데이트시간', '순위', '키워드', '언급횟수'])
@@ -288,7 +280,7 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
 
 def update_technical_data(df_theme):
     try:
-        print("▶️ 기술적 지표, 스코어링, 정밀 타점 판독 시작 (스나이퍼 모드 + 재무 경고 태그)...")
+        print("▶️ 기술적 지표, 스코어링, 정밀 타점 판독 시작 (500억 주도주 필터 이식 완료)...")
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         doc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)).open_by_url(SHEET_URL)
         
@@ -340,6 +332,7 @@ def update_technical_data(df_theme):
                 today_high = int(today_data[2])
                 today_low = int(today_data[3])
                 current_price = int(today_data[4])
+                today_vol = int(today_data[5])
                 
                 high_60d = max(high_prices[:-1]) if len(high_prices) > 1 else today_high
                 
@@ -398,7 +391,6 @@ def update_technical_data(df_theme):
                         
                         if capital_stock and total_equity and total_equity < capital_stock:
                             is_financial_risk = True
-                        
                         if len(op_profits) == 3 and all(p < 0 for p in op_profits):
                             is_chronic_loss = True
                 except: pass
@@ -412,7 +404,6 @@ def update_technical_data(df_theme):
                     elif i_buy > 0: supply_text = " (기관매수)"
                 except: pass
 
-                today_vol = df_hist['volume'].iloc[-1]
                 ma5 = int(df_hist['close'].tail(5).mean()) if len(df_hist) >= 5 else current_price
                 ma20 = int(df_hist['close'].tail(20).mean()) if len(df_hist) >= 20 else current_price
                 std20 = df_hist['close'].tail(20).std(ddof=0) if len(df_hist) >= 20 else 0
@@ -453,15 +444,21 @@ def update_technical_data(df_theme):
                 is_near_high = current_price >= (high_60d * 0.90)
                 dist_text = "🎯 전고점 턱밑" if is_near_high else ("🟢 매물대 소화중" if current_price >= high_60d * 0.80 else "📉 이격 과다")
                 
+                # 💡 [핵심 패치] 거래대금 500억 필터 추가
+                trading_value = current_price * today_vol
+                yest_trading_value = prev_price * yest_vol
+                
                 is_4yin_1yang = False
                 if len(df_hist) >= 5:
                     c1, c2, c3, c4 = df_hist['close'].iloc[-1], df_hist['close'].iloc[-2], df_hist['close'].iloc[-3], df_hist['close'].iloc[-4]
                     if c1 > c2 and c2 < c3 and (c3 < c4 or (c4-c2)/c4 > 0.05) and (ma20 * 0.95 <= c1 <= ma20 * 1.05):
                         is_4yin_1yang = True
 
-                is_doji = abs(change_rate) <= 0.03 and vol_ratio <= 60 and v_yest_ratio >= 120 and current_price >= ma5
-                is_squeeze_breakout = band_width <= 0.15 and current_price >= upper_band * 0.98 and vol_ratio >= 150
-                is_ss_breakout = vol_ratio >= 150 and change_rate >= 0.05 and not is_long_shadow and is_near_high
+                # 💡 [SS급 상향 조정] 거래대금 500억 이상 + 전고돌파 + 윗꼬리 없음
+                is_ss_breakout = (trading_value >= 50_000_000_000) and (vol_ratio >= 150) and (change_rate >= 0.05) and not is_long_shadow and is_near_high
+                
+                # 💡 [도지 강등] 어제 500억 터진 십자가 캔들 -> A급으로 하향
+                is_doji = (yest_trading_value >= 50_000_000_000) and (abs(change_rate) <= 0.025) and (vol_ratio <= 50) and (v_yest_ratio >= 120) and (ma5 * 0.99 <= current_price <= ma5 * 1.03)
                 
                 master_tajeom = "⏸️ 관망 및 대기"
                 
@@ -471,9 +468,8 @@ def update_technical_data(df_theme):
                 elif is_long_shadow: master_tajeom = "⚠️ 윗꼬리 위험 (매수금지)"
                 elif is_huge_gap: master_tajeom = "⚠️ 갭상승 과다 (추격금지)"
                 
-                elif is_ss_breakout: master_tajeom = "👑 [SS급] 전고점 돌파"
-                elif is_doji: master_tajeom = "🎯 [S급] 도지 눌림목"
-                elif is_squeeze_breakout: master_tajeom = "🚀 [A급] 수렴돌파"
+                elif is_ss_breakout: master_tajeom = "👑 [SS급] 500억 전고 돌파"
+                elif is_doji: master_tajeom = "🎯 [A급] 500억 5일선 도지"  # S급에서 A급으로 강등 완료!
                 elif is_4yin_1yang: master_tajeom = "📉 [B급] 4음1양 지지"
                 
                 elif "🌟" in signal: master_tajeom = "🌟 [VIP] 쌍끌이 모아가기" 
