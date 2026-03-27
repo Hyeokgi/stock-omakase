@@ -59,11 +59,13 @@ STOPWORDS = [
     '정치', '외교', '합의', '수출', '수입', '도입', '본격', '소식', '임박', '부각', '주도'
 ]
 
-# 🔥 [광고/보도자료 스팸 필터] 기업 홍보팀이 자주 쓰는 영업용 단어 목록
+# 🔥 [광고/보도자료/문장형 스팸 2차 필터] 
 AD_FILTER = [
     '펀드', '투어', '캠페인', '서비스', '최초', '강화', '고객', '연금', '마스터', 
     '코리아', '정책', '개최', '박람회', '전시회', '프로모션', '할인', '기획전', 
-    '페스티벌', '출시', '협약', 'MOU', '체결', '선정', '어워드', '스마트픽'
+    '페스티벌', '출시', '협약', 'MOU', '체결', '선정', '어워드', '스마트픽',
+    '팔자', '사자', '증가', '감소', '목표', '꺾인', '주석', '전망', '우려', '기대',
+    '연내', '내달', '오늘', '내일', '돌파', '연속', '급락', '투자', '매수', '매도', '수익'
 ]
 
 def search_code_from_naver(stock_name):
@@ -90,19 +92,23 @@ def get_news_keywords():
                 title_text = sub.get_text(strip=True)
                 full_text += title_text + " \n "
                 
-                # 💡 1. 따옴표 핀셋 추출
+                # 💡 1. 따옴표 핀셋 추출 (+ 순수 명사 판독기)
                 matches = re.findall(r"['\"‘“](.*?)['\"’”]", title_text)
                 for m in matches:
                     clean = re.sub(r'(수혜|관련주|테마주|대장주|강세|상한가|특징주|급등|주목|부각)', '', m).strip()
-                    if 1 < len(clean) <= 15:
-                        # [광고 스팸 필터 작동] 광고성 단어가 포함되어 있지 않을 때만 테마로 인정!
+                    # 특수기호(·, -, ! 등) 싹 제거하고 순수 글자와 공백만 남김
+                    clean = re.sub(r'[^\w\s]', '', clean).strip()
+                    
+                    # 문장 컷! 띄어쓰기가 1개 이하(즉, 단어나 짧은 복합명사)일 때만 통과!
+                    if 1 < len(clean) <= 12 and clean.count(' ') <= 1:
                         if not any(ad in clean for ad in AD_FILTER):
                             theme_phrases.append(clean)
                 
                 # 💡 2. 주식 시장 꼬리표 추출
                 matches2 = re.findall(r'([가-힣a-zA-Z0-9]+)(?:\s+)?(?:관련주|테마주|수혜주|대장주|섹터|주도주)', title_text)
                 for m in matches2:
-                    if len(m) > 1 and not any(ad in m for ad in AD_FILTER):
+                    m = re.sub(r'[^\w\s]', '', m).strip()
+                    if 1 < len(m) <= 10 and not any(ad in m for ad in AD_FILTER):
                         theme_phrases.append(m)
             time.sleep(0.3)
             
