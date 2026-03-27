@@ -2,7 +2,6 @@ name: 🤖 오마카세 AI 리서치 퍼블리셔
 
 on:
   schedule:
-    # 한국 시간 오후 3시 10분 매일 실행 (UTC 06:10)
     - cron: '10 6 * * 1-5' 
   workflow_dispatch: 
 
@@ -25,10 +24,10 @@ jobs:
         sudo apt-get install -y wkhtmltopdf fonts-nanum
         fc-cache -fv 
 
-    - name: 📦 필수 라이브러리 설치
+    - name: 📦 필수 라이브러리 설치 (💡 제미나이 패키지 추가 완료!)
       run: |
         python -m pip install --upgrade pip
-        pip install requests gspread oauth2client markdown pdfkit
+        pip install google-generativeai requests gspread oauth2client markdown pdfkit
 
     - name: 🚀 구글 시트 보안 인증 파일(secret.json) 생성
       env:
