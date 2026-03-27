@@ -1,10 +1,13 @@
 import os
-import requests
-import json
+import warnings
+warnings.filterwarnings("ignore")
+
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import google.generativeai as genai
 import markdown
 import pdfkit
+import requests
 import datetime
 
 # ==========================================
@@ -20,6 +23,24 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "여기에_로컬테스트
 print("🤖 [오마카세 리서치 센터] 데이터 수집 및 분석 시작...")
 
 try:
+    # 💡 [핵심 복구] 스스로 가용한 최상위 모델을 찾아내는 자동 탐색 엔진!
+    genai.configure(api_key=GEMINI_API_KEY)
+    available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+    
+    target_model_name = None
+    priority_models = ['models/gemini-1.5-pro', 'models/gemini-1.5-pro-latest', 'models/gemini-1.5-flash', 'models/gemini-pro']
+    
+    for m in priority_models:
+        if m in available_models:
+            target_model_name = m.replace('models/', '')
+            break
+            
+    if not target_model_name:
+        target_model_name = available_models[0].replace('models/', '')
+        
+    print(f"✅ 모델 탐색 완료! 최상위 추론 모델 [{target_model_name}] 엔진을 장착했습니다.")
+    model = genai.GenerativeModel(target_model_name)
+
     # 1. 구글 시트 데이터 수집
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
@@ -35,7 +56,7 @@ try:
     tech_data = doc.worksheet("주가데이터_보조").get_all_values()[1:30] 
     stock_candidates = "\n".join([f"종목:{r[0]}, 현재가:{r[2]}, 타점:{r[9]}" for r in tech_data if len(r) >= 10])
 
-    print("🧠 [AI 수석 애널리스트] 다이렉트 통신망으로 1.5-flash 엔진 접속 중...")
+    print("🧠 [AI 수석 애널리스트] 입체적 데이터 융합 및 분석 중... (약 15~20초 소요)")
 
     # 2. 증권사 리포트 형식 강제 프롬프트
     prompt = f"""
@@ -70,25 +91,14 @@ try:
     시나리오 이탈 시나 거시경제 악화 시 대응할 수 있는 칼 같은 손절 기준.
     """
 
-    # 3. 무적의 다이렉트 API 통신 (SDK 에러 영구 차단)
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-    headers = {'Content-Type': 'application/json'}
-    data = {"contents": [{"parts": [{"text": prompt}]}]}
-    
-    response = requests.post(url, headers=headers, json=data)
-    response_data = response.json()
-    
-    if response.status_code != 200:
-        print(f"❌ AI 통신 에러: {response_data}")
-        exit(1)
-        
-    ai_report_md = response_data['candidates'][0]['content']['parts'][0]['text']
+    # 3. AI 리포트 생성
+    response = model.generate_content(prompt)
+    ai_report_md = response.text
     print("✅ AI 텍스트 리포트 생성 완료!")
 
     # 4. 마크다운 -> 증권사 리포트 스타일의 HTML로 변환
     html_content = markdown.markdown(ai_report_md)
     
-    # 🎨 업로드하신 메리츠증권 PDF 스타일 완벽 복제 CSS
     css_style = """
     <style>
         body { font-family: 'NanumGothic', 'Malgun Gothic', sans-serif; color: #222; line-height: 1.7; padding: 40px; margin: 0; }
@@ -127,7 +137,8 @@ try:
 
     # 6. 텔레그램으로 PDF 파일 전송
     if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "여기에_로컬테스트용_토큰입력":
-        print("❌ [경고] 텔레그램 토큰이 설정되지 않았습니다.")
+        print("❌ [경고] 텔레그램 토큰이 깃허브 Secrets에서 제대로 불러와지지 않았습니다!")
+        exit(1)
     else:
         print("📲 텔레그램으로 PDF 발송 중...")
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
@@ -139,7 +150,8 @@ try:
             if response.status_code == 200:
                 print("✅ 텔레그램 첨부파일 전송 성공!")
             else:
-                print(f"❌ 텔레그램 전송 실패: {response.text}")
+                print(f"❌ 텔레그램 전송 실패! [에러코드: {response.status_code}]")
+                print(f"이유: {response.text}")
                 exit(1)
 
 except Exception as e:
