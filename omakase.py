@@ -68,7 +68,6 @@ AD_FILTER = [
 ]
 
 def check_warning_market():
-    """ 💡 시장 국면 판독기 """
     try:
         url = "https://m.stock.naver.com/api/index/KOSDAQ/price?pageSize=20&page=1"
         res = session.get(url, verify=False, timeout=3).json()
@@ -292,9 +291,8 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
 
 def update_technical_data(df_theme):
     try:
-        print("▶️ 기술적 지표, 스코어링, 정밀 타점 판독 시작 (🚩 깃발형 모아가기 엔진 탑재 완료)...")
+        print("▶️ 기술적 지표, 스코어링, 정밀 타점 판독 시작 (🛡️ V8 삼륭물산 철통방어 패치)...")
         
-        # 💡 시장 국면 판독기 가동
         is_warning_market = check_warning_market()
         if is_warning_market:
             print("⚠️ 코스닥 20일선 이탈(하락장) 감지! 돌파 타점에 경고 태그를 부착합니다.")
@@ -479,10 +477,9 @@ def update_technical_data(df_theme):
                     if c1 > c2 and c2 < c3 and (c3 < c4 or (c4-c2)/c4 > 0.05) and (ma20 * 0.95 <= c1 <= ma20 * 1.05):
                         is_4yin_1yang = True
 
-                # 💡 [V4 이식] 500억 대장주 전고 돌파
                 is_ss_breakout = (trading_value >= 50_000_000_000) and (vol_ratio >= 150) and (change_rate >= 0.05) and not is_long_shadow and is_near_high
                 
-                # 🚀 [V7 깃발형 모아가기 카운트다운 엔진] 1일차 ~ 3일차 추적
+                # 🚀 [V8 엄격한 깃발형 카운트다운 엔진 (가짜 폭락 방어막 추가)]
                 flag_days = 0
                 for d in range(1, 4):
                     anchor_idx = -(d + 1)
@@ -499,16 +496,30 @@ def update_technical_data(df_theme):
                         high_60d_anchor = max(hist_before_anchor) if len(hist_before_anchor) > 0 else anchor_close
                         is_near_high_anchor = anchor_close >= (high_60d_anchor * 0.90)
                         
-                        # 어제 혹은 그 이전에 SS급 장대양봉이 터졌는가?
                         if anchor_tv >= 50_000_000_000 and anchor_change >= 0.10 and anchor_close > anchor_open and is_near_high_anchor:
                             is_holding = True
-                            # 장대양봉 다음 날부터 오늘까지 매일 종가가 버텼는지 확인
+                            
+                            # 기준봉 다음 날부터 오늘까지 매일 검사
                             for j in range(anchor_idx + 1, 0): 
                                 curr_close = int(df_hist['close'].iloc[j])
-                                if not (anchor_close * 0.98 <= curr_close <= anchor_close * 1.15):
-                                    is_holding = False
-                                    break
-                            
+                                curr_open = int(df_hist['open'].iloc[j])
+                                curr_prev_close = int(df_hist['close'].iloc[j-1])
+                                curr_vol = int(df_hist['volume'].iloc[j])
+                                
+                                curr_change = (curr_close - curr_prev_close) / curr_prev_close if curr_prev_close > 0 else 0
+                                
+                                # 🛡️ 방어막 1: 기준봉 종가 방어선 (살짝 깨는건 허용)
+                                if not (anchor_close * 0.96 <= curr_close <= anchor_close * 1.15):
+                                    is_holding = False; break
+                                    
+                                # 🛡️ 방어막 2: 삼륭물산 방지! 단 하루라도 -4% 이상 내리꽂으면 즉시 탈락
+                                if curr_change < -0.04:
+                                    is_holding = False; break
+                                    
+                                # 🛡️ 방어막 3: 쉬어가는 날 거래량은 기준봉의 60%를 넘지 못하게 억제
+                                if curr_vol > anchor_vol * 0.60:
+                                    is_holding = False; break
+
                             if is_holding:
                                 flag_days = d
                                 break
@@ -524,10 +535,9 @@ def update_technical_data(df_theme):
                 elif is_ss_breakout: 
                     master_tajeom = "👑 [SS급] 전고 돌파 ⚠️(주의장세)" if is_warning_market else "👑 [SS급] 전고 돌파"
                 
-                # 🚀 깃발형 카운트다운 출력 (우선순위 높음)
                 elif flag_days == 3:
                     master_tajeom = "🎯 [슈팅임박] 깃발 3일 차 완성 (비중 40%)" + (" ⚠️(주의장세)" if is_warning_market else "")
-                    score += 30 # 강력한 3일차 완성 가점
+                    score += 30 
                 elif flag_days == 2:
                     master_tajeom = "🚩 [모아가기] 깃발 2일 차 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else "")
                 elif flag_days == 1:
