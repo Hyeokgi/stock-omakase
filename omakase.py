@@ -59,7 +59,6 @@ STOPWORDS = [
     '정치', '외교', '합의', '수출', '수입', '도입', '본격', '소식', '임박', '부각', '주도'
 ]
 
-# 🔥 [광고/보도자료 스팸 필터]
 AD_FILTER = [
     '펀드', '투어', '캠페인', '서비스', '최초', '강화', '고객', '연금', '마스터', 
     '코리아', '정책', '개최', '박람회', '전시회', '프로모션', '할인', '기획전', 
@@ -69,7 +68,7 @@ AD_FILTER = [
 ]
 
 def check_warning_market():
-    """ 💡 시장 국면 판독기: 코스닥 지수가 20일선 아래에 위치하면 True(하락/주의장세) 반환 """
+    """ 💡 시장 국면 판독기 """
     try:
         url = "https://m.stock.naver.com/api/index/KOSDAQ/price?pageSize=20&page=1"
         res = session.get(url, verify=False, timeout=3).json()
@@ -147,7 +146,6 @@ def get_news_keywords():
         now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M')
         return pd.DataFrame([[now_str, rank, word, count] for rank, (word, count) in enumerate(top_10, 1)], columns=['업데이트시간', '순위', '키워드', '언급횟수'])
     except Exception as e:
-        print(f"키워 에러: {e}")
         return pd.DataFrame()
 
 market_cap_cache = {} 
@@ -294,7 +292,7 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
 
 def update_technical_data(df_theme):
     try:
-        print("▶️ 기술적 지표, 스코어링, 정밀 타점 판독 시작 (V4 실전 이식 완료)...")
+        print("▶️ 기술적 지표, 스코어링, 정밀 타점 판독 시작 (🚩 깃발형 모아가기 엔진 탑재 완료)...")
         
         # 💡 시장 국면 판독기 가동
         is_warning_market = check_warning_market()
@@ -358,7 +356,6 @@ def update_technical_data(df_theme):
                 prev_price = int(df_hist['close'].iloc[-2]) if len(df_hist) > 1 else current_price
                 change_rate = (current_price - prev_price) / prev_price if prev_price > 0 else 0.0
                 
-                # --- [과거 데이터 연산] ---
                 yest_close = prev_price
                 yest_open = int(df_hist['open'].iloc[-2]) if len(df_hist) > 1 else yest_close
                 yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) > 1 else 0
@@ -368,7 +365,6 @@ def update_technical_data(df_theme):
                 yest_change_rate = (yest_close - yest_prev_close) / yest_prev_close if yest_prev_close > 0 else 0
                 yest_is_yangbong = yest_close > yest_open
                 
-                # --- [현재 데이터 연산] ---
                 trading_value = current_price * today_vol
                 high_60d = max(high_prices[:-1]) if len(high_prices) > 1 else today_high
                 
@@ -486,13 +482,36 @@ def update_technical_data(df_theme):
                 # 💡 [V4 이식] 500억 대장주 전고 돌파
                 is_ss_breakout = (trading_value >= 50_000_000_000) and (vol_ratio >= 150) and (change_rate >= 0.05) and not is_long_shadow and is_near_high
                 
-                # 💡 [V4 이식] 진짜 10% 양봉 후 십자도지 강등 타점
-                is_true_doji = (
-                    (yest_trading_value >= 50_000_000_000) and 
-                    (yest_change_rate >= 0.10) and yest_is_yangbong and is_near_high and
-                    is_today_yangbong and (today_body_ratio <= 0.025) and
-                    (vol_drop_to_yest <= 0.40)
-                )
+                # 🚀 [V7 깃발형 모아가기 카운트다운 엔진] 1일차 ~ 3일차 추적
+                flag_days = 0
+                for d in range(1, 4):
+                    anchor_idx = -(d + 1)
+                    if len(df_hist) >= abs(anchor_idx) + 1:
+                        anchor_close = int(df_hist['close'].iloc[anchor_idx])
+                        anchor_open = int(df_hist['open'].iloc[anchor_idx])
+                        anchor_vol = int(df_hist['volume'].iloc[anchor_idx])
+                        anchor_prev_close = int(df_hist['close'].iloc[anchor_idx - 1]) if len(df_hist) > abs(anchor_idx) + 1 else anchor_open
+                        
+                        anchor_tv = anchor_close * anchor_vol
+                        anchor_change = (anchor_close - anchor_prev_close) / anchor_prev_close if anchor_prev_close > 0 else 0
+                        
+                        hist_before_anchor = high_prices[:anchor_idx] if anchor_idx < -1 else high_prices[:-1]
+                        high_60d_anchor = max(hist_before_anchor) if len(hist_before_anchor) > 0 else anchor_close
+                        is_near_high_anchor = anchor_close >= (high_60d_anchor * 0.90)
+                        
+                        # 어제 혹은 그 이전에 SS급 장대양봉이 터졌는가?
+                        if anchor_tv >= 50_000_000_000 and anchor_change >= 0.10 and anchor_close > anchor_open and is_near_high_anchor:
+                            is_holding = True
+                            # 장대양봉 다음 날부터 오늘까지 매일 종가가 버텼는지 확인
+                            for j in range(anchor_idx + 1, 0): 
+                                curr_close = int(df_hist['close'].iloc[j])
+                                if not (anchor_close * 0.98 <= curr_close <= anchor_close * 1.15):
+                                    is_holding = False
+                                    break
+                            
+                            if is_holding:
+                                flag_days = d
+                                break
                 
                 master_tajeom = "⏸️ 관망 및 대기"
                 
@@ -503,10 +522,17 @@ def update_technical_data(df_theme):
                 elif is_huge_gap: master_tajeom = "⚠️ 갭상승 과다 (추격금지)"
                 
                 elif is_ss_breakout: 
-                    # 💡 시장 국면에 따라 주의장세 태그 자동 부착!
                     master_tajeom = "👑 [SS급] 전고 돌파 ⚠️(주의장세)" if is_warning_market else "👑 [SS급] 전고 돌파"
                 
-                elif is_true_doji: master_tajeom = "🎯 [A급] 10% 양봉 후 십자도지"
+                # 🚀 깃발형 카운트다운 출력 (우선순위 높음)
+                elif flag_days == 3:
+                    master_tajeom = "🎯 [슈팅임박] 깃발 3일 차 완성 (비중 40%)" + (" ⚠️(주의장세)" if is_warning_market else "")
+                    score += 30 # 강력한 3일차 완성 가점
+                elif flag_days == 2:
+                    master_tajeom = "🚩 [모아가기] 깃발 2일 차 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else "")
+                elif flag_days == 1:
+                    master_tajeom = "🚩 [모아가기] 깃발 1일 차 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else "")
+                
                 elif is_4yin_1yang: master_tajeom = "📉 [B급] 4음1양 지지"
                 
                 elif "🌟" in signal: master_tajeom = "🌟 [VIP] 쌍끌이 모아가기" 
