@@ -72,23 +72,23 @@ def search_code_from_naver(stock_name):
 def get_news_keywords():
     try:
         full_text = ""
-        # 💡 [핵심 패치] 네이버 통합 뉴스 검색 API를 사용하여 '특징주' 기사를 완벽하게 수집합니다.
-        for page in range(1, 4):
-            start = (page - 1) * 10 + 1
-            # 통합검색 뉴스 탭에서 '특징주' 검색
-            url = f"https://search.naver.com/search.naver?where=news&query=%ED%8A%B9%EC%A7%95%EC%A3%BC&start={start}"
+        # 💡 [해외 IP 차단 우회] 네이버 금융(차단 안됨)의 '실시간 속보'를 10페이지까지 뒤져서 
+        # 거시경제 뉴스(노이즈)를 버리고, 주도주/테마 관련 뉴스 타이틀만 핀셋으로 뽑습니다.
+        for page in range(1, 10):
+            url = f"https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258&page={page}"
             res = session.get(url, verify=False, timeout=5)
-            soup = BeautifulSoup(res.text, 'html.parser')
+            soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
             
-            # 네이버 통합검색 뉴스의 고정 클래스('.news_tit')
-            titles = soup.select('.news_tit')
-            for t in titles:
-                title_text = t.get_text(strip=True)
-                title_text = re.sub(r'\[.*?\]', '', title_text) # [특징주] 등 괄호 텍스트 날림
-                full_text += title_text + " "
-            time.sleep(0.3)
+            subjects = soup.select('.articleSubject a')
+            for sub in subjects:
+                title = sub.text.strip()
+                # 필터링: 특징주, 테마 등 특정 키워드가 있는 개별 종목 뉴스만 줍기
+                if any(k in title for k in ['특징주', '강세', '급등', '상한가', '수혜', '주목', '관련주', '테마']):
+                    clean_title = re.sub(r'\[.*?\]', '', title) # [특징주], [속보] 같은 대괄호 텍스트 날림
+                    full_text += clean_title + " "
+            time.sleep(0.2)
             
-        if len(full_text) < 50: return pd.DataFrame()
+        if len(full_text) < 20: return pd.DataFrame()
             
         from kiwipiepy import Kiwi
         kiwi = Kiwi()
@@ -353,11 +353,9 @@ def update_technical_data(df_theme):
                                         break
                                     except: pass
                         
-                        # 1. 자본잠식 (즉각 아웃 사유)
                         if capital_stock and total_equity and total_equity < capital_stock:
                             is_financial_risk = True
                         
-                        # 2. 3년 연속 영업이익 적자 (경고 태그용)
                         if len(op_profits) == 3 and all(p < 0 for p in op_profits):
                             is_chronic_loss = True
                 except: pass
