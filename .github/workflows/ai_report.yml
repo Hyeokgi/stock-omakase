@@ -1,0 +1,45 @@
+name: 🤖 오마카세 AI 리서치 퍼블리셔
+
+on:
+  schedule:
+    # 한국 시간(KST) 오후 3시 10분 = UTC 시간 오전 6시 10분
+    - cron: '10 6 * * 1-5' 
+  workflow_dispatch: # 수동 실행 버튼 활성화
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 📥 레포지토리 코드 가져오기
+      uses: actions/checkout@v3
+
+    - name: 🐍 파이썬 환경 세팅
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: 🛠️ 필수 프로그램 및 한글 폰트 설치 (PDF 변환용)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y wkhtmltopdf fonts-nanum
+        fc-cache -fv  # 폰트 캐시 업데이트 (한글 깨짐 방지)
+
+    - name: 📦 파이썬 라이브러리 설치
+      run: |
+        python -m pip install --upgrade pip
+        pip install google-generativeai gspread oauth2client markdown pdfkit requests
+
+    - name: 🚀 구글 시트 보안 인증 파일 생성
+      env:
+        SECRET_JSON: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+      run: |
+        echo "$SECRET_JSON" > secret.json
+
+    - name: 📊 AI 리포트 생성 및 텔레그램 발송 실행
+      env:
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        python ai_sector_analyst.py
