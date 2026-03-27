@@ -504,7 +504,7 @@ def update_technical_data(df_theme):
                 
                 elif is_ss_breakout: 
                     # 💡 시장 국면에 따라 주의장세 태그 자동 부착!
-                    master_tajeom = "👑 [SS급] 500억 전고 돌파 ⚠️(주의장세)" if is_warning_market else "👑 [SS급] 500억 전고 돌파"
+                    master_tajeom = "👑 [SS급] 전고 돌파 ⚠️(주의장세)" if is_warning_market else "👑 [SS급] 전고 돌파"
                 
                 elif is_true_doji: master_tajeom = "🎯 [A급] 10% 양봉 후 십자도지"
                 elif is_4yin_1yang: master_tajeom = "📉 [B급] 4음1양 지지"
