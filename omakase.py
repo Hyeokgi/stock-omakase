@@ -131,13 +131,15 @@ def get_news_keywords():
             if word not in STOPWORDS and not any(junk in word for junk in ['특징주', '강세', '급등', '상승', '하락']):
                 final_keywords.append(word)
                 
-        top_15 = Counter(final_keywords).most_common(15)
+        # 💡 [핵심 패치] 전체 순위 집계 후, '언급 횟수 1'인 쓰레기 데이터는 전부 버리고 TOP 10까지만 압축!
+        raw_top = Counter(final_keywords).most_common()
+        top_10 = [(word, count) for word, count in raw_top if count > 1][:10]
         
-        if not top_15:
+        if not top_10:
             return pd.DataFrame()
             
         now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M')
-        return pd.DataFrame([[now_str, rank, word, count] for rank, (word, count) in enumerate(top_15, 1)], columns=['업데이트시간', '순위', '키워드', '언급횟수'])
+        return pd.DataFrame([[now_str, rank, word, count] for rank, (word, count) in enumerate(top_10, 1)], columns=['업데이트시간', '순위', '키워드', '언급횟수'])
     except Exception as e:
         print(f"키워드 에러: {e}")
         return pd.DataFrame()
