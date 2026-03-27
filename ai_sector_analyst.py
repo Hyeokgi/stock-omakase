@@ -97,16 +97,22 @@ try:
         {markdown.markdown(report_mid)} {make_chart_section(report_mid, "[중기 전략] 일봉 차트")}
     </body></html>"""
 
-    # 6. PDF 저장 및 업로드
+    # 6. PDF 저장 및 업로드 (수정된 로직)
     pdf_filename = f"HYEOKS_Research_{datetime.datetime.now().strftime('%Y%m%d')}.pdf"
     pdfkit.from_string(full_html, pdf_filename, options={'encoding': "UTF-8", 'enable-local-file-access': None})
     
-    # 💡 드라이브 업로드 로직 (FOLDER_ID 체크 강화)
-    print(f"📂 구글 드라이브 업로드 중... (대상 폴더: {FOLDER_ID})")
+    print(f"📂 HYEOKS 리서치 드라이브 업로드 시도... (폴더: {FOLDER_ID})")
     media = MediaFileUpload(pdf_filename, mimetype='application/pdf')
     file_metadata = {'name': pdf_filename, 'parents': [FOLDER_ID]}
     
-    uploaded_file = drive_service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+    # 💡 [핵심 수정] supportsAllDrives=True 옵션을 추가하여 서비스 계정의 용량 제한을 우회합니다.
+    uploaded_file = drive_service.files().create(
+        body=file_metadata, 
+        media_body=media, 
+        fields='id',
+        supportsAllDrives=True  # 이 옵션이 공유 폴더 업로드의 핵심입니다!
+    ).execute()
+    
     file_id = uploaded_file.get('id')
     
     # 7. 앱시트 시트 기록
