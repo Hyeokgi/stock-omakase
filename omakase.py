@@ -68,6 +68,20 @@ AD_FILTER = [
     '연내', '내달', '오늘', '내일', '돌파', '연속', '급락', '투자', '매수', '매도', '수익'
 ]
 
+def check_warning_market():
+    """ 💡 시장 국면 판독기: 코스닥 지수가 20일선 아래에 위치하면 True(하락/주의장세) 반환 """
+    try:
+        url = "https://m.stock.naver.com/api/index/KOSDAQ/price?pageSize=20&page=1"
+        res = session.get(url, verify=False, timeout=3).json()
+        prices = [float(item['closePrice'].replace(',', '')) for item in res]
+        if len(prices) == 20:
+            ma20 = sum(prices) / 20
+            if prices[0] < ma20:
+                return True
+    except:
+        pass
+    return False
+
 def search_code_from_naver(stock_name):
     try:
         url = f"https://m.stock.naver.com/api/search/all?keyword={stock_name}"
@@ -133,7 +147,7 @@ def get_news_keywords():
         now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M')
         return pd.DataFrame([[now_str, rank, word, count] for rank, (word, count) in enumerate(top_10, 1)], columns=['업데이트시간', '순위', '키워드', '언급횟수'])
     except Exception as e:
-        print(f"키워드 에러: {e}")
+        print(f"키워 에러: {e}")
         return pd.DataFrame()
 
 market_cap_cache = {} 
@@ -280,7 +294,13 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
 
 def update_technical_data(df_theme):
     try:
-        print("▶️ 기술적 지표, 스코어링, 정밀 타점 판독 시작 (500억 주도주 필터 이식 완료)...")
+        print("▶️ 기술적 지표, 스코어링, 정밀 타점 판독 시작 (V4 실전 이식 완료)...")
+        
+        # 💡 시장 국면 판독기 가동
+        is_warning_market = check_warning_market()
+        if is_warning_market:
+            print("⚠️ 코스닥 20일선 이탈(하락장) 감지! 돌파 타점에 경고 태그를 부착합니다.")
+        
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         doc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)).open_by_url(SHEET_URL)
         
@@ -334,20 +354,36 @@ def update_technical_data(df_theme):
                 current_price = int(today_data[4])
                 today_vol = int(today_data[5])
                 
+                df_hist = pd.DataFrame(history)
+                prev_price = int(df_hist['close'].iloc[-2]) if len(df_hist) > 1 else current_price
+                change_rate = (current_price - prev_price) / prev_price if prev_price > 0 else 0.0
+                
+                # --- [과거 데이터 연산] ---
+                yest_close = prev_price
+                yest_open = int(df_hist['open'].iloc[-2]) if len(df_hist) > 1 else yest_close
+                yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) > 1 else 0
+                yest_prev_close = int(df_hist['close'].iloc[-3]) if len(df_hist) > 2 else yest_open
+                
+                yest_trading_value = yest_close * yest_vol
+                yest_change_rate = (yest_close - yest_prev_close) / yest_prev_close if yest_prev_close > 0 else 0
+                yest_is_yangbong = yest_close > yest_open
+                
+                # --- [현재 데이터 연산] ---
+                trading_value = current_price * today_vol
                 high_60d = max(high_prices[:-1]) if len(high_prices) > 1 else today_high
                 
                 body_top = max(current_price, open_price)
                 body_bottom = min(current_price, open_price)
                 upper_shadow = today_high - body_top
                 real_body = body_top - body_bottom
-                upper_shadow_ratio = upper_shadow / current_price if current_price > 0 else 0
                 
+                upper_shadow_ratio = upper_shadow / current_price if current_price > 0 else 0
                 is_long_shadow = (upper_shadow_ratio >= 0.05) or (upper_shadow_ratio >= 0.025 and upper_shadow > real_body * 1.5)
                 shadow_text = "⚠️ 윗꼬리 위험" if is_long_shadow else ("👑 깔끔한 단봉" if upper_shadow_ratio <= 0.015 else "🟡 보통 캔들")
                 
-                df_hist = pd.DataFrame(history)
-                prev_price = int(df_hist['close'].iloc[-2]) if len(df_hist) > 1 else current_price
-                change_rate = (current_price - prev_price) / prev_price if prev_price > 0 else 0.0
+                today_body_ratio = real_body / open_price if open_price > 0 else 0
+                is_today_yangbong = current_price >= open_price
+                vol_drop_to_yest = today_vol / yest_vol if yest_vol > 0 else 0
                 
                 gap_ratio = (open_price - prev_price) / prev_price if prev_price > 0 else 0
                 is_huge_gap = gap_ratio >= 0.04
@@ -438,15 +474,8 @@ def update_technical_data(df_theme):
                     elif ma5 > ma20: score += 10
                     elif current_price >= ma20: score += 5
                     
-                yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) > 1 else 0
-                v_yest_ratio = (yest_vol / avg_vol_10) * 100 if avg_vol_10 > 0 else 0
-                
-                is_near_high = current_price >= (high_60d * 0.90)
+                is_near_high = current_price >= (high_60d * 0.90) or yest_close >= (high_60d * 0.90)
                 dist_text = "🎯 전고점 턱밑" if is_near_high else ("🟢 매물대 소화중" if current_price >= high_60d * 0.80 else "📉 이격 과다")
-                
-                # 💡 [핵심 패치] 거래대금 500억 필터 추가
-                trading_value = current_price * today_vol
-                yest_trading_value = prev_price * yest_vol
                 
                 is_4yin_1yang = False
                 if len(df_hist) >= 5:
@@ -454,11 +483,16 @@ def update_technical_data(df_theme):
                     if c1 > c2 and c2 < c3 and (c3 < c4 or (c4-c2)/c4 > 0.05) and (ma20 * 0.95 <= c1 <= ma20 * 1.05):
                         is_4yin_1yang = True
 
-                # 💡 [SS급 상향 조정] 거래대금 500억 이상 + 전고돌파 + 윗꼬리 없음
+                # 💡 [V4 이식] 500억 대장주 전고 돌파
                 is_ss_breakout = (trading_value >= 50_000_000_000) and (vol_ratio >= 150) and (change_rate >= 0.05) and not is_long_shadow and is_near_high
                 
-                # 💡 [도지 강등] 어제 500억 터진 십자가 캔들 -> A급으로 하향
-                is_doji = (yest_trading_value >= 50_000_000_000) and (abs(change_rate) <= 0.025) and (vol_ratio <= 50) and (v_yest_ratio >= 120) and (ma5 * 0.99 <= current_price <= ma5 * 1.03)
+                # 💡 [V4 이식] 진짜 10% 양봉 후 십자도지 강등 타점
+                is_true_doji = (
+                    (yest_trading_value >= 50_000_000_000) and 
+                    (yest_change_rate >= 0.10) and yest_is_yangbong and is_near_high and
+                    is_today_yangbong and (today_body_ratio <= 0.025) and
+                    (vol_drop_to_yest <= 0.40)
+                )
                 
                 master_tajeom = "⏸️ 관망 및 대기"
                 
@@ -468,8 +502,11 @@ def update_technical_data(df_theme):
                 elif is_long_shadow: master_tajeom = "⚠️ 윗꼬리 위험 (매수금지)"
                 elif is_huge_gap: master_tajeom = "⚠️ 갭상승 과다 (추격금지)"
                 
-                elif is_ss_breakout: master_tajeom = "👑 [SS급] 500억 전고 돌파"
-                elif is_doji: master_tajeom = "🎯 [A급] 500억 5일선 도지"  # S급에서 A급으로 강등 완료!
+                elif is_ss_breakout: 
+                    # 💡 시장 국면에 따라 주의장세 태그 자동 부착!
+                    master_tajeom = "👑 [SS급] 500억 전고 돌파 ⚠️(주의장세)" if is_warning_market else "👑 [SS급] 500억 전고 돌파"
+                
+                elif is_true_doji: master_tajeom = "🎯 [A급] 10% 양봉 후 십자도지"
                 elif is_4yin_1yang: master_tajeom = "📉 [B급] 4음1양 지지"
                 
                 elif "🌟" in signal: master_tajeom = "🌟 [VIP] 쌍끌이 모아가기" 
