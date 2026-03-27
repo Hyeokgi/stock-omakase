@@ -71,34 +71,34 @@ def search_code_from_naver(stock_name):
 def get_news_keywords():
     try:
         full_text = ""
-        # 통합검색 뉴스 탭에서 '특징주' 검색 (10페이지까지 넉넉하게 긁어옵니다)
-        for page in range(1, 10):
-            start = (page - 1) * 10 + 1
-            url = f"https://search.naver.com/search.naver?where=news&query=%ED%8A%B9%EC%A7%95%EC%A3%BC&start={start}"
-            res = session.get(url, verify=False, timeout=5)
-            soup = BeautifulSoup(res.text, 'html.parser')
-            
-            titles = soup.select('.news_tit')
-            for t in titles:
-                title_text = t.get_text(strip=True)
-                full_text += title_text + " \n "
-            time.sleep(0.2)
-            
         theme_phrases = []
         
-        # 💡 1. 기자들의 '따옴표 강조' 핀셋 추출
-        matches = re.findall(r"['\"‘“](.*?)['\"’”]", full_text)
-        for m in matches:
-            clean = re.sub(r'(수혜|관련주|테마주|대장주|강세|상한가|특징주|급등|주목|부각)', '', m).strip()
-            if 1 < len(clean) <= 15:
-                theme_phrases.append(clean)
-                
-        # 💡 2. 주식 시장 꼬리표 추출 (OO관련주, OO테마주)
-        matches2 = re.findall(r'([가-힣a-zA-Z0-9]+)(?:\s+)?(?:관련주|테마주|수혜주|대장주|섹터|주도주)', full_text)
-        for m in matches2:
-            if len(m) > 1: theme_phrases.append(m)
+        # 💡 [핵심 패치 완료] 해외 깃허브 IP를 차단하지 않는 네이버 금융 속보 주소로 정상 복귀!!
+        for page in range(1, 10):
+            url = f"https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258&page={page}"
+            res = session.get(url, verify=False, timeout=5)
+            soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
             
-        # 💡 3. 메가 트렌드 핵심어 하드코딩 레이더 (무조건 잡아냄)
+            # 기사 제목 추출
+            subjects = soup.select('.articleSubject a')
+            for sub in subjects:
+                title_text = sub.get_text(strip=True)
+                full_text += title_text + " \n "
+                
+                # 💡 1. 기자들의 '따옴표 강조' 핀셋 추출
+                matches = re.findall(r"['\"‘“](.*?)['\"’”]", title_text)
+                for m in matches:
+                    clean = re.sub(r'(수혜|관련주|테마주|대장주|강세|상한가|특징주|급등|주목|부각)', '', m).strip()
+                    if 1 < len(clean) <= 15:
+                        theme_phrases.append(clean)
+                
+                # 💡 2. 주식 시장 꼬리표 추출 (OO관련주, OO테마주)
+                matches2 = re.findall(r'([가-힣a-zA-Z0-9]+)(?:\s+)?(?:관련주|테마주|수혜주|대장주|섹터|주도주)', title_text)
+                for m in matches2:
+                    if len(m) > 1: theme_phrases.append(m)
+            time.sleep(0.3)
+            
+        # 💡 3. 메가 트렌드 핵심어 하드코딩 레이더 (스치기만 해도 무조건 적발)
         core_keywords = [
             '의료AI', '비만치료제', '전고체', '자율주행', '로봇', '반도체', '바이오시밀러', 
             '원격진료', '탈플라스틱', '신재생', '원전', '우주항공', 'UAM', '메타버스', 
@@ -120,6 +120,10 @@ def get_news_keywords():
                 
         top_15 = Counter(final_keywords).most_common(15)
         
+        # 텅 빌 경우 방어막
+        if not top_15:
+            return pd.DataFrame()
+            
         now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M')
         return pd.DataFrame([[now_str, rank, word, count] for rank, (word, count) in enumerate(top_15, 1)], columns=['업데이트시간', '순위', '키워드', '언급횟수'])
     except Exception as e:
