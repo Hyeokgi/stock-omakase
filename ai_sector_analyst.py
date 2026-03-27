@@ -58,7 +58,7 @@ try:
 
     print("🧠 [AI 수석 애널리스트] 입체적 데이터 융합 및 분석 중... (약 15~20초 소요)")
 
-    # 2. 증권사 리포트 형식 강제 프롬프트
+# 2. 증권사 리포트 형식 강제 프롬프트
     prompt = f"""
     너는 메리츠증권의 최고 수석 퀀트 애널리스트 '오마카세 AI'야. 
     다음 데이터를 바탕으로 오늘 시장의 핵심을 짚고, 가장 유망한 Top Pick 1종목을 골라.
@@ -69,26 +69,27 @@ try:
     - 타점후보: {stock_candidates}
 
     [작성 규칙] (반드시 아래 마크다운 양식을 지켜서 전문적인 애널리스트 톤으로 작성)
+    ⚠️ 가장 중요한 규칙: 최종 리포트는 반드시 A4 1장에 완벽히 들어가야 하므로, 각 섹션별 설명을 3~4문장 이내로 '핵심만 극도로 압축'해서 작성할 것. 절대 길게 쓰지 마라.
     
     <div class="broker-name">OMAKASE Securities</div>
     <div class="header">
         <p class="stock-title">종목명 (종목코드)</p>
-        <p class="subtitle">여기에 시선을 끄는 강력한 1줄 소제목 작성 (예: 1Q 서프라이즈, 여기도 기판이 완판)</p>
+        <p class="subtitle">여기에 시선을 끄는 강력한 1줄 소제목 작성</p>
     </div>
     
     <div class="info-box">
         <b>Company Brief | 퀀트 분석팀</b><br>
-        현재 매크로(환율, 유가 등) 환경과 테마 순환매를 바탕으로 이 종목을 지금 매수해야 하는 핵심 논리를 3줄로 요약.
+        현재 매크로 환경과 테마 순환매를 바탕으로 이 종목을 매수해야 하는 핵심 논리를 2~3줄로 요약.
     </div>
 
     ## 1. 기업 개요 및 실적 모멘텀 (Company Overview & Earnings)
-    이 기업의 비즈니스 모델 개요와 최근 시장에서 기대하고 있는 실적 턴어라운드나 모멘텀, 뉴스를 애널리스트의 시각으로 서술.
+    비즈니스 모델 개요와 최근 실적 턴어라운드/모멘텀을 간결하게 서술.
     
     ## 2. 기술적 분석 및 매매 전략 (Technical Analysis)
-    세력의 깃발형 패턴, 거래량 급감, 이평선 지지 등을 근거로 한 정확한 매수 타점 분석.
+    세력의 깃발형 패턴, 거래량 등 핵심 매수 타점 근거 제시.
     
     ## 3. 리스크 팩터 및 손절 라인 (Risk Management)
-    시나리오 이탈 시나 거시경제 악화 시 대응할 수 있는 칼 같은 손절 기준.
+    시나리오 이탈 시나 거시경제 악화 시 대응할 수 있는 손절 기준 제시.
     """
 
     # 3. AI 리포트 생성
@@ -96,20 +97,20 @@ try:
     ai_report_md = response.text
     print("✅ AI 텍스트 리포트 생성 완료!")
 
-    # 4. 마크다운 -> 증권사 리포트 스타일의 HTML로 변환
+# 4. 마크다운 -> 증권사 리포트 스타일의 HTML로 변환
     html_content = markdown.markdown(ai_report_md)
     
     css_style = """
     <style>
-        body { font-family: 'NanumGothic', 'Malgun Gothic', sans-serif; color: #222; line-height: 1.7; padding: 40px; margin: 0; }
-        .broker-name { color: #800000; font-weight: 900; font-size: 22px; margin-bottom: 20px; font-style: italic; }
-        .header { border-bottom: 4px solid #800000; padding-bottom: 15px; margin-bottom: 25px; }
-        .stock-title { font-size: 36px; font-weight: 900; margin: 0; color: #000; }
-        .subtitle { font-size: 20px; color: #004080; margin-top: 8px; font-weight: bold; }
-        .info-box { border-left: 5px solid #800000; background: #f4f4f4; padding: 15px 20px; margin: 25px 0; font-size: 14px; }
-        h2 { color: #800000; font-size: 18px; margin-top: 35px; border-bottom: 1px solid #ddd; padding-bottom: 5px; text-transform: uppercase; }
-        p { font-size: 14px; text-align: justify; word-break: keep-all; }
-        .footer { text-align: center; font-size: 11px; color: #999; margin-top: 50px; border-top: 1px solid #eee; padding-top: 15px; }
+        body { font-family: 'NanumGothic', 'Malgun Gothic', sans-serif; color: #222; line-height: 1.5; padding: 25px; margin: 0; }
+        .broker-name { color: #800000; font-weight: 900; font-size: 20px; margin-bottom: 15px; font-style: italic; }
+        .header { border-bottom: 4px solid #800000; padding-bottom: 10px; margin-bottom: 20px; }
+        .stock-title { font-size: 32px; font-weight: 900; margin: 0; color: #000; }
+        .subtitle { font-size: 18px; color: #004080; margin-top: 5px; font-weight: bold; }
+        .info-box { border-left: 5px solid #800000; background: #f4f4f4; padding: 12px 15px; margin: 20px 0; font-size: 13px; }
+        h2 { color: #800000; font-size: 16px; margin-top: 20px; border-bottom: 1px solid #ddd; padding-bottom: 5px; text-transform: uppercase; }
+        p { font-size: 13px; text-align: justify; word-break: keep-all; margin-top: 5px; margin-bottom: 10px; }
+        .footer { text-align: center; font-size: 10px; color: #999; margin-top: 30px; border-top: 1px solid #eee; padding-top: 10px; }
     </style>
     """
     
@@ -124,12 +125,12 @@ try:
     </html>
     """
 
-    # 5. HTML을 PDF 파일로 굽기
+    # 5. HTML을 PDF 파일로 굽기 (마진을 0.7in -> 0.5in로 줄여 공간 확보)
     pdf_filename = f"Omakase_Report_{datetime.datetime.now().strftime('%Y%m%d')}.pdf"
     
     options = {
         'page-size': 'A4',
-        'margin-top': '0.7in', 'margin-right': '0.7in', 'margin-bottom': '0.7in', 'margin-left': '0.7in',
+        'margin-top': '0.5in', 'margin-right': '0.5in', 'margin-bottom': '0.5in', 'margin-left': '0.5in',
         'encoding': "UTF-8", 'enable-local-file-access': None
     }
     pdfkit.from_string(full_html, pdf_filename, options=options)
