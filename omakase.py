@@ -70,10 +70,9 @@ def search_code_from_naver(stock_name):
 
 def get_news_keywords():
     try:
-        theme_phrases = []
         full_text = ""
-        
-        for page in range(1, 6):
+        # 통합검색 뉴스 탭에서 '특징주' 검색 (10페이지까지 넉넉하게 긁어옵니다)
+        for page in range(1, 10):
             start = (page - 1) * 10 + 1
             url = f"https://search.naver.com/search.naver?where=news&query=%ED%8A%B9%EC%A7%95%EC%A3%BC&start={start}"
             res = session.get(url, verify=False, timeout=5)
@@ -82,34 +81,47 @@ def get_news_keywords():
             titles = soup.select('.news_tit')
             for t in titles:
                 title_text = t.get_text(strip=True)
-                full_text += title_text + " "
-                
-                # 💡 [핵심 패치] 기자의 '따옴표' 법칙 활용!
-                # 작은따옴표(' '), 큰따옴표(" ") 안의 강조된 핵심 테마를 통째로 추출합니다.
-                matches = re.findall(r"['\"‘“](.*?)['\"’”]", title_text)
-                for m in matches:
-                    clean_m = m.strip()
-                    # 꼬리표 떼기 (기자들이 따옴표 안에 같이 넣는 불필요한 서술어 제거)
-                    clean_m = re.sub(r'(수혜|관련주|테마주|강세|상한가|특징주|급등|주목|임박|돌파|추진)', '', clean_m).strip()
-                    
-                    # 너무 길거나 짧은 문구 필터링 & 금지어 방어막
-                    if 1 < len(clean_m) <= 15 and clean_m not in STOPWORDS:
-                        theme_phrases.append(clean_m)
-            time.sleep(0.3)
+                full_text += title_text + " \n "
+            time.sleep(0.2)
             
-        # 1차: 따옴표에서 통째로 건진 진짜 테마 키워드들 집계
-        top_words = Counter(theme_phrases).most_common(15)
+        theme_phrases = []
         
-        # 2차: 장이 조용해서 따옴표 기사가 너무 적을 경우, 형태소 분석기를 보조 엔진으로 섞어줌
-        if len(top_words) < 7 and len(full_text) > 50:
-            from kiwipiepy import Kiwi
-            kiwi = Kiwi()
-            nouns = [token.form for token in kiwi.tokenize(full_text) if token.tag in ['NNG', 'NNP'] and len(token.form) > 1 and token.form not in STOPWORDS]
-            theme_phrases.extend(nouns)
-            top_words = Counter(theme_phrases).most_common(15)
+        # 💡 1. 기자들의 '따옴표 강조' 핀셋 추출
+        matches = re.findall(r"['\"‘“](.*?)['\"’”]", full_text)
+        for m in matches:
+            clean = re.sub(r'(수혜|관련주|테마주|대장주|강세|상한가|특징주|급등|주목|부각)', '', m).strip()
+            if 1 < len(clean) <= 15:
+                theme_phrases.append(clean)
+                
+        # 💡 2. 주식 시장 꼬리표 추출 (OO관련주, OO테마주)
+        matches2 = re.findall(r'([가-힣a-zA-Z0-9]+)(?:\s+)?(?:관련주|테마주|수혜주|대장주|섹터|주도주)', full_text)
+        for m in matches2:
+            if len(m) > 1: theme_phrases.append(m)
             
+        # 💡 3. 메가 트렌드 핵심어 하드코딩 레이더 (무조건 잡아냄)
+        core_keywords = [
+            '의료AI', '비만치료제', '전고체', '자율주행', '로봇', '반도체', '바이오시밀러', 
+            '원격진료', '탈플라스틱', '신재생', '원전', '우주항공', 'UAM', '메타버스', 
+            'OLED', 'LFP', 'HBM', 'CXL', '온디바이스', 'AI', '초전도체', '양자암호', 
+            '저전력', '데이터센터', '웹툰', '비트코인', 'STO', '밸류업', '방산', '조선',
+            '피지컬AI', '전력설비', '유리기판', '액침냉각', '엔터', '화장품', '미용기기',
+            '제약', '바이오', '이차전지', '2차전지', '폐배터리', '수소', '태양광', '마이크로바이옴'
+        ]
+        for word in core_keywords:
+            count = full_text.count(word)
+            for _ in range(count):
+                theme_phrases.append(word)
+
+        # 쓰레기 단어 필터링 (일반 명사 엔진 아예 삭제)
+        final_keywords = []
+        for word in theme_phrases:
+            if word not in STOPWORDS and not any(junk in word for junk in ['특징주', '강세', '급등', '상승', '하락']):
+                final_keywords.append(word)
+                
+        top_15 = Counter(final_keywords).most_common(15)
+        
         now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M')
-        return pd.DataFrame([[now_str, rank, word, count] for rank, (word, count) in enumerate(top_words, 1)], columns=['업데이트시간', '순위', '키워드', '언급횟수'])
+        return pd.DataFrame([[now_str, rank, word, count] for rank, (word, count) in enumerate(top_15, 1)], columns=['업데이트시간', '순위', '키워드', '언급횟수'])
     except Exception as e:
         print(f"키워드 에러: {e}")
         return pd.DataFrame()
