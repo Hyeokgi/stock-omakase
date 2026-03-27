@@ -291,7 +291,7 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
 
 def update_technical_data(df_theme):
     try:
-        print("▶️ 기술적 지표, 스코어링, 정밀 타점 판독 시작 (🛡️ V8 삼륭물산 철통방어 패치)...")
+        print("▶️ 기술적 지표, 스코어링, 정밀 타점 판독 시작 (🚩 0일차 관심종목 패치 완료)...")
         
         is_warning_market = check_warning_market()
         if is_warning_market:
@@ -479,7 +479,7 @@ def update_technical_data(df_theme):
 
                 is_ss_breakout = (trading_value >= 50_000_000_000) and (vol_ratio >= 150) and (change_rate >= 0.05) and not is_long_shadow and is_near_high
                 
-                # 🚀 [V8 엄격한 깃발형 카운트다운 엔진 (가짜 폭락 방어막 추가)]
+                # 🚀 [V8 깃발형 카운트다운 엔진 (가짜 폭락 방어막)]
                 flag_days = 0
                 for d in range(1, 4):
                     anchor_idx = -(d + 1)
@@ -499,24 +499,16 @@ def update_technical_data(df_theme):
                         if anchor_tv >= 50_000_000_000 and anchor_change >= 0.10 and anchor_close > anchor_open and is_near_high_anchor:
                             is_holding = True
                             
-                            # 기준봉 다음 날부터 오늘까지 매일 검사
                             for j in range(anchor_idx + 1, 0): 
                                 curr_close = int(df_hist['close'].iloc[j])
-                                curr_open = int(df_hist['open'].iloc[j])
                                 curr_prev_close = int(df_hist['close'].iloc[j-1])
                                 curr_vol = int(df_hist['volume'].iloc[j])
-                                
                                 curr_change = (curr_close - curr_prev_close) / curr_prev_close if curr_prev_close > 0 else 0
                                 
-                                # 🛡️ 방어막 1: 기준봉 종가 방어선 (살짝 깨는건 허용)
                                 if not (anchor_close * 0.96 <= curr_close <= anchor_close * 1.15):
                                     is_holding = False; break
-                                    
-                                # 🛡️ 방어막 2: 삼륭물산 방지! 단 하루라도 -4% 이상 내리꽂으면 즉시 탈락
                                 if curr_change < -0.04:
                                     is_holding = False; break
-                                    
-                                # 🛡️ 방어막 3: 쉬어가는 날 거래량은 기준봉의 60%를 넘지 못하게 억제
                                 if curr_vol > anchor_vol * 0.60:
                                     is_holding = False; break
 
@@ -526,15 +518,18 @@ def update_technical_data(df_theme):
                 
                 master_tajeom = "⏸️ 관망 및 대기"
                 
+                # 🛑 1순위: 위험 종목 원천 차단
                 if len(history) < 20: master_tajeom = "⚠️ 신규상장 (데이터 부족)"
                 elif is_junk: master_tajeom = "🚨 매매금지 (딱지)"
                 elif is_financial_risk: master_tajeom = "🚨 매매금지 (자본잠식)"
                 elif is_long_shadow: master_tajeom = "⚠️ 윗꼬리 위험 (매수금지)"
                 elif is_huge_gap: master_tajeom = "⚠️ 갭상승 과다 (추격금지)"
                 
+                # 👑 2순위: 당일 완벽한 전고점 돌파 (매수 & 기준봉 0일차 시작점)
                 elif is_ss_breakout: 
                     master_tajeom = "👑 [SS급] 전고 돌파 ⚠️(주의장세)" if is_warning_market else "👑 [SS급] 전고 돌파"
                 
+                # 🎯 3순위: 깃발 1~3일차 카운트다운 (스윙 모아가기)
                 elif flag_days == 3:
                     master_tajeom = "🎯 [슈팅임박] 깃발 3일 차 완성 (비중 40%)" + (" ⚠️(주의장세)" if is_warning_market else "")
                     score += 30 
@@ -544,16 +539,17 @@ def update_technical_data(df_theme):
                     master_tajeom = "🚩 [모아가기] 깃발 1일 차 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else "")
                 
                 elif is_4yin_1yang: master_tajeom = "📉 [B급] 4음1양 지지"
-                
                 elif "🌟" in signal: master_tajeom = "🌟 [VIP] 쌍끌이 모아가기" 
-                
                 elif vol_ratio <= 45 and (ma20 <= current_price <= ma20 * 1.05) and change_rate >= -0.03: 
                     master_tajeom = "⏳ [A급] 20일선 눌림 (종가베팅)"
-                
                 elif vol_ratio <= 30 and current_price < ma5 and change_rate >= -0.04: 
                     master_tajeom = "📉 [B급] 투매 소화 (종가베팅)"
                 
-                elif change_rate >= 0.12 and vol_ratio >= 200: master_tajeom = "⚡ [단타용] 당일 주도주"
+                # 💡 [핵심 패치] 단타용 삭제 및 '0일차(관심)' 모니터링 대체
+                elif change_rate >= 0.09 and trading_value >= 30_000_000_000: 
+                    # 윗단에서 윗꼬리가 잘렸기 때문에 여기까지 내려온 놈은 꽉 찬 튼튼한 양봉입니다.
+                    master_tajeom = "👀 [관심] 깃발 0일차 (기준봉 출현)" + (" ⚠️(주의장세)" if is_warning_market else "")
+                    score += 10 # 대시보드 노출을 위한 가점 부여
 
                 if is_chronic_loss and "급]" in master_tajeom:
                     master_tajeom += " ⚠️(3년적자)"
