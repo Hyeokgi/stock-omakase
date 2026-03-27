@@ -54,7 +54,7 @@ STOPWORDS = [
     '정책', '의원', '장관', '페이지', '주소', '입력', '방문', '삭제', '요청', '정확', '확인',
     '문의', '사항', '고객', '센터', '안내', '감사', '반대', '선임', '공개', '자본', '공개',
     
-    # 🔥 [핀셋 방어막 추가] 거시경제, 일반 동사, 불필요한 단어 영구 차단
+    # 🔥 [핀셋 방어막] 거시경제, 일반 동사, 불필요한 단어 철통 차단!
     '이란', '국민연금', '종전', '전쟁', '트럼프', '제안', '찬성', '대통령', '사내', '협상',
     '출시', '계좌', '중동', '상품', '체제', '변경', '투자증권', '성장', '시그널', '신규',
     '정치', '외교', '합의', '수출', '수입', '도입', '본격', '소식', '임박', '부각', '주도'
@@ -72,21 +72,20 @@ def search_code_from_naver(stock_name):
 def get_news_keywords():
     try:
         full_text = ""
-        # 💡 [핵심 패치] 시황/전망 대신 '특징주' 검색 결과를 1~5페이지 긁어옵니다. (진짜 테마의 뼈대만 잡힙니다)
-        for page in range(1, 6):
-            url = f"https://finance.naver.com/news/news_search.naver?q=%C6%AF%C1%A1%C1%D6&page={page}"
-            res = session.get(url, verify=False)
-            soup = BeautifulSoup(res.content, 'html.parser', from_encoding='euc-kr')
+        # 💡 [핵심 패치] 네이버 통합 뉴스 검색 API를 사용하여 '특징주' 기사를 완벽하게 수집합니다.
+        for page in range(1, 4):
+            start = (page - 1) * 10 + 1
+            # 통합검색 뉴스 탭에서 '특징주' 검색
+            url = f"https://search.naver.com/search.naver?where=news&query=%ED%8A%B9%EC%A7%95%EC%A3%BC&start={start}"
+            res = session.get(url, verify=False, timeout=5)
+            soup = BeautifulSoup(res.text, 'html.parser')
             
-            # 뉴스 제목만 핀셋 추출 (본문의 불필요한 매크로 설명 차단)
-            subjects = soup.select('.articleSubject a')
-            if not subjects: 
-                subjects = soup.select('.tit')
-                
-            for sub in subjects: 
-                title = sub.get_text(strip=True)
-                title = re.sub(r'\[.*?\]', '', title) # [특징주], [속보] 같은 대괄호 텍스트 날림
-                full_text += title + " "
+            # 네이버 통합검색 뉴스의 고정 클래스('.news_tit')
+            titles = soup.select('.news_tit')
+            for t in titles:
+                title_text = t.get_text(strip=True)
+                title_text = re.sub(r'\[.*?\]', '', title_text) # [특징주] 등 괄호 텍스트 날림
+                full_text += title_text + " "
             time.sleep(0.3)
             
         if len(full_text) < 50: return pd.DataFrame()
@@ -246,7 +245,7 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
 
 def update_technical_data(df_theme):
     try:
-        print("▶️ 기술적 지표, 스코어링, 정밀 타점 판독 시작...")
+        print("▶️ 기술적 지표, 스코어링, 정밀 타점 판독 시작 (스나이퍼 모드 + 재무 경고 태그)...")
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         doc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)).open_by_url(SHEET_URL)
         
@@ -354,9 +353,11 @@ def update_technical_data(df_theme):
                                         break
                                     except: pass
                         
+                        # 1. 자본잠식 (즉각 아웃 사유)
                         if capital_stock and total_equity and total_equity < capital_stock:
                             is_financial_risk = True
                         
+                        # 2. 3년 연속 영업이익 적자 (경고 태그용)
                         if len(op_profits) == 3 and all(p < 0 for p in op_profits):
                             is_chronic_loss = True
                 except: pass
