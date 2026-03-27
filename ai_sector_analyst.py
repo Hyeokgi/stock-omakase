@@ -59,10 +59,10 @@ try:
             real_code = r[1].replace("'", "").strip().zfill(6)
             stock_candidates += f"종목:{r[0]} ({real_code}), 현재가:{r[2]}, 타점:{r[9]}\n"
 
-    print("🧠 [HYEOKS 수석 애널리스트] 듀얼 전략(단기/중기) 분석을 시작합니다...")
+    print("🧠 [HYEOKS 수석 애널리스트] 시장의 미래를 예측하는 심층 듀얼 분석 중... (시간이 조금 더 소요될 수 있습니다)")
 
     # ==========================================
-    # 📝 전략 1: 단기 모멘텀 & 돌파 (Short-Term)
+    # 📝 전략 1: 단기 모멘텀 & 돌파 (Short-Term) - 심층 예측 버전
     # ==========================================
     prompt_short = f"""
     너는 HYEOKS 증권의 최고 수석 퀀트 애널리스트야. 
@@ -75,7 +75,8 @@ try:
     {stock_candidates}
 
     [작성 규칙] 
-    - ⚠️ 제목의 종목 코드는 반드시 [데이터]에 제공된 진짜 6자리 숫자를 사용할 것.
+    - ⚠️ 분량 제한 없음. 1페이지를 가득 채우거나 넘어가도 좋으니, 단순 묘사를 넘어 현상의 이면을 분석하고 '미래를 예측'하는 통찰력을 보여줄 것.
+    - 제목의 종목 코드는 반드시 [데이터]에 제공된 진짜 6자리 숫자를 사용할 것.
     
     <div class="broker-name">HYEOKS Securities | Short-Term Strategy</div>
     <div class="header">
@@ -88,11 +89,11 @@ try:
         현재 수급과 차트 흐름상 단기 슈팅이 임박한 핵심 논리를 명확히 요약.
     </div>
 
-    ## 1. 단기 수급 및 테마 모멘텀 (Momentum)
-    현재 이 종목에 왜 단기적인 자금이 쏠리고 있는지, 뉴스나 재료를 기반으로 서술.
+    ## 1. 단기 수급 및 테마 모멘텀 심층 고찰 (Momentum & Predictive Analysis)
+    현재 이 종목에 왜 단기적인 자금이 쏠리고 있는지 단순 나열을 넘어, 거시경제 지표(환율/유가 등)와 연계하여 세력의 의도와 향후 며칠간의 테마 흐름을 예측하여 서술할 것.
     
-    ## 2. 기술적 타점 분석 (Technical Analysis)
-    전고점 돌파, 깃발형 단기 수렴 등 캔들과 거래량 기반의 정확한 단기 매수 타점 분석.
+    ## 2. 기술적 타점 분석 및 대응 시나리오 (Technical Analysis)
+    전고점 돌파, 깃발형 단기 수렴 등 캔들과 거래량 기반의 정확한 매수 타점 분석. 돌파 성공 시의 1차 목표가와 실패 시의 칼 같은 손절 라인을 제시.
     """
 
     response_short = model.generate_content(prompt_short)
@@ -105,7 +106,7 @@ try:
         chart_html_short = f'<div class="chart-container"><h3>📊 [단기 전략] 일봉 캔들 차트</h3><img src="https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{code_s}.png"></div>'
 
     # ==========================================
-    # 📝 전략 2: 중기 모아가기 (Mid-Term)
+    # 📝 전략 2: 중기 모아가기 (Mid-Term) - 심층 밸류에이션 버전
     # ==========================================
     prompt_mid = f"""
     너는 HYEOKS 증권의 최고 수석 퀀트 애널리스트야. 
@@ -119,6 +120,7 @@ try:
 
     [작성 규칙] 
     - ⚠️ 탄탄한 기업이 주목을 받았다가 충분한 기간/가격 조정을 거치고, 이평선이 밀집되며 이제 막 반등의 기미가 보이는 종목을 찾아낼 것.
+    - 분량 제한 없이 각 항목에 대해 매우 깊이 있고 입체적인 분석을 제공할 것.
     - 제목의 종목 코드는 반드시 [데이터]에 제공된 6자리 숫자를 사용할 것.
     
     <div class="broker-name">HYEOKS Securities | Mid-Term Strategy</div>
@@ -129,14 +131,14 @@ try:
     
     <div class="info-box">
         <b>Company Brief | HYEOKS 밸류에이션 데스크</b><br>
-        실적 기반의 탄탄한 종목이 조정을 끝내고 턴어라운드 할 조짐을 보이는 논리 요약.
+        실적 기반의 우량주가 조정을 끝내고 턴어라운드 할 조짐을 보이는 핵심 논리 요약.
     </div>
 
-    ## 1. 실적 모멘텀 및 턴어라운드 (Fundamentals)
-    우량한 펀더멘털과 향후 1주~1달간 지속될 중기 모멘텀 분석.
+    ## 1. 펀더멘털 및 턴어라운드 스토리 (Fundamentals & Future Outlook)
+    왜 이 기업이 단순한 테마주가 아니라 중기로 끌고 갈 만한 우량한 실적 모멘텀을 가지고 있는지, 향후 1주~1달간 지속될 시장의 모멘텀을 상세히 분석할 것.
     
-    ## 2. 이평선 밀집 및 모아가기 전략 (Accumulation Strategy)
-    기간/가격 조정을 거친 후 이평선 수렴 상태에서의 분할 매수 전략 및 중기 목표가/손절가 제시.
+    ## 2. 이평선 밀집 및 모아가기 타점 전략 (Accumulation Strategy)
+    충분한 기간/가격 조정을 거친 후 현재 이평선 수렴 상태에서 어떻게 분할 매수를 진행해야 하는지(예: N분할 매수, 눌림목 공략 등) 구체적인 전략과 중기 목표가를 제시할 것.
     """
 
     response_mid = model.generate_content(prompt_mid)
@@ -148,25 +150,28 @@ try:
         code_m = match_mid.group(1)
         chart_html_mid = f'<div class="chart-container"><h3>📊 [중기 전략] 일봉 캔들 차트</h3><img src="https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{code_m}.png"></div>'
 
-    print("✅ 단기 & 중기 듀얼 리포트 텍스트 및 차트 생성 완료!")
+    print("✅ 단기 & 중기 듀얼 심층 리포트 생성 완료!")
 
     # ==========================================
-    # 🎨 PDF 통합 렌더링
+    # 🎨 PDF 통합 렌더링 (강제 페이지 넘김 완벽 적용)
     # ==========================================
     css_style = """
     <style>
-        body { font-family: 'NanumGothic', 'Malgun Gothic', sans-serif; color: #222; line-height: 1.6; padding: 40px; margin: 0; }
-        .broker-name { color: #1a365d; font-weight: 900; font-size: 20px; margin-bottom: 20px; text-transform: uppercase; }
+        body { font-family: 'NanumGothic', 'Malgun Gothic', sans-serif; color: #222; line-height: 1.8; padding: 40px; margin: 0; }
+        .broker-name { color: #1a365d; font-weight: 900; font-size: 20px; margin-bottom: 20px; text-transform: uppercase; letter-spacing: 1px; }
         .header { border-bottom: 4px solid #1a365d; padding-bottom: 15px; margin-bottom: 25px; }
         .stock-title { font-size: 34px; font-weight: 900; margin: 0; color: #000; }
         .subtitle { font-size: 18px; color: #2b6cb0; margin-top: 8px; font-weight: bold; }
-        .info-box { border-left: 5px solid #1a365d; background: #f7fafc; padding: 15px 20px; margin: 25px 0; font-size: 14px; }
-        h2 { color: #1a365d; font-size: 17px; margin-top: 35px; border-bottom: 1px solid #e2e8f0; padding-bottom: 5px; }
-        p { font-size: 14px; text-align: justify; word-break: keep-all; }
+        .info-box { border-left: 5px solid #1a365d; background: #f7fafc; padding: 20px 25px; margin: 25px 0; font-size: 14.5px; box-shadow: 2px 2px 5px rgba(0,0,0,0.03); }
+        h2 { color: #1a365d; font-size: 18px; margin-top: 40px; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px; }
+        p { font-size: 14.5px; text-align: justify; word-break: keep-all; margin-bottom: 15px; }
         .chart-container { text-align: center; margin-top: 40px; page-break-inside: avoid; }
         .chart-container h3 { color: #2d3748; font-size: 15px; margin-bottom: 15px; }
         .chart-container img { max-width: 90%; border: 1px solid #cbd5e0; padding: 10px; background: #fff; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        .page-break { page-break-before: always; }
+        
+        /* 💡 핵심: 어떤 상황에서도 다음 리포트는 완벽하게 새 페이지에서 시작하도록 강제 분리 */
+        .page-break { page-break-before: always; display: block; height: 0; margin: 0; padding: 0; }
+        
         .footer { text-align: center; font-size: 11px; color: #a0aec0; margin-top: 40px; border-top: 1px solid #edf2f7; padding-top: 15px; }
     </style>
     """
@@ -176,13 +181,17 @@ try:
     <html>
     <head><meta charset="utf-8">{css_style}</head>
     <body>
-        {html_short}
-        {chart_html_short}
+        <div class="report-section">
+            {html_short}
+            {chart_html_short}
+        </div>
         
         <div class="page-break"></div>
         
-        {html_mid}
-        {chart_html_mid}
+        <div class="report-section">
+            {html_mid}
+            {chart_html_mid}
+        </div>
         
         <div class="footer">본 리포트는 HYEOKS AI 퀀트 시스템에 의해 자동 생성된 투자 참고용 자료입니다. (생성일: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')})</div>
     </body>
@@ -193,14 +202,14 @@ try:
     
     options = {
         'page-size': 'A4',
-        'margin-top': '0.7in', 'margin-right': '0.7in', 'margin-bottom': '0.7in', 'margin-left': '0.7in',
+        'margin-top': '0.75in', 'margin-right': '0.75in', 'margin-bottom': '0.75in', 'margin-left': '0.75in',
         'encoding': "UTF-8", 'enable-local-file-access': None
     }
     pdfkit.from_string(full_html, pdf_filename, options=options)
     print("✅ HYEOKS 리서치 듀얼 PDF 파일 렌더링 완료!")
 
     # ==========================================
-    # 📲 텔레그램 발송 (심플한 메시지 처리)
+    # 📲 텔레그램 발송 
     # ==========================================
     if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN == "여기에_로컬테스트용_토큰입력":
         print("❌ [경고] 텔레그램 토큰을 확인하세요!")
@@ -210,7 +219,7 @@ try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
         with open(pdf_filename, 'rb') as pdf_file:
             files = {'document': (pdf_filename, pdf_file, 'application/pdf')}
-            data = {'chat_id': TELEGRAM_CHAT_ID, 'caption': "🤖 [HYEOKS 리서치] 일일 딥 리서치 PDF 리포트"}
+            data = {'chat_id': TELEGRAM_CHAT_ID, 'caption': "🤖 [HYEOKS 리서치] 일일 딥 리서치 PDF (단기 & 중기 전략)"}
             
             response = requests.post(url, files=files, data=data)
             if response.status_code == 200:
