@@ -61,7 +61,7 @@ try:
             code = r[1].replace("'", "").strip().zfill(6)
             stock_candidates += f"종목:{r[0]} ({code}), 현재가:{r[2]}, 타점:{r[9]}\n"
 
-    # 4. 💡 심층 분석 프롬프트 분리 적용 (단기 vs 중기)
+    # 4. 💡 심층 분석 프롬프트 분리 적용 (단기 vs 중기/스윙)
     def generate_hyeoks_report(st_type):
         if st_type == "short":
             prompt = f"""
@@ -95,31 +95,32 @@ try:
         else:
             prompt = f"""
             너는 HYEOKS 증권의 최고 수석 퀀트 애널리스트야. 
-            다음 데이터를 바탕으로 기나긴 하락이나 지루한 박스권을 멈추고, 이제 막 '턴어라운드(추세 전환)' 할 여건이 마련된 중기 스윙 유망주 1종목을 골라. (단기 종목과 겹치지 않게 할 것)
+            다음 데이터를 바탕으로 직장인이 마음 편히 '종가 베팅' 또는 '스윙(1주~1달)'으로 끌고 갈 수 있는 유망주 1종목을 골라. (단기 종목과 겹치지 않게 할 것)
 
             [데이터]
             - 매크로: 나스닥 {nasdaq}, 환율 {exchange_rate}, 유가 {wti_oil}
             - 타점후보: {stock_candidates}
 
-            [심층 분석 지시사항] 
-            1. 시장 및 뉴스 분석: 현재 거시경제 환경(환율 등)이나 섹터 뉴스를 볼 때, 이 종목이 왜 지금 바닥을 다지고 올라갈 명분이 생겼는지 분석할 것.
-            2. 거래량 및 매집 흔적: 거래량이 마르면서 이평선이 밀집되는 등, 하락이 멈추고 세력이 천천히 모아가고 있는 징후를 추측하여 서술할 것.
-            3. 제목의 종목 코드는 반드시 [데이터]에 제공된 6자리 숫자를 사용할 것.
+            [직장인 스윙 특화 지시사항] 
+            1. '4음 1양' 패턴 확인: 최근 3~4일간 거래량 없이 조정을 받다가(음봉), 오늘 첫 양봉으로 추세를 돌리려는 종목인지 점검할 것.
+            2. '20일선 휩소(개미털기)' 확인: 20일 생명선을 살짝 깼다가 다시 회복하며 개미들의 손절 물량을 받아먹은 세력의 흔적이 있는지 분석할 것.
+            3. '장기 이평선(240일, 480일)' 돌파: 바닥을 다지고 장기 이평선을 수렴/돌파하며 대세 상승을 준비하는 자리인지 고찰할 것.
+            4. 제목의 종목 코드는 반드시 [데이터]에 제공된 6자리 숫자를 사용할 것.
             
-            <div class="broker-name">HYEOKS Securities | Mid-Term Strategy</div>
+            <div class="broker-name">HYEOKS Securities | Swing & Closing Bet Strategy</div>
             <div class="header">
                 <p class="stock-title">종목명 (종목코드)</p>
-                <p class="subtitle">중기 턴어라운드 전략: (1줄 소제목)</p>
+                <p class="subtitle">직장인 스윙/종가베팅 최적화 타점: (1줄 소제목)</p>
             </div>
             
-            ## 1. 시장 환경 및 턴어라운드 명분 (Market & Catalyst)
-            현재 매크로/섹터 흐름상 이 기업이 박스권이나 하락을 끝내고 상승 턴어라운드 할 수밖에 없는 근본적인 이유와 뉴스를 심층 분석.
+            ## 1. 턴어라운드 명분 및 패턴 분석 (Catalyst & Pattern)
+            '4음 1양' 또는 '20일선 개미털기 후 회복' 등 현재 캔들이 직장인이 종가 베팅하기에 왜 가장 안전하고 확률 높은 자리인지 구체적으로 서술.
             
-            ## 2. 거래량 바닥 및 이평선 분석 (Volume & Base Building)
-            거래량 급감, 이평선 수렴 등 바닥을 다지는 기술적 패턴을 분석하고 세력의 매집 징후를 추측.
+            ## 2. 세력 매집 및 이평선 고찰 (Volume & Moving Averages)
+            터진 거래량 이후 거래량이 말라가는 과정, 혹은 240일선 등 장기 이평선 수렴 과정을 통해 세력의 매집과 방향성을 분석.
             
-            ## 3. 분할 모아가기 전략 (Accumulation Plan)
-            안전한 매수 구간과 1주~1달 관점의 중기 목표가, 그리고 바닥 이탈 시의 리스크 관리 방안 제시.
+            ## 3. 직장인 맞춤 대응 전략 (Worker's Trading Plan)
+            내일 아침 흔들림에 멘탈이 나가지 않도록, 1~3분할 매수 타점과 직장인이 MTS에 미리 걸어둘 수 있는 명확한 '자동 감시 주문(손절가 및 1차 목표가)'을 수치로 제시.
             """
         
         response = safe_generate_content(model, prompt)
@@ -153,7 +154,7 @@ try:
     full_html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">{css}</head><body>
         {markdown.markdown(report_short)} {make_chart(report_short, "[단기 전략] 일봉 차트")}
         <div class="page-break"></div>
-        {markdown.markdown(report_mid)} {make_chart(report_mid, "[중기 전략] 일봉 차트")}
+        {markdown.markdown(report_mid)} {make_chart(report_mid, "[직장인 스윙/종가베팅 전략] 일봉 차트")}
     </body></html>"""
 
     # 6. PDF 변환
@@ -169,7 +170,7 @@ try:
     print("📲 텔레그램으로 PDF 발송 중...")
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
     with open(pdf_filename, 'rb') as f:
-        response = requests.post(url, files={'document': f}, data={'chat_id': TELEGRAM_CHAT_ID, 'caption': "📊 [HYEOKS 리서치] 2.5-flash 심층 리포트 (단기 & 중기 전략)"})
+        response = requests.post(url, files={'document': f}, data={'chat_id': TELEGRAM_CHAT_ID, 'caption': "📊 [HYEOKS 리서치] 직장인 스윙 & 단기 심층 리포트가 도착했습니다!"})
         
         if response.status_code == 200:
             print("✅ 텔레그램 첨부파일 전송 성공!")
