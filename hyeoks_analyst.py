@@ -27,14 +27,16 @@ GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxyuSEjPmg8rZPjLlG-YK
 
 print("🤖 [HYEOKS 리서치 센터] 2.5-flash 비전(Vision) 엔진 가동...")
 
+# 기존의 safe_generate_content 함수를 아래 내용으로 통째로 바꿔주세요.
 def safe_generate_content(model, prompt_data):
-    for i in range(3):
+    for i in range(5):  # 재시도 횟수 5번으로 증가
         try:
             return model.generate_content(prompt_data)
         except Exception as e:
             if "429" in str(e):
-                print(f"⚠️ API 할당량 초과. 10초 대기... ({i+1}/3)")
-                time.sleep(10)
+                wait_time = 30 * (i + 1)  # 30초, 60초, 90초 점진적 대기
+                print(f"⚠️ API 할당량 초과. 숨 고르기를 위해 {wait_time}초 대기합니다... ({i+1}/5)")
+                time.sleep(wait_time)
             else:
                 raise e
     raise Exception("❌ 재시도 횟수 초과: 구글 API 에러")
@@ -151,9 +153,13 @@ try:
         os.remove(img_path)
         return response.text
 
+    # 기존 코드의 이 부분을 찾아서 아래처럼 바꿔주세요.
     print("🧠 [HYEOKS 수석 애널리스트] 비전 데이터 분석 중...")
     report_short = generate_hyeoks_report("short")
-    time.sleep(2)
+    
+    print("⏳ 단기 리포트 완료! API 과부하 방지를 위해 60초 휴식합니다...")
+    time.sleep(60)  # 💡 마법의 60초 휴식!
+    
     report_mid = generate_hyeoks_report("mid")
 
     # 💡 1페이지 가독성 극대화 CSS 디자인
