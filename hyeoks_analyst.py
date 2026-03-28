@@ -71,8 +71,8 @@ try:
             데이터: {stock_candidates} / 매크로: 나스닥 {nasdaq}, 환율 {exchange_rate}, 유가 {wti_oil}
 
             [특별 지시사항 - 반드시 지킬 것]
-            1. 분량 및 깊이: 각 목차별로 최소 2~3개의 상세한 단락을 작성하여, 기관용 리포트 수준의 방대한 분량과 전문적인 깊이를 확보할 것.
-            2. 용어 순화: 'SS급', '대장주(O)', '깃발 0일차' 같은 시스템 내부 기호나 은어를 절대 출력하지 말 것. 대신 "전고점을 완벽하게 뚫어낸 폭발적인 패턴", "시장을 주도하는 압도적인 거래대금", "추세 전환의 첫 신호탄" 등으로 직관적이고 우아하게 풀어서 설명할 것.
+            1. 여백 및 단락: 스마트폰에서 읽기 편하도록 각 단락(문단) 사이에는 반드시 한 줄 이상의 빈 줄(엔터)을 넣어 넉넉한 여백을 확보할 것. 문장은 너무 길지 않게 끊어 칠 것.
+            2. 용어 순화: 'SS급', '대장주(O)', '깃발 0일차' 같은 시스템 내부 기호나 은어를 절대 출력하지 말 것. 직관적이고 우아하게 풀어서 설명할 것.
             
             [출력 양식 (마크다운 및 HTML 구조 완벽 유지)]
             <div class="broker-name">HYEOKS SECURITIES | SHORT-TERM STRATEGY</div>
@@ -81,20 +81,21 @@ try:
                 <p class="subtitle">단기 모멘텀 집중 분석: (1~2줄의 강력한 소제목)</p>
             </div>
             
-            **Company Brief | HYEOKS 단기 트레이딩 데스크**
-            (이곳에 종목의 현재 테마 상황과 강력한 매수 근거를 3~4문장으로 요약)
+            <div class="summary-box">
+                <strong>💡 Company Brief | HYEOKS 단기 트레이딩 데스크</strong><br><br>
+                (이곳에 종목의 현재 테마 상황과 강력한 매수 근거를 3~4문장으로 요약)
+            </div>
 
-            ## 1. 단기 수급 및 테마 모멘텀 심층 고찰 (Momentum & Predictive Analysis)
-            (거시경제 및 유동성 연계 분석, 압도적인 테마 강세 및 멀티 모멘텀 확보 여부, 세력의 의도와 향후 며칠간의 흐름 예측 등을 아주 상세하게 서술)
+            ## 1. 단기 수급 및 테마 모멘텀 심층 고찰
+            (거시경제 및 유동성 연계 분석, 테마 강세 및 세력의 의도 서술)
             
-            ## 2. 기술적 타점 분석 및 대응 시나리오 (Technical Analysis)
-            * **캔들 및 거래량 기반의 매수 타점 분석:** (상세 서술)
+            ## 2. 기술적 타점 분석 및 대응 시나리오
+            * **캔들 및 매수 타점 분석:** (상세 서술)
             * **기준봉 출현 및 추가 상승 동력:** (상세 서술)
             * **대응 시나리오:**
               - **매수 타점:** (구체적인 진입 가격대와 논리)
-              - **1차/2차 목표가:** (구체적인 가격대와 논리)
+              - **목표가:** (구체적인 가격대와 논리)
               - **손절 라인:** (칼같은 손절 가격과 이탈 시의 논리)
-            (강력한 확신이 담긴 결론 단락 추가)
             """
         else:
             prompt = f"""
@@ -103,9 +104,8 @@ try:
             데이터: {stock_candidates} / 매크로: 나스닥 {nasdaq}, 환율 {exchange_rate}, 유가 {wti_oil}
 
             [특별 지시사항 - 반드시 지킬 것]
-            1. 분량 및 깊이: 각 목차별로 최소 2~3개의 상세한 단락을 작성하여, 기관용 리포트 수준의 방대한 분량을 확보할 것.
-            2. 용어 순화: '대장주(O)', 'A급', 'B급', '4음 1양' 같은 시스템 내부 은어를 절대 쓰지 말 것. "과거 폭발적인 상승을 주도했던 종목", "충분한 기간 조정과 거래량 급감으로 매도세가 마른 자리" 등으로 전문적이고 매끄럽게 풀어서 쓸 것.
-            3. 분석 초점: 과거 상한가나 폭등 이력이 있는 종목이 10~20일간 거래량이 마르며 20일선에 수렴한 상황을 집중 조명할 것.
+            1. 여백 및 단락: 스마트폰에서 읽기 편하도록 각 단락(문단) 사이에는 반드시 한 줄 이상의 빈 줄(엔터)을 넣어 넉넉한 여백을 확보할 것. 문장은 너무 길지 않게 끊어 칠 것.
+            2. 용어 순화: '대장주(O)', 'A급', 'B급', '4음 1양' 같은 시스템 내부 은어를 절대 쓰지 말 것. 전문적이고 매끄럽게 풀어서 쓸 것.
             
             [출력 양식 (마크다운 및 HTML 구조 완벽 유지)]
             <div class="broker-name">HYEOKS SECURITIES | MID-TERM STRATEGY</div>
@@ -114,24 +114,25 @@ try:
                 <p class="subtitle">직장인 대시세 눌림목 종가베팅: (1~2줄의 강력한 소제목)</p>
             </div>
             
-            **Company Brief | HYEOKS 밸류에이션 데스크**
-            (이곳에 종목의 펀더멘털과 턴어라운드 기대감을 3~4문장으로 요약)
+            <div class="summary-box">
+                <strong>💡 Company Brief | HYEOKS 밸류에이션 데스크</strong><br><br>
+                (이곳에 종목의 펀더멘털과 턴어라운드 기대감을 3~4문장으로 요약)
+            </div>
 
-            ## 1. 펀더멘털 및 턴어라운드 스토리 (Fundamentals & Future Outlook)
-            가. 기업 개요 및 잃어버린 모멘텀 분석: (상세 서술)
-            나. 턴어라운드 시그널 포착: (상세 서술)
-            다. 향후 1주~1달 간 지속될 핵심 모멘텀: (번호를 매겨 구체적인 재료 3~4가지를 심도 있게 서술)
+            ## 1. 펀더멘털 및 턴어라운드 스토리
+            가. 기업 개요 및 잃어버린 모멘텀 분석: (서술)
+            나. 턴어라운드 시그널 포착: (서술)
+            다. 향후 1주~1달 간 지속될 핵심 모멘텀: (상세 서술)
             
-            ## 2. 이평선 밀집 및 모아가기 타점 전략 (Accumulation Strategy)
-            가. 기술적 분석: 이평선 밀집과 추세 전환 신호의 의미: (상세 서술)
-            나. 중기 스윙 모아가기 타점 전략 (N분할 매수 & 눌림목 공략):
+            ## 2. 이평선 밀집 및 모아가기 타점 전략
+            가. 기술적 분석 (이평선 밀집과 추세 전환): (서술)
+            나. 중기 스윙 모아가기 분할 타점:
               - **1차 진입 (초기 포지션 구축):** (시점 및 논리)
               - **2차 진입 (눌림목 활용):** (시점 및 논리)
               - **3차 진입 (추세 확인 후):** (시점 및 논리)
             다. 중기 목표가 및 손절 전략:
               - **목표가:** (1차, 2차 분할 설정)
               - **손절가:** (추세 이탈 기준)
-            (강력한 확신이 담긴 결론 단락 추가)
             """
         return safe_generate_content(model, prompt).text
 
@@ -140,16 +141,28 @@ try:
     time.sleep(2)
     report_mid = generate_hyeoks_report("mid")
 
-    # 5. HTML 및 차트 결합 (💡 글씨 크기 전체 10% 상향 패치 적용)
+    # 5. HTML 및 차트 결합 (💡 가독성 극대화 CSS 디자인 패치)
     css = """<style>
-        body { font-family: 'NanumGothic', sans-serif; line-height: 1.8; padding: 40px; color: #222; font-size: 110%; } /* 기본 글꼴 크기 10% 확대 */
-        .broker-name { color: #1a365d; font-weight: bold; font-size: 22px; text-transform: uppercase; letter-spacing: 1px; }
-        .header { border-bottom: 4px solid #1a365d; margin-bottom: 25px; padding-bottom: 10px; }
-        .stock-title { font-size: 38px; font-weight: 900; margin: 0; } /* 제목 크기 확대 */
-        .subtitle { font-size: 21px; color: #2b6cb0; font-weight: bold; margin-top: 5px; }
-        h2 { color: #1a365d; border-bottom: 1px solid #ddd; margin-top: 35px; font-size: 130%; } /* 소제목 크기 확대 */
-        .chart-container { text-align: center; margin-top: 40px; page-break-inside: avoid; }
-        .chart-container img { max-width: 90%; border: 1px solid #cbd5e0; padding: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        body { font-family: 'NanumGothic', sans-serif; line-height: 1.9; padding: 40px; color: #222; font-size: 110%; }
+        .broker-name { color: #1a365d; font-weight: bold; font-size: 22px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 15px; }
+        .header { border-bottom: 4px solid #1a365d; margin-bottom: 35px; padding-bottom: 15px; }
+        .stock-title { font-size: 38px; font-weight: 900; margin: 0; }
+        .subtitle { font-size: 21px; color: #2b6cb0; font-weight: bold; margin-top: 8px; line-height: 1.4; }
+        
+        /* 💡 추가된 요약 박스 디자인 */
+        .summary-box { background-color: #f8fafc; padding: 25px; border-left: 5px solid #1a365d; margin-top: 25px; margin-bottom: 35px; border-radius: 6px; font-size: 105%; }
+        
+        h2 { color: #1a365d; border-bottom: 2px solid #edf2f7; margin-top: 45px; margin-bottom: 25px; padding-bottom: 10px; font-size: 130%; }
+        
+        /* 💡 문단 및 리스트 여백 대폭 확대 */
+        p { margin-bottom: 20px; text-align: justify; word-break: keep-all; }
+        ul, ol { margin-bottom: 25px; padding-left: 25px; }
+        li { margin-bottom: 12px; }
+        strong { color: #1a365d; }
+        
+        .chart-container { text-align: center; margin-top: 50px; page-break-inside: avoid; }
+        .chart-container h3 { color: #4a5568; font-size: 110%; margin-bottom: 15px; }
+        .chart-container img { max-width: 90%; border: 1px solid #cbd5e0; padding: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border-radius: 8px; }
         .page-break { page-break-before: always; }
     </style>"""
 
