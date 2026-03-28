@@ -23,7 +23,7 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 # 💡 여기에 방금 복사한 [웹 앱 URL]을 붙여넣으세요!
-GAS_WEB_APP_URL = "https://script.google.com/macros/s/여기에_발급받은_웹앱_주소를_넣어주세요/exec"
+GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxyuSEjPmg8rZPjLlG-YKck07QYxmZm0HtxvWAumvV2zp7RRpVaKDo6D-CiQ6pLqKFm/exec"
 
 print("🤖 [HYEOKS 리서치 센터] 2.5-flash 엔진 가동...")
 
