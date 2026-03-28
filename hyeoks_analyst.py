@@ -62,22 +62,39 @@ try:
             # 💡 시트에 새로 추가된 20일이격도(16번째), 대장주이력(17번째) 칼럼을 AI에게 먹여줍니다.
             stock_candidates += f"종목:{r[0]} ({code}), 타점:{r[9]}, 20일이격도:{r[16]}, 이력:{r[17]}\n"
 
-    # 4. 듀얼 전략 프롬프트 (단기 모멘텀 vs 직장인 20일선 스윙)
+    # 4. 💡 심층 분석 프롬프트 분리 적용 (단기 vs 중기/스윙)
     def generate_hyeoks_report(st_type):
         if st_type == "short":
             prompt = f"""
             너는 HYEOKS 증권의 최고 수석 퀀트 애널리스트야. 
             [데이터]를 바탕으로 내일 당장 '갭 상승'이나 '강력한 슈팅'이 나올 단기 폭발 유망주 1종목을 선정해.
             데이터: {stock_candidates} / 매크로: 나스닥 {nasdaq}, 환율 {exchange_rate}, 유가 {wti_oil}
+
+            [특별 지시사항 - 반드시 지킬 것]
+            1. 분량 및 깊이: 각 목차별로 최소 2~3개의 상세한 단락을 작성하여, 기관용 리포트 수준의 방대한 분량과 전문적인 깊이를 확보할 것.
+            2. 용어 순화: 'SS급', '대장주(O)', '깃발 0일차' 같은 시스템 내부 기호나 은어를 절대 출력하지 말 것. 대신 "전고점을 완벽하게 뚫어낸 폭발적인 패턴", "시장을 주도하는 압도적인 거래대금", "추세 전환의 첫 신호탄" 등으로 직관적이고 우아하게 풀어서 설명할 것.
             
-            <div class="broker-name">HYEOKS Securities | Short-Term Strategy</div>
+            [출력 양식 (마크다운 및 HTML 구조 완벽 유지)]
+            <div class="broker-name">HYEOKS SECURITIES | SHORT-TERM STRATEGY</div>
             <div class="header">
                 <p class="stock-title">종목명 (종목코드)</p>
-                <p class="subtitle">단기 모멘텀 집중 분석: (1줄 소제목)</p>
+                <p class="subtitle">단기 모멘텀 집중 분석: (1~2줄의 강력한 소제목)</p>
             </div>
-            ## 1. 재료 분석 및 추세 연속성
-            ## 2. 거래량 및 타점 고찰
-            ## 3. 단기 대응 시나리오
+            
+            **Company Brief | HYEOKS 단기 트레이딩 데스크**
+            (이곳에 종목의 현재 테마 상황과 강력한 매수 근거를 3~4문장으로 요약)
+
+            ## 1. 단기 수급 및 테마 모멘텀 심층 고찰 (Momentum & Predictive Analysis)
+            (거시경제 및 유동성 연계 분석, 압도적인 테마 강세 및 멀티 모멘텀 확보 여부, 세력의 의도와 향후 며칠간의 흐름 예측 등을 아주 상세하게 서술)
+            
+            ## 2. 기술적 타점 분석 및 대응 시나리오 (Technical Analysis)
+            * **캔들 및 거래량 기반의 매수 타점 분석:** (상세 서술)
+            * **기준봉 출현 및 추가 상승 동력:** (상세 서술)
+            * **대응 시나리오:**
+              - **매수 타점:** (구체적인 진입 가격대와 논리)
+              - **1차/2차 목표가:** (구체적인 가격대와 논리)
+              - **손절 라인:** (칼같은 손절 가격과 이탈 시의 논리)
+            (강력한 확신이 담긴 결론 단락 추가)
             """
         else:
             prompt = f"""
@@ -85,19 +102,36 @@ try:
             [데이터]를 바탕으로 직장인이 마음 편히 종가에 매수하여 '대시세(20~50% 반등)'를 노릴 수 있는 스윙 유망주 1종목을 골라. (단기 종목과 겹치지 않게 할 것)
             데이터: {stock_candidates} / 매크로: 나스닥 {nasdaq}, 환율 {exchange_rate}, 유가 {wti_oil}
 
-            [직장인 스윙 특화 지시사항] 
-            1. 대장주의 조건: 최근 1~2달 내 상한가 또는 막대한 거래대금으로 폭등했던 이력(엔벨로프 상단 터치) 확인.
-            2. 10~20일 거래량 급감 조정: 고점 이후 10일~20일간 거래량이 완벽히 마르며 조정을 받은 상태 분석.
-            3. 20일선 이평선 밀집: 주가가 20일선 부근까지 내려와 5, 10, 20일선이 수렴하며 반등(도지, 첫 양봉)을 보이는지 분석.
+            [특별 지시사항 - 반드시 지킬 것]
+            1. 분량 및 깊이: 각 목차별로 최소 2~3개의 상세한 단락을 작성하여, 기관용 리포트 수준의 방대한 분량을 확보할 것.
+            2. 용어 순화: '대장주(O)', 'A급', 'B급', '4음 1양' 같은 시스템 내부 은어를 절대 쓰지 말 것. "과거 폭발적인 상승을 주도했던 종목", "충분한 기간 조정과 거래량 급감으로 매도세가 마른 자리" 등으로 전문적이고 매끄럽게 풀어서 쓸 것.
+            3. 분석 초점: 과거 상한가나 폭등 이력이 있는 종목이 10~20일간 거래량이 마르며 20일선에 수렴한 상황을 집중 조명할 것.
             
-            <div class="broker-name">HYEOKS Securities | Swing & Closing Bet Strategy</div>
+            [출력 양식 (마크다운 및 HTML 구조 완벽 유지)]
+            <div class="broker-name">HYEOKS SECURITIES | MID-TERM STRATEGY</div>
             <div class="header">
                 <p class="stock-title">종목명 (종목코드)</p>
-                <p class="subtitle">직장인 대시세 눌림목 종가베팅: (1줄 소제목)</p>
+                <p class="subtitle">직장인 대시세 눌림목 종가베팅: (1~2줄의 강력한 소제목)</p>
             </div>
-            ## 1. 폭등 이력 및 대장주 명분
-            ## 2. 시간 조정 및 거래량(씨마름) 분석
-            ## 3. 직장인 매수 타점 및 대응 시나리오 (자동감시주문 기준가 제시)
+            
+            **Company Brief | HYEOKS 밸류에이션 데스크**
+            (이곳에 종목의 펀더멘털과 턴어라운드 기대감을 3~4문장으로 요약)
+
+            ## 1. 펀더멘털 및 턴어라운드 스토리 (Fundamentals & Future Outlook)
+            가. 기업 개요 및 잃어버린 모멘텀 분석: (상세 서술)
+            나. 턴어라운드 시그널 포착: (상세 서술)
+            다. 향후 1주~1달 간 지속될 핵심 모멘텀: (번호를 매겨 구체적인 재료 3~4가지를 심도 있게 서술)
+            
+            ## 2. 이평선 밀집 및 모아가기 타점 전략 (Accumulation Strategy)
+            가. 기술적 분석: 이평선 밀집과 추세 전환 신호의 의미: (상세 서술)
+            나. 중기 스윙 모아가기 타점 전략 (N분할 매수 & 눌림목 공략):
+              - **1차 진입 (초기 포지션 구축):** (시점 및 논리)
+              - **2차 진입 (눌림목 활용):** (시점 및 논리)
+              - **3차 진입 (추세 확인 후):** (시점 및 논리)
+            다. 중기 목표가 및 손절 전략:
+              - **목표가:** (1차, 2차 분할 설정)
+              - **손절가:** (추세 이탈 기준)
+            (강력한 확신이 담긴 결론 단락 추가)
             """
         return safe_generate_content(model, prompt).text
 
@@ -106,14 +140,14 @@ try:
     time.sleep(2)
     report_mid = generate_hyeoks_report("mid")
 
-    # 5. HTML 및 차트 결합
+    # 5. HTML 및 차트 결합 (💡 글씨 크기 전체 10% 상향 패치 적용)
     css = """<style>
-        body { font-family: 'NanumGothic', sans-serif; line-height: 1.8; padding: 40px; color: #222; }
-        .broker-name { color: #1a365d; font-weight: bold; font-size: 20px; text-transform: uppercase; letter-spacing: 1px; }
+        body { font-family: 'NanumGothic', sans-serif; line-height: 1.8; padding: 40px; color: #222; font-size: 110%; } /* 기본 글꼴 크기 10% 확대 */
+        .broker-name { color: #1a365d; font-weight: bold; font-size: 22px; text-transform: uppercase; letter-spacing: 1px; }
         .header { border-bottom: 4px solid #1a365d; margin-bottom: 25px; padding-bottom: 10px; }
-        .stock-title { font-size: 34px; font-weight: 900; margin: 0; }
-        .subtitle { font-size: 19px; color: #2b6cb0; font-weight: bold; margin-top: 5px; }
-        h2 { color: #1a365d; border-bottom: 1px solid #ddd; margin-top: 35px; }
+        .stock-title { font-size: 38px; font-weight: 900; margin: 0; } /* 제목 크기 확대 */
+        .subtitle { font-size: 21px; color: #2b6cb0; font-weight: bold; margin-top: 5px; }
+        h2 { color: #1a365d; border-bottom: 1px solid #ddd; margin-top: 35px; font-size: 130%; } /* 소제목 크기 확대 */
         .chart-container { text-align: center; margin-top: 40px; page-break-inside: avoid; }
         .chart-container img { max-width: 90%; border: 1px solid #cbd5e0; padding: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
         .page-break { page-break-before: always; }
