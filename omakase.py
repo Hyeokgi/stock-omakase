@@ -291,7 +291,7 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
 
 def update_technical_data(df_theme):
     try:
-        print("▶️ 기술적 지표, 스코어링, 정밀 타점 판독 시작 (🚩 0일차 관심종목 패치 완료)...")
+        print("▶️ 기술적 지표, 스코어링, 정밀 타점 판독 시작 (🚩 0일차 관심종목 및 대장주 판독 패치 완료)...")
         
         is_warning_market = check_warning_market()
         if is_warning_market:
@@ -438,6 +438,21 @@ def update_technical_data(df_theme):
                 ma20 = int(df_hist['close'].tail(20).mean()) if len(df_hist) >= 20 else current_price
                 std20 = df_hist['close'].tail(20).std(ddof=0) if len(df_hist) >= 20 else 0
                 
+                # 💡 [새로운 무기 1] 20일선 이격도 정밀 계산
+                disp_20 = (current_price / ma20) * 100 if ma20 > 0 else 100
+                disp_text = f"{disp_20:.1f}%"
+                
+                # 💡 [새로운 무기 2] 대장주(폭등) 이력 추적 엔진 (엔벨로프 상단/상한가 이력)
+                is_leader_history = False
+                for i in range(1, len(history)):
+                    past_prev_c = history[i-1]['close']
+                    past_curr_h = high_prices[i]
+                    # 60일 내에 하루라도 22% 이상(상한가 근접) 슈팅을 쏜 적이 있는가?
+                    if past_prev_c > 0 and (past_curr_h - past_prev_c) / past_prev_c >= 0.22:
+                        is_leader_history = True
+                        break
+                leader_text = "🔥대장주(O)" if is_leader_history else "평범(X)"
+
                 upper_band = ma20 + (std20 * 2) 
                 lower_band = ma20 - (std20 * 2) 
                 band_width = (upper_band - lower_band) / ma20 if ma20 > 0 else 0 
@@ -525,7 +540,7 @@ def update_technical_data(df_theme):
                 elif is_long_shadow: master_tajeom = "⚠️ 윗꼬리 위험 (매수금지)"
                 elif is_huge_gap: master_tajeom = "⚠️ 갭상승 과다 (추격금지)"
                 
-                # 👑 2순위: 당일 완벽한 전고점 돌파 (매수 & 기준봉 0일차 시작점)
+                # 👑 2순위: 당일 완벽한 전고점 돌파
                 elif is_ss_breakout: 
                     master_tajeom = "👑 [SS급] 전고 돌파 ⚠️(주의장세)" if is_warning_market else "👑 [SS급] 전고 돌파"
                 
@@ -545,16 +560,21 @@ def update_technical_data(df_theme):
                 elif vol_ratio <= 30 and current_price < ma5 and change_rate >= -0.04: 
                     master_tajeom = "📉 [B급] 투매 소화 (종가베팅)"
                 
-                # 💡 [핵심 패치] 단타용 삭제 및 '0일차(관심)' 모니터링 대체
+                # 💡 [단타용 삭제 및 '0일차(관심)' 모니터링 대체]
                 elif change_rate >= 0.09 and trading_value >= 30_000_000_000: 
-                    # 윗단에서 윗꼬리가 잘렸기 때문에 여기까지 내려온 놈은 꽉 찬 튼튼한 양봉입니다.
                     master_tajeom = "👀 [관심] 깃발 0일차 (기준봉 출현)" + (" ⚠️(주의장세)" if is_warning_market else "")
-                    score += 10 # 대시보드 노출을 위한 가점 부여
+                    score += 10
 
                 if is_chronic_loss and "급]" in master_tajeom:
                     master_tajeom += " ⚠️(3년적자)"
 
-                results.append([name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, score, master_tajeom, today_high, today_low, high_60d, market_cap, shadow_text, dist_text])
+                # 💡 결과 배열에 '이격도'와 '대장주이력'을 추가
+                results.append([
+                    name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", 
+                    int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, 
+                    score, master_tajeom, today_high, today_low, high_60d, 
+                    market_cap, shadow_text, dist_text, disp_text, leader_text
+                ])
             except Exception as e:
                 continue
 
@@ -564,7 +584,8 @@ def update_technical_data(df_theme):
             try: helper_sheet = doc.worksheet("주가데이터_보조")
             except: helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="20")
             helper_sheet.clear()
-            headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "오마카세점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)", "윗꼬리판독", "전고점위치"]
+            # 💡 [헤더 브랜딩] 오마카세점수 -> HYEOKS점수 변경 및 신규 칼럼 추가
+            headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "HYEOKS점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)", "윗꼬리판독", "전고점위치", "20일이격도", "대장주이력"]
             helper_sheet.update(range_name="A1", values=[headers] + results, value_input_option="USER_ENTERED")
             print(f"✅ 총 {len(results)}개 종목 판독 완료! 🚀")
             
