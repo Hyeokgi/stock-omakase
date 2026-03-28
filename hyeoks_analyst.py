@@ -22,7 +22,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-# 💡 여기에 방금 복사한 [웹 앱 URL]을 붙여넣으세요!
+# 💡 웹 앱 URL 유지
 GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxyuSEjPmg8rZPjLlG-YKck07QYxmZm0HtxvWAumvV2zp7RRpVaKDo6D-CiQ6pLqKFm/exec"
 
 print("🤖 [HYEOKS 리서치 센터] 2.5-flash 엔진 가동...")
@@ -50,7 +50,7 @@ try:
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel('gemini-2.5-flash')
     
-    # 3. 데이터 로드
+    # 3. 데이터 로드 (💡 1차 수술: 현재가, 5일선, 20일선 데이터를 다시 넘겨줍니다!)
     macro_sheet = doc.worksheet("시장요약").get_all_values()
     nasdaq = macro_sheet[1][4]
     exchange_rate = macro_sheet[1][6]
@@ -61,9 +61,10 @@ try:
     for r in tech_data:
         if len(r) >= 10:
             code = r[1].replace("'", "").strip().zfill(6)
-            stock_candidates += f"종목:{r[0]} ({code}), 타점:{r[9]}, 20일이격도:{r[16] if len(r)>16 else ''}, 이력:{r[17] if len(r)>17 else ''}\n"
+            # 현재가[2], 등락률[3], 5일선[4], 20일선[5] 정보 추가
+            stock_candidates += f"종목:{r[0]}({code}), 현재가:{r[2]}({r[3]}), 5일선:{r[4]}, 20일선:{r[5]}, 타점:{r[9]}, 20일이격도:{r[16] if len(r)>16 else ''}, 이력:{r[17] if len(r)>17 else ''}\n"
 
-    # 4. 💡 완벽하게 보존된 프롬프트 양식
+    # 4. 💡 심층 분석 프롬프트 분리 적용 (단기 vs 중기/스윙)
     def generate_hyeoks_report(st_type):
         if st_type == "short":
             prompt = f"""
@@ -75,6 +76,7 @@ try:
             1. 분량 및 깊이: 각 목차별로 최소 2~3개의 상세한 단락을 작성하여, 기관용 리포트 수준의 방대한 분량과 전문적인 깊이를 확보할 것.
             2. 여백 및 단락: 스마트폰에서 읽기 편하도록 각 단락(문단) 사이에는 반드시 한 줄 이상의 빈 줄(엔터)을 넣어 넉넉한 여백을 확보할 것. 문장은 너무 길지 않게 끊어 칠 것.
             3. 용어 순화: 'SS급', '대장주(O)', '깃발 0일차' 같은 시스템 내부 기호나 은어를 절대 출력하지 말 것. 직관적이고 우아하게 풀어서 설명할 것.
+            4. 절대적인 가격 규칙: 매수 타점, 목표가, 손절가는 반드시 내가 제공한 [현재가], [5일선], [20일선] 데이터를 기준으로 수학적이고 논리적으로 산출할 것. 현재가보다 낮은 목표가를 제시하는 등 상식에 어긋나는 소설을 절대 쓰지 말 것.
             
             [출력 양식 (마크다운 및 HTML 구조 완벽 유지)]
             <div class="broker-name">HYEOKS SECURITIES | SHORT-TERM STRATEGY</div>
@@ -110,6 +112,7 @@ try:
             2. 여백 및 단락: 스마트폰에서 읽기 편하도록 각 단락(문단) 사이에는 반드시 한 줄 이상의 빈 줄(엔터)을 넣어 넉넉한 여백을 확보할 것. 문장은 너무 길지 않게 끊어 칠 것.
             3. 용어 순화: '대장주(O)', 'A급', 'B급', '4음 1양' 같은 시스템 내부 은어를 절대 쓰지 말 것. 전문적이고 매끄럽게 풀어서 쓸 것.
             4. 분석 초점: 과거 상한가나 폭등 이력이 있는 종목이 거래량이 마르며 20일선에 수렴한 상황을 집중 조명할 것.
+            5. 절대적인 가격 규칙: 매수 타점, 1차/2차 목표가, 손절가는 반드시 내가 제공한 [현재가], [5일선], [20일선] 데이터를 기준으로 수학적이고 논리적으로 산출할 것. 현재가보다 낮은 목표가를 제시하는 등 상식에 어긋나는 소설을 절대 쓰지 말 것.
             
             [출력 양식 (마크다운 및 HTML 구조 완벽 유지)]
             <div class="broker-name">HYEOKS SECURITIES | MID-TERM STRATEGY</div>
