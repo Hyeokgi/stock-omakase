@@ -1,4 +1,4 @@
-name: 🤖 오마카세 AI 리서치 퍼블리셔
+name: 🤖 HYEOKS AI 리서치 퍼블리셔
 
 on:
   schedule:
@@ -41,4 +41,4 @@ jobs:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: |
-        python ai_sector_analyst.py
+        python hyeoks_analyst.py
