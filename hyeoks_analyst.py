@@ -155,8 +155,9 @@ try:
     print("🧠 [HYEOKS 수석 애널리스트] 비전 데이터 심층 분석 중...")
     report_short, code_short = generate_hyeoks_report("short")
     
-    print("⏳ 단기 리포트 완료! API 과부하 방지를 위해 10초 휴식합니다...")
-    time.sleep(10)
+    # 💡 [핵심 패치] 429 에러(8분 딜레이) 방지를 위해 휴식 시간을 30초로 넉넉하게 연장
+    print("⏳ 단기 리포트 완료! API 과부하 방지를 위해 30초 휴식합니다...")
+    time.sleep(30)
     
     report_mid, code_mid = generate_hyeoks_report("mid")
 
@@ -195,15 +196,22 @@ try:
         print("📂 구글 드라이브 업로드 진행 중...")
         with open(pdf_filename, "rb") as f:
             pdf_base64 = base64.b64encode(f.read()).decode('utf-8')
-        try:
-            res = requests.post(GAS_WEB_APP_URL, json={"filename": pdf_filename, "base64": pdf_base64})
-            if res.status_code == 200 and "success" in res.text:
-                file_id = res.json().get("id")
-                report_link = f"https://drive.google.com/uc?id={file_id}"
-                doc.worksheet("리포트_게시").append_row([datetime.datetime.now().strftime('%Y-%m-%d'), report_link])
-                print("✅ 앱시트 연동 완료!")
-        except Exception as e:
-            print(f"⚠️ 드라이브 에러: {e}")
+        
+        # 💡 [핵심 패치] 네트워크 끊김 방지를 위한 3회 재시도 및 타임아웃 방어 로직
+        for attempt in range(3):
+            try:
+                res = requests.post(GAS_WEB_APP_URL, json={"filename": pdf_filename, "base64": pdf_base64}, timeout=30)
+                if res.status_code == 200 and "success" in res.text:
+                    file_id = res.json().get("id")
+                    report_link = f"https://drive.google.com/uc?id={file_id}"
+                    doc.worksheet("리포트_게시").append_row([datetime.datetime.now().strftime('%Y-%m-%d'), report_link])
+                    print("✅ 앱시트 연동 완료!")
+                    break  # 성공 시 반복문 탈출
+                else:
+                    print(f"⚠️ 드라이브 업로드 응답 오류 (시도 {attempt+1}/3)")
+            except Exception as e:
+                print(f"⚠️ 드라이브 에러 (시도 {attempt+1}/3): {e}")
+                time.sleep(5) # 실패 시 5초 대기 후 재시도
 
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         print("📲 텔레그램 PDF 발송 중...")
