@@ -290,7 +290,7 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
 
 def update_technical_data(df_theme):
     try:
-        print("▶️ 기술적 지표, 스코어링, 정밀 타점 판독 시작 (🚩 용어 순화 및 방배동선수 거래량 엔진 탑재)...")
+        print("▶️ 기술적 지표, 투트랙 채점(돌파/눌림 분리) 및 퀀트 아차상 판독 시작...")
         
         is_warning_market = check_warning_market()
         if is_warning_market:
@@ -349,8 +349,6 @@ def update_technical_data(df_theme):
                 current_price = int(today_data[4])
                 today_vol = int(today_data[5])
                 
-                # 🛑 [핵심 패치] 거래정지 종목 완벽 차단
-                # 당일 거래량이 0인 종목은 (거래정지 등) 명단에서 즉시 제외하여 '씨마름'으로 오탐지되는 것을 방지합니다.
                 if today_vol == 0:
                     continue
                 
@@ -362,10 +360,6 @@ def update_technical_data(df_theme):
                 yest_open = int(df_hist['open'].iloc[-2]) if len(df_hist) > 1 else yest_close
                 yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) > 1 else 0
                 yest_prev_close = int(df_hist['close'].iloc[-3]) if len(df_hist) > 2 else yest_open
-                
-                yest_trading_value = yest_close * yest_vol
-                yest_change_rate = (yest_close - yest_prev_close) / yest_prev_close if yest_prev_close > 0 else 0
-                yest_is_yangbong = yest_close > yest_open
                 
                 trading_value = current_price * today_vol
                 high_60d = max(high_prices[:-1]) if len(high_prices) > 1 else today_high
@@ -381,7 +375,6 @@ def update_technical_data(df_theme):
                 
                 today_body_ratio = real_body / open_price if open_price > 0 else 0
                 is_today_yangbong = current_price >= open_price
-                vol_drop_to_yest = today_vol / yest_vol if yest_vol > 0 else 0
                 
                 gap_ratio = (open_price - prev_price) / prev_price if prev_price > 0 else 0
                 is_huge_gap = gap_ratio >= 0.04
@@ -411,16 +404,12 @@ def update_technical_data(df_theme):
                             elif title == '자본총계':
                                 for td in reversed(tr.find_all('td')):
                                     val = td.text.replace(',', '').strip()
-                                    try:
-                                        total_equity = float(val)
-                                        break
+                                    try: total_equity = float(val); break
                                     except: pass
                             elif title == '자본금':
                                 for td in reversed(tr.find_all('td')):
                                     val = td.text.replace(',', '').strip()
-                                    try:
-                                        capital_stock = float(val)
-                                        break
+                                    try: capital_stock = float(val); break
                                     except: pass
                         
                         if capital_stock and total_equity and total_equity < capital_stock:
@@ -470,34 +459,42 @@ def update_technical_data(df_theme):
                 elif band_width <= 0.20 and current_price >= ma20: signal = "🚀 N자파동 (밴드돌파)" + supply_text if current_price >= upper_band * 0.98 else "👀 N자파동 (에너지응축)" + supply_text
                 elif ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035: signal = "📈 2차랠리 (이평수렴)" + supply_text if current_price > ma20 else "⏳ 이평선 저항" + supply_text
                 else: signal = "🟢 낙폭과대 (과매도)" + supply_text if current_price < lower_band else "⚡ 관망 (이격발생)" + supply_text
-                    
-                score = 0
-                if not (is_junk or is_financial_risk):
-                    if band_width <= 0.10: score += 20
-                    elif band_width <= 0.15: score += 15
-                    elif band_width <= 0.20: score += 10
-                    if is_dual_buy: score += 25
-                    elif f_buy > 0 or i_buy > 0: score += 10
-                    if vol_ratio >= 500: score += 20
-                    elif vol_ratio >= 300: score += 15
-                    elif vol_ratio >= 200: score += 10
-                    elif vol_ratio >= 100: score += 5
-                    if ma5 > ma20 and current_price >= ma5: score += 15
-                    elif ma5 > ma20: score += 10
-                    elif current_price >= ma20: score += 5
-                    
+                
                 is_near_high = current_price >= (high_60d * 0.90) or yest_close >= (high_60d * 0.90)
                 dist_text = "🎯 전고점 턱밑" if is_near_high else ("🟢 매물대 소화중" if current_price >= high_60d * 0.80 else "📉 이격 과다")
-                
-                is_4yin_1yang = False
-                if len(df_hist) >= 5:
-                    c1, c2, c3, c4 = df_hist['close'].iloc[-1], df_hist['close'].iloc[-2], df_hist['close'].iloc[-3], df_hist['close'].iloc[-4]
-                    if c1 > c2 and c2 < c3 and (c3 < c4 or (c4-c2)/c4 > 0.07) and (ma20 * 0.95 <= c1 <= ma20 * 1.05):
-                        is_4yin_1yang = True
 
+                # 🚀 [투트랙 채점표 분리 적용]
+                is_breakout_track = current_price >= ma20
+                track_type = "돌파" if is_breakout_track else "눌림"
+                quant_score = 0
+                
+                if not (is_junk or is_financial_risk):
+                    if is_breakout_track:
+                        # 트랙 1: 돌파형 (전고점, 거래량폭발, 쌍끌이 집중)
+                        if current_price >= (high_60d * 0.90): quant_score += 20
+                        elif current_price >= (high_60d * 0.85): quant_score += 10
+                        if vol_ratio >= 300: quant_score += 20
+                        elif vol_ratio >= 150: quant_score += 10
+                        if is_dual_buy: quant_score += 25
+                        elif f_buy > 0 or i_buy > 0: quant_score += 10
+                        if band_width <= 0.20: quant_score += 10
+                        if ma5 > ma20 and current_price >= ma5: quant_score += 15
+                    else:
+                        # 트랙 2: 눌림형 (방배동 룰 - 거래량 씨마름, 양봉/도지 방어력, 20일선 근접)
+                        if vol_ratio <= 35: quant_score += 30
+                        elif vol_ratio <= 50: quant_score += 15
+                        if is_today_yangbong or today_body_ratio <= 0.015: quant_score += 20
+                        if ma20 * 0.95 <= current_price <= ma20 * 1.02: quant_score += 20
+                        if is_dual_buy: quant_score += 15
+                        elif f_buy > 0 or i_buy > 0: quant_score += 10
+                        if band_width <= 0.15: quant_score += 15
+
+                score_display = f"{quant_score}점 ({track_type})"
+
+                # 🛑 기존 마스터 깐깐한 타점 룰
                 is_ss_breakout = (trading_value >= 80_000_000_000) and (vol_ratio >= 200) and (change_rate >= 0.07) and not is_long_shadow and is_near_high
                 
-                # 🚀 [V8 눌림목 카운트다운 엔진]
+                # 🚀 [V8 눌림목 3일차 카운트다운 엔진]
                 flag_days = 0
                 for d in range(1, 4):
                     anchor_idx = -(d + 1)
@@ -516,7 +513,6 @@ def update_technical_data(df_theme):
                         
                         if anchor_tv >= 80_000_000_000 and anchor_change >= 0.12 and anchor_close > anchor_open and is_near_high_anchor:
                             is_holding = True
-                            
                             for j in range(anchor_idx + 1, 0): 
                                 curr_close = int(df_hist['close'].iloc[j])
                                 curr_prev_close = int(df_hist['close'].iloc[j-1])
@@ -534,40 +530,49 @@ def update_technical_data(df_theme):
                                 flag_days = d
                                 break
                 
+                # 😅 [새로운 아차상(관심) 로직]
+                # 돌파 아차상: 깐깐한 타점 탈락, but 퀀트 60점 이상 + 거래대금 400억 이상 + 4% 이상 상승 + 윗꼬리 아님
+                is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 60) and (trading_value >= 40_000_000_000) and (change_rate >= 0.04) and not is_long_shadow
+                # 눌림 아차상: 퀀트 60점 이상 + 거래량 극감(45% 이하) + 방어력(도지/양봉) 존재 (LG엔솔, SK오션플랜트 등 대형주 포함)
+                is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 60) and (vol_ratio <= 45) and (is_today_yangbong or today_body_ratio <= 0.015)
+
                 master_tajeom = "⏸️ 관망 및 대기"
                 
-                # 🛑 1순위: 위험 종목 원천 차단
+                # 🛑 1순위: 위험 종목
                 if len(history) < 20: master_tajeom = "⚠️ 신규상장 (데이터 부족)"
                 elif is_junk: master_tajeom = "🚨 매매금지 (딱지)"
                 elif is_financial_risk: master_tajeom = "🚨 매매금지 (자본잠식)"
                 elif is_long_shadow: master_tajeom = "⚠️ 윗꼬리 위험 (매수금지)"
                 elif is_huge_gap: master_tajeom = "⚠️ 갭상승 과다 (추격금지)"
                 
-                # 👑 2순위: 당일 완벽한 전고점 돌파
+                # 👑 2순위: 완벽한 타점 (돌파 & 눌림 3일차)
                 elif is_ss_breakout: 
                     master_tajeom = "👑 [핵심] 신고가 돌파 ⚠️(주의장세)" if is_warning_market else "👑 [핵심] 신고가 돌파"
-                
-                # 🎯 3순위: 눌림목 1~3일차 카운트다운 (스윙 모아가기)
+                    quant_score += 50
+                    score_display = f"{quant_score}점 ({track_type})"
                 elif flag_days == 3:
                     master_tajeom = "🎯 [타점] 눌림목 3일 차 완성 (비중 40%)" + (" ⚠️(주의장세)" if is_warning_market else "")
-                    score += 30 
+                    quant_score += 50 
+                    score_display = f"{quant_score}점 ({track_type})"
+
+                # 😅 3순위: 아차상 (돌파 턱밑 대기 & 우량/대형주 눌림목 방어 테스트)
+                elif is_runner_up_breakout:
+                    master_tajeom = "👀 [관심] 돌파 턱밑 대기 (아차상)"
+                    quant_score += 20 # 상위권 노출을 위한 멱살 캐리
+                    score_display = f"{quant_score}점 ({track_type})"
+                elif is_runner_up_pullback:
+                    master_tajeom = "👀 [관심] 눌림목 방어 테스트 (아차상)"
+                    quant_score += 20 # 상위권 노출을 위한 멱살 캐리
+                    score_display = f"{quant_score}점 ({track_type})"
+
+                # 🎯 4순위: 기타 
                 elif flag_days == 2:
                     master_tajeom = "🚩 [분할매수] 눌림목 2일 차 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else "")
                 elif flag_days == 1:
                     master_tajeom = "🚩 [분할매수] 단기 눌림 진입 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else "")
-                
-                elif is_4yin_1yang: master_tajeom = "📉 [단기] 하방 경직 (지지선 확인)"
                 elif "🌟" in signal: master_tajeom = "🌟 [우량] 기관/외인 수급 유입" 
-                
-                elif vol_ratio <= 35 and (ma20 * 1.00 <= current_price <= ma20 * 1.03) and change_rate >= -0.025: 
-                    master_tajeom = "⏳ [주력] 20일선 눌림목 (종가베팅)"
-                # 💡 [필터링 강화] 가짜 하락(계단식 늪) 방지 및 진짜 투매 소화(양봉/도지 방어) 판독
-                elif vol_ratio <= 30 and current_price < (ma20 * 0.95) and change_rate >= -0.02 and (is_today_yangbong or today_body_ratio <= 0.015): 
-                    master_tajeom = "📉 [기회] 과매도 투매 소화"
-                
                 elif change_rate >= 0.12 and trading_value >= 50_000_000_000: 
                     master_tajeom = "👀 [관심] 신규 기준봉 출현 (수급 집중)" + (" ⚠️(주의장세)" if is_warning_market else "")
-                    score += 10
 
                 if is_chronic_loss and "[" in master_tajeom:
                     master_tajeom += " ⚠️(3년적자)"
@@ -575,21 +580,23 @@ def update_technical_data(df_theme):
                 results.append([
                     name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", 
                     int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, 
-                    score, master_tajeom, today_high, today_low, high_60d, 
-                    market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text
+                    score_display, master_tajeom, today_high, today_low, high_60d, 
+                    market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, quant_score
                 ])
             except Exception as e:
                 continue
 
-        results.sort(key=lambda x: x[8], reverse=True) 
+        # 숨겨진 정수형 quant_score(인덱스 19)를 기준으로 완벽하게 내림차순 정렬
+        results.sort(key=lambda x: x[19], reverse=True) 
+        final_results = [r[:19] for r in results]
 
-        if results:
+        if final_results:
             try: helper_sheet = doc.worksheet("주가데이터_보조")
             except: helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="20")
             helper_sheet.clear()
             headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "HYEOKS점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)", "윗꼬리판독", "전고점위치", "20일이격도", "대장주이력", "거래량상태"]
-            helper_sheet.update(range_name="A1", values=[headers] + results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(results)}개 종목 판독 완료! 🚀")
+            helper_sheet.update(range_name="A1", values=[headers] + final_results, value_input_option="USER_ENTERED")
+            print(f"✅ 총 {len(final_results)}개 종목 판독 완료! 🚀")
             
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
