@@ -481,10 +481,10 @@ def update_technical_data(df_theme):
                         if ma5 > ma20 and current_price >= ma5: quant_score += 15
                     else:
                         # 트랙 2: 눌림형 (방배동 룰 - 거래량 씨마름, 양봉/도지 방어력, 20일선 근접)
-                        if vol_ratio <= 35: quant_score += 30
-                        elif vol_ratio <= 50: quant_score += 15
-                        if is_today_yangbong or today_body_ratio <= 0.015: quant_score += 20
-                        if ma20 * 0.95 <= current_price <= ma20 * 1.02: quant_score += 20
+                        if vol_ratio <= 35: quant_score += 20
+                        elif vol_ratio <= 50: quant_score += 10
+                        if is_today_yangbong or today_body_ratio <= 0.015: quant_score += 15
+                        if ma20 * 0.95 <= current_price <= ma20 * 1.02: quant_score += 15
                         if is_dual_buy: quant_score += 15
                         elif f_buy > 0 or i_buy > 0: quant_score += 10
                         if band_width <= 0.15: quant_score += 15
@@ -531,9 +531,7 @@ def update_technical_data(df_theme):
                                 break
                 
                 # 😅 [새로운 아차상(관심) 로직]
-                # 돌파 아차상: 깐깐한 타점 탈락, but 퀀트 40점 이상 + 거래대금 400억 이상 + 4% 이상 상승 + 윗꼬리 아님
                 is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 40) and (trading_value >= 40_000_000_000) and (change_rate >= 0.04) and not is_long_shadow
-                # 눌림 아차상: 퀀트 40점 이상 + 거래량 극감(45% 이하) + 방어력(도지/양봉) 존재 (LG엔솔, SK오션플랜트 등 대형주 포함)
                 is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 40) and (vol_ratio <= 45) and (is_today_yangbong or today_body_ratio <= 0.015)
 
                 master_tajeom = "⏸️ 관망 및 대기"
@@ -548,21 +546,21 @@ def update_technical_data(df_theme):
                 # 👑 2순위: 완벽한 타점 (돌파 & 눌림 3일차)
                 elif is_ss_breakout: 
                     master_tajeom = "👑 [핵심] 신고가 돌파 ⚠️(주의장세)" if is_warning_market else "👑 [핵심] 신고가 돌파"
-                    quant_score += 50
+                    quant_score += 30
                     score_display = f"{quant_score}점 ({track_type})"
                 elif flag_days == 3:
                     master_tajeom = "🎯 [타점] 눌림목 3일 차 완성 (비중 40%)" + (" ⚠️(주의장세)" if is_warning_market else "")
-                    quant_score += 50 
+                    quant_score += 20 
                     score_display = f"{quant_score}점 ({track_type})"
 
                 # 😅 3순위: 아차상 (돌파 턱밑 대기 & 우량/대형주 눌림목 방어 테스트)
                 elif is_runner_up_breakout:
                     master_tajeom = "👀 [관심] 돌파 턱밑 대기 (아차상)"
-                    quant_score += 20 # 상위권 노출을 위한 멱살 캐리
+                    quant_score += 10
                     score_display = f"{quant_score}점 ({track_type})"
                 elif is_runner_up_pullback:
                     master_tajeom = "👀 [관심] 눌림목 방어 테스트 (아차상)"
-                    quant_score += 20 # 상위권 노출을 위한 멱살 캐리
+                    quant_score += 10
                     score_display = f"{quant_score}점 ({track_type})"
 
                 # 🎯 4순위: 기타 
@@ -570,7 +568,10 @@ def update_technical_data(df_theme):
                     master_tajeom = "🚩 [분할매수] 눌림목 2일 차 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else "")
                 elif flag_days == 1:
                     master_tajeom = "🚩 [분할매수] 단기 눌림 진입 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else "")
-                elif "🌟" in signal: master_tajeom = "🌟 [우량] 기관/외인 수급 유입" 
+                elif "🌟" in signal: 
+                    master_tajeom = "🌟 [우량] 기관/외인 수급 유입" 
+                    quant_score += 15
+                    score_display = f"{quant_score}점 ({track_type})"
                 elif change_rate >= 0.12 and trading_value >= 50_000_000_000: 
                     master_tajeom = "👀 [관심] 신규 기준봉 출현 (수급 집중)" + (" ⚠️(주의장세)" if is_warning_market else "")
 
