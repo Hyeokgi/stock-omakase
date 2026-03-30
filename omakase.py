@@ -531,10 +531,10 @@ def update_technical_data(df_theme):
                                 break
                 
                 # 😅 [새로운 아차상(관심) 로직]
-                # 돌파 아차상: 깐깐한 타점 탈락, but 퀀트 60점 이상 + 거래대금 400억 이상 + 4% 이상 상승 + 윗꼬리 아님
-                is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 60) and (trading_value >= 40_000_000_000) and (change_rate >= 0.04) and not is_long_shadow
-                # 눌림 아차상: 퀀트 60점 이상 + 거래량 극감(45% 이하) + 방어력(도지/양봉) 존재 (LG엔솔, SK오션플랜트 등 대형주 포함)
-                is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 60) and (vol_ratio <= 45) and (is_today_yangbong or today_body_ratio <= 0.015)
+                # 돌파 아차상: 깐깐한 타점 탈락, but 퀀트 40점 이상 + 거래대금 400억 이상 + 4% 이상 상승 + 윗꼬리 아님
+                is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 40) and (trading_value >= 40_000_000_000) and (change_rate >= 0.04) and not is_long_shadow
+                # 눌림 아차상: 퀀트 40점 이상 + 거래량 극감(45% 이하) + 방어력(도지/양봉) 존재 (LG엔솔, SK오션플랜트 등 대형주 포함)
+                is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 40) and (vol_ratio <= 45) and (is_today_yangbong or today_body_ratio <= 0.015)
 
                 master_tajeom = "⏸️ 관망 및 대기"
                 
