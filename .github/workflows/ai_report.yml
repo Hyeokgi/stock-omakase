@@ -2,7 +2,7 @@ name: 🤖 HYEOKS AI 리서치 퍼블리셔
 
 on:
   schedule:
-    - cron: '10 6 * * 1-5' 
+    - cron: '7 6 * * 1-5' 
   workflow_dispatch: 
 
 jobs:
