@@ -562,7 +562,8 @@ def update_technical_data(df_theme):
                 
                 elif vol_ratio <= 35 and (ma20 * 1.00 <= current_price <= ma20 * 1.03) and change_rate >= -0.025: 
                     master_tajeom = "⏳ [주력] 20일선 눌림목 (종가베팅)"
-                elif vol_ratio <= 25 and current_price < ma5 and change_rate >= -0.03: 
+                # 💡 [필터링 강화] 가짜 하락(계단식 늪) 방지 및 진짜 투매 소화(양봉/도지 방어) 판독
+                elif vol_ratio <= 30 and current_price < (ma20 * 0.95) and change_rate >= -0.02 and (is_today_yangbong or today_body_ratio <= 0.015): 
                     master_tajeom = "📉 [기회] 과매도 투매 소화"
                 
                 elif change_rate >= 0.12 and trading_value >= 50_000_000_000: 
