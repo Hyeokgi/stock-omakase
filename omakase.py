@@ -350,6 +350,11 @@ def update_technical_data(df_theme):
                 current_price = int(today_data[4])
                 today_vol = int(today_data[5])
                 
+                # 🛑 [핵심 패치] 거래정지 종목 완벽 차단
+                # 당일 거래량이 0인 종목은 (거래정지 등) 명단에서 즉시 제외하여 '씨마름'으로 오탐지되는 것을 방지합니다.
+                if today_vol == 0:
+                    continue
+                
                 df_hist = pd.DataFrame(history)
                 prev_price = int(df_hist['close'].iloc[-2]) if len(df_hist) > 1 else current_price
                 change_rate = (current_price - prev_price) / prev_price if prev_price > 0 else 0.0
@@ -488,14 +493,12 @@ def update_technical_data(df_theme):
                 is_4yin_1yang = False
                 if len(df_hist) >= 5:
                     c1, c2, c3, c4 = df_hist['close'].iloc[-1], df_hist['close'].iloc[-2], df_hist['close'].iloc[-3], df_hist['close'].iloc[-4]
-                    # 💡 [필터링 강화] 양봉 반등폭(c4-c2)/c4 허들을 5%에서 7%로 상향
                     if c1 > c2 and c2 < c3 and (c3 < c4 or (c4-c2)/c4 > 0.07) and (ma20 * 0.95 <= c1 <= ma20 * 1.05):
                         is_4yin_1yang = True
 
-                # 💡 [필터링 강화] 전고돌파 조건: 거래대금 800억 이상, 거래량비율 200% 이상, 등락률 7% 이상
                 is_ss_breakout = (trading_value >= 80_000_000_000) and (vol_ratio >= 200) and (change_rate >= 0.07) and not is_long_shadow and is_near_high
                 
-                # 🚀 [V8 눌림목 카운트다운 엔진 - 필터링 강화]
+                # 🚀 [V8 눌림목 카운트다운 엔진]
                 flag_days = 0
                 for d in range(1, 4):
                     anchor_idx = -(d + 1)
@@ -512,7 +515,6 @@ def update_technical_data(df_theme):
                         high_60d_anchor = max(hist_before_anchor) if len(hist_before_anchor) > 0 else anchor_close
                         is_near_high_anchor = anchor_close >= (high_60d_anchor * 0.90)
                         
-                        # 💡 [필터링 강화] 기준봉 허들: 800억 이상, 등락률 12% 이상
                         if anchor_tv >= 80_000_000_000 and anchor_change >= 0.12 and anchor_close > anchor_open and is_near_high_anchor:
                             is_holding = True
                             
@@ -522,7 +524,6 @@ def update_technical_data(df_theme):
                                 curr_vol = int(df_hist['volume'].iloc[j])
                                 curr_change = (curr_close - curr_prev_close) / curr_prev_close if curr_prev_close > 0 else 0
                                 
-                                # 💡 [필터링 강화] 지지폭 축소 및 거래량 허들(45% 이하)로 씨마름 극대화
                                 if not (anchor_close * 0.97 <= curr_close <= anchor_close * 1.12):
                                     is_holding = False; break
                                 if curr_change < -0.035:
@@ -559,14 +560,11 @@ def update_technical_data(df_theme):
                 elif is_4yin_1yang: master_tajeom = "📉 [단기] 하방 경직 (지지선 확인)"
                 elif "🌟" in signal: master_tajeom = "🌟 [우량] 기관/외인 수급 유입" 
                 
-                # 💡 [필터링 강화] 거래량 35% 이하, 이평선 이격 타이트닝
                 elif vol_ratio <= 35 and (ma20 * 1.00 <= current_price <= ma20 * 1.03) and change_rate >= -0.025: 
                     master_tajeom = "⏳ [주력] 20일선 눌림목 (종가베팅)"
-                # 💡 [필터링 강화] 거래량 25% 이하 극감시에만 허용
                 elif vol_ratio <= 25 and current_price < ma5 and change_rate >= -0.03: 
                     master_tajeom = "📉 [기회] 과매도 투매 소화"
                 
-                # 💡 [필터링 강화] 기준봉 500억 & 12% 이상 상승
                 elif change_rate >= 0.12 and trading_value >= 50_000_000_000: 
                     master_tajeom = "👀 [관심] 신규 기준봉 출현 (수급 집중)" + (" ⚠️(주의장세)" if is_warning_market else "")
                     score += 10
