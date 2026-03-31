@@ -217,7 +217,9 @@ try:
             
             # 실시간 현재가 가져오기
             try:
-                api_url = f"https://m.stock.naver.com/api/stock/{str(code).replace('\'', '').zfill(6)}/basic"
+                # [오류 수정 완료] f-string 내부의 역슬래시 사용 제거
+                clean_code = str(code).replace("'", "").zfill(6)
+                api_url = f"https://m.stock.naver.com/api/stock/{clean_code}/basic"
                 curr_price = int(req_session.get(api_url, timeout=3).json()['closePrice'].replace(',', ''))
             except:
                 curr_price = avg_price # 통신 오류시 기존가 유지
@@ -236,7 +238,8 @@ try:
                 result_str = "승리" if return_rate > 0 else "패배"
                 closed_list.append([name, avg_price, curr_price, f"{return_rate*100:.2f}%", today_str, f"{result_str} ({sell_reason})"])
             else:
-                new_hold_list.append([name, f"'{str(code).replace('\'', '').zfill(6)}", avg_price, invest_amt, curr_price, f"{return_rate*100:.2f}%", buy_date, t_price, s_price, ""])
+                clean_code2 = str(code).replace("'", "").zfill(6)
+                new_hold_list.append([name, f"'{clean_code2}", avg_price, invest_amt, curr_price, f"{return_rate*100:.2f}%", buy_date, t_price, s_price, ""])
                 
         # 2. 신규 리포트 종목 편입 (기존 보유 확인 후 물타기/신규 진입)
         for pick in picks:
