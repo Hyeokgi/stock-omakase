@@ -463,6 +463,10 @@ def update_technical_data(df_theme):
                 is_near_high = current_price >= (high_60d * 0.90) or yest_close >= (high_60d * 0.90)
                 dist_text = "🎯 전고점 턱밑" if is_near_high else ("🟢 매물대 소화중" if current_price >= high_60d * 0.80 else "📉 이격 과다")
 
+                # 🚀 [단타대장 사냥 (야수의 심장) 로직 추가]
+                # 등락률 15% 이상, 거래대금 1,000억 이상 터진 찐 대장주는 갭상승/윗꼬리 페널티 무시
+                is_danta_leader = (change_rate >= 0.15) and (trading_value >= 100_000_000_000) and not (is_junk or is_financial_risk)
+
                 # 🚀 [투트랙 채점표 분리 적용]
                 is_breakout_track = current_price >= ma20
                 track_type = "돌파" if is_breakout_track else "눌림"
@@ -548,10 +552,14 @@ def update_technical_data(df_theme):
 
                 master_tajeom = "⏸️ 관망 및 대기"
                 
-                # 🛑 1순위: 위험 종목
+                # 🛑 1순위: 위험 종목 (단타대장은 갭/윗꼬리 필터 무시하고 우선 통과)
                 if len(history) < 20: master_tajeom = "⚠️ 신규상장 (데이터 부족)"
                 elif is_junk: master_tajeom = "🚨 매매금지 (딱지)"
                 elif is_financial_risk: master_tajeom = "🚨 매매금지 (자본잠식)"
+                elif is_danta_leader: 
+                    master_tajeom = "🚀 [단타대장] 야수의 심장 (비중조절)" + (" ⚠️(주의장세)" if is_warning_market else "")
+                    quant_score += 40
+                    score_display = f"{quant_score}점 ({track_type})"
                 elif is_long_shadow: master_tajeom = "⚠️ 윗꼬리 위험 (매수금지)"
                 elif is_huge_gap: master_tajeom = "⚠️ 갭상승 과다 (추격금지)"
                 
