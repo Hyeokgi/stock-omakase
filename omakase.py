@@ -463,13 +463,14 @@ def update_technical_data(df_theme):
                 is_near_high = current_price >= (high_60d * 0.90) or yest_close >= (high_60d * 0.90)
                 dist_text = "🎯 전고점 턱밑" if is_near_high else ("🟢 매물대 소화중" if current_price >= high_60d * 0.80 else "📉 이격 과다")
 
-                # 🚀 [상한가 잠김 필터]
-                # 등락률 29.5% 이상이면 상한가에 잠긴 것으로 간주하여 별도 분류
+                # 🚀 [단타대장 및 단타후발 로직 추가]
                 is_upper_limit = change_rate >= 0.295
 
-                # 🚀 [단타대장 사냥 (야수의 심장) 로직 추가]
-                # 등락률 15% 이상, 거래대금 1,000억 이상 터졌으나 상한가에 안 잠긴 '살 수 있는' 찐 대장주
-                is_danta_leader = (change_rate >= 0.15) and not is_upper_limit and (trading_value >= 100_000_000_000) and not (is_junk or is_financial_risk)
+                # 1등 대장주: 상한가에 도달했고, 거래대금 500억 이상 터진 당일 시장 주도주
+                is_danta_daejang = is_upper_limit and (trading_value >= 50_000_000_000) and not (is_junk or is_financial_risk)
+
+                # 2~3등 후발주: 상한가에는 못 갔지만(+15% 이상), 돈이 1000억 이상 쏠린 종목 (예: 알루코)
+                is_danta_hubal = (change_rate >= 0.15) and not is_upper_limit and (trading_value >= 100_000_000_000) and not (is_junk or is_financial_risk)
 
                 # 🚀 [투트랙 채점표 분리 적용]
                 is_breakout_track = current_price >= ma20
@@ -556,17 +557,21 @@ def update_technical_data(df_theme):
 
                 master_tajeom = "⏸️ 관망 및 대기"
                 
-                # 🛑 1순위: 위험 종목 및 상한가 분리 (우선 통과 필터)
+                # 🛑 1순위: 위험 종목 및 단타 포지션 분리 (우선 통과 필터)
                 if len(history) < 20: master_tajeom = "⚠️ 신규상장 (데이터 부족)"
                 elif is_junk: master_tajeom = "🚨 매매금지 (딱지)"
                 elif is_financial_risk: master_tajeom = "🚨 매매금지 (자본잠식)"
-                elif is_upper_limit: 
-                    master_tajeom = "🔒 [상한가] 보유자 영역 (추격금지)" + (" ⚠️(주의장세)" if is_warning_market else "")
-                    quant_score += 50 # 상단 노출을 위해 점수 부여
+                elif is_danta_daejang: 
+                    master_tajeom = "👑 [단타대장] 당일 주도주 (상한가)" + (" ⚠️(주의장세)" if is_warning_market else "")
+                    quant_score += 50
                     score_display = f"{quant_score}점 ({track_type})"
-                elif is_danta_leader: 
-                    master_tajeom = "🚀 [단타대장] 야수의 심장 (비중조절)" + (" ⚠️(주의장세)" if is_warning_market else "")
+                elif is_danta_hubal: 
+                    master_tajeom = "🏃 [단타후발] 야수의 심장 (2~3등주)" + (" ⚠️(주의장세)" if is_warning_market else "")
                     quant_score += 40
+                    score_display = f"{quant_score}점 ({track_type})"
+                elif is_upper_limit: # 대장 조건에는 못 미치지만 상한가에 간 종목
+                    master_tajeom = "🔒 [상한가] 보유자 영역 (추격금지)" + (" ⚠️(주의장세)" if is_warning_market else "")
+                    quant_score += 50
                     score_display = f"{quant_score}점 ({track_type})"
                 elif is_long_shadow: master_tajeom = "⚠️ 윗꼬리 위험 (매수금지)"
                 elif is_huge_gap: master_tajeom = "⚠️ 갭상승 과다 (추격금지)"
