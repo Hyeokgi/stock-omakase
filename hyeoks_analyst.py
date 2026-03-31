@@ -46,10 +46,10 @@ try:
     creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
     gc = gspread.authorize(creds)
     doc = gc.open_by_url(SHEET_URL)
-    
+
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel('gemini-2.5-flash')
-    
+
     macro_sheet = doc.worksheet("시장요약").get_all_values()
     nasdaq = macro_sheet[1][4]
     exchange_rate = macro_sheet[1][6]
@@ -59,16 +59,27 @@ try:
     stock_candidates = ""
     for r in tech_data:
         if len(r) >= 10:
+            tajeom = str(r[9])
+            
+            # 🛑 [핵심 패치] 상한가 잠김, 매수금지, 관망, 위험 종목은 AI 분석 후보 명단에서 원천 차단
+            if re.search(r'상한가|매수금지|관망|위험', tajeom):
+                continue
+                
             code = r[1].replace("'", "").strip().zfill(6)
             vol_status = r[18] if len(r)>18 else ''
-            stock_candidates += f"종목:{r[0]}({code}), 현재가:{r[2]}({r[3]}), 5일선:{r[4]}, 20일선:{r[5]}, 타점:{r[9]}, 20일이격도:{r[16] if len(r)>16 else ''}, 이력:{r[17] if len(r)>17 else ''}, 거래량상태:{vol_status}\n"
+            stock_candidates += f"종목:{r[0]}({code}), 현재가:{r[2]}({r[3]}), 5일선:{r[4]}, 20일선:{r[5]}, 타점:{tajeom}, 20일이격도:{r[16] if len(r)>16 else ''}, 이력:{r[17] if len(r)>17 else ''}, 거래량상태:{vol_status}\n"
 
     def generate_hyeoks_report(st_type):
-        sys_msg = "내일 당장 급등할 단기 폭발" if st_type == "short" else "직장인 스윙 종가베팅"
-        pick_prompt = f"너는 HYEOKS 수석 애널리스트야. 다음 데이터 중 '{sys_msg}' 유망주로 가장 완벽한 1종목을 골라. 다른 말은 절대 하지 말고 '오직 6자리 종목코드 숫자'만 출력해.\n데이터: {stock_candidates}"
-        
+        sys_msg = "내일 당장 진입 가능한 단기 폭발" if st_type == "short" else "직장인 스윙 종가베팅"
+        pick_prompt = f"너는 HYEOKS 수석 애널리스트야. 다음 데이터 중 '{sys_msg}' 유망주로 실전 매수가 가능하고 가장 완벽한 1종목을 골라. 다른 말은 절대 하지 말고 '오직 6자리 종목코드 숫자'만 출력해.\n데이터: {stock_candidates}"
+
         raw_code = safe_generate_content(model, pick_prompt).text
-        target_code = re.search(r'\d{6}', raw_code).group()
+        
+        # 정규식으로 종목코드를 찾지 못할 경우의 예외 처리 방어코드
+        code_match = re.search(r'\d{6}', raw_code)
+        if not code_match:
+            raise Exception("AI가 종목 코드를 정상적으로 출력하지 못했습니다. 다시 시도해 주세요.")
+        target_code = code_match.group()
 
         # 💡 [가상계좌 연동] 종목명 추출
         target_name = "Unknown"
@@ -82,7 +93,7 @@ try:
         img_res = requests.get(chart_url, headers={'User-Agent': 'Mozilla/5.0'})
         with open(img_path, 'wb') as f:
             f.write(img_res.content)
-            
+
         img = PIL.Image.open(img_path)
 
         if st_type == "short":
@@ -150,13 +161,13 @@ try:
             ## 2. 👁️ AI 시각적 차트 판독 및 분할 매수 전략
             (상세 서술)
             """
-            
+
         response = safe_generate_content(model, [final_prompt, img])
         img.close()
         os.remove(img_path)
-        
+
         raw_report_text = response.text
-        
+
         # 💡 [핵심 패치] AI가 출력한 매매 기준 추출 (가상계좌용)
         pick_data = None
         match = re.search(r'\[DATA\]\s*목표가\s*:\s*([0-9,]+).*?손절가\s*:\s*([0-9,]+).*?분할매수\s*:\s*([OX])', raw_report_text)
@@ -175,10 +186,10 @@ try:
 
     print("🧠 [HYEOKS 수석 애널리스트] 비전 데이터 심층 분석 중...")
     report_short, code_short, pick_short = generate_hyeoks_report("short")
-    
+
     print("⏳ 단기 리포트 완료! API 과부하 방지를 위해 30초 휴식합니다...")
     time.sleep(30)
-    
+
     report_mid, code_mid, pick_mid = generate_hyeoks_report("mid")
 
     # ==========================================
@@ -188,44 +199,43 @@ try:
         print("💰 [HYEOKS 퀀트 데스크] 가상계좌 시뮬레이션 가동 중...")
         hold_sheet = doc.worksheet("가상계좌_보유")
         closed_sheet = doc.worksheet("가상계좌_종료")
-        
+
         hold_data = hold_sheet.get_all_values()
         headers = ["종목명", "종목코드", "매입단가", "투자금액", "현재가", "수익률(%)", "편입일", "목표가", "손절가", "수동매도"]
-        
+
         # 시트 포맷 초기화 (기존 잘못된 헤더가 있으면 덮어쓰기)
         if len(hold_data) <= 1 or hold_data[0][0] != "종목명" or len(hold_data[0]) < 10:
             hold_sheet.clear()
             hold_sheet.update(range_name="A1", values=[headers])
             hold_data = [headers]
-            
+
         today_str = datetime.datetime.now(KST).strftime('%Y-%m-%d')
         new_hold_list = []
         closed_list = []
-        
+
         req_session = requests.Session()
         req_session.headers.update({'User-Agent': 'Mozilla/5.0'})
-        
+
         # 1. 기존 보유 종목 검증 및 매도 처리
         for row in hold_data[1:]:
             if len(row) < 10 or not row[0]: continue
             name, code, avg_price, invest_amt, _, _, buy_date, t_price, s_price, manual_sell = row
-            
+
             avg_price = int(float(str(avg_price).replace(',', '')))
             invest_amt = int(float(str(invest_amt).replace(',', '')))
             t_price = int(float(str(t_price).replace(',', '')))
             s_price = int(float(str(s_price).replace(',', '')))
-            
+
             # 실시간 현재가 가져오기
             try:
-                # [오류 수정 완료] f-string 내부의 역슬래시 사용 제거
                 clean_code = str(code).replace("'", "").zfill(6)
                 api_url = f"https://m.stock.naver.com/api/stock/{clean_code}/basic"
                 curr_price = int(req_session.get(api_url, timeout=3).json()['closePrice'].replace(',', ''))
             except:
                 curr_price = avg_price # 통신 오류시 기존가 유지
-                
+
             return_rate = (curr_price - avg_price) / avg_price if avg_price > 0 else 0
-            
+
             sell_reason = ""
             if str(manual_sell).strip() == "매도":
                 sell_reason = "사용자 수동 중도 매도"
@@ -233,37 +243,37 @@ try:
                 sell_reason = "🎯 AI 목표가 도달 (전량 익절)"
             elif curr_price <= s_price:
                 sell_reason = "📉 AI 손절가 이탈 (전량 손절)"
-                
+
             if sell_reason:
                 result_str = "승리" if return_rate > 0 else "패배"
                 closed_list.append([name, avg_price, curr_price, f"{return_rate*100:.2f}%", today_str, f"{result_str} ({sell_reason})"])
             else:
                 clean_code2 = str(code).replace("'", "").zfill(6)
                 new_hold_list.append([name, f"'{clean_code2}", avg_price, invest_amt, curr_price, f"{return_rate*100:.2f}%", buy_date, t_price, s_price, ""])
-                
+
         # 2. 신규 리포트 종목 편입 (기존 보유 확인 후 물타기/신규 진입)
         for pick in picks:
             if not pick: continue
             name, code, t_price, s_price, is_split = pick['name'], pick['code'], pick['target'], pick['stop'], pick['split']
-            
+
             try:
                 curr_price = int(req_session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", timeout=3).json()['closePrice'].replace(',', ''))
             except: continue
-                
+
             existing_idx = next((i for i, r in enumerate(new_hold_list) if r[0] == name), -1)
-            
+
             if existing_idx != -1:
                 # 이미 보유중인데 리포트에서 "분할매수:O" 라면 100만원 추가 베팅 진행
                 if is_split:
                     old_avg = new_hold_list[existing_idx][2]
                     old_invest = new_hold_list[existing_idx][3]
                     add_invest = 1000000 # 100만원 고정 매수
-                    
+
                     new_invest = old_invest + add_invest
                     old_qty = old_invest / old_avg
                     add_qty = add_invest / curr_price
                     new_avg = int(new_invest / (old_qty + add_qty)) # 평단가 재조정
-                    
+
                     new_hold_list[existing_idx][2] = new_avg
                     new_hold_list[existing_idx][3] = new_invest
                     new_hold_list[existing_idx][4] = curr_price
@@ -271,11 +281,11 @@ try:
             else:
                 # 겹치지 않는 신규 종목일 경우 편입 (초기 진입 100만원)
                 new_hold_list.append([name, f"'{code}", curr_price, 1000000, curr_price, "0.00%", today_str, t_price, s_price, ""])
-                
+
         # 시트 데이터 덮어쓰기 (기존 내용 싹 밀고 새 리스트로 갱신)
         hold_sheet.clear()
         hold_sheet.update(range_name="A1", values=[headers] + new_hold_list, value_input_option="USER_ENTERED")
-        
+
         # 매도된 종목이 있다면 가상계좌_종료 시트에 누적
         if closed_list:
             # 헤더 없으면 생성
@@ -283,7 +293,7 @@ try:
                 closed_sheet.update(range_name="A1", values=[["종목명", "최종평단가", "매도단가", "최종수익률", "매도일자", "결과(승/패)"]])
             for row in closed_list:
                 closed_sheet.append_row(row)
-                
+
         print("✅ 실전 가상계좌 리밸런싱 및 익/손절 처리 완료!")
 
     # 🚀 생성된 리포트 데이터를 바탕으로 가상계좌 업데이트 실행
@@ -328,7 +338,7 @@ try:
         print("📂 구글 드라이브 업로드 진행 중...")
         with open(pdf_filename, "rb") as f:
             pdf_base64 = base64.b64encode(f.read()).decode('utf-8')
-        
+
         for attempt in range(3):
             try:
                 res = requests.post(GAS_WEB_APP_URL, json={"filename": pdf_filename, "base64": pdf_base64}, timeout=30)
