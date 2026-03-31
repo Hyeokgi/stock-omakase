@@ -470,7 +470,6 @@ def update_technical_data(df_theme):
                 
                 if not (is_junk or is_financial_risk):
                     if is_breakout_track:
-                        # 트랙 1: 돌파형 (전고점, 거래량폭발, 쌍끌이 집중)
                         if current_price >= (high_60d * 0.90): quant_score += 20
                         elif current_price >= (high_60d * 0.85): quant_score += 10
                         if vol_ratio >= 300: quant_score += 20
@@ -480,7 +479,6 @@ def update_technical_data(df_theme):
                         if band_width <= 0.20: quant_score += 10
                         if ma5 > ma20 and current_price >= ma5: quant_score += 15
                     else:
-                        # 트랙 2: 눌림형 (방배동 룰 - 거래량 씨마름, 양봉/도지 방어력, 20일선 근접)
                         if vol_ratio <= 35: quant_score += 20
                         elif vol_ratio <= 50: quant_score += 10
                         if is_today_yangbong or today_body_ratio <= 0.015: quant_score += 15
@@ -491,9 +489,6 @@ def update_technical_data(df_theme):
 
                 score_display = f"{quant_score}점 ({track_type})"
 
-                # 🛑 기존 마스터 깐깐한 타점 룰
-                is_ss_breakout = (trading_value >= 80_000_000_000) and (vol_ratio >= 200) and (change_rate >= 0.07) and not is_long_shadow and is_near_high
-                
                 # 🚀 [V8 눌림목 3일차 카운트다운 엔진]
                 flag_days = 0
                 for d in range(1, 4):
@@ -530,9 +525,26 @@ def update_technical_data(df_theme):
                                 flag_days = d
                                 break
                 
-                # 😅 [새로운 아차상(관심) 로직]
-                is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 40) and (trading_value >= 40_000_000_000) and (change_rate >= 0.04) and not is_long_shadow
-                is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 40) and (vol_ratio <= 45) and (is_today_yangbong or today_body_ratio <= 0.015)
+                # 🛑 [체급별 다이내믹 허들 적용] 마스터 타점 및 아차상 판독
+                if market_cap >= 50000:  # 🐘 초대형주 (5조 이상)
+                    is_ss_breakout = (trading_value >= 150_000_000_000) and (change_rate >= 0.025) and not is_long_shadow and is_near_high
+                    is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 35) and (trading_value >= 80_000_000_000) and (change_rate >= 0.015) and not is_long_shadow
+                    is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 35) and (vol_ratio <= 60) and (is_today_yangbong or today_body_ratio <= 0.02)
+                
+                elif market_cap >= 10000:  # 🏢 대형주 (1조 이상 ~ 5조 미만)
+                    is_ss_breakout = (trading_value >= 100_000_000_000) and (change_rate >= 0.04) and not is_long_shadow and is_near_high
+                    is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 35) and (trading_value >= 60_000_000_000) and (change_rate >= 0.025) and not is_long_shadow
+                    is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 35) and (vol_ratio <= 50) and (is_today_yangbong or today_body_ratio <= 0.015)
+                
+                elif market_cap >= 5000:  # 🏭 중형주 (5,000억 이상 ~ 1조 미만)
+                    is_ss_breakout = (trading_value >= 80_000_000_000) and (vol_ratio >= 150) and (change_rate >= 0.06) and not is_long_shadow and is_near_high
+                    is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 40) and (trading_value >= 40_000_000_000) and (change_rate >= 0.04) and not is_long_shadow
+                    is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 40) and (vol_ratio <= 40) and (is_today_yangbong or today_body_ratio <= 0.015)
+                
+                else:  # 🏃 소형주 (5,000억 미만)
+                    is_ss_breakout = (trading_value >= 50_000_000_000) and (vol_ratio >= 200) and (change_rate >= 0.08) and not is_long_shadow and is_near_high
+                    is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 45) and (trading_value >= 30_000_000_000) and (change_rate >= 0.05) and not is_long_shadow
+                    is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 45) and (vol_ratio <= 35) and (is_today_yangbong or today_body_ratio <= 0.01)
 
                 master_tajeom = "⏸️ 관망 및 대기"
                 
