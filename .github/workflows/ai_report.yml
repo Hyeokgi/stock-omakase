@@ -2,7 +2,7 @@ name: 🤖 HYEOKS AI 리서치 퍼블리셔
 
 on:
   schedule:
-    - cron: '0 6 * * 1-5' # 한국시간(KST) 매주 월~금 오후 3시 00분
+    - cron: '5 6 * * 1-5' # 한국시간(KST) 매주 월~금 오후 3시 00분
   workflow_dispatch: 
 
 jobs:
