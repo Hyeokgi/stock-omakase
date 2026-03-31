@@ -2,7 +2,8 @@ name: 🤖 HYEOKS AI 리서치 퍼블리셔
 
 on:
   schedule:
-    - cron: '5 6 * * 1-5' # 한국시간(KST) 매주 월~금 오후 3시 00분
+    # 🎯 스캐너가 끝난 뒤, KST 15시 05분에 리포트 작성 시작!
+    - cron: '05 6 * * 1-5' 
   workflow_dispatch: 
 
 jobs:
@@ -13,13 +14,13 @@ jobs:
     - name: 📥 코드 가져오기
       uses: actions/checkout@v3
 
-    - name: 🐍 파이썬 세팅 및 캐싱 적용 (속도 향상)
+    - name: 🐍 파이썬 세팅 및 캐싱 적용
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
-        cache: 'pip' # 💡 패키지 설치 기록을 저장하여 다음 실행부터 1초 컷으로 단축
+        cache: 'pip'
 
-    - name: 🛠️ PDF 렌더링 도구 및 나눔고딕 폰트 설치 (초고속 모드)
+    - name: 🛠️ PDF 렌더링 도구 및 나눔고딕 폰트 설치
       run: |
         sudo apt-get install -y wkhtmltopdf fonts-nanum
         fc-cache -fv 
