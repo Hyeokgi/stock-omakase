@@ -563,15 +563,15 @@ def update_technical_data(df_theme):
                 elif is_financial_risk: master_tajeom = "🚨 매매금지 (자본잠식)"
                 elif is_danta_daejang: 
                     master_tajeom = "👑 [단타대장] 당일 주도주 (상한가)" + (" ⚠️(주의장세)" if is_warning_market else "")
-                    quant_score += 50
+                    quant_score += 25
                     score_display = f"{quant_score}점 ({track_type})"
                 elif is_danta_hubal: 
                     master_tajeom = "🏃 [단타후발] 야수의 심장 (2~3등주)" + (" ⚠️(주의장세)" if is_warning_market else "")
-                    quant_score += 40
+                    quant_score += 20
                     score_display = f"{quant_score}점 ({track_type})"
                 elif is_upper_limit: # 대장 조건에는 못 미치지만 상한가에 간 종목
                     master_tajeom = "🔒 [상한가] 보유자 영역 (추격금지)" + (" ⚠️(주의장세)" if is_warning_market else "")
-                    quant_score += 50
+                    quant_score += 30
                     score_display = f"{quant_score}점 ({track_type})"
                 elif is_long_shadow: master_tajeom = "⚠️ 윗꼬리 위험 (매수금지)"
                 elif is_huge_gap: master_tajeom = "⚠️ 갭상승 과다 (추격금지)"
@@ -579,21 +579,21 @@ def update_technical_data(df_theme):
                 # 👑 2순위: 완벽한 타점 (돌파 & 눌림 3일차)
                 elif is_ss_breakout: 
                     master_tajeom = "👑 [핵심] 신고가 돌파 ⚠️(주의장세)" if is_warning_market else "👑 [핵심] 신고가 돌파"
-                    quant_score += 30
+                    quant_score += 20
                     score_display = f"{quant_score}점 ({track_type})"
                 elif flag_days == 3:
                     master_tajeom = "🎯 [타점] 눌림목 3일 차 완성 (비중 40%)" + (" ⚠️(주의장세)" if is_warning_market else "")
-                    quant_score += 20 
+                    quant_score += 10 
                     score_display = f"{quant_score}점 ({track_type})"
 
                 # 😅 3순위: 아차상 (돌파 턱밑 대기 & 우량/대형주 눌림목 방어 테스트)
                 elif is_runner_up_breakout:
                     master_tajeom = "👀 [관심] 돌파 턱밑 대기 (아차상)"
-                    quant_score += 10
+                    quant_score += 5
                     score_display = f"{quant_score}점 ({track_type})"
                 elif is_runner_up_pullback:
                     master_tajeom = "👀 [관심] 눌림목 방어 테스트 (아차상)"
-                    quant_score += 10
+                    quant_score += 5
                     score_display = f"{quant_score}점 ({track_type})"
 
                 # 🎯 4순위: 기타 
