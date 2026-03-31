@@ -1,8 +1,8 @@
-name: 🎯 오후 3시 15분 종가베팅 스캐너
+name: 🎯 오후 3시 정각 종가베팅 스캐너
 
 on:
   schedule:
-    # 🎯 하루 딱 한 번! KST 15시 05분에만 출동!
+    # 🎯 KST 15시 00분에 스캐너 먼저 가동!
     - cron: '0 6 * * 1-5'
   workflow_dispatch:
 
@@ -18,6 +18,7 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
+        cache: 'pip'
         
     - name: Install dependencies
       run: |
@@ -26,9 +27,9 @@ jobs:
         
     - name: Create secret.json
       env:
-        GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }} 
+        # ai_report.yml과 동일한 환경 변수명으로 통일할 것을 권장합니다.
+        GCP_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }} 
       run: echo "$GCP_CREDENTIALS" > secret.json
         
-    # 💡 [핵심 변경] 구버전 scanner_bot.py 대신 완벽하게 통합된 omakase.py를 실행합니다.
     - name: Run Main Engine
       run: python omakase.py
