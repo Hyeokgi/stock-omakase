@@ -174,7 +174,7 @@ def get_real_money_themes():
     themes = [{'name': a.text.strip(), 'url': "https://finance.naver.com" + a['href']} for tds in [tr.find_all('td') for tr in soup.find('table', {'class': 'type_1'}).find_all('tr')] if len(tds) > 1 for a in [tds[0].find('a')] if a][:20]
                     
     theme_data_list = []
-    print("▶️ 실시간 주도 테마 수집 시작...")
+    print("▶️ 실시간 주도 테마 수집 시작 (거래대금 필터링 + 등락률 랭킹)...")
     for theme in themes:
         try:
             soup = BeautifulSoup(session.get(theme['url'], verify=False).content, 'html.parser', from_encoding='cp949')
@@ -192,9 +192,14 @@ def get_real_money_themes():
                         if rate_num >= TARGET_PERCENT and val_num > 0 and get_market_cap(s_code.replace("'", "")) >= 1000:
                             stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
                     except: continue
-            stocks = sorted(stocks, key=lambda x: x['value'], reverse=True)[:3]
-            if stocks and not (len(stocks) >= 2 and stocks[0]['value'] >= stocks[1]['value'] * 10):
-                theme_data_list.append({'theme_name': theme['name'], 'stocks': stocks})
+            
+            # 🚀 [1차: 거래대금으로 찐 종목 3개 선별]
+            stocks_val = sorted(stocks, key=lambda x: x['value'], reverse=True)[:3]
+            
+            if stocks_val and not (len(stocks_val) >= 2 and stocks_val[0]['value'] >= stocks_val[1]['value'] * 10):
+                # 🚀 [2차: 선별된 3개 안에서 대장주 서열은 '등락률' 순으로 재정렬]
+                stocks_rate = sorted(stocks_val, key=lambda x: x['rate'], reverse=True)
+                theme_data_list.append({'theme_name': theme['name'], 'stocks': stocks_rate})
         except: continue
         time.sleep(0.1)
         
@@ -208,8 +213,12 @@ def get_real_money_themes():
         theme_names = list(dict.fromkeys(t['theme_name'] for t in t_list))
         merged_name = " / ".join(theme_names) + f" (대장: {t_list[0]['stocks'][0]['name']})" if len(theme_names) > 1 else theme_names[0]
         unique_stocks = {s['code']: s for t in t_list for s in t['stocks']}
-        merged_stocks = sorted(unique_stocks.values(), key=lambda x: x['value'], reverse=True)[:3]
-        merged_themes.append({'theme_name': merged_name, 'theme_sum': sum(s['value'] for s in merged_stocks), 'stocks': merged_stocks})
+        
+        # 🚀 [병합 시에도 거래대금 TOP3 선별 후, 등락률 순으로 최종 정렬]
+        merged_stocks_val = sorted(unique_stocks.values(), key=lambda x: x['value'], reverse=True)[:3]
+        merged_stocks_rate = sorted(merged_stocks_val, key=lambda x: x['rate'], reverse=True)
+        
+        merged_themes.append({'theme_name': merged_name, 'theme_sum': sum(s['value'] for s in merged_stocks_val), 'stocks': merged_stocks_rate})
         
     merged_themes = sorted(merged_themes, key=lambda x: x['theme_sum'], reverse=True)
     final_themes = []
@@ -302,7 +311,6 @@ def update_technical_data(df_theme):
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
         target_names = set()
         
-        # 💡 [핵심 패치] 여러 테마에 중복된 종목이라도, 단 한 번이라도 1등을 한 적이 있다면 '대장(is_leader=True)'으로 인정
         theme_rank_dict = {}
 
         try:
@@ -333,12 +341,8 @@ def update_technical_data(df_theme):
                     
                 theme_rank_tracker[t_rank].append(s_name)
                 
-                # 해당 테마 내에서의 위치가 1번째면 대장
                 is_leader_in_this_theme = (len(theme_rank_tracker[t_rank]) == 1)
                 
-                # 딕셔너리에 추가/갱신 로직:
-                # 이전에 저장된 적이 없다면 새로 추가
-                # 이전에 저장된 적이 있는데, 이번에 1등(대장)으로 발견됐다면 'is_leader' 속성을 무조건 True로 덮어씌움
                 if s_name not in theme_rank_dict:
                     theme_rank_dict[s_name] = {'theme_rank': t_rank, 'is_leader': is_leader_in_this_theme}
                 else:
