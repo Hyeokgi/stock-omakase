@@ -193,11 +193,11 @@ def get_real_money_themes():
                             stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
                     except: continue
             
-            # 🚀 [1차: 거래대금으로 찐 종목 3개 선별]
-            stocks_val = sorted(stocks, key=lambda x: x['value'], reverse=True)[:3]
+            # 🚀 [1차: 거래대금으로 찐 종목 5개 선별]
+            stocks_val = sorted(stocks, key=lambda x: x['value'], reverse=True)[:5]
             
             if stocks_val and not (len(stocks_val) >= 2 and stocks_val[0]['value'] >= stocks_val[1]['value'] * 10):
-                # 🚀 [2차: 선별된 3개 안에서 대장주 서열은 '등락률' 순으로 재정렬]
+                # 🚀 [2차: 선별된 5개 안에서 대장주 서열은 '등락률' 순으로 재정렬]
                 stocks_rate = sorted(stocks_val, key=lambda x: x['rate'], reverse=True)
                 theme_data_list.append({'theme_name': theme['name'], 'stocks': stocks_rate})
         except: continue
@@ -214,8 +214,8 @@ def get_real_money_themes():
         merged_name = " / ".join(theme_names) + f" (대장: {t_list[0]['stocks'][0]['name']})" if len(theme_names) > 1 else theme_names[0]
         unique_stocks = {s['code']: s for t in t_list for s in t['stocks']}
         
-        # 🚀 [병합 시에도 거래대금 TOP3 선별 후, 등락률 순으로 최종 정렬]
-        merged_stocks_val = sorted(unique_stocks.values(), key=lambda x: x['value'], reverse=True)[:3]
+        # 🚀 [병합 시에도 거래대금 TOP5 선별 후, 등락률 순으로 최종 정렬]
+        merged_stocks_val = sorted(unique_stocks.values(), key=lambda x: x['value'], reverse=True)[:5]
         merged_stocks_rate = sorted(merged_stocks_val, key=lambda x: x['rate'], reverse=True)
         
         merged_themes.append({'theme_name': merged_name, 'theme_sum': sum(s['value'] for s in merged_stocks_val), 'stocks': merged_stocks_rate})
@@ -225,7 +225,8 @@ def get_real_money_themes():
     for m_data in merged_themes:
         if not any(len(set(s['code'] for s in m_data['stocks']).intersection(set(s['code'] for s in f_data['stocks']))) >= 2 for f_data in final_themes):
             final_themes.append(m_data)
-        if len(final_themes) >= 5: break
+        # 🚀 [테마 개수를 5개에서 10개로 확장]
+        if len(final_themes) >= 10: break
             
     final_rows = [{'날짜': now.strftime('%Y-%m-%d'), **({'시간': time_str} if not is_market_closed else {}), '순위': rank, '테마명': t_data['theme_name'], '종목명': s['name'], '종목코드': s['code'], '등락률(%)': s['rate'], '거래대금(억원)': int(s['value']/100)} for rank, t_data in enumerate(final_themes, 1) for s in t_data['stocks']]
     return pd.DataFrame(final_rows), is_market_closed
@@ -349,7 +350,9 @@ def update_technical_data(df_theme):
                     if is_leader_in_this_theme:
                         theme_rank_dict[s_name]['is_leader'] = True
                         
-                target_names.add(s_name)
+            # 🚀 [테마 판독 종목을 기존 5위 -> 10위까지 확장]
+            top_10_themes = df_theme[df_theme['순위'] <= 10]['종목명'].tolist()
+            for t in top_10_themes: target_names.add(t)
 
         results = []
         for name in list(target_names):
