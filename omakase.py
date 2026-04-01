@@ -502,18 +502,22 @@ def update_technical_data(df_theme):
                 has_theme = name in theme_rank_dict
                 is_theme_leader_raw = has_theme and theme_rank_dict[name]['is_leader']
                 
-                # 💡 [핵심 패치] 테마 대장주라 할지라도 당일 거래대금 1,000억 미만이면 진짜 대장으로 인정하지 않음!
-                is_theme_leader = is_theme_leader_raw and (trading_value >= 100_000_000_000)
+                # 💡 [핵심 패치] 거래대금 1,000억 기준으로 진짜 대장과 가짜 대장(개별주 취급) 분리
+                is_true_theme_leader = is_theme_leader_raw and (trading_value >= 100_000_000_000)
+                is_weak_theme_leader = is_theme_leader_raw and (trading_value < 100_000_000_000)
                 
-                is_theme_daejang_sang = is_theme_leader and is_upper_limit and not (is_junk or is_financial_risk)
-                is_theme_daejang = is_theme_leader and is_danta_range and not (is_junk or is_financial_risk)
+                is_theme_daejang_sang = is_true_theme_leader and is_upper_limit and not (is_junk or is_financial_risk)
+                is_theme_daejang = is_true_theme_leader and is_danta_range and not (is_junk or is_financial_risk)
                 
-                # 1,000억 미만의 약한 대장주이거나 일반 후발주인 경우 여기로 편입됨
-                is_theme_hubal_sang = has_theme and not is_theme_leader and is_upper_limit and not (is_junk or is_financial_risk)
-                is_theme_hubal = has_theme and not is_theme_leader and is_danta_range and not (is_junk or is_financial_risk)
+                # 💡 순수 후발주는 애초에 테마 대장이 아니었던 종목들만 해당
+                is_real_hubal = has_theme and not is_theme_leader_raw
+                is_theme_hubal_sang = is_real_hubal and is_upper_limit and not (is_junk or is_financial_risk)
+                is_theme_hubal = is_real_hubal and is_danta_range and not (is_junk or is_financial_risk)
                 
-                is_individual_sang = not has_theme and is_upper_limit and not (is_junk or is_financial_risk)
-                is_individual_surge = not has_theme and is_danta_range and not (is_junk or is_financial_risk)
+                # 💡 개별주 조건: 테마가 아예 없거나, 테마 대장이지만 1,000억이 안 터진 '나홀로 상승주'
+                is_individual = (not has_theme) or is_weak_theme_leader
+                is_individual_sang = is_individual and is_upper_limit and not (is_junk or is_financial_risk)
+                is_individual_surge = is_individual and is_danta_range and not (is_junk or is_financial_risk)
 
                 # 🚀 [투트랙 채점표 분리 적용]
                 is_breakout_track = current_price >= ma20
