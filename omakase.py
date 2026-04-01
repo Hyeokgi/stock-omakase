@@ -494,17 +494,21 @@ def update_technical_data(df_theme):
                 is_near_high = current_price >= (high_60d * 0.90) or yest_close >= (high_60d * 0.90)
                 dist_text = "🎯 전고점 턱밑" if is_near_high else ("🟢 매물대 소화중" if current_price >= high_60d * 0.80 else "📉 이격 과다")
 
-                # 🚀 [테마 및 개별주 완벽 분리 로직]
+                # 🚀 [테마 및 개별주 완벽 분리 로직 & 거래대금 1,000억 허들 강화]
                 is_upper_limit = change_rate >= 0.295
                 is_danta_range = 0.17 <= change_rate < 0.295
                 
                 # 이 종목이 어떤 테마 그룹에 속해 있는지 파악
                 has_theme = name in theme_rank_dict
-                is_theme_leader = has_theme and theme_rank_dict[name]['is_leader']
+                is_theme_leader_raw = has_theme and theme_rank_dict[name]['is_leader']
+                
+                # 💡 [핵심 패치] 테마 대장주라 할지라도 당일 거래대금 1,000억 미만이면 진짜 대장으로 인정하지 않음!
+                is_theme_leader = is_theme_leader_raw and (trading_value >= 100_000_000_000)
                 
                 is_theme_daejang_sang = is_theme_leader and is_upper_limit and not (is_junk or is_financial_risk)
                 is_theme_daejang = is_theme_leader and is_danta_range and not (is_junk or is_financial_risk)
                 
+                # 1,000억 미만의 약한 대장주이거나 일반 후발주인 경우 여기로 편입됨
                 is_theme_hubal_sang = has_theme and not is_theme_leader and is_upper_limit and not (is_junk or is_financial_risk)
                 is_theme_hubal = has_theme and not is_theme_leader and is_danta_range and not (is_junk or is_financial_risk)
                 
