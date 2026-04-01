@@ -1,10 +1,7 @@
 name: 🤖 HYEOKS AI 리서치 퍼블리셔
 
 on:
-  schedule:
-    # 🎯 스캐너가 끝난 뒤, KST 15시 05분에 리포트 작성 시작!
-    - cron: '05 6 * * 1-5' 
-  workflow_dispatch: 
+  workflow_dispatch:
 
 jobs:
   build:
