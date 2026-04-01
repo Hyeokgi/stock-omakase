@@ -1,11 +1,7 @@
 name: 🎯 오후 3시 정각 종가베팅 스캐너
 
 on:
-  schedule:
-    # 🎯 KST 15시 00분에 스캐너 먼저 가동!
-    - cron: '0 6 * * 1-5'
   workflow_dispatch:
-
 jobs:
   build:
     runs-on: ubuntu-latest
