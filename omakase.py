@@ -302,6 +302,10 @@ def update_technical_data(df_theme):
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
         target_names = set()
         
+        # 💡 [테마 주도주 판독을 위한 딕셔너리 추가]
+        # 해당 종목이 속한 가장 높은 테마 순위와 테마 내에서의 등수(1=대장, 2=후발)를 기록합니다.
+        theme_rank_dict = {}
+
         try:
             raw_data = doc.worksheet("수급_Raw").get_all_values()
             for row in raw_data[1:]:
@@ -320,8 +324,31 @@ def update_technical_data(df_theme):
         except: pass
         
         if not df_theme.empty:
-            top_5_themes = df_theme[df_theme['순위'] <= 5]['종목명'].tolist()
-            for t in top_5_themes: target_names.add(t)
+            # 실시간 테마 데이터에서 종목별 테마 서열을 매깁니다.
+            # df_theme의 구조: ['날짜', '순위', '테마명', '종목명', '종목코드', '등락률(%)', '거래대금(억원)']
+            # 1등 종목이 여러 테마에 속할 수 있으므로, 가장 높은 '순위'를 우선시합니다.
+            theme_rank_tracker = {}
+            for index, row in df_theme.iterrows():
+                t_rank = int(row['순위'])
+                s_name = row['종목명']
+                
+                # 아직 처리되지 않은 테마 순위라면, 이 테마의 첫 번째 등장 종목이 대장(1등)입니다.
+                if t_rank not in theme_rank_tracker:
+                    theme_rank_tracker[t_rank] = []
+                    
+                theme_rank_tracker[t_rank].append(s_name)
+                
+                # 종목별 등수 매기기 (테마 내에서 몇 번째로 등장했는가)
+                # 1번째 등장 -> 1등(대장), 그 외 -> 2등 이후(후발주)
+                stock_position_in_theme = len(theme_rank_tracker[t_rank])
+                
+                # 만약 이 종목이 다른 테마에서 이미 더 높은 순위를 받았다면 덮어쓰지 않습니다.
+                if s_name not in theme_rank_dict or theme_rank_dict[s_name]['theme_rank'] > t_rank:
+                    theme_rank_dict[s_name] = {
+                        'theme_rank': t_rank,
+                        'is_leader': stock_position_in_theme == 1 # 1등이면 True
+                    }
+                target_names.add(s_name)
 
         results = []
         for name in list(target_names):
@@ -463,14 +490,22 @@ def update_technical_data(df_theme):
                 is_near_high = current_price >= (high_60d * 0.90) or yest_close >= (high_60d * 0.90)
                 dist_text = "🎯 전고점 턱밑" if is_near_high else ("🟢 매물대 소화중" if current_price >= high_60d * 0.80 else "📉 이격 과다")
 
-                # 🚀 [단타대장 및 단타후발 로직 추가]
+                # 🚀 [테마 및 개별주 완벽 분리 로직]
                 is_upper_limit = change_rate >= 0.295
-
-                # 1등 대장주: 상한가에 도달했고, 거래대금 500억 이상 터진 당일 시장 주도주
-                is_danta_daejang = is_upper_limit and (trading_value >= 50_000_000_000) and not (is_junk or is_financial_risk)
-
-                # 2~3등 후발주: 상한가에는 못 갔지만(+15% 이상), 돈이 1000억 이상 쏠린 종목 (예: 알루코)
-                is_danta_hubal = (change_rate >= 0.15) and not is_upper_limit and (trading_value >= 100_000_000_000) and not (is_junk or is_financial_risk)
+                is_danta_range = 0.17 <= change_rate < 0.295
+                
+                # 이 종목이 어떤 테마 그룹에 속해 있는지 파악
+                has_theme = name in theme_rank_dict
+                is_theme_leader = has_theme and theme_rank_dict[name]['is_leader']
+                
+                is_theme_daejang_sang = is_theme_leader and is_upper_limit and not (is_junk or is_financial_risk)
+                is_theme_daejang = is_theme_leader and is_danta_range and not (is_junk or is_financial_risk)
+                
+                is_theme_hubal_sang = has_theme and not is_theme_leader and is_upper_limit and not (is_junk or is_financial_risk)
+                is_theme_hubal = has_theme and not is_theme_leader and is_danta_range and not (is_junk or is_financial_risk)
+                
+                is_individual_sang = not has_theme and is_upper_limit and not (is_junk or is_financial_risk)
+                is_individual_surge = not has_theme and is_danta_range and not (is_junk or is_financial_risk)
 
                 # 🚀 [투트랙 채점표 분리 적용]
                 is_breakout_track = current_price >= ma20
@@ -557,44 +592,48 @@ def update_technical_data(df_theme):
 
                 master_tajeom = "⏸️ 관망 및 대기"
                 
-                # 🛑 1순위: 위험 종목 및 단타 포지션 분리 (우선 통과 필터)
+                # 🛑 1순위: 위험 종목 및 새로운 테마 분리 판독기
                 if len(history) < 20: master_tajeom = "⚠️ 신규상장 (데이터 부족)"
                 elif is_junk: master_tajeom = "🚨 매매금지 (딱지)"
                 elif is_financial_risk: master_tajeom = "🚨 매매금지 (자본잠식)"
-                elif is_danta_daejang: 
-                    master_tajeom = "👑 [단타대장] 당일 주도주 (상한가)" + (" ⚠️(주의장세)" if is_warning_market else "")
-                    quant_score += 25
-                    score_display = f"{quant_score}점 ({track_type})"
-                elif is_danta_hubal: 
-                    master_tajeom = "🏃 [단타후발] 야수의 심장 (2~3등주)" + (" ⚠️(주의장세)" if is_warning_market else "")
-                    quant_score += 20
-                    score_display = f"{quant_score}점 ({track_type})"
-                elif is_upper_limit: # 대장 조건에는 못 미치지만 상한가에 간 종목
-                    master_tajeom = "🔒 [상한가] 보유자 영역 (추격금지)" + (" ⚠️(주의장세)" if is_warning_market else "")
-                    quant_score += 30
-                    score_display = f"{quant_score}점 ({track_type})"
+                
+                elif is_theme_daejang_sang:
+                    master_tajeom = "👑 [테마대장] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else "")
+                    quant_score += 50; score_display = f"{quant_score}점 ({track_type})"
+                elif is_theme_daejang:
+                    master_tajeom = "🚀 [테마대장] 당일 주도주" + (" ⚠️(주의장세)" if is_warning_market else "")
+                    quant_score += 45; score_display = f"{quant_score}점 ({track_type})"
+                elif is_theme_hubal_sang:
+                    master_tajeom = "🔒 [후발주] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else "")
+                    quant_score += 40; score_display = f"{quant_score}점 ({track_type})"
+                elif is_theme_hubal:
+                    master_tajeom = "🏃 [후발주] 테마 추종" + (" ⚠️(주의장세)" if is_warning_market else "")
+                    quant_score += 35; score_display = f"{quant_score}점 ({track_type})"
+                elif is_individual_sang:
+                    master_tajeom = "🔒 [개별주] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else "")
+                    quant_score += 30; score_display = f"{quant_score}점 ({track_type})"
+                elif is_individual_surge:
+                    master_tajeom = "🐎 [개별주] 나홀로 상승중" + (" ⚠️(주의장세)" if is_warning_market else "")
+                    quant_score += 25; score_display = f"{quant_score}점 ({track_type})"
+                    
                 elif is_long_shadow: master_tajeom = "⚠️ 윗꼬리 위험 (매수금지)"
                 elif is_huge_gap: master_tajeom = "⚠️ 갭상승 과다 (추격금지)"
                 
                 # 👑 2순위: 완벽한 타점 (돌파 & 눌림 3일차)
                 elif is_ss_breakout: 
                     master_tajeom = "👑 [핵심] 신고가 돌파 ⚠️(주의장세)" if is_warning_market else "👑 [핵심] 신고가 돌파"
-                    quant_score += 20
-                    score_display = f"{quant_score}점 ({track_type})"
+                    quant_score += 20; score_display = f"{quant_score}점 ({track_type})"
                 elif flag_days == 3:
                     master_tajeom = "🎯 [타점] 눌림목 3일 차 완성 (비중 40%)" + (" ⚠️(주의장세)" if is_warning_market else "")
-                    quant_score += 10 
-                    score_display = f"{quant_score}점 ({track_type})"
+                    quant_score += 10; score_display = f"{quant_score}점 ({track_type})"
 
                 # 😅 3순위: 아차상 (돌파 턱밑 대기 & 우량/대형주 눌림목 방어 테스트)
                 elif is_runner_up_breakout:
                     master_tajeom = "👀 [관심] 돌파 턱밑 대기 (아차상)"
-                    quant_score += 5
-                    score_display = f"{quant_score}점 ({track_type})"
+                    quant_score += 5; score_display = f"{quant_score}점 ({track_type})"
                 elif is_runner_up_pullback:
                     master_tajeom = "👀 [관심] 눌림목 방어 테스트 (아차상)"
-                    quant_score += 5
-                    score_display = f"{quant_score}점 ({track_type})"
+                    quant_score += 5; score_display = f"{quant_score}점 ({track_type})"
 
                 # 🎯 4순위: 기타 
                 elif flag_days == 2:
@@ -603,8 +642,7 @@ def update_technical_data(df_theme):
                     master_tajeom = "🚩 [분할매수] 단기 눌림 진입 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else "")
                 elif "🌟" in signal: 
                     master_tajeom = "🌟 [우량] 기관/외인 수급 유입" 
-                    quant_score += 15
-                    score_display = f"{quant_score}점 ({track_type})"
+                    quant_score += 15; score_display = f"{quant_score}점 ({track_type})"
                 elif change_rate >= 0.12 and trading_value >= 50_000_000_000: 
                     master_tajeom = "👀 [관심] 신규 기준봉 출현 (수급 집중)" + (" ⚠️(주의장세)" if is_warning_market else "")
 
