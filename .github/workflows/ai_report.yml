@@ -22,8 +22,9 @@ jobs:
 
     - name: 🛠️ PDF 렌더링 도구 및 나눔고딕 폰트 설치
       run: |
+        sudo apt-get update
         sudo apt-get install -y wkhtmltopdf fonts-nanum
-        fc-cache -fv 
+        fc-cache -fv
 
     - name: 📦 필수 라이브러리 설치
       run: |
