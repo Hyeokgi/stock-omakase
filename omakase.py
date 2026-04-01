@@ -302,8 +302,7 @@ def update_technical_data(df_theme):
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
         target_names = set()
         
-        # 💡 [테마 주도주 판독을 위한 딕셔너리 추가]
-        # 해당 종목이 속한 가장 높은 테마 순위와 테마 내에서의 등수(1=대장, 2=후발)를 기록합니다.
+        # 💡 [핵심 패치] 여러 테마에 중복된 종목이라도, 단 한 번이라도 1등을 한 적이 있다면 '대장(is_leader=True)'으로 인정
         theme_rank_dict = {}
 
         try:
@@ -324,30 +323,28 @@ def update_technical_data(df_theme):
         except: pass
         
         if not df_theme.empty:
-            # 실시간 테마 데이터에서 종목별 테마 서열을 매깁니다.
-            # df_theme의 구조: ['날짜', '순위', '테마명', '종목명', '종목코드', '등락률(%)', '거래대금(억원)']
-            # 1등 종목이 여러 테마에 속할 수 있으므로, 가장 높은 '순위'를 우선시합니다.
             theme_rank_tracker = {}
             for index, row in df_theme.iterrows():
                 t_rank = int(row['순위'])
                 s_name = row['종목명']
                 
-                # 아직 처리되지 않은 테마 순위라면, 이 테마의 첫 번째 등장 종목이 대장(1등)입니다.
                 if t_rank not in theme_rank_tracker:
                     theme_rank_tracker[t_rank] = []
                     
                 theme_rank_tracker[t_rank].append(s_name)
                 
-                # 종목별 등수 매기기 (테마 내에서 몇 번째로 등장했는가)
-                # 1번째 등장 -> 1등(대장), 그 외 -> 2등 이후(후발주)
-                stock_position_in_theme = len(theme_rank_tracker[t_rank])
+                # 해당 테마 내에서의 위치가 1번째면 대장
+                is_leader_in_this_theme = (len(theme_rank_tracker[t_rank]) == 1)
                 
-                # 만약 이 종목이 다른 테마에서 이미 더 높은 순위를 받았다면 덮어쓰지 않습니다.
-                if s_name not in theme_rank_dict or theme_rank_dict[s_name]['theme_rank'] > t_rank:
-                    theme_rank_dict[s_name] = {
-                        'theme_rank': t_rank,
-                        'is_leader': stock_position_in_theme == 1 # 1등이면 True
-                    }
+                # 딕셔너리에 추가/갱신 로직:
+                # 이전에 저장된 적이 없다면 새로 추가
+                # 이전에 저장된 적이 있는데, 이번에 1등(대장)으로 발견됐다면 'is_leader' 속성을 무조건 True로 덮어씌움
+                if s_name not in theme_rank_dict:
+                    theme_rank_dict[s_name] = {'theme_rank': t_rank, 'is_leader': is_leader_in_this_theme}
+                else:
+                    if is_leader_in_this_theme:
+                        theme_rank_dict[s_name]['is_leader'] = True
+                        
                 target_names.add(s_name)
 
         results = []
