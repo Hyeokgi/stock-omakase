@@ -18,7 +18,7 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
-        cache: 'pip'
+        # 에러의 원인이었던 cache 옵션 삭제 완료!
         
     - name: Install dependencies
       run: |
@@ -27,7 +27,6 @@ jobs:
         
     - name: Create secret.json
       env:
-        # ai_report.yml과 동일한 환경 변수명으로 통일할 것을 권장합니다.
         GCP_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }} 
       run: echo "$GCP_CREDENTIALS" > secret.json
         
