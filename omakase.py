@@ -395,6 +395,11 @@ def update_technical_data(df_theme):
                 trading_value = current_price * today_vol
                 high_60d = max(high_prices[:-1]) if len(high_prices) > 1 else today_high
                 
+                # 💡 [핵심 패치] 최근 20일(약 1개월) 내 최저가 대비 상승률 판독 (고공권 색출 엔진)
+                min_20d = int(df_hist['close'].tail(20).min()) if len(df_hist) >= 20 else int(df_hist['close'].min())
+                surge_rate_20d = (current_price - min_20d) / min_20d if min_20d > 0 else 0
+                is_high_altitude = surge_rate_20d >= 0.50  # 50% 이상 급등 시 고공권 분류
+                
                 body_top = max(current_price, open_price)
                 body_bottom = min(current_price, open_price)
                 upper_shadow = today_high - body_top
@@ -502,7 +507,7 @@ def update_technical_data(df_theme):
                 has_theme = name in theme_rank_dict
                 is_theme_leader_raw = has_theme and theme_rank_dict[name]['is_leader']
                 
-                # 💡 [핵심 패치] 거래대금 1,000억 기준으로 진짜 대장과 가짜 대장(개별주 취급) 분리
+                # 💡 [거래대금 1,000억 기준으로 진짜 대장과 가짜 대장(개별주 취급) 분리]
                 is_true_theme_leader = is_theme_leader_raw and (trading_value >= 100_000_000_000)
                 is_weak_theme_leader = is_theme_leader_raw and (trading_value < 100_000_000_000)
                 
@@ -658,8 +663,16 @@ def update_technical_data(df_theme):
                 elif change_rate >= 0.12 and trading_value >= 50_000_000_000: 
                     master_tajeom = "👀 [관심] 신규 기준봉 출현 (수급 집중)" + (" ⚠️(주의장세)" if is_warning_market else "")
 
+                # 💡 [최종 점수 조정] 경고 딱지 및 페널티 부여
                 if is_chronic_loss and "[" in master_tajeom:
+                    quant_score -= 10
+                    score_display = f"{quant_score}점 ({track_type})"
                     master_tajeom += " ⚠️(3년적자)"
+
+                if is_high_altitude and "[" in master_tajeom:
+                    quant_score -= 10
+                    score_display = f"{quant_score}점 ({track_type})"
+                    master_tajeom += " ⚠️고공권(단기대응)"
 
                 results.append([
                     name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", 
