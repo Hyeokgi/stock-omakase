@@ -336,6 +336,7 @@ def update_technical_data(df_theme):
             for index, row in df_theme.iterrows():
                 t_rank = int(row['순위'])
                 s_name = row['종목명']
+                t_name = row['테마명'] # 💡 [추가] 테마명 데이터 추출
                 
                 if t_rank not in theme_rank_tracker:
                     theme_rank_tracker[t_rank] = []
@@ -344,11 +345,13 @@ def update_technical_data(df_theme):
                 
                 is_leader_in_this_theme = (len(theme_rank_tracker[t_rank]) == 1)
                 
+                # 💡 [추가] 딕셔너리에 '테마명' 꼬리표 함께 저장
                 if s_name not in theme_rank_dict:
-                    theme_rank_dict[s_name] = {'theme_rank': t_rank, 'is_leader': is_leader_in_this_theme}
+                    theme_rank_dict[s_name] = {'theme_rank': t_rank, 'is_leader': is_leader_in_this_theme, 'theme_name': t_name}
                 else:
                     if is_leader_in_this_theme:
                         theme_rank_dict[s_name]['is_leader'] = True
+                        theme_rank_dict[s_name]['theme_name'] = t_name
                         
             # 🚀 [테마 판독 종목을 기존 5위 -> 10위까지 확장]
             top_10_themes = df_theme[df_theme['순위'] <= 10]['종목명'].tolist()
@@ -395,7 +398,7 @@ def update_technical_data(df_theme):
                 trading_value = current_price * today_vol
                 high_60d = max(high_prices[:-1]) if len(high_prices) > 1 else today_high
                 
-                # 💡 [핵심 패치] 최근 20일(약 1개월) 내 최저가 대비 상승률 판독 (고공권 색출 엔진)
+                # 💡 최근 20일(약 1개월) 내 최저가 대비 상승률 판독 (고공권 색출 엔진)
                 min_20d = int(df_hist['close'].tail(20).min()) if len(df_hist) >= 20 else int(df_hist['close'].min())
                 surge_rate_20d = (current_price - min_20d) / min_20d if min_20d > 0 else 0
                 is_high_altitude = surge_rate_20d >= 0.50  # 50% 이상 급등 시 고공권 분류
@@ -499,7 +502,7 @@ def update_technical_data(df_theme):
                 is_near_high = current_price >= (high_60d * 0.90) or yest_close >= (high_60d * 0.90)
                 dist_text = "🎯 전고점 턱밑" if is_near_high else ("🟢 매물대 소화중" if current_price >= high_60d * 0.80 else "📉 이격 과다")
 
-                # 🚀 [테마 및 개별주 완벽 분리 로직 & 거래대금 1,000억 허들 강화]
+                # 🚀 [테마 및 개별주 완벽 분리 로직]
                 is_upper_limit = change_rate >= 0.295
                 is_danta_range = 0.17 <= change_rate < 0.295
                 
@@ -507,19 +510,19 @@ def update_technical_data(df_theme):
                 has_theme = name in theme_rank_dict
                 is_theme_leader_raw = has_theme and theme_rank_dict[name]['is_leader']
                 
-                # 💡 [거래대금 1,000억 기준으로 진짜 대장과 가짜 대장(개별주 취급) 분리]
+                # 💡 [추가] 테마명 변수에 장전 (테마가 없으면 개별주 처리)
+                my_theme_name = theme_rank_dict[name]['theme_name'] if has_theme else "개별주/기타"
+                
                 is_true_theme_leader = is_theme_leader_raw and (trading_value >= 100_000_000_000)
                 is_weak_theme_leader = is_theme_leader_raw and (trading_value < 100_000_000_000)
                 
                 is_theme_daejang_sang = is_true_theme_leader and is_upper_limit and not (is_junk or is_financial_risk)
                 is_theme_daejang = is_true_theme_leader and is_danta_range and not (is_junk or is_financial_risk)
                 
-                # 💡 순수 후발주는 애초에 테마 대장이 아니었던 종목들만 해당
                 is_real_hubal = has_theme and not is_theme_leader_raw
                 is_theme_hubal_sang = is_real_hubal and is_upper_limit and not (is_junk or is_financial_risk)
                 is_theme_hubal = is_real_hubal and is_danta_range and not (is_junk or is_financial_risk)
                 
-                # 💡 개별주 조건: 테마가 아예 없거나, 테마 대장이지만 1,000억이 안 터진 '나홀로 상승주'
                 is_individual = (not has_theme) or is_weak_theme_leader
                 is_individual_sang = is_individual and is_upper_limit and not (is_junk or is_financial_risk)
                 is_individual_surge = is_individual and is_danta_range and not (is_junk or is_financial_risk)
@@ -663,7 +666,7 @@ def update_technical_data(df_theme):
                 elif change_rate >= 0.12 and trading_value >= 50_000_000_000: 
                     master_tajeom = "👀 [관심] 신규 기준봉 출현 (수급 집중)" + (" ⚠️(주의장세)" if is_warning_market else "")
 
-                # 💡 [최종 점수 조정] 경고 딱지 및 페널티 부여
+                # 💡 [최종 점수 조정] 수석님 커스텀 로직: 경고 딱지 및 페널티 부여
                 if is_chronic_loss and "[" in master_tajeom:
                     quant_score -= 10
                     score_display = f"{quant_score}점 ({track_type})"
@@ -674,26 +677,31 @@ def update_technical_data(df_theme):
                     score_display = f"{quant_score}점 ({track_type})"
                     master_tajeom += " ⚠️고공권(단기대응)"
 
+                # 💡 [추가] my_theme_name 을 마지막 열(index 20)에 추가
                 results.append([
                     name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", 
                     int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, 
                     score_display, master_tajeom, today_high, today_low, high_60d, 
-                    market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, quant_score
+                    market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, quant_score, my_theme_name
                 ])
             except Exception as e:
                 continue
 
         # 숨겨진 정수형 quant_score(인덱스 19)를 기준으로 완벽하게 내림차순 정렬
         results.sort(key=lambda x: x[19], reverse=True) 
-        final_results = [r[:19] for r in results]
+        
+        # 💡 [변경] 19번 인덱스(은닉된 정수 점수)만 빼고, 20번 인덱스(테마명)를 뒤에 붙여 최종 20개 열을 만듦
+        final_results = [r[:19] + [r[20]] for r in results]
 
         if final_results:
             try: helper_sheet = doc.worksheet("주가데이터_보조")
             except: helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="20")
             helper_sheet.clear()
-            headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "HYEOKS점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)", "윗꼬리판독", "전고점위치", "20일이격도", "대장주이력", "거래량상태"]
+            
+            # 💡 [변경] 맨 끝에 '소속테마' 헤더 추가
+            headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "HYEOKS점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)", "윗꼬리판독", "전고점위치", "20일이격도", "대장주이력", "거래량상태", "소속테마"]
             helper_sheet.update(range_name="A1", values=[headers] + final_results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(final_results)}개 종목 판독 완료! 🚀")
+            print(f"✅ 총 {len(final_results)}개 종목 판독 완료! (테마명 매핑 완료) 🚀")
             
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
