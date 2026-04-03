@@ -345,7 +345,7 @@ try:
                 if res.status_code == 200 and "success" in res.text:
                     file_id = res.json().get("id")
                     report_link = f"https://drive.google.com/uc?id={file_id}"
-                    doc.worksheet("리포트_게시").append_row([datetime.datetime.now(KST).strftime('%Y-%m-%d'), report_link])
+                    doc.worksheet("리포트_게시").insert_row([datetime.datetime.now(KST).strftime('%Y-%m-%d'), report_link], index=2)
                     print("✅ 앱시트 연동 완료!")
                     break  
                 else:
