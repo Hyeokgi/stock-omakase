@@ -66,6 +66,11 @@ AD_FILTER = [
     '연내', '내달', '오늘', '내일', '돌파', '연속', '급락', '투자', '매수', '매도', '수익'
 ]
 
+# 💡 [추가] 꼴도 보기 싫은 '좀비 테마' 블랙리스트 (여기에 단어를 추가하시면 아예 수집하지 않습니다)
+THEME_BLACKLIST = [
+    '코로나19', '메르스', '지카바이러스', '우한폐렴', '원숭이두창', '엠폭스', '아프리카돼지열병', '구제역', '광우병'
+]
+
 def check_warning_market():
     try:
         url = "https://m.stock.naver.com/api/index/KOSDAQ/price?pageSize=20&page=1"
@@ -171,7 +176,14 @@ def get_real_money_themes():
     res = session.get("https://finance.naver.com/sise/theme.naver", verify=False)
     soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
     
-    themes = [{'name': a.text.strip(), 'url': "https://finance.naver.com" + a['href']} for tds in [tr.find_all('td') for tr in soup.find('table', {'class': 'type_1'}).find_all('tr')] if len(tds) > 1 for a in [tds[0].find('a')] if a][:20]
+    # 💡 [핵심 패치] 네이버 테마 긁어올 때, 블랙리스트에 있는 녀석들은 아예 입장도 안 함
+    raw_themes = [{'name': a.text.strip(), 'url': "https://finance.naver.com" + a['href']} for tds in [tr.find_all('td') for tr in soup.find('table', {'class': 'type_1'}).find_all('tr')] if len(tds) > 1 for a in [tds[0].find('a')] if a]
+    
+    themes = []
+    for t in raw_themes:
+        if not any(b in t['name'] for b in THEME_BLACKLIST):
+            themes.append(t)
+    themes = themes[:20]  # 블랙리스트 제거 후 가장 위에 있는 20개만 선별
                     
     theme_data_list = []
     print("▶️ 실시간 주도 테마 수집 시작 (거래대금 필터링 + 등락률 랭킹)...")
@@ -517,7 +529,6 @@ def update_technical_data(df_theme, all_theme_map):
                 is_upper_limit = change_rate >= 0.295
                 is_danta_range = 0.17 <= change_rate < 0.295
                 
-                # 💡 [핵심 패치] 대시보드에서 짤렸더라도, 백업된 테마 데이터가 있으면 테마주로 완전 복권!
                 if name in theme_rank_dict:
                     my_theme_name = theme_rank_dict[name]['theme_name']
                     is_theme_leader_raw = theme_rank_dict[name]['is_leader']
