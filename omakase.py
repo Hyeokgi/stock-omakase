@@ -203,7 +203,7 @@ def get_real_money_themes():
         except: continue
         time.sleep(0.1)
         
-    if not theme_data_list: return pd.DataFrame(), is_market_closed
+    if not theme_data_list: return pd.DataFrame(), is_market_closed, {}
     
     grouped_themes = {}
     for t_data in theme_data_list: grouped_themes.setdefault(t_data['stocks'][0]['code'], []).append(t_data)
@@ -221,15 +221,27 @@ def get_real_money_themes():
         merged_themes.append({'theme_name': merged_name, 'theme_sum': sum(s['value'] for s in merged_stocks_val), 'stocks': merged_stocks_rate})
         
     merged_themes = sorted(merged_themes, key=lambda x: x['theme_sum'], reverse=True)
+    
+    # 💡 [핵심 백업] 대시보드에서 통폐합(삭제) 당하기 전의 '모든 원본 테마 정보'를 사전으로 백업
+    all_theme_map = {}
+    for m_data in merged_themes:
+        for idx, s in enumerate(m_data['stocks']):
+            if s['name'] not in all_theme_map:
+                all_theme_map[s['name']] = {
+                    'theme_name': m_data['theme_name'],
+                    'is_leader': (idx == 0) # 1등 종목이면 대장주로 인식
+                }
+
     final_themes = []
     for m_data in merged_themes:
+        # 교집합 통폐합 로직 (대시보드 깔끔화용)
         if not any(len(set(s['code'] for s in m_data['stocks']).intersection(set(s['code'] for s in f_data['stocks']))) >= 2 for f_data in final_themes):
             final_themes.append(m_data)
-        # 🚀 [테마 개수를 5개에서 10개로 확장]
         if len(final_themes) >= 10: break
             
     final_rows = [{'날짜': now.strftime('%Y-%m-%d'), **({'시간': time_str} if not is_market_closed else {}), '순위': rank, '테마명': t_data['theme_name'], '종목명': s['name'], '종목코드': s['code'], '등락률(%)': s['rate'], '거래대금(억원)': int(s['value']/100)} for rank, t_data in enumerate(final_themes, 1) for s in t_data['stocks']]
-    return pd.DataFrame(final_rows), is_market_closed
+    
+    return pd.DataFrame(final_rows), is_market_closed, all_theme_map
 
 def get_naver_search_ranking():
     try:
@@ -298,7 +310,7 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
                 sheet.update(range_name="A1", values=[df.columns.values.tolist()] + df.values.tolist(), value_input_option="USER_ENTERED")
     except: pass
 
-def update_technical_data(df_theme):
+def update_technical_data(df_theme, all_theme_map):
     try:
         print("▶️ 기술적 지표, 투트랙 채점(돌파/눌림 분리) 및 퀀트 아차상 판독 시작...")
         
@@ -336,16 +348,14 @@ def update_technical_data(df_theme):
             for index, row in df_theme.iterrows():
                 t_rank = int(row['순위'])
                 s_name = row['종목명']
-                t_name = row['테마명'] # 💡 [추가] 테마명 데이터 추출
+                t_name = row['테마명']
                 
                 if t_rank not in theme_rank_tracker:
                     theme_rank_tracker[t_rank] = []
                     
                 theme_rank_tracker[t_rank].append(s_name)
-                
                 is_leader_in_this_theme = (len(theme_rank_tracker[t_rank]) == 1)
                 
-                # 💡 [추가] 딕셔너리에 '테마명' 꼬리표 함께 저장
                 if s_name not in theme_rank_dict:
                     theme_rank_dict[s_name] = {'theme_rank': t_rank, 'is_leader': is_leader_in_this_theme, 'theme_name': t_name}
                 else:
@@ -353,9 +363,12 @@ def update_technical_data(df_theme):
                         theme_rank_dict[s_name]['is_leader'] = True
                         theme_rank_dict[s_name]['theme_name'] = t_name
                         
-            # 🚀 [테마 판독 종목을 기존 5위 -> 10위까지 확장]
             top_10_themes = df_theme[df_theme['순위'] <= 10]['종목명'].tolist()
             for t in top_10_themes: target_names.add(t)
+            
+        # 💡 [추가] 대시보드에서 짤린 테마의 종목들도 모조리 스캐너 분석 대상에 강제 포함!
+        for t_name in all_theme_map.keys():
+            target_names.add(t_name)
 
         results = []
         for name in list(target_names):
@@ -398,10 +411,9 @@ def update_technical_data(df_theme):
                 trading_value = current_price * today_vol
                 high_60d = max(high_prices[:-1]) if len(high_prices) > 1 else today_high
                 
-                # 💡 최근 20일(약 1개월) 내 최저가 대비 상승률 판독 (고공권 색출 엔진)
                 min_20d = int(df_hist['close'].tail(20).min()) if len(df_hist) >= 20 else int(df_hist['close'].min())
                 surge_rate_20d = (current_price - min_20d) / min_20d if min_20d > 0 else 0
-                is_high_altitude = surge_rate_20d >= 0.50  # 50% 이상 급등 시 고공권 분류
+                is_high_altitude = surge_rate_20d >= 0.50 
                 
                 body_top = max(current_price, open_price)
                 body_bottom = min(current_price, open_price)
@@ -502,16 +514,22 @@ def update_technical_data(df_theme):
                 is_near_high = current_price >= (high_60d * 0.90) or yest_close >= (high_60d * 0.90)
                 dist_text = "🎯 전고점 턱밑" if is_near_high else ("🟢 매물대 소화중" if current_price >= high_60d * 0.80 else "📉 이격 과다")
 
-                # 🚀 [테마 및 개별주 완벽 분리 로직]
                 is_upper_limit = change_rate >= 0.295
                 is_danta_range = 0.17 <= change_rate < 0.295
                 
-                # 이 종목이 어떤 테마 그룹에 속해 있는지 파악
-                has_theme = name in theme_rank_dict
-                is_theme_leader_raw = has_theme and theme_rank_dict[name]['is_leader']
-                
-                # 💡 [추가] 테마명 변수에 장전 (테마가 없으면 개별주 처리)
-                my_theme_name = theme_rank_dict[name]['theme_name'] if has_theme else "개별주/기타"
+                # 💡 [핵심 패치] 대시보드에서 짤렸더라도, 백업된 테마 데이터가 있으면 테마주로 완전 복권!
+                if name in theme_rank_dict:
+                    my_theme_name = theme_rank_dict[name]['theme_name']
+                    is_theme_leader_raw = theme_rank_dict[name]['is_leader']
+                    has_theme = True
+                elif name in all_theme_map:
+                    my_theme_name = all_theme_map[name]['theme_name']
+                    is_theme_leader_raw = all_theme_map[name]['is_leader']
+                    has_theme = True
+                else:
+                    my_theme_name = "개별주/기타"
+                    is_theme_leader_raw = False
+                    has_theme = False
                 
                 is_true_theme_leader = is_theme_leader_raw and (trading_value >= 100_000_000_000)
                 is_weak_theme_leader = is_theme_leader_raw and (trading_value < 100_000_000_000)
@@ -527,7 +545,6 @@ def update_technical_data(df_theme):
                 is_individual_sang = is_individual and is_upper_limit and not (is_junk or is_financial_risk)
                 is_individual_surge = is_individual and is_danta_range and not (is_junk or is_financial_risk)
 
-                # 🚀 [투트랙 채점표 분리 적용]
                 is_breakout_track = current_price >= ma20
                 track_type = "돌파" if is_breakout_track else "눌림"
                 quant_score = 0
@@ -553,7 +570,6 @@ def update_technical_data(df_theme):
 
                 score_display = f"{quant_score}점 ({track_type})"
 
-                # 🚀 [V8 눌림목 3일차 카운트다운 엔진]
                 flag_days = 0
                 for d in range(1, 4):
                     anchor_idx = -(d + 1)
@@ -589,30 +605,28 @@ def update_technical_data(df_theme):
                                 flag_days = d
                                 break
                 
-                # 🛑 [체급별 다이내믹 허들 적용] 마스터 타점 및 아차상 판독
-                if market_cap >= 50000:  # 🐘 초대형주 (5조 이상)
+                if market_cap >= 50000:
                     is_ss_breakout = (trading_value >= 150_000_000_000) and (change_rate >= 0.025) and not is_long_shadow and is_near_high
                     is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 35) and (trading_value >= 80_000_000_000) and (change_rate >= 0.015) and not is_long_shadow
                     is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 35) and (vol_ratio <= 60) and (is_today_yangbong or today_body_ratio <= 0.02)
                 
-                elif market_cap >= 10000:  # 🏢 대형주 (1조 이상 ~ 5조 미만)
+                elif market_cap >= 10000:
                     is_ss_breakout = (trading_value >= 100_000_000_000) and (change_rate >= 0.04) and not is_long_shadow and is_near_high
                     is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 35) and (trading_value >= 60_000_000_000) and (change_rate >= 0.025) and not is_long_shadow
                     is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 35) and (vol_ratio <= 50) and (is_today_yangbong or today_body_ratio <= 0.015)
                 
-                elif market_cap >= 5000:  # 🏭 중형주 (5,000억 이상 ~ 1조 미만)
+                elif market_cap >= 5000:
                     is_ss_breakout = (trading_value >= 80_000_000_000) and (vol_ratio >= 150) and (change_rate >= 0.06) and not is_long_shadow and is_near_high
                     is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 40) and (trading_value >= 40_000_000_000) and (change_rate >= 0.04) and not is_long_shadow
                     is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 40) and (vol_ratio <= 40) and (is_today_yangbong or today_body_ratio <= 0.015)
                 
-                else:  # 🏃 소형주 (5,000억 미만)
+                else:
                     is_ss_breakout = (trading_value >= 50_000_000_000) and (vol_ratio >= 200) and (change_rate >= 0.08) and not is_long_shadow and is_near_high
                     is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 45) and (trading_value >= 30_000_000_000) and (change_rate >= 0.05) and not is_long_shadow
                     is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 45) and (vol_ratio <= 35) and (is_today_yangbong or today_body_ratio <= 0.01)
 
                 master_tajeom = "⏸️ 관망 및 대기"
                 
-                # 🛑 1순위: 위험 종목 및 새로운 테마 분리 판독기
                 if len(history) < 20: master_tajeom = "⚠️ 신규상장 (데이터 부족)"
                 elif is_junk: master_tajeom = "🚨 매매금지 (딱지)"
                 elif is_financial_risk: master_tajeom = "🚨 매매금지 (자본잠식)"
@@ -639,7 +653,6 @@ def update_technical_data(df_theme):
                 elif is_long_shadow: master_tajeom = "⚠️ 윗꼬리 위험 (매수금지)"
                 elif is_huge_gap: master_tajeom = "⚠️ 갭상승 과다 (추격금지)"
                 
-                # 👑 2순위: 완벽한 타점 (돌파 & 눌림 3일차)
                 elif is_ss_breakout: 
                     master_tajeom = "👑 [핵심] 신고가 돌파 ⚠️(주의장세)" if is_warning_market else "👑 [핵심] 신고가 돌파"
                     quant_score += 20; score_display = f"{quant_score}점 ({track_type})"
@@ -647,7 +660,6 @@ def update_technical_data(df_theme):
                     master_tajeom = "🎯 [타점] 눌림목 3일 차 완성 (비중 40%)" + (" ⚠️(주의장세)" if is_warning_market else "")
                     quant_score += 10; score_display = f"{quant_score}점 ({track_type})"
 
-                # 😅 3순위: 아차상 (돌파 턱밑 대기 & 우량/대형주 눌림목 방어 테스트)
                 elif is_runner_up_breakout:
                     master_tajeom = "👀 [관심] 돌파 턱밑 대기 (아차상)"
                     quant_score += 5; score_display = f"{quant_score}점 ({track_type})"
@@ -655,7 +667,6 @@ def update_technical_data(df_theme):
                     master_tajeom = "👀 [관심] 눌림목 방어 테스트 (아차상)"
                     quant_score += 5; score_display = f"{quant_score}점 ({track_type})"
 
-                # 🎯 4순위: 기타 
                 elif flag_days == 2:
                     master_tajeom = "🚩 [분할매수] 눌림목 2일 차 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else "")
                 elif flag_days == 1:
@@ -666,7 +677,6 @@ def update_technical_data(df_theme):
                 elif change_rate >= 0.12 and trading_value >= 50_000_000_000: 
                     master_tajeom = "👀 [관심] 신규 기준봉 출현 (수급 집중)" + (" ⚠️(주의장세)" if is_warning_market else "")
 
-                # 💡 [최종 점수 조정] 수석님 커스텀 로직: 경고 딱지 및 페널티 부여
                 if is_chronic_loss and "[" in master_tajeom:
                     quant_score -= 10
                     score_display = f"{quant_score}점 ({track_type})"
@@ -677,7 +687,6 @@ def update_technical_data(df_theme):
                     score_display = f"{quant_score}점 ({track_type})"
                     master_tajeom += " ⚠️고공권(단기대응)"
 
-                # 💡 [추가] my_theme_name 을 마지막 열(index 20)에 추가
                 results.append([
                     name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", 
                     int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, 
@@ -687,27 +696,22 @@ def update_technical_data(df_theme):
             except Exception as e:
                 continue
 
-        # 숨겨진 정수형 quant_score(인덱스 19)를 기준으로 완벽하게 내림차순 정렬
         results.sort(key=lambda x: x[19], reverse=True) 
-        
-        # 💡 [변경] 19번 인덱스(은닉된 정수 점수)만 빼고, 20번 인덱스(테마명)를 뒤에 붙여 최종 20개 열을 만듦
         final_results = [r[:19] + [r[20]] for r in results]
 
         if final_results:
             try: helper_sheet = doc.worksheet("주가데이터_보조")
             except: helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="20")
             helper_sheet.clear()
-            
-            # 💡 [변경] 맨 끝에 '소속테마' 헤더 추가
             headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "HYEOKS점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)", "윗꼬리판독", "전고점위치", "20일이격도", "대장주이력", "거래량상태", "소속테마"]
             helper_sheet.update(range_name="A1", values=[headers] + final_results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(final_results)}개 종목 판독 완료! (테마명 매핑 완료) 🚀")
+            print(f"✅ 총 {len(final_results)}개 종목 판독 완료! (테마 복권 완료) 🚀")
             
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
 
 if __name__ == "__main__":
-    df_theme, is_market_closed = get_real_money_themes()
+    df_theme, is_market_closed, all_theme_map = get_real_money_themes()
     df_news, df_naver, df_main_news = get_news_keywords(), get_naver_search_ranking(), get_naver_main_news()
     update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_closed)
-    update_technical_data(df_theme)
+    update_technical_data(df_theme, all_theme_map)
