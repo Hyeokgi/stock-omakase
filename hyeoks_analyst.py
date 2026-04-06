@@ -60,11 +60,10 @@ try:
     
     # ==========================================
     # 🔍 후보군 추출 및 국내장 매크로 분위기 자동 판독
-    # 상한가, 윗꼬리, 매매금지 등 '절대 불가' 종목만 컷오프 하고 AI에게 선택권을 넘깁니다.
     # ==========================================
     valid_short_candidates = []
     valid_mid_candidates = []
-    is_korean_market_down = False # 코스닥 하락장 여부 판독기
+    is_korean_market_down = False 
 
     for r in tech_data:
         if len(r) < 10: continue
@@ -76,7 +75,6 @@ try:
         tajeom = str(r[9])     
         shadow_status = str(r[14]) if len(r)>14 else ""
         
-        # 💡 시스템이 '주의장세' 꼬리표를 달아놨다면, 현재 국내 증시(코스닥)가 20일선 아래의 하락장임을 뜻함
         if "주의장세" in tajeom:
             is_korean_market_down = True
             
@@ -99,7 +97,7 @@ try:
 
     def generate_hyeoks_report(st_type):
         # ==========================================
-        # 🧠 [AI 선택권 부활] AI가 매크로와 후보군을 입체적으로 분석하여 최고 1종목을 직접 발탁!
+        # 🧠 [AI 선택권 부활] AI가 매크로와 후보군을 입체적으로 분석하여 최고 1종목 발탁
         # ==========================================
         if st_type == "short":
             if not valid_short_candidates: raise Exception("단기 돌파 조건에 부합하는 안전한 종목이 없습니다.")
@@ -111,7 +109,7 @@ try:
             sys_msg = "매크로 불안 속에서도 메이저 스마트 머니가 굳건하게 방어해주며, 악성 매도 물량이 씨가 마른(거래량 급감) 완벽한 '스윙 눌림목(Mid-term Swing)' 최고의 1종목"
 
         pick_prompt = f"""
-        너는 전설적인 실전 트레이더들(방배동선수, 강창권 등)의 호가창/차트 판독 능력을 딥러닝하고, 거시경제 통찰력까지 갖춘 HYEOKS 리서치의 최고 AI 수석 퀀트 애널리스트야.
+        너는 전설적인 실전 트레이더들의 호가창/차트 판독 능력을 딥러닝하고, 거시경제 통찰력까지 갖춘 HYEOKS 리서치의 최고 AI 수석 퀀트 애널리스트야.
         현재 매크로 상황과 아래의 [안전망을 통과한 후보 종목 데이터]를 입체적으로 분석해라.
 
         📊 [현재 글로벌 및 국내 매크로 환경]
@@ -130,12 +128,10 @@ try:
         raw_code = safe_generate_content(model, pick_prompt).text
         code_match = re.search(r'\d{6}', raw_code)
         if not code_match:
-            # AI가 형식을 어길 경우를 대비한 안전장치 (가장 점수 높은 1등 강제 편입)
             target_code = valid_short_candidates[0]['code'] if st_type == "short" else valid_mid_candidates[0]['code']
         else:
             target_code = code_match.group()
 
-        # 선택된 종목의 데이터 매핑
         if st_type == "short":
             best_pick = next((item for item in valid_short_candidates if item["code"] == target_code), valid_short_candidates[0])
         else:
@@ -144,7 +140,6 @@ try:
         target_name = best_pick['name']
         print(f"🎯 [{st_type.upper()}] AI 수석 애널리스트의 최종 픽: {target_name} ({target_code})")
 
-        # 차트 이미지 캡처
         img_path = f"temp_chart_{target_code}.png"
         chart_url = f"https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{target_code}.png"
         img_res = requests.get(chart_url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -153,7 +148,6 @@ try:
 
         img = PIL.Image.open(img_path)
 
-        # 🚨 [리스크 맞춤형 프롬프트 주입] (이모지 제거 및 텍스트 정제)
         warning_msg = ""
         if "고공권" in best_pick['tajeom']:
             warning_msg = "\n[필수 경고] 이 종목은 최근 단기 급등하여 '고공권' 판정을 받았습니다. 모멘텀은 최고조이나, 단기 이격 리스크가 있으므로 '비중을 평소의 절반으로 줄이고 -3% 이탈 시 기계적 손절을 집행하는 철저한 방어적 트레이딩'을 권고하는 문장을 반드시 포함하십시오."
@@ -161,7 +155,7 @@ try:
             warning_msg = "\n[필수 경고] 현재 국내 증시가 20일선을 이탈한 '주의 장세'입니다. 내일 아침 갭하락 리스크를 피하기 위해 '오버나잇 비중을 축소하고, 익일 장 초반 지지선 방어를 확인한 뒤 진입'하라는 보수적 가이드를 반드시 포함하십시오."
 
         # ==========================================
-        # 📝 [리포트 작성 프롬프트] 들여쓰기 완벽 제거 및 HYEOKS 독자 전략 주입
+        # 📝 [리포트 작성 프롬프트]
         # ==========================================
         if st_type == "short":
             final_prompt = f"""너는 압도적인 모멘텀 분석과 실전 호가창의 심리를 꿰뚫는 HYEOKS 증권의 최고 수석 퀀트 애널리스트야. 
@@ -234,42 +228,6 @@ try:
 ## 2. 거래량 딥리딩 및 직장인 스윙 타점 전략
 (상세 서술)
 """
-        else:
-            final_prompt = f"""
-            너는 전설적인 실전 트레이더들의 매매 기법(거래량 씨마름, VCP 등)을 체화한 HYEOKS 증권의 최고 수석 퀀트 애널리스트야. 
-            내가 첨부한 '일봉 차트 이미지'와 아래 [데이터]를 바탕으로 종목코드 '{target_code}'에 대한 직장인 스윙(Mid-term) 심층 리포트를 작성해.
-
-            [입력 데이터] 
-            {best_pick['info']} 
-            매크로 환경: 나스닥 {nasdaq}, 환율 {exchange_rate}, 유가 {wti_oil}, 국내증시 {market_status_text}
-            {warning_msg}
-
-            [작성 지침 - Apex Trader Mode]
-            1. 은어 배제: 내부 시스템 은어 및 이모지를 절대 사용하지 말 것.
-            2. 통찰력: 하락장 또는 변동성 장세 속에서도 이 종목이 왜 지지선을 방어하며 턴어라운드를 준비하고 있는지, 기업의 펀더멘털과 엮어서 통찰력 있게 서술할 것.
-            3. 차트 판독: 음봉 거래량의 급감(악성 매도 물량의 씨마름), 주요 이평선(20일선 등)에서의 방어 여부를 시각적으로 분석할 것.
-            4. 리스크 관리: 직장인 투자자가 오버나잇(Overnight) 리스크를 견딜 수 있도록 1차 진입 비중 제한 및 갭하락 대비 분할 매수 시나리오를 제시할 것.
-            5. 가상계좌 연동 필수 형식 (리포트 맨 마지막 줄에 오직 이 형식으로만 작성, 숫자에 콤마 생략 가능):
-               [DATA] 목표가:00000, 손절가:00000, 분할매수:O
-            
-            [출력 양식 (마크다운 유지)]
-            <div class="broker-name">HYEOKS SECURITIES | MID-TERM STRATEGY</div>
-            <div class="header">
-                <p class="stock-title">{target_name} ({target_code})</p>
-                <p class="subtitle">대시세 눌림목 종가베팅 전략: (소제목)</p>
-            </div>
-            
-            <div class="summary-box">
-                <strong>💡 Company Brief | HYEOKS 밸류에이션 데스크</strong><br><br>
-                (요약)
-            </div>
-
-            ## 1. 펀더멘털 및 매크로 방어력
-            (상세 서술)
-            
-            ## 2. 👁️ 거래량/차트 딥리딩 및 직장인 분할 매수 전략
-            (상세 서술)
-            """
 
         response = safe_generate_content(model, [final_prompt, img])
         img.close()
@@ -277,7 +235,6 @@ try:
 
         raw_report_text = response.text
 
-        # 💡 [핵심 패치] AI가 출력한 매매 기준 추출 (가상계좌용)
         pick_data = None
         match = re.search(r'\[DATA\]\s*목표가\s*:\s*([0-9,]+).*?손절가\s*:\s*([0-9,]+).*?분할매수\s*:\s*([OX])', raw_report_text)
         if match:
@@ -288,7 +245,6 @@ try:
                 'stop': int(match.group(2).replace(',', '')),
                 'split': match.group(3) == 'O'
             }
-            # 실제 리포트 본문에서는 [DATA] 줄을 깔끔하게 삭제하여 숨김
             raw_report_text = re.sub(r'\[DATA\].*', '', raw_report_text, flags=re.DOTALL).strip()
 
         return raw_report_text, target_code, pick_data
@@ -302,7 +258,7 @@ try:
     report_mid, code_mid, pick_mid = generate_hyeoks_report("mid")
 
     # ==========================================
-    # 💰 가상계좌 실전 퀀트 시뮬레이션 엔진 (Python)
+    # 💰 가상계좌 실전 퀀트 시뮬레이션 엔진
     # ==========================================
     def update_virtual_portfolio(picks):
         print("💰 [HYEOKS 퀀트 데스크] 가상계좌 시뮬레이션 가동 중...")
@@ -397,7 +353,6 @@ try:
         print("✅ 실전 가상계좌 리밸런싱 및 익/손절 처리 완료!")
 
     update_virtual_portfolio([pick_short, pick_mid])
-
 
     # ==========================================
     # 📝 리포트 HTML 조립 및 PDF 생성
