@@ -50,44 +50,101 @@ try:
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel('gemini-2.5-flash')
 
+    # 매크로 지표 수집
     macro_sheet = doc.worksheet("시장요약").get_all_values()
     nasdaq = macro_sheet[1][4]
     exchange_rate = macro_sheet[1][6]
     wti_oil = macro_sheet[1][7]
 
     tech_data = doc.worksheet("주가데이터_보조").get_all_values()[1:30]
-    stock_candidates = ""
+    
+    # ==========================================
+    # 🔍 후보군 추출 및 국내장 매크로 분위기 자동 판독
+    # 상한가, 윗꼬리, 매매금지 등 '절대 불가' 종목만 컷오프 하고 AI에게 선택권을 넘깁니다.
+    # ==========================================
+    valid_short_candidates = []
+    valid_mid_candidates = []
+    is_korean_market_down = False # 코스닥 하락장 여부 판독기
+
     for r in tech_data:
-        if len(r) >= 10:
-            tajeom = str(r[9])
+        if len(r) < 10: continue
+        
+        name = str(r[0]).strip()
+        code = str(r[1]).replace("'", "").strip().zfill(6)
+        change_rate = str(r[3])
+        score_str = str(r[8])  
+        tajeom = str(r[9])     
+        shadow_status = str(r[14]) if len(r)>14 else ""
+        
+        # 💡 시스템이 '주의장세' 꼬리표를 달아놨다면, 현재 국내 증시(코스닥)가 20일선 아래의 하락장임을 뜻함
+        if "주의장세" in tajeom:
+            is_korean_market_down = True
             
-            # 🛑 [핵심 패치] 상한가는 후보에 남겨두어 대장주 판별에 사용하되, 진짜 위험한 놈들만 컷!
-            if re.search(r'매수금지|관망|위험', tajeom):
-                continue
-                
-            code = r[1].replace("'", "").strip().zfill(6)
-            vol_status = r[18] if len(r)>18 else ''
-            stock_candidates += f"종목:{r[0]}({code}), 현재가:{r[2]}({r[3]}), 5일선:{r[4]}, 20일선:{r[5]}, 타점:{tajeom}, 20일이격도:{r[16] if len(r)>16 else ''}, 이력:{r[17] if len(r)>17 else ''}, 거래량상태:{vol_status}\n"
+        # ❌ [안전망: 무조건 탈락 조건]
+        if "상한가" in tajeom or "29." in change_rate or "30." in change_rate: continue 
+        if "윗꼬리 위험" in shadow_status or "윗꼬리" in tajeom: continue 
+        if re.search(r'매수금지|자본잠식|딱지|관망|데이터 부족', tajeom): continue 
+            
+        cand_info = f"종목:{name}({code}), 현재가:{r[2]}({change_rate}), 5일선:{r[4]}, 20일선:{r[5]}, 타점:{tajeom}, 퀀트점수:{score_str}, 거래량:{r[18] if len(r)>18 else ''}, 테마:{r[19] if len(r)>19 else '개별주'}"
+        
+        cand_data = {'name': name, 'code': code, 'tajeom': tajeom, 'info': cand_info}
+        
+        # 트랙 분류 (돌파/주도주는 단기, 나머지는 스윙)
+        if "돌파" in score_str or "주도주" in tajeom:
+            valid_short_candidates.append(cand_data)
+        else:
+            valid_mid_candidates.append(cand_data)
+
+    market_status_text = "코스피/코스닥 20일선 이탈 (하락 변동성 장세 - 방어적 트레이딩 요망)" if is_korean_market_down else "코스피/코스닥 안정화 (추세 추종 및 비중 베팅 가능)"
 
     def generate_hyeoks_report(st_type):
-        sys_msg = "내일 당장 진입 가능하거나 테마를 지배하는 단기 폭발" if st_type == "short" else "직장인 스윙 종가베팅"
-        pick_prompt = f"너는 HYEOKS 수석 애널리스트야. 다음 데이터 중 '{sys_msg}' 유망주로 가장 완벽한 1종목을 골라. 다른 말은 절대 하지 말고 '오직 6자리 종목코드 숫자'만 출력해.\n데이터: {stock_candidates}"
+        # ==========================================
+        # 🧠 [AI 선택권 부활] AI가 매크로와 후보군을 입체적으로 분석하여 최고 1종목을 직접 발탁!
+        # ==========================================
+        if st_type == "short":
+            if not valid_short_candidates: raise Exception("단기 돌파 조건에 부합하는 안전한 종목이 없습니다.")
+            candidates_str = "\n".join([c['info'] for c in valid_short_candidates])
+            sys_msg = "대한민국 증시를 지배하는 주도 테마의 심장부에서, 거래대금이 폭발하며 전고점 매물대를 완벽히 소화해 낸 '단기 폭발(Short-term Breakout)' 최고의 1종목"
+        else:
+            if not valid_mid_candidates: raise Exception("스윙 눌림 조건에 부합하는 안전한 종목이 없습니다.")
+            candidates_str = "\n".join([c['info'] for c in valid_mid_candidates])
+            sys_msg = "매크로 불안 속에서도 메이저 스마트 머니가 굳건하게 방어해주며, 악성 매도 물량이 씨가 마른(거래량 급감) 완벽한 '스윙 눌림목(Mid-term Swing)' 최고의 1종목"
 
-        raw_code = safe_generate_content(model, pick_prompt).text
+        pick_prompt = f"""
+        너는 전설적인 실전 트레이더들(방배동선수, 강창권 등)의 호가창/차트 판독 능력을 딥러닝하고, 거시경제 통찰력까지 갖춘 HYEOKS 리서치의 최고 AI 수석 퀀트 애널리스트야.
+        현재 매크로 상황과 아래의 [안전망을 통과한 후보 종목 데이터]를 입체적으로 분석해라.
+
+        📊 [현재 글로벌 및 국내 매크로 환경]
+        - 나스닥: {nasdaq} / 원달러 환율: {exchange_rate} / WTI유가: {wti_oil}
+        - 국내 증시 상태: {market_status_text}
+
+        📋 [후보 종목 데이터 (퀀트 점수 및 기술적 지표)]
+        {candidates_str}
+
+        [행동 지침]
+        단순히 퀀트 점수가 높은 순으로 맹신하지 마라. 현재의 매크로 흐름(유가, 환율 등)과 엮일 수 있는 테마인지, 단기 고점 리스크(고공권)는 없는지, 거래량의 응축 상태는 완벽한지 인간 최고수 트레이더의 직감으로 평가해라.
+        위 후보들 중 {sys_msg}을 단 1개만 찾아라.
+        다른 설명은 절대 하지 말고, 네가 선택한 1개 종목의 '6자리 종목코드 숫자'만 정확히 출력해.
+        """
         
-        # 정규식으로 종목코드를 찾지 못할 경우의 예외 처리 방어코드
+        raw_code = safe_generate_content(model, pick_prompt).text
         code_match = re.search(r'\d{6}', raw_code)
         if not code_match:
-            raise Exception("AI가 종목 코드를 정상적으로 출력하지 못했습니다. 다시 시도해 주세요.")
-        target_code = code_match.group()
+            # AI가 형식을 어길 경우를 대비한 안전장치 (가장 점수 높은 1등 강제 편입)
+            target_code = valid_short_candidates[0]['code'] if st_type == "short" else valid_mid_candidates[0]['code']
+        else:
+            target_code = code_match.group()
 
-        # 💡 [가상계좌 연동] 종목명 추출
-        target_name = "Unknown"
-        for r in tech_data:
-            if target_code in r[1]:
-                target_name = r[0]
-                break
+        # 선택된 종목의 데이터 매핑
+        if st_type == "short":
+            best_pick = next((item for item in valid_short_candidates if item["code"] == target_code), valid_short_candidates[0])
+        else:
+            best_pick = next((item for item in valid_mid_candidates if item["code"] == target_code), valid_mid_candidates[0])
 
+        target_name = best_pick['name']
+        print(f"🎯 [{st_type.upper()}] AI 수석 애널리스트의 최종 픽: {target_name} ({target_code})")
+
+        # 차트 이미지 캡처
         img_path = f"temp_chart_{target_code}.png"
         chart_url = f"https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{target_code}.png"
         img_res = requests.get(chart_url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -96,58 +153,75 @@ try:
 
         img = PIL.Image.open(img_path)
 
+        # 🚨 [리스크 맞춤형 프롬프트 주입]
+        warning_msg = ""
+        if "고공권" in best_pick['tajeom']:
+            warning_msg = "\n[🚨 필수 경고] 이 종목은 최근 단기 급등하여 '고공권' 판정을 받았습니다. 모멘텀은 최고조이나, 단기 이격 리스크가 있으므로 '비중을 평소의 절반으로 줄이고 -3% 이탈 시 기계적 손절을 집행하는 철저한 방어적 트레이딩'을 권고하는 문장을 반드시 포함하십시오."
+        elif is_korean_market_down:
+            warning_msg = "\n[🚨 필수 경고] 현재 국내 증시가 20일선을 이탈한 '주의 장세'입니다. 내일 아침 갭하락 리스크를 피하기 위해 '오버나잇 비중을 축소하고, 익일 장 초반 지지선 방어를 확인한 뒤 진입'하라는 보수적 가이드를 반드시 포함하십시오."
+
+        # ==========================================
+        # 📝 [리포트 작성 프롬프트] 최상위 트레이더의 통찰력 탑재
+        # ==========================================
         if st_type == "short":
             final_prompt = f"""
-            너는 HYEOKS 증권의 최고 수석 퀀트 애널리스트야. 
-            내가 첨부한 '일봉 차트 이미지'와 아래 [데이터]를 바탕으로 종목코드 '{target_code}'에 대한 단기 폭발 유망주 심층 리포트를 작성해.
-            데이터: {stock_candidates} / 매크로: 나스닥 {nasdaq}, 환율 {exchange_rate}, 유가 {wti_oil}
+            너는 전설적인 실전 트레이더들의 매매 기법을 체화한 HYEOKS 증권의 최고 수석 퀀트 애널리스트야. 
+            내가 첨부한 '일봉 차트 이미지'와 아래 [데이터]를 바탕으로 종목코드 '{target_code}'에 대한 단기 돌파(Short-term) 심층 리포트를 작성해.
 
-            [특별 지시사항]
-            1. 금지어 철저 배제: 'S급' 등 내부 시스템 은어 및 등급 기호를 절대 사용하지 말 것.
-            2. 분량 및 깊이: 방대한 깊이를 확보할 것.
-            3. 만약 이 종목이 이미 '상한가'에 도달한 대장주라면, 해당 테마 전체를 이끄는 나침반으로서의 파급력과 내일 장 초반 갭상승 시나리오, 그리고 후발주 베팅을 위한 기준점으로서의 역할을 중점적으로 서술할 것.
-            4. 절대적인 가격 규칙: 매수 타점, 목표가, 손절가를 논리적으로 계산할 것 (상한가 종목의 경우 내일 시가 갭상승 후 눌림 타점을 제시할 것).
-            5. 가상계좌 연동을 위해, 리포트 맨 마지막 줄에 오직 아래 형식으로만 한 줄을 추가할 것. (목표가와 손절가는 숫자만 기입)
+            [입력 데이터] 
+            {best_pick['info']} 
+            매크로 환경: 나스닥 {nasdaq}, 환율 {exchange_rate}, 유가 {wti_oil}, 국내증시 {market_status_text}
+            {warning_msg}
+
+            [작성 지침 - Apex Trader Mode]
+            1. 은어 배제: 'SS급', 'S급', '단타용' 등 시스템 이모지(⚠️,🚀 등)를 리포트 본문에 절대 노출하지 말 것. 월스트리트 애널리스트의 정제된 어조를 유지할 것.
+            2. 통찰력: 이 종목이 단순히 점수가 높아서가 아니라, 현재 매크로(지수/유가/환율) 흐름 속에서 왜 시장의 뭉칫돈(스마트 머니)을 빨아들이고 있는지 테마의 파급력을 서술할 것.
+            3. 차트 판독: 첨부된 차트의 매물대 소화 과정, 전고점 돌파 여부, 거래량의 '발자국(Footprint)'을 인간 최고수 트레이더의 시각으로 심층 분석할 것.
+            4. 절대 규칙: 논리적인 매수 타점, 목표가, 손절가를 계산할 것.
+            5. 가상계좌 연동 필수 형식 (리포트 맨 마지막 줄에 오직 이 형식으로만 작성, 숫자에 콤마 생략 가능):
                [DATA] 목표가:00000, 손절가:00000, 분할매수:X
             
             [출력 양식 (마크다운 유지)]
             <div class="broker-name">HYEOKS SECURITIES | SHORT-TERM STRATEGY</div>
             <div class="header">
-                <p class="stock-title">종목명 (종목코드)</p>
-                <p class="subtitle">단기 모멘텀 집중 분석: (소제목)</p>
+                <p class="stock-title">{target_name} ({target_code})</p>
+                <p class="subtitle">단기 모멘텀 및 스마트 머니 유입 분석: (소제목)</p>
             </div>
             
             <div class="summary-box">
-                <strong>💡 Company Brief | HYEOKS 단기 트레이딩 데스크</strong><br><br>
+                <strong>💡 Company Brief | HYEOKS 트레이딩 데스크</strong><br><br>
                 (요약)
             </div>
 
-            ## 1. 단기 수급 및 테마 모멘텀 심층 고찰
+            ## 1. 매크로 연동성 및 테마 주도력 고찰
             (상세 서술)
             
-            ## 2. 👁️ AI 시각적 차트 판독 및 타점 시나리오
+            ## 2. 👁️ 차트/거래량 딥리딩 및 타점 시나리오
             (상세 서술)
             """
         else:
             final_prompt = f"""
-            너는 HYEOKS 증권의 최고 수석 퀀트 애널리스트야. 
-            내가 첨부한 '일봉 차트 이미지'와 아래 [데이터]를 바탕으로 종목코드 '{target_code}'에 대한 스윙 심층 리포트를 작성해.
-            데이터: {stock_candidates} / 매크로: 나스닥 {nasdaq}, 환율 {exchange_rate}, 유가 {wti_oil}
+            너는 전설적인 실전 트레이더들의 매매 기법(거래량 씨마름, VCP 등)을 체화한 HYEOKS 증권의 최고 수석 퀀트 애널리스트야. 
+            내가 첨부한 '일봉 차트 이미지'와 아래 [데이터]를 바탕으로 종목코드 '{target_code}'에 대한 직장인 스윙(Mid-term) 심층 리포트를 작성해.
 
-            [특별 지시사항]
-            1. 금지어 철저 배제.
-            2. 분량 및 깊이: 펀더멘털 스토리 풍부하게 서술.
-            3. 시각적 차트 및 거래량 판독 (방배동선수 룰) 최우선 분석.
-            4. 🛡️ 오버나잇 리스크 관리: 1차 진입 비중 제한 및 갭하락 대비 시나리오 포함.
-            5. 매수 타점, 목표가, 손절가 논리적 계산.
-            6. 가상계좌 연동을 위해, 리포트 맨 마지막 줄에 오직 아래 형식으로만 한 줄을 추가할 것. (목표가와 손절가는 숫자만 기입)
+            [입력 데이터] 
+            {best_pick['info']} 
+            매크로 환경: 나스닥 {nasdaq}, 환율 {exchange_rate}, 유가 {wti_oil}, 국내증시 {market_status_text}
+            {warning_msg}
+
+            [작성 지침 - Apex Trader Mode]
+            1. 은어 배제: 내부 시스템 은어 및 이모지를 절대 사용하지 말 것.
+            2. 통찰력: 하락장 또는 변동성 장세 속에서도 이 종목이 왜 지지선을 방어하며 턴어라운드를 준비하고 있는지, 기업의 펀더멘털과 엮어서 통찰력 있게 서술할 것.
+            3. 차트 판독: 음봉 거래량의 급감(악성 매도 물량의 씨마름), 주요 이평선(20일선 등)에서의 방어 여부를 시각적으로 분석할 것.
+            4. 리스크 관리: 직장인 투자자가 오버나잇(Overnight) 리스크를 견딜 수 있도록 1차 진입 비중 제한 및 갭하락 대비 분할 매수 시나리오를 제시할 것.
+            5. 가상계좌 연동 필수 형식 (리포트 맨 마지막 줄에 오직 이 형식으로만 작성, 숫자에 콤마 생략 가능):
                [DATA] 목표가:00000, 손절가:00000, 분할매수:O
             
             [출력 양식 (마크다운 유지)]
             <div class="broker-name">HYEOKS SECURITIES | MID-TERM STRATEGY</div>
             <div class="header">
-                <p class="stock-title">종목명 (종목코드)</p>
-                <p class="subtitle">직장인 대시세 눌림목 종가베팅: (소제목)</p>
+                <p class="stock-title">{target_name} ({target_code})</p>
+                <p class="subtitle">대시세 눌림목 종가베팅 전략: (소제목)</p>
             </div>
             
             <div class="summary-box">
@@ -155,10 +229,10 @@ try:
                 (요약)
             </div>
 
-            ## 1. 펀더멘털 및 턴어라운드 스토리
+            ## 1. 펀더멘털 및 매크로 방어력
             (상세 서술)
             
-            ## 2. 👁️ AI 시각적 차트 판독 및 분할 매수 전략
+            ## 2. 👁️ 거래량/차트 딥리딩 및 직장인 분할 매수 전략
             (상세 서술)
             """
 
@@ -184,7 +258,7 @@ try:
 
         return raw_report_text, target_code, pick_data
 
-    print("🧠 [HYEOKS 수석 애널리스트] 비전 데이터 심층 분석 중...")
+    print("🧠 [HYEOKS 수석 애널리스트] 매크로 및 비전 데이터 심층 분석 중...")
     report_short, code_short, pick_short = generate_hyeoks_report("short")
 
     print("⏳ 단기 리포트 완료! API 과부하 방지를 위해 30초 휴식합니다...")
@@ -203,7 +277,6 @@ try:
         hold_data = hold_sheet.get_all_values()
         headers = ["종목명", "종목코드", "매입단가", "투자금액", "현재가", "수익률(%)", "편입일", "목표가", "손절가", "수동매도"]
 
-        # 시트 포맷 초기화 (기존 잘못된 헤더가 있으면 덮어쓰기)
         if len(hold_data) <= 1 or hold_data[0][0] != "종목명" or len(hold_data[0]) < 10:
             hold_sheet.clear()
             hold_sheet.update(range_name="A1", values=[headers])
@@ -216,7 +289,6 @@ try:
         req_session = requests.Session()
         req_session.headers.update({'User-Agent': 'Mozilla/5.0'})
 
-        # 1. 기존 보유 종목 검증 및 매도 처리
         for row in hold_data[1:]:
             if len(row) < 10 or not row[0]: continue
             name, code, avg_price, invest_amt, _, _, buy_date, t_price, s_price, manual_sell = row
@@ -226,13 +298,12 @@ try:
             t_price = int(float(str(t_price).replace(',', '')))
             s_price = int(float(str(s_price).replace(',', '')))
 
-            # 실시간 현재가 가져오기
             try:
                 clean_code = str(code).replace("'", "").zfill(6)
                 api_url = f"https://m.stock.naver.com/api/stock/{clean_code}/basic"
                 curr_price = int(req_session.get(api_url, timeout=3).json()['closePrice'].replace(',', ''))
             except:
-                curr_price = avg_price # 통신 오류시 기존가 유지
+                curr_price = avg_price 
 
             return_rate = (curr_price - avg_price) / avg_price if avg_price > 0 else 0
 
@@ -251,7 +322,6 @@ try:
                 clean_code2 = str(code).replace("'", "").zfill(6)
                 new_hold_list.append([name, f"'{clean_code2}", avg_price, invest_amt, curr_price, f"{return_rate*100:.2f}%", buy_date, t_price, s_price, ""])
 
-        # 2. 신규 리포트 종목 편입 (기존 보유 확인 후 물타기/신규 진입)
         for pick in picks:
             if not pick: continue
             name, code, t_price, s_price, is_split = pick['name'], pick['code'], pick['target'], pick['stop'], pick['split']
@@ -263,32 +333,27 @@ try:
             existing_idx = next((i for i, r in enumerate(new_hold_list) if r[0] == name), -1)
 
             if existing_idx != -1:
-                # 이미 보유중인데 리포트에서 "분할매수:O" 라면 100만원 추가 베팅 진행
                 if is_split:
                     old_avg = new_hold_list[existing_idx][2]
                     old_invest = new_hold_list[existing_idx][3]
-                    add_invest = 1000000 # 100만원 고정 매수
+                    add_invest = 1000000 
 
                     new_invest = old_invest + add_invest
                     old_qty = old_invest / old_avg
                     add_qty = add_invest / curr_price
-                    new_avg = int(new_invest / (old_qty + add_qty)) # 평단가 재조정
+                    new_avg = int(new_invest / (old_qty + add_qty)) 
 
                     new_hold_list[existing_idx][2] = new_avg
                     new_hold_list[existing_idx][3] = new_invest
                     new_hold_list[existing_idx][4] = curr_price
                     new_hold_list[existing_idx][5] = f"{(curr_price - new_avg) / new_avg * 100:.2f}%"
             else:
-                # 겹치지 않는 신규 종목일 경우 편입 (초기 진입 100만원)
                 new_hold_list.append([name, f"'{code}", curr_price, 1000000, curr_price, "0.00%", today_str, t_price, s_price, ""])
 
-        # 시트 데이터 덮어쓰기 (기존 내용 싹 밀고 새 리스트로 갱신)
         hold_sheet.clear()
         hold_sheet.update(range_name="A1", values=[headers] + new_hold_list, value_input_option="USER_ENTERED")
 
-        # 매도된 종목이 있다면 가상계좌_종료 시트에 누적
         if closed_list:
-            # 헤더 없으면 생성
             if not closed_sheet.get_all_values():
                 closed_sheet.update(range_name="A1", values=[["종목명", "최종평단가", "매도단가", "최종수익률", "매도일자", "결과(승/패)"]])
             for row in closed_list:
@@ -296,7 +361,6 @@ try:
 
         print("✅ 실전 가상계좌 리밸런싱 및 익/손절 처리 완료!")
 
-    # 🚀 생성된 리포트 데이터를 바탕으로 가상계좌 업데이트 실행
     update_virtual_portfolio([pick_short, pick_mid])
 
 
@@ -325,9 +389,9 @@ try:
         return f'<div class="chart-container"><h3>📊 {title}</h3><img src="https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{code}.png"></div>'
 
     full_html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">{css}</head><body>
-        {markdown.markdown(report_short)} {make_chart_html(code_short, "[야수들의 단기 돌파 전략] AI 분석 일봉 차트")}
+        {markdown.markdown(report_short)} {make_chart_html(code_short, "[트레이더의 관점] AI 시각적 일봉 차트 판독")}
         <div class="page-break"></div>
-        {markdown.markdown(report_mid)} {make_chart_html(code_mid, "[직장인 스윙 종가베팅 전략] AI 분석 일봉 차트")}
+        {markdown.markdown(report_mid)} {make_chart_html(code_mid, "[직장인 종가베팅] AI 시각적 일봉 차트 판독")}
     </body></html>"""
 
     pdf_filename = f"HYEOKS_Report_{datetime.datetime.now(KST).strftime('%Y%m%d')}.pdf"
