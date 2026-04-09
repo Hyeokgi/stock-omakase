@@ -10,21 +10,32 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxyuSEjPmg8rZPjLlG-YKck07QYxmZm0HtxvWAumvV2zp7RRpVaKDo6D-CiQ6pLqKFm/exec"
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
-print("🤖 [HYEOKS 리서치 센터] 2.5-flash 비전 심층 분석 엔진 가동...")
+print("🤖 [HYEOKS 리서치 센터] 2.5-flash 메인 엔진 가동 대기중...")
 
 try:
     client = genai.Client(api_key=GEMINI_API_KEY)
-    MODEL_ID = 'gemini-2.5-flash'
 except Exception as e:
     print(f"❌ API 초기화 실패: {e}")
     exit(1)
 
+# 💡 [핵심 패치] 메인 엔진(2.5) 서버 다운 시, 예비 엔진(2.0)으로 즉각 스위칭하는 생존 로직
 def safe_generate_content(contents):
+    current_model = 'gemini-2.5-flash'
     for i in range(3):
         try:
-            return client.models.generate_content(model=MODEL_ID, contents=contents)
+            return client.models.generate_content(model=current_model, contents=contents)
         except Exception as e:
-            if "429" in str(e) or "quota" in str(e).lower():
+            err_str = str(e).lower()
+            print(f"⚠️ [구글 서버 응답] {e}")
+            
+            # 503 과부하 에러 시 예비 엔진으로 교체 후 즉시 재시도
+            if "503" in err_str or "unavailable" in err_str:
+                print(f"🚨 메인 서버 과부하 감지! 즉시 예비 엔진(gemini-2.0-flash)으로 전환합니다.")
+                current_model = 'gemini-2.0-flash'
+                time.sleep(3)
+                continue
+                
+            if "429" in err_str or "quota" in err_str:
                 time.sleep(30 * (i + 1))
             else: raise e
     raise Exception("❌ API 에러 재시도 초과")
@@ -119,7 +130,6 @@ try:
     time.sleep(30)
     report_mid, code_mid, pick_mid = generate_hyeoks_report("mid")
 
-    # 포트폴리오 업데이트
     def update_portfolio(picks):
         hold_sheet = doc.worksheet("가상계좌_보유")
         closed_sheet = doc.worksheet("가상계좌_종료")
@@ -137,7 +147,6 @@ try:
             name, code, avg_p, inv_amt, _, _, b_date, t_p, s_p, manual = r
             avg_p, inv_amt, t_p, s_p = int(float(str(avg_p).replace(',',''))), int(float(str(inv_amt).replace(',',''))), int(float(str(t_p).replace(',',''))), int(float(str(s_p).replace(',','')))
             
-            # 💡 [핵심 패치] 백슬래시 문법 에러를 없애기 위해 코드 변환을 별도로 분리!
             clean_code = str(code).replace("'", "").strip().zfill(6)
             try: curr_p = int(req.get(f"https://m.stock.naver.com/api/stock/{clean_code}/basic", timeout=3).json()['closePrice'].replace(',',''))
             except: curr_p = avg_p 
