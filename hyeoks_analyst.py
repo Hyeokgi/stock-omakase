@@ -22,7 +22,7 @@ except Exception as e:
 def safe_generate_content(contents):
     for i in range(10): # 포기하지 않고 10번까지 재시도
         try:
-            return client.models.generate_content(model='gemini-2.5-flash', contents=contents)
+            return client.models.generate_content(model='gemini-2.5-pro', contents=contents)
         except Exception as e:
             err_str = str(e).lower()
             print(f"⚠️ [돌파 시도 {i+1}/10] 서버 응답: {e}")
