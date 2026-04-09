@@ -10,7 +10,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxyuSEjPmg8rZPjLlG-YKck07QYxmZm0HtxvWAumvV2zp7RRpVaKDo6D-CiQ6pLqKFm/exec"
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
-print("🤖 [HYEOKS 리서치 센터] 2.5-flash 비전 심층 분석 엔진 가동...")
+print("🤖 [HYEOKS 리서치 센터] AI 모델 자동 탐색(Auto-Discovery) 엔진 가동...")
 
 try:
     client = genai.Client(api_key=GEMINI_API_KEY)
@@ -18,37 +18,28 @@ except Exception as e:
     print(f"❌ API 초기화 실패: {e}")
     exit(1)
 
-# 💡 [최종 패치] 한도가 0으로 막혀있을 경우, 100% 무료 개방된 1.5-flash로 강제 우회하는 무결점 생존 로직
+# 💡 [최종 패치] 구글에 진짜 존재하는 모델들을 차례대로 테스트하여 무조건 뚫고 나가는 생존 로직
 def safe_generate_content(contents):
-    current_model = 'gemini-2.5-flash'
-    for i in range(4): # 재시도 횟수를 4번으로 늘려 우회할 시간을 확보
-        try:
-            return client.models.generate_content(model=current_model, contents=contents)
-        except Exception as e:
-            err_str = str(e).lower()
-            print(f"⚠️ [구글 서버 응답] {e}")
-            
-            # 1. 메인 서버(2.5)가 과부하로 터졌을 때
-            if "503" in err_str or "unavailable" in err_str:
-                print(f"🚨 메인 서버 과부하! 안정적인 범용 엔진(gemini-1.5-flash)으로 즉시 우회합니다.")
-                current_model = 'gemini-1.5-flash'
-                time.sleep(3)
-                continue
+    model_lineup = ['gemini-1.5-flash-latest', 'gemini-1.5-pro-latest', 'gemini-1.5-flash-8b-latest']
+    
+    for target_model in model_lineup:
+        for i in range(2):
+            try:
+                return client.models.generate_content(model=target_model, contents=contents)
+            except Exception as e:
+                err_str = str(e).lower()
+                print(f"⚠️ [{target_model} 응답] {e}")
                 
-            # 2. 토큰 초과 에러가 났을 때
-            if "429" in err_str or "quota" in err_str:
-                # 2-1. 무료 계정 한도가 아예 0으로 차단된 모델일 경우 강제 우회
-                if "limit: 0" in err_str and current_model != 'gemini-1.5-flash':
-                    print(f"🚨 현재 모델의 무료 한도가 0으로 차단되었습니다. 범용 엔진(gemini-1.5-flash)으로 강제 스위칭합니다.")
-                    current_model = 'gemini-1.5-flash'
-                    time.sleep(3)
-                    continue
+                # 모델 이름이 틀렸거나, 한도가 0으로 막혀있거나, 503 과부하일 경우 즉시 다음 엔진으로 교체
+                if "404" in err_str or "not found" in err_str or "limit: 0" in err_str or "503" in err_str or "400" in err_str:
+                    print(f"🚨 {target_model} 사용 불가! 다음 예비 엔진으로 스위칭합니다.")
+                    break 
                 
-                # 2-2. 진짜로 단기 트래픽을 너무 많이 쓴 경우 숨 고르기
-                time.sleep(30 * (i + 1))
-            else: 
-                raise e
-    raise Exception("❌ API 에러 재시도 초과")
+                # 일시적인 트래픽 초과일 경우에만 20초 숨 고르기
+                if "429" in err_str or "quota" in err_str: time.sleep(20)
+                else: break
+                
+    raise Exception("❌ 모든 무료 모델이 차단되었거나 응답하지 않습니다.")
 
 try:
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -111,17 +102,7 @@ try:
 
         warn = "\n[필수 경고] 고공권 판정. 비중을 절반으로 줄이고 칼손절 요망." if "고공권" in best_pick['tajeom'] else ("\n[필수 경고] 주의 장세. 오버나잇 비중 축소 요망." if is_korean_market_down else "")
 
-        base_prompt = f"""너는 HYEOKS 증권 최고 수석 애널리스트야. 이미지와 데이터를 바탕으로 심층 리포트를 작성해. 
-데이터: {best_pick['info']}, 매크로: 나스닥 {nasdaq}, 환율 {exchange_rate}, 유가 {wti_oil}, 증시 {market_status_text} {warn}
-1. 은어 배제, 2. 매크로/수급 딥리딩, 3. 차트 매물대 분석, 4. 논리적 목표/손절가. 5. 마지막줄: [DATA] 목표가:000, 손절가:000, 분할매수:{"X" if st_type=="short" else "O"}
-[출력양식(들여쓰기 없이 마크다운)]
-<div class="broker-name">HYEOKS SECURITIES | {"SHORT-TERM" if st_type=="short" else "MID-TERM"} STRATEGY</div>
-<div class="header"><p class="stock-title">{target_name} ({target_code})</p><p class="subtitle">{"단기 모멘텀 분석" if st_type=="short" else "대시세 눌림목 종가베팅"}: (소제목)</p></div>
-<div class="summary-box"><strong>💡 Company Brief | HYEOKS 데스크</strong><br><br>(요약)</div>
-## 1. {"매크로 연동성 및 테마 주도력" if st_type=="short" else "펀더멘털 및 매크로 방어력"}
-(상세)
-## 2. 차트/거래량 딥리딩 및 타점 시나리오
-(상세)"""
+        base_prompt = f"너는 HYEOKS 증권 최고 수석 애널리스트야. 이미지와 데이터를 바탕으로 심층 리포트를 작성해. \n데이터: {best_pick['info']}, 매크로: 나스닥 {nasdaq}, 환율 {exchange_rate}, 유가 {wti_oil}, 증시 {market_status_text} {warn}\n1. 은어 배제, 2. 매크로/수급 딥리딩, 3. 차트 매물대 분석, 4. 논리적 목표/손절가. 5. 마지막줄: [DATA] 목표가:000, 손절가:000, 분할매수:{'X' if st_type=='short' else 'O'}\n[출력양식(들여쓰기 없이 마크다운)]\n<div class=\"broker-name\">HYEOKS SECURITIES | {'SHORT-TERM' if st_type=='short' else 'MID-TERM'} STRATEGY</div>\n<div class=\"header\"><p class=\"stock-title\">{target_name} ({target_code})</p><p class=\"subtitle\">{'단기 모멘텀 분석' if st_type=='short' else '대시세 눌림목 종가베팅'}: (소제목)</p></div>\n<div class=\"summary-box\"><strong>💡 Company Brief | HYEOKS 데스크</strong><br><br>(요약)</div>\n## 1. {'매크로 연동성 및 테마 주도력' if st_type=='short' else '펀더멘털 및 매크로 방어력'}\n(상세)\n## 2. 차트/거래량 딥리딩 및 타점 시나리오\n(상세)"
 
         response = safe_generate_content([base_prompt, img])
         img.close()
@@ -136,8 +117,8 @@ try:
         return raw_report, target_code, pick_data
 
     report_short, code_short, pick_short = generate_hyeoks_report("short")
-    print("⏳ 단기 리포트 완료! 30초 대기...")
-    time.sleep(30)
+    print("⏳ 단기 리포트 완료! 20초 대기...")
+    time.sleep(20)
     report_mid, code_mid, pick_mid = generate_hyeoks_report("mid")
 
     def update_portfolio(picks):
