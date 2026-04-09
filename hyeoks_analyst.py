@@ -10,7 +10,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxyuSEjPmg8rZPjLlG-YKck07QYxmZm0HtxvWAumvV2zp7RRpVaKDo6D-CiQ6pLqKFm/exec"
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
-print("🤖 [HYEOKS 리서치 센터] AI 모델 자동 탐색(Auto-Discovery) 엔진 가동...")
+print("🤖 [HYEOKS 리서치 센터] 2.5-flash 무한 돌파(Zombie) 엔진 가동...")
 
 try:
     client = genai.Client(api_key=GEMINI_API_KEY)
@@ -18,29 +18,23 @@ except Exception as e:
     print(f"❌ API 초기화 실패: {e}")
     exit(1)
 
-# 💡 [최종 패치] 2026년 기준 현재 완벽하게 작동하는 2.5 세대 생존 라인업으로 변경
+# 💡 [최종 패치] 유일한 생명줄인 2.5-flash 하나만 물고 늘어지는 10연속 돌파 로직
 def safe_generate_content(contents):
-    # 메인 엔진 -> 초경량/고속 엔진 -> 최고성능 엔진 순으로 탐색
-    model_lineup = ['gemini-2.5-flash', 'gemini-2.5-flash-8b', 'gemini-2.5-pro']
-    
-    for target_model in model_lineup:
-        for i in range(2):
-            try:
-                return client.models.generate_content(model=target_model, contents=contents)
-            except Exception as e:
-                err_str = str(e).lower()
-                print(f"⚠️ [{target_model} 응답] {e}")
-                
-                # 모델이 없거나, 무료 한도가 막혔거나, 서버가 터졌을 경우 즉시 다음 엔진으로 교체
-                if "404" in err_str or "not found" in err_str or "limit: 0" in err_str or "503" in err_str or "400" in err_str:
-                    print(f"🚨 {target_model} 일시적 사용 불가! 다음 엔진으로 스위칭합니다.")
-                    break 
-                
-                # 일시적인 트래픽 초과(429)일 경우에만 20초 숨 고르기
-                if "429" in err_str or "quota" in err_str: time.sleep(20)
-                else: break
-                
-    raise Exception("❌ 모든 무료 모델이 차단되었거나 응답하지 않습니다.")
+    for i in range(10): # 포기하지 않고 10번까지 재시도
+        try:
+            return client.models.generate_content(model='gemini-2.5-flash', contents=contents)
+        except Exception as e:
+            err_str = str(e).lower()
+            print(f"⚠️ [돌파 시도 {i+1}/10] 서버 응답: {e}")
+            
+            # 503(과부하) 또는 429(트래픽 초과) 시, 죽지 않고 대기 시간을 점진적으로 늘리며 존버
+            if "503" in err_str or "unavailable" in err_str or "429" in err_str or "quota" in err_str:
+                wait_time = 30 * (i + 1)
+                print(f"🚨 서버 혼잡. {wait_time}초 동안 숨을 고른 후 다시 문을 두드립니다...")
+                time.sleep(wait_time)
+            else: 
+                raise e # 503이나 429가 아닌 진짜 치명적 에러면 시스템 중지
+    raise Exception("❌ 10번의 재시도에도 구글 서버가 문을 열어주지 않습니다. 30분 뒤에 다시 실행해 주세요.")
 
 try:
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
