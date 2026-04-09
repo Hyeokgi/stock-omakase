@@ -10,7 +10,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxyuSEjPmg8rZPjLlG-YKck07QYxmZm0HtxvWAumvV2zp7RRpVaKDo6D-CiQ6pLqKFm/exec"
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
-print("🤖 [HYEOKS 리서치 센터] 2.5-flash 무한 돌파(Zombie) 엔진 가동...")
+print("🤖 [HYEOKS 리서치 센터] 2.5-Pro 무한 돌파(Zombie) 엔진 가동...")
 
 try:
     client = genai.Client(api_key=GEMINI_API_KEY)
@@ -18,7 +18,7 @@ except Exception as e:
     print(f"❌ API 초기화 실패: {e}")
     exit(1)
 
-# 💡 [최종 패치] 유일한 생명줄인 2.5-flash 하나만 물고 늘어지는 10연속 돌파 로직
+# 💡 [최종 패치] 유일한 생명줄인 2.5-pro 하나만 물고 늘어지는 10연속 돌파 로직
 def safe_generate_content(contents):
     for i in range(10): # 포기하지 않고 10번까지 재시도
         try:
@@ -97,7 +97,44 @@ try:
 
         warn = "\n[필수 경고] 고공권 판정. 비중을 절반으로 줄이고 칼손절 요망." if "고공권" in best_pick['tajeom'] else ("\n[필수 경고] 주의 장세. 오버나잇 비중 축소 요망." if is_korean_market_down else "")
 
-        base_prompt = f"너는 HYEOKS 증권 최고 수석 애널리스트야. 이미지와 데이터를 바탕으로 심층 리포트를 작성해. \n데이터: {best_pick['info']}, 매크로: 나스닥 {nasdaq}, 환율 {exchange_rate}, 유가 {wti_oil}, 증시 {market_status_text} {warn}\n1. 은어 배제, 2. 매크로/수급 딥리딩, 3. 차트 매물대 분석, 4. 논리적 목표/손절가. 5. 마지막줄: [DATA] 목표가:000, 손절가:000, 분할매수:{'X' if st_type=='short' else 'O'}\n[출력양식(들여쓰기 없이 마크다운)]\n<div class=\"broker-name\">HYEOKS SECURITIES | {'SHORT-TERM' if st_type=='short' else 'MID-TERM'} STRATEGY</div>\n<div class=\"header\"><p class=\"stock-title\">{target_name} ({target_code})</p><p class=\"subtitle\">{'단기 모멘텀 분석' if st_type=='short' else '대시세 눌림목 종가베팅'}: (소제목)</p></div>\n<div class=\"summary-box\"><strong>💡 Company Brief | HYEOKS 데스크</strong><br><br>(요약)</div>\n## 1. {'매크로 연동성 및 테마 주도력' if st_type=='short' else '펀더멘털 및 매크로 방어력'}\n(상세)\n## 2. 차트/거래량 딥리딩 및 타점 시나리오\n(상세)"
+        # 💡 [핵심 패치] 방배동 선수 + 강창권 + 신정재의 야수성을 담은 Ultimate Master Prompt
+        base_prompt = f"""너는 대한민국 최상위 1% 실전 트레이더들의 피 말리는 호가창 감각과 'HYEOKS 리서치'의 정교한 매크로 분석력을 완벽하게 결합한 수석 퀀트 애널리스트야.
+제공된 일봉 차트(Vision)와 데이터를 바탕으로, 여의도 샌님들처럼 뻔하고 방어적인 소리가 아닌, 실전 계좌의 수익률을 폭발시킬 수 있는 날카롭고 공격적인(동시에 정교하게 계산된) 심층 리포트를 작성해라.
+
+[입력 데이터]
+종목: {best_pick['info']}
+매크로 환경: 나스닥 {nasdaq}, 환율 {exchange_rate}, 유가 {wti_oil}, 국내증시 {market_status_text}
+{warn}
+
+[HYEOKS 딥리딩 절대 지침 - 명심해라]
+1. 은어 및 이모지 절대 금지: 리포트 본문에는 특정인의 이름, 'SS급', '단타용', '개미털기' 등 저급한 은어나 시스템 이모지를 절대 쓰지 마라. 냉철하고 품격 있는 전문 애널리스트의 어조를 완벽히 유지해라.
+2. 매크로-수급 융합: 현재 환율/유가/지수가 이 종목의 테마(수출/내수/원자재 등)에 미치는 인과관계를 입체적으로 서술해라. 거시경제의 위기를 이 종목이 어떻게 기회로 삼는지(또는 방어하는지) 짚어내라.
+3. 실전 야수의 타점 설계 (가장 중요):
+   - 단기 돌파(Short-term)인 경우: "신고가라 위험하다, 조심해라"라는 식의 겁먹은 소리를 하지 마라. 상단 매물대 공백을 확인했다면, 익일 장 초반 9시~9시 30분 사이 출회되는 '아침 투매(Morning Shakeout, -2~3% 구간)'를 과감하게 낚아채는 시나리오나, 직전 고점 지지선 부근에서 호가창 매수세가 붙을 때 올라타는 공격적 타점을 구체적인 가격으로 제시해라.
+   - 스윙 눌림목(Mid-term)인 경우: "장기 이평선에 닿았으니 사라"며 떨어지는 칼날을 맨손으로 잡게 하지 마라. 거래량이 완벽히 마른 상태(VCP)에서, 하락하던 5일선이 수평으로 눕거나 고개를 드는 변곡점, 혹은 도지(십자) 캔들이 발생하며 하방 경직성을 '눈으로 직접 확인한 후 진입하는 종가 베팅' 타점만 엄격하게 제시해라.
+4. 명확한 리스크 관리: 추상적인 손절이 아닌, 직관적인 가격(예: 20일선, 전일 캔들의 시가/저점 등)을 기준으로 한 기계적이고 칼 같은 손절 라인을 설정해라. 목표가는 대칭 이론 및 라운드 피겨(Round Figure)를 고려하여 산출해라.
+5. 가상계좌 연동 시스템 규칙 (절대 준수): 리포트 맨 마지막 줄에는 어떠한 부연 설명도 없이 오직 아래 형식만 출력해라. (숫자에 콤마 생략 가능)
+[DATA] 목표가:00000, 손절가:00000, 분할매수:{'X' if st_type=='short' else 'O'}
+
+[출력 양식 (마크다운 필수, 들여쓰기 절대 금지)]
+<div class="broker-name">HYEOKS SECURITIES | {'SHORT-TERM' if st_type=='short' else 'MID-TERM'} STRATEGY</div>
+<div class="header">
+<p class="stock-title">{target_name} ({target_code})</p>
+<p class="subtitle">{'매물대 진공 구간 돌파 및 오전장 투매 공략' if st_type=='short' else 'VCP 거래량 급감 및 5일선 변곡점 종가베팅'}: (여기에 핵심 요약 소제목 작성)</p>
+</div>
+
+<div class="summary-box">
+<strong>💡 Company Brief | HYEOKS 퀀트 데스크</strong><br><br>
+(종목의 펀더멘털, 핵심 테마, 현재 차트의 핵심 국면을 3~4문장으로 밀도 있게 압축 요약할 것.)
+</div>
+
+## 1. 매크로 인과관계 및 테마 주도력 심층 분석
+(현재 매크로 상황과 종목의 수급이 어떻게 맞물리는지 분석. 단순 나열이 아닌, 뭉칫돈(스마트 머니)이 이 종목을 선택할 수밖에 없는 논리적 근거를 서술할 것.)
+
+## 2. 시각적 차트 판독 및 실전 타점 시나리오
+(첨부된 차트 이미지의 매물대, 이평선 이격, 캔들의 윗꼬리/밑꼬리, 거래량 증감의 의미를 철저하게 딥리딩할 것.
+위에서 지시한 '실전 야수의 타점 설계' 원칙에 입각하여, 1차 진입 구간, 오전장 투매 대기 여부, 종가 베팅 확인 여부 등 실전 행동 지침을 구체적인 가격대와 함께 명확히 서술할 것.)
+"""
 
         response = safe_generate_content([base_prompt, img])
         img.close()
