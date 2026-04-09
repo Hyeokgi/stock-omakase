@@ -136,14 +136,17 @@ try:
             if len(r) < 10 or not r[0]: continue
             name, code, avg_p, inv_amt, _, _, b_date, t_p, s_p, manual = r
             avg_p, inv_amt, t_p, s_p = int(float(str(avg_p).replace(',',''))), int(float(str(inv_amt).replace(',',''))), int(float(str(t_p).replace(',',''))), int(float(str(s_p).replace(',','')))
-            try: curr_p = int(req.get(f"https://m.stock.naver.com/api/stock/{str(code).replace('\'','').zfill(6)}/basic", timeout=3).json()['closePrice'].replace(',',''))
+            
+            # 💡 [핵심 패치] 백슬래시 문법 에러를 없애기 위해 코드 변환을 별도로 분리!
+            clean_code = str(code).replace("'", "").strip().zfill(6)
+            try: curr_p = int(req.get(f"https://m.stock.naver.com/api/stock/{clean_code}/basic", timeout=3).json()['closePrice'].replace(',',''))
             except: curr_p = avg_p 
 
             rtn = (curr_p - avg_p) / avg_p if avg_p > 0 else 0
             reason = "수동매도" if str(manual).strip() == "매도" else ("🎯 목표가 도달" if curr_p >= t_p else ("📉 손절가 이탈" if curr_p <= s_p else ""))
 
             if reason: closed.append([name, avg_p, curr_p, f"{rtn*100:.2f}%", today, f"{'승리' if rtn>0 else '패배'} ({reason})"])
-            else: new_hold.append([name, f"'{str(code).replace('\'','').zfill(6)}", avg_p, inv_amt, curr_p, f"{rtn*100:.2f}%", b_date, t_p, s_p, ""])
+            else: new_hold.append([name, f"'{clean_code}", avg_p, inv_amt, curr_p, f"{rtn*100:.2f}%", b_date, t_p, s_p, ""])
 
         for p in picks:
             if not p: continue
