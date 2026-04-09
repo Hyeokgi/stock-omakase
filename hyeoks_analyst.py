@@ -10,7 +10,9 @@ import pdfkit
 import gspread
 import PIL.Image 
 from oauth2client.service_account import ServiceAccountCredentials
-import google.generativeai as genai
+
+# 💡 [핵심 패치 1] 구글의 최신 패키지 규격으로 전면 전환
+from google import genai
 
 warnings.filterwarnings("ignore")
 
@@ -26,16 +28,29 @@ GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxyuSEjPmg8rZPjLlG-YK
 
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
-print("🤖 [HYEOKS 리서치 센터] 2.5-flash 비전(Vision) 심층 분석 엔진 가동...")
+print("🤖 [HYEOKS 리서치 센터] 2.5-flash 비전(Vision) 심층 분석 엔진 가동 (최신 SDK 적용)...")
 
-def safe_generate_content(model, prompt_data):
+# 💡 [핵심 패치 2] 최신 Client 객체 생성
+try:
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    MODEL_ID = 'gemini-2.5-flash'
+except Exception as e:
+    print(f"❌ Gemini API 초기화 실패. API 키를 확인하세요: {e}")
+    exit(1)
+
+# 💡 [핵심 패치 3] 분당 토큰 리미트(TPM) 방어 시간 대폭 증가
+def safe_generate_content(contents):
     for i in range(5):
         try:
-            return model.generate_content(prompt_data)
+            return client.models.generate_content(
+                model=MODEL_ID,
+                contents=contents
+            )
         except Exception as e:
-            if "429" in str(e):
-                wait_time = 30 * (i + 1)
-                print(f"⚠️ API 할당량 초과. 숨 고르기를 위해 {wait_time}초 대기합니다... ({i+1}/5)")
+            err_str = str(e).lower()
+            if "429" in err_str or "quota" in err_str or "exhausted" in err_str:
+                wait_time = 45 * (i + 1) # 대기 시간을 45초, 90초, 135초로 대폭 늘려 확실히 숨을 고름
+                print(f"⚠️ API 분당 토큰 할당량 초과 감지. 숨 고르기를 위해 {wait_time}초 대기합니다... ({i+1}/5)")
                 time.sleep(wait_time)
             else:
                 raise e
@@ -46,9 +61,6 @@ try:
     creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
     gc = gspread.authorize(creds)
     doc = gc.open_by_url(SHEET_URL)
-
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-2.5-flash')
 
     # 매크로 지표 수집
     macro_sheet = doc.worksheet("시장요약").get_all_values()
@@ -96,9 +108,6 @@ try:
     market_status_text = "코스피/코스닥 20일선 이탈 (하락 변동성 장세 - 방어적 트레이딩 요망)" if is_korean_market_down else "코스피/코스닥 안정화 (추세 추종 및 비중 베팅 가능)"
 
     def generate_hyeoks_report(st_type):
-        # ==========================================
-        # 🧠 [AI 선택권 부활] AI가 매크로와 후보군을 입체적으로 분석하여 최고 1종목 발탁
-        # ==========================================
         if st_type == "short":
             if not valid_short_candidates: raise Exception("단기 돌파 조건에 부합하는 안전한 종목이 없습니다.")
             candidates_str = "\n".join([c['info'] for c in valid_short_candidates])
@@ -125,7 +134,7 @@ try:
         다른 설명은 절대 하지 말고, 네가 선택한 1개 종목의 '6자리 종목코드 숫자'만 정확히 출력해.
         """
         
-        raw_code = safe_generate_content(model, pick_prompt).text
+        raw_code = safe_generate_content(pick_prompt).text
         code_match = re.search(r'\d{6}', raw_code)
         if not code_match:
             target_code = valid_short_candidates[0]['code'] if st_type == "short" else valid_mid_candidates[0]['code']
@@ -229,7 +238,8 @@ try:
 (상세 서술)
 """
 
-        response = safe_generate_content(model, [final_prompt, img])
+        # 💡 [핵심 패치 4] 최신 SDK 기반 멀티모달 컨텐츠 전송 규격
+        response = safe_generate_content([final_prompt, img])
         img.close()
         os.remove(img_path)
 
@@ -252,8 +262,9 @@ try:
     print("🧠 [HYEOKS 수석 애널리스트] 매크로 및 비전 데이터 심층 분석 중...")
     report_short, code_short, pick_short = generate_hyeoks_report("short")
 
-    print("⏳ 단기 리포트 완료! API 과부하 방지를 위해 30초 휴식합니다...")
-    time.sleep(30)
+    # 💡 [핵심 패치 5] 두 리포트 생성 사이의 휴식 시간을 60초로 대폭 연장하여 토큰 초기화 보장
+    print("⏳ 단기 리포트 완료! 구글 API 토큰 리미트 방어를 위해 60초간 휴식합니다...")
+    time.sleep(60)
 
     report_mid, code_mid, pick_mid = generate_hyeoks_report("mid")
 
