@@ -18,9 +18,10 @@ except Exception as e:
     print(f"❌ API 초기화 실패: {e}")
     exit(1)
 
-# 💡 [최종 패치] 구글에 진짜 존재하는 모델들을 차례대로 테스트하여 무조건 뚫고 나가는 생존 로직
+# 💡 [최종 패치] 2026년 기준 현재 완벽하게 작동하는 2.5 세대 생존 라인업으로 변경
 def safe_generate_content(contents):
-    model_lineup = ['gemini-1.5-flash-latest', 'gemini-1.5-pro-latest', 'gemini-1.5-flash-8b-latest']
+    # 메인 엔진 -> 초경량/고속 엔진 -> 최고성능 엔진 순으로 탐색
+    model_lineup = ['gemini-2.5-flash', 'gemini-2.5-flash-8b', 'gemini-2.5-pro']
     
     for target_model in model_lineup:
         for i in range(2):
@@ -30,12 +31,12 @@ def safe_generate_content(contents):
                 err_str = str(e).lower()
                 print(f"⚠️ [{target_model} 응답] {e}")
                 
-                # 모델 이름이 틀렸거나, 한도가 0으로 막혀있거나, 503 과부하일 경우 즉시 다음 엔진으로 교체
+                # 모델이 없거나, 무료 한도가 막혔거나, 서버가 터졌을 경우 즉시 다음 엔진으로 교체
                 if "404" in err_str or "not found" in err_str or "limit: 0" in err_str or "503" in err_str or "400" in err_str:
-                    print(f"🚨 {target_model} 사용 불가! 다음 예비 엔진으로 스위칭합니다.")
+                    print(f"🚨 {target_model} 일시적 사용 불가! 다음 엔진으로 스위칭합니다.")
                     break 
                 
-                # 일시적인 트래픽 초과일 경우에만 20초 숨 고르기
+                # 일시적인 트래픽 초과(429)일 경우에만 20초 숨 고르기
                 if "429" in err_str or "quota" in err_str: time.sleep(20)
                 else: break
                 
