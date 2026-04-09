@@ -30,31 +30,25 @@ print("🤖 [HYEOKS 리서치 센터] 2.5-flash 비전(Vision) 심층 분석 엔
 
 try:
     client = genai.Client(api_key=GEMINI_API_KEY)
-    # 💡 [원상 복구] 수석님의 지시대로 압도적 차트 판독을 위해 다시 2.5-flash로 엔진 격상!
     MODEL_ID = 'gemini-2.5-flash'
 except Exception as e:
     print(f"❌ Gemini API 초기화 실패: {e}")
     exit(1)
 
-# 💡 [핵심 패치 3] 무한 대기를 막고, 진짜 에러 이유를 깃허브 로그에 찍어주는 스마트 디버거
 def safe_generate_content(contents):
-    for i in range(3): # 피 말리는 대기 시간을 줄이기 위해 3번만 시도
+    for i in range(3):
         try:
-            return client.models.generate_content(
-                model=MODEL_ID,
-                contents=contents
-            )
+            return client.models.generate_content(model=MODEL_ID, contents=contents)
         except Exception as e:
             err_str = str(e).lower()
-            print(f"⚠️ [디버그 원문] 구글 서버 응답: {e}") # 깃허브 액션 로그에서 정확한 이유를 보기 위함
-            
+            print(f"⚠️ [디버그 원문] 구글 서버 응답: {e}")
             if "429" in err_str or "quota" in err_str or "exhausted" in err_str:
                 wait_time = 30 * (i + 1)
                 print(f"⏳ 토큰/할당량 초과. {wait_time}초 숨 고르기... ({i+1}/3)")
                 time.sleep(wait_time)
             else:
                 raise e
-    raise Exception("❌ 재시도 횟수 초과: 구글 API 에러 (위의 '디버그 원문' 로그를 확인하세요)")
+    raise Exception("❌ 재시도 횟수 초과: 구글 API 에러")
 
 try:
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -122,7 +116,7 @@ try:
         {candidates_str}
 
         [행동 지침]
-        단순히 퀀트 점수가 높은 순으로 맹신하지 마라. 현재의 매크로 흐름(유가, 환율 등)과 엮일 수 있는 테마인지, 단기 고점 리스크(고공권)는 없는지, 거래량의 응축 상태는 완벽한지 인간 최고수 트레이더의 직감으로 평가해라.
+        단순히 퀀트 점수가 높은 순으로 맹신하지 마라. 현재의 매크로 흐름과 엮일 수 있는 테마인지, 거래량의 응축 상태는 완벽한지 평가해라.
         위 후보들 중 {sys_msg}을 단 1개만 찾아라.
         다른 설명은 절대 하지 말고, 네가 선택한 1개 종목의 '6자리 종목코드 숫자'만 정확히 출력해.
         """
@@ -149,8 +143,6 @@ try:
             f.write(img_res.content)
 
         img = PIL.Image.open(img_path)
-        
-        # 💡 [핵심 패치 2] 토큰 과식 방지: 차트 해상도를 적당히 압축하여 구글 서버 부담 완화
         img.thumbnail((800, 800))
 
         warning_msg = ""
@@ -170,7 +162,7 @@ try:
 
 [작성 지침 - HYEOKS Master Mode]
 1. 은어 배제: 특정인의 이름이나 'SS급', '단타용' 등 시스템 이모지 및 은어를 리포트 본문에 절대 노출하지 말 것.
-2. 통찰력: 이 종목이 현재 매크로(지수/유가/환율) 흐름 속에서 왜 시장의 뭉칫돈(스마트 머니)을 빨아들이고 있는지 서술할 것.
+2. 통찰력: 이 종목이 현재 매크로 흐름 속에서 왜 시장의 뭉칫돈을 빨아들이고 있는지 서술할 것.
 3. 차트 판독: 첨부된 차트의 매물대 소화 과정, 전고점 돌파 여부, 거래량의 발자국을 심층 분석할 것.
 4. 절대 규칙: 논리적인 매수 타점, 목표가, 손절가를 계산할 것.
 5. 가상계좌 연동 필수 형식 (리포트 맨 마지막 줄에 오직 이 형식으로만 작성, 숫자에 콤마 생략 가능):
@@ -206,9 +198,9 @@ try:
 [작성 지침 - HYEOKS Master Mode]
 1. 은어 배제: 특정인의 이름이나 내부 시스템 은어 및 이모지를 절대 사용하지 말 것. 정제된 애널리스트 어조 유지.
 2. 통찰력: 하락장 또는 변동성 장세 속에서도 이 종목이 왜 지지선을 방어하며 턴어라운드를 준비하고 있는지 서술할 것.
-3. 거래량 및 VCP 판독: 음봉 거래량의 극감(악성 매도 물량의 씨마름), 주요 이평선(20일선 등)에서의 방어 여부를 시각적으로 분석할 것.
-4. 리스크 관리 1 (확인 매매): 단순히 지지선에 닿았다고 예측하여 매수하는 것이 아니라, 하락하던 5일선이 수평으로 눕거나 위로 고개를 드는(턴어라운드) 흐름을 '눈으로 확인한 뒤 진입'하는 보수적 타점을 제시할 것.
-5. 리스크 관리 2 (비중 조절): 1차 매수가 부근에서 횡보 시 무의미한 추가 매수(물타기)를 엄격히 금지하고, 추세가 확실히 위로 방향을 틀 때 추가 비중을 싣는 직장인 맞춤형 스윙 전략을 서술할 것. 갭하락 대비 시나리오도 포함.
+3. 거래량 및 VCP 판독: 음봉 거래량의 극감(악성 매도 물량의 씨마름), 주요 이평선에서의 방어 여부를 시각적으로 분석할 것.
+4. 리스크 관리 1: 단순히 지지선에 닿았다고 매수하는 것이 아니라, 하락하던 5일선이 수평으로 눕거나 턴어라운드하는 흐름을 확인한 뒤 진입하는 타점을 제시할 것.
+5. 리스크 관리 2: 1차 매수가 부근에서 횡보 시 무의미한 물타기를 금지하고, 추세가 위로 틀 때 추가 비중을 싣는 스윙 전략 서술.
 6. 가상계좌 연동 필수 형식 (리포트 맨 마지막 줄에 오직 이 형식으로만 작성, 숫자에 콤마 생략 가능):
 [DATA] 목표가:00000, 손절가:00000, 분할매수:O
 
@@ -266,7 +258,6 @@ try:
         print("💰 [HYEOKS 퀀트 데스크] 가상계좌 시뮬레이션 가동 중...")
         hold_sheet = doc.worksheet("가상계좌_보유")
         closed_sheet = doc.worksheet("가상계좌_종료")
-
         hold_data = hold_sheet.get_all_values()
         headers = ["종목명", "종목코드", "매입단가", "투자금액", "현재가", "수익률(%)", "편입일", "목표가", "손절가", "수동매도"]
 
@@ -278,14 +269,12 @@ try:
         today_str = datetime.datetime.now(KST).strftime('%Y-%m-%d')
         new_hold_list = []
         closed_list = []
-
         req_session = requests.Session()
         req_session.headers.update({'User-Agent': 'Mozilla/5.0'})
 
         for row in hold_data[1:]:
             if len(row) < 10 or not row[0]: continue
             name, code, avg_price, invest_amt, _, _, buy_date, t_price, s_price, manual_sell = row
-
             avg_price = int(float(str(avg_price).replace(',', '')))
             invest_amt = int(float(str(invest_amt).replace(',', '')))
             t_price = int(float(str(t_price).replace(',', '')))
@@ -299,14 +288,10 @@ try:
                 curr_price = avg_price 
 
             return_rate = (curr_price - avg_price) / avg_price if avg_price > 0 else 0
-
             sell_reason = ""
-            if str(manual_sell).strip() == "매도":
-                sell_reason = "사용자 수동 중도 매도"
-            elif curr_price >= t_price:
-                sell_reason = "🎯 AI 목표가 도달 (전량 익절)"
-            elif curr_price <= s_price:
-                sell_reason = "📉 AI 손절가 이탈 (전량 손절)"
+            if str(manual_sell).strip() == "매도": sell_reason = "사용자 수동 중도 매도"
+            elif curr_price >= t_price: sell_reason = "🎯 AI 목표가 도달 (전량 익절)"
+            elif curr_price <= s_price: sell_reason = "📉 AI 손절가 이탈 (전량 손절)"
 
             if sell_reason:
                 result_str = "승리" if return_rate > 0 else "패배"
@@ -324,18 +309,15 @@ try:
             except: continue
 
             existing_idx = next((i for i, r in enumerate(new_hold_list) if r[0] == name), -1)
-
             if existing_idx != -1:
                 if is_split:
                     old_avg = new_hold_list[existing_idx][2]
                     old_invest = new_hold_list[existing_idx][3]
                     add_invest = 1000000 
-
                     new_invest = old_invest + add_invest
                     old_qty = old_invest / old_avg
                     add_qty = add_invest / curr_price
                     new_avg = int(new_invest / (old_qty + add_qty)) 
-
                     new_hold_list[existing_idx][2] = new_avg
                     new_hold_list[existing_idx][3] = new_invest
                     new_hold_list[existing_idx][4] = curr_price
@@ -365,4 +347,59 @@ try:
         .header { border-bottom: 4px solid #1a365d; margin-bottom: 35px; padding-bottom: 15px; }
         .stock-title { font-size: 38px; font-weight: 900; margin: 0; }
         .subtitle { font-size: 21px; color: #2b6cb0; font-weight: bold; margin-top: 8px; line-height: 1.4; }
-        .summary-box { background-color: #f8fafc; padding: 25px; border-left: 5px solid #
+        .summary-box { background-color: #f8fafc; padding: 25px; border-left: 5px solid #1a365d; margin-top: 25px; margin-bottom: 35px; border-radius: 6px; font-size: 105%; }
+        h2 { color: #1a365d; border-bottom: 2px solid #edf2f7; margin-top: 45px; margin-bottom: 25px; padding-bottom: 10px; font-size: 130%; }
+        p { margin-bottom: 20px; text-align: justify; word-break: keep-all; }
+        ul, ol { margin-bottom: 25px; padding-left: 25px; }
+        li { margin-bottom: 12px; }
+        strong { color: #1a365d; }
+        .chart-container { text-align: center; margin-top: 50px; page-break-inside: avoid; }
+        .chart-container h3 { color: #4a5568; font-size: 110%; margin-bottom: 15px; }
+        .chart-container img { max-width: 90%; border: 1px solid #cbd5e0; padding: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border-radius: 8px; }
+        .page-break { page-break-before: always; }
+    </style>"""
+
+    def make_chart_html(code, title):
+        return f'<div class="chart-container"><h3>📊 {title}</h3><img src="https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{code}.png"></div>'
+
+    full_html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">{css}</head><body>
+        {markdown.markdown(report_short)} {make_chart_html(code_short, "[트레이더의 관점] AI 시각적 일봉 차트 판독")}
+        <div class="page-break"></div>
+        {markdown.markdown(report_mid)} {make_chart_html(code_mid, "[직장인 종가베팅] AI 시각적 일봉 차트 판독")}
+    </body></html>"""
+
+    pdf_filename = f"HYEOKS_Report_{datetime.datetime.now(KST).strftime('%Y%m%d')}.pdf"
+    pdfkit.from_string(full_html, pdf_filename, options={'encoding': "UTF-8", 'enable-local-file-access': None})
+    print("✅ PDF 렌더링 완료!")
+
+    if GAS_WEB_APP_URL.startswith("http"):
+        print("📂 구글 드라이브 업로드 진행 중...")
+        with open(pdf_filename, "rb") as f:
+            pdf_base64 = base64.b64encode(f.read()).decode('utf-8')
+
+        for attempt in range(3):
+            try:
+                res = requests.post(GAS_WEB_APP_URL, json={"filename": pdf_filename, "base64": pdf_base64}, timeout=30)
+                if res.status_code == 200 and "success" in res.text:
+                    file_id = res.json().get("id")
+                    report_link = f"https://drive.google.com/uc?id={file_id}"
+                    doc.worksheet("리포트_게시").insert_row([datetime.datetime.now(KST).strftime('%Y-%m-%d'), report_link], index=2)
+                    print("✅ 앱시트 연동 완료!")
+                    break  
+                else:
+                    print(f"⚠️ 드라이브 업로드 응답 오류 (시도 {attempt+1}/3)")
+            except Exception as e:
+                print(f"⚠️ 드라이브 에러 (시도 {attempt+1}/3): {e}")
+                time.sleep(5) 
+
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        print("📲 텔레그램 PDF 발송 중...")
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
+        with open(pdf_filename, 'rb') as f:
+            response = requests.post(url, files={'document': f}, data={'chat_id': TELEGRAM_CHAT_ID, 'caption': "📊 [HYEOKS 리서치] AI 펀더멘털 및 시각적 차트 판독 심층 리포트\n\n💰 (가상계좌 포트폴리오 연동 완료)"})
+            if response.status_code == 200:
+                print("✅ 텔레그램 전송 성공!")
+
+except Exception as e:
+    print(f"\n❌ 에러 발생: {e}")
+    exit(1)
