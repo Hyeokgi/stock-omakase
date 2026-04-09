@@ -10,7 +10,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxyuSEjPmg8rZPjLlG-YKck07QYxmZm0HtxvWAumvV2zp7RRpVaKDo6D-CiQ6pLqKFm/exec"
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
-print("🤖 [HYEOKS 리서치 센터] 2.5-flash 메인 엔진 가동 대기중...")
+print("🤖 [HYEOKS 리서치 센터] 2.5-flash 비전 심층 분석 엔진 가동...")
 
 try:
     client = genai.Client(api_key=GEMINI_API_KEY)
@@ -18,26 +18,36 @@ except Exception as e:
     print(f"❌ API 초기화 실패: {e}")
     exit(1)
 
-# 💡 [핵심 패치] 메인 엔진(2.5) 서버 다운 시, 예비 엔진(2.0)으로 즉각 스위칭하는 생존 로직
+# 💡 [최종 패치] 한도가 0으로 막혀있을 경우, 100% 무료 개방된 1.5-flash로 강제 우회하는 무결점 생존 로직
 def safe_generate_content(contents):
     current_model = 'gemini-2.5-flash'
-    for i in range(3):
+    for i in range(4): # 재시도 횟수를 4번으로 늘려 우회할 시간을 확보
         try:
             return client.models.generate_content(model=current_model, contents=contents)
         except Exception as e:
             err_str = str(e).lower()
             print(f"⚠️ [구글 서버 응답] {e}")
             
-            # 503 과부하 에러 시 예비 엔진으로 교체 후 즉시 재시도
+            # 1. 메인 서버(2.5)가 과부하로 터졌을 때
             if "503" in err_str or "unavailable" in err_str:
-                print(f"🚨 메인 서버 과부하 감지! 즉시 예비 엔진(gemini-2.0-flash)으로 전환합니다.")
-                current_model = 'gemini-2.0-flash'
+                print(f"🚨 메인 서버 과부하! 안정적인 범용 엔진(gemini-1.5-flash)으로 즉시 우회합니다.")
+                current_model = 'gemini-1.5-flash'
                 time.sleep(3)
                 continue
                 
+            # 2. 토큰 초과 에러가 났을 때
             if "429" in err_str or "quota" in err_str:
+                # 2-1. 무료 계정 한도가 아예 0으로 차단된 모델일 경우 강제 우회
+                if "limit: 0" in err_str and current_model != 'gemini-1.5-flash':
+                    print(f"🚨 현재 모델의 무료 한도가 0으로 차단되었습니다. 범용 엔진(gemini-1.5-flash)으로 강제 스위칭합니다.")
+                    current_model = 'gemini-1.5-flash'
+                    time.sleep(3)
+                    continue
+                
+                # 2-2. 진짜로 단기 트래픽을 너무 많이 쓴 경우 숨 고르기
                 time.sleep(30 * (i + 1))
-            else: raise e
+            else: 
+                raise e
     raise Exception("❌ API 에러 재시도 초과")
 
 try:
