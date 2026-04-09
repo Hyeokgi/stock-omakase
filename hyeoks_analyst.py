@@ -10,8 +10,6 @@ import pdfkit
 import gspread
 import PIL.Image 
 from oauth2client.service_account import ServiceAccountCredentials
-
-# 💡 [핵심 패치 1] 구글의 최신 패키지 규격으로 전면 전환
 from google import genai
 
 warnings.filterwarnings("ignore")
@@ -28,19 +26,19 @@ GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxyuSEjPmg8rZPjLlG-YK
 
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
-print("🤖 [HYEOKS 리서치 센터] 2.5-flash 비전(Vision) 심층 분석 엔진 가동 (최신 SDK 적용)...")
+print("🤖 [HYEOKS 리서치 센터] 2.5-flash 비전(Vision) 심층 분석 엔진 가동...")
 
-# 💡 [핵심 패치 2] 최신 Client 객체 생성
 try:
     client = genai.Client(api_key=GEMINI_API_KEY)
+    # 💡 [원상 복구] 수석님의 지시대로 압도적 차트 판독을 위해 다시 2.5-flash로 엔진 격상!
     MODEL_ID = 'gemini-2.5-flash'
 except Exception as e:
-    print(f"❌ Gemini API 초기화 실패. API 키를 확인하세요: {e}")
+    print(f"❌ Gemini API 초기화 실패: {e}")
     exit(1)
 
-# 💡 [핵심 패치 3] 분당 토큰 리미트(TPM) 방어 시간 대폭 증가
+# 💡 [핵심 패치 3] 무한 대기를 막고, 진짜 에러 이유를 깃허브 로그에 찍어주는 스마트 디버거
 def safe_generate_content(contents):
-    for i in range(5):
+    for i in range(3): # 피 말리는 대기 시간을 줄이기 위해 3번만 시도
         try:
             return client.models.generate_content(
                 model=MODEL_ID,
@@ -48,13 +46,15 @@ def safe_generate_content(contents):
             )
         except Exception as e:
             err_str = str(e).lower()
+            print(f"⚠️ [디버그 원문] 구글 서버 응답: {e}") # 깃허브 액션 로그에서 정확한 이유를 보기 위함
+            
             if "429" in err_str or "quota" in err_str or "exhausted" in err_str:
-                wait_time = 45 * (i + 1) # 대기 시간을 45초, 90초, 135초로 대폭 늘려 확실히 숨을 고름
-                print(f"⚠️ API 분당 토큰 할당량 초과 감지. 숨 고르기를 위해 {wait_time}초 대기합니다... ({i+1}/5)")
+                wait_time = 30 * (i + 1)
+                print(f"⏳ 토큰/할당량 초과. {wait_time}초 숨 고르기... ({i+1}/3)")
                 time.sleep(wait_time)
             else:
                 raise e
-    raise Exception("❌ 재시도 횟수 초과: 구글 API 에러")
+    raise Exception("❌ 재시도 횟수 초과: 구글 API 에러 (위의 '디버그 원문' 로그를 확인하세요)")
 
 try:
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -62,7 +62,6 @@ try:
     gc = gspread.authorize(creds)
     doc = gc.open_by_url(SHEET_URL)
 
-    # 매크로 지표 수집
     macro_sheet = doc.worksheet("시장요약").get_all_values()
     nasdaq = macro_sheet[1][4]
     exchange_rate = macro_sheet[1][6]
@@ -70,9 +69,6 @@ try:
 
     tech_data = doc.worksheet("주가데이터_보조").get_all_values()[1:30]
     
-    # ==========================================
-    # 🔍 후보군 추출 및 국내장 매크로 분위기 자동 판독
-    # ==========================================
     valid_short_candidates = []
     valid_mid_candidates = []
     is_korean_market_down = False 
@@ -90,16 +86,13 @@ try:
         if "주의장세" in tajeom:
             is_korean_market_down = True
             
-        # ❌ [안전망: 무조건 탈락 조건]
         if "상한가" in tajeom or "29." in change_rate or "30." in change_rate: continue 
         if "윗꼬리 위험" in shadow_status or "윗꼬리" in tajeom: continue 
         if re.search(r'매수금지|자본잠식|딱지|관망|데이터 부족', tajeom): continue 
             
         cand_info = f"종목:{name}({code}), 현재가:{r[2]}({change_rate}), 5일선:{r[4]}, 20일선:{r[5]}, 타점:{tajeom}, 퀀트점수:{score_str}, 거래량:{r[18] if len(r)>18 else ''}, 테마:{r[19] if len(r)>19 else '개별주'}"
-        
         cand_data = {'name': name, 'code': code, 'tajeom': tajeom, 'info': cand_info}
         
-        # 트랙 분류 (돌파/주도주는 단기, 나머지는 스윙)
         if "돌파" in score_str or "주도주" in tajeom:
             valid_short_candidates.append(cand_data)
         else:
@@ -156,6 +149,9 @@ try:
             f.write(img_res.content)
 
         img = PIL.Image.open(img_path)
+        
+        # 💡 [핵심 패치 2] 토큰 과식 방지: 차트 해상도를 적당히 압축하여 구글 서버 부담 완화
+        img.thumbnail((800, 800))
 
         warning_msg = ""
         if "고공권" in best_pick['tajeom']:
@@ -163,9 +159,6 @@ try:
         elif is_korean_market_down:
             warning_msg = "\n[필수 경고] 현재 국내 증시가 20일선을 이탈한 '주의 장세'입니다. 내일 아침 갭하락 리스크를 피하기 위해 '오버나잇 비중을 축소하고, 익일 장 초반 지지선 방어를 확인한 뒤 진입'하라는 보수적 가이드를 반드시 포함하십시오."
 
-        # ==========================================
-        # 📝 [리포트 작성 프롬프트]
-        # ==========================================
         if st_type == "short":
             final_prompt = f"""너는 압도적인 모멘텀 분석과 실전 호가창의 심리를 꿰뚫는 HYEOKS 증권의 최고 수석 퀀트 애널리스트야. 
 내가 첨부한 '일봉 차트 이미지'와 아래 [데이터]를 바탕으로 종목코드 '{target_code}'에 대한 단기 돌파(Short-term) 심층 리포트를 작성해.
@@ -238,7 +231,6 @@ try:
 (상세 서술)
 """
 
-        # 💡 [핵심 패치 4] 최신 SDK 기반 멀티모달 컨텐츠 전송 규격
         response = safe_generate_content([final_prompt, img])
         img.close()
         os.remove(img_path)
@@ -262,9 +254,8 @@ try:
     print("🧠 [HYEOKS 수석 애널리스트] 매크로 및 비전 데이터 심층 분석 중...")
     report_short, code_short, pick_short = generate_hyeoks_report("short")
 
-    # 💡 [핵심 패치 5] 두 리포트 생성 사이의 휴식 시간을 60초로 대폭 연장하여 토큰 초기화 보장
-    print("⏳ 단기 리포트 완료! 구글 API 토큰 리미트 방어를 위해 60초간 휴식합니다...")
-    time.sleep(60)
+    print("⏳ 단기 리포트 완료! 구글 API 토큰 리미트 방어를 위해 30초간 휴식합니다...")
+    time.sleep(30)
 
     report_mid, code_mid, pick_mid = generate_hyeoks_report("mid")
 
@@ -374,59 +365,4 @@ try:
         .header { border-bottom: 4px solid #1a365d; margin-bottom: 35px; padding-bottom: 15px; }
         .stock-title { font-size: 38px; font-weight: 900; margin: 0; }
         .subtitle { font-size: 21px; color: #2b6cb0; font-weight: bold; margin-top: 8px; line-height: 1.4; }
-        .summary-box { background-color: #f8fafc; padding: 25px; border-left: 5px solid #1a365d; margin-top: 25px; margin-bottom: 35px; border-radius: 6px; font-size: 105%; }
-        h2 { color: #1a365d; border-bottom: 2px solid #edf2f7; margin-top: 45px; margin-bottom: 25px; padding-bottom: 10px; font-size: 130%; }
-        p { margin-bottom: 20px; text-align: justify; word-break: keep-all; }
-        ul, ol { margin-bottom: 25px; padding-left: 25px; }
-        li { margin-bottom: 12px; }
-        strong { color: #1a365d; }
-        .chart-container { text-align: center; margin-top: 50px; page-break-inside: avoid; }
-        .chart-container h3 { color: #4a5568; font-size: 110%; margin-bottom: 15px; }
-        .chart-container img { max-width: 90%; border: 1px solid #cbd5e0; padding: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); border-radius: 8px; }
-        .page-break { page-break-before: always; }
-    </style>"""
-
-    def make_chart_html(code, title):
-        return f'<div class="chart-container"><h3>📊 {title}</h3><img src="https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{code}.png"></div>'
-
-    full_html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">{css}</head><body>
-        {markdown.markdown(report_short)} {make_chart_html(code_short, "[트레이더의 관점] AI 시각적 일봉 차트 판독")}
-        <div class="page-break"></div>
-        {markdown.markdown(report_mid)} {make_chart_html(code_mid, "[직장인 종가베팅] AI 시각적 일봉 차트 판독")}
-    </body></html>"""
-
-    pdf_filename = f"HYEOKS_Report_{datetime.datetime.now(KST).strftime('%Y%m%d')}.pdf"
-    pdfkit.from_string(full_html, pdf_filename, options={'encoding': "UTF-8", 'enable-local-file-access': None})
-    print("✅ PDF 렌더링 완료!")
-
-    if GAS_WEB_APP_URL.startswith("http"):
-        print("📂 구글 드라이브 업로드 진행 중...")
-        with open(pdf_filename, "rb") as f:
-            pdf_base64 = base64.b64encode(f.read()).decode('utf-8')
-
-        for attempt in range(3):
-            try:
-                res = requests.post(GAS_WEB_APP_URL, json={"filename": pdf_filename, "base64": pdf_base64}, timeout=30)
-                if res.status_code == 200 and "success" in res.text:
-                    file_id = res.json().get("id")
-                    report_link = f"https://drive.google.com/uc?id={file_id}"
-                    doc.worksheet("리포트_게시").insert_row([datetime.datetime.now(KST).strftime('%Y-%m-%d'), report_link], index=2)
-                    print("✅ 앱시트 연동 완료!")
-                    break  
-                else:
-                    print(f"⚠️ 드라이브 업로드 응답 오류 (시도 {attempt+1}/3)")
-            except Exception as e:
-                print(f"⚠️ 드라이브 에러 (시도 {attempt+1}/3): {e}")
-                time.sleep(5) 
-
-    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
-        print("📲 텔레그램 PDF 발송 중...")
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument"
-        with open(pdf_filename, 'rb') as f:
-            response = requests.post(url, files={'document': f}, data={'chat_id': TELEGRAM_CHAT_ID, 'caption': "📊 [HYEOKS 리서치] AI 펀더멘털 및 시각적 차트 판독 심층 리포트\n\n💰 (가상계좌 포트폴리오 연동 완료)"})
-            if response.status_code == 200:
-                print("✅ 텔레그램 전송 성공!")
-
-except Exception as e:
-    print(f"\n❌ 에러 발생: {e}")
-    exit(1)
+        .summary-box { background-color: #f8fafc; padding: 25px; border-left: 5px solid #
