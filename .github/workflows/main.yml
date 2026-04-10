@@ -1,7 +1,5 @@
 name: Stock Omakase Auto Scraper
 
-name: Stock Omakase Auto Scraper
-
 on:
   workflow_dispatch: # 💡 게으른 깃허브 알람은 삭제! 오직 구글의 원격 명령만 받는다!
 
