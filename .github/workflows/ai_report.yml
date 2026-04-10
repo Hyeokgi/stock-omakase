@@ -3,6 +3,11 @@ name: 🤖 HYEOKS AI 리서치 퍼블리셔
 on: 
   workflow_dispatch:
 
+# 💡 [핵심 방패 장착] main.yml과 완벽하게 동일한 대기열 그룹 지정!
+concurrency:
+  group: hyeoks-google-sheet
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
