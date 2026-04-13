@@ -3,8 +3,12 @@ name: 🌅 HYEOKS 모닝 브리핑
 on:
   workflow_dispatch:
   schedule:
-    # 💡 UTC 시간 기준 22:50 (한국 시간 아침 7:55) 월요일~금요일 실행
+    # 💡 UTC 시간 22:50 (한국 시간 아침 7:55) 실행
     - cron: '50 22 * * 0-4'
+
+concurrency:
+  group: hyeoks-google-sheet
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -21,7 +25,14 @@ jobs:
     - name: 📦 필수 라이브러리 설치
       run: |
         python -m pip install --upgrade pip
-        pip install requests beautifulsoup4 google-genai>=0.1.2
+        # 💡 gspread와 oauth2client 추가!
+        pip install requests beautifulsoup4 google-genai>=0.1.2 gspread oauth2client
+
+    - name: 🚀 구글 시트 보안 인증 파일 생성
+      env:
+        SECRET_JSON: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+      run: |
+        echo "$SECRET_JSON" > secret.json
 
     - name: 🌅 모닝 브리핑 생성 및 텔레그램 발송
       env:
