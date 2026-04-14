@@ -94,7 +94,8 @@ def generate_morning_briefing(market_data, news_data, kor_context):
 """
     for i in range(10):
         try:
-            response = client.models.generate_content(model='gemini-2.5-pro', contents=prompt)
+            # 💡 모델명을 gemini-1.5-pro 또는 gemini-2.0-flash 로 수정하십시오.
+            response = client.models.generate_content(model='gemini-1.5-pro', contents=prompt)
             return response.text
         except Exception as e:
             if "503" in str(e) or "429" in str(e):
