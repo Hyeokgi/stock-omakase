@@ -29,8 +29,8 @@ jobs:
 
     - name: 🚀 구글 시트 보안 인증 파일 생성
       env:
-        # 💡 [핵심 수정] 수석님의 진짜 시크릿 이름인 GCP_CREDENTIALS 로 변경!
-        SECRET_JSON: ${{ secrets.GCP_CREDENTIALS }}
+        # 💡 [핵심 수정] 수석님의 진짜 시크릿 이름으로 원상 복구!
+        SECRET_JSON: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
       run: |
         echo "$SECRET_JSON" > secret.json
 
