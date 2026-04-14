@@ -6,35 +6,30 @@ on:
     # 한국 시간 아침 7시 55분 (UTC 22:55)
     - cron: '55 22 * * 0-4'
 
-concurrency:
-  group: hyeoks-google-sheet
-  cancel-in-progress: false
-
 jobs:
   build:
     runs-on: ubuntu-latest
+    
     steps:
-    - name: 📥 코드 가져오기
+    - name: Checkout code
       uses: actions/checkout@v4
-
-    - name: 🐍 파이썬 세팅
+      
+    - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
-
-    - name: 📦 필수 라이브러리 설치
+        # 에러의 원인이었던 cache 옵션 삭제 완료!
+        
+    - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install requests beautifulsoup4 google-genai>=0.1.2 gspread oauth2client
-
-    # 💡 [필살기] secret.json 파일 만드는 단계 원천 삭제!
-
-    - name: 🌅 모닝 브리핑 생성 및 텔레그램 발송
+        pip install requests beautifulsoup4 pandas gspread oauth2client kiwipiepy
+        
+    - name: Create secret.json
       env:
-        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        # 💡 파일을 만들지 않고 파이썬 메모리로 다이렉트 전송!
-        GCP_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+        GCP_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }} 
+      run: echo "$GCP_CREDENTIALS" > secret.json
+        
+    - name: Run Main Engine
       run: |
         python hyeoks_morning.py
