@@ -31,5 +31,4 @@ jobs:
       run: echo "$GCP_CREDENTIALS" > secret.json
         
     - name: Run Main Engine
-      run: |
-        python hyeoks_morning.py
+      run: python hyeoks_morning.py
