@@ -3,8 +3,8 @@ name: 🌅 HYEOKS 모닝 브리핑
 on:
   workflow_dispatch:
   schedule:
-    # 💡 UTC 시간 22:50 (한국 시간 아침 7:55) 실행
-    - cron: '50 22 * * 0-4'
+    # 한국 시간 아침 7시 55분 (UTC 22:55)
+    - cron: '55 22 * * 0-4'
 
 concurrency:
   group: hyeoks-google-sheet
@@ -29,8 +29,8 @@ jobs:
 
     - name: 🚀 구글 시트 보안 인증 파일 생성
       env:
-        # 💡 [핵심 수정] 수석님의 진짜 시크릿 이름으로 원상 복구!
-        SECRET_JSON: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+        # 💡 [필살 수정] main.yml에서 성공했던 진짜 시크릿 이름인 GCP_CREDENTIALS를 사용합니다.
+        SECRET_JSON: ${{ secrets.GCP_CREDENTIALS }}
       run: |
         echo "$SECRET_JSON" > secret.json
 
