@@ -27,16 +27,14 @@ jobs:
         python -m pip install --upgrade pip
         pip install requests beautifulsoup4 google-genai>=0.1.2 gspread oauth2client
 
-    - name: 🚀 구글 시트 보안 인증 파일(secret.json) 만들기
-      env:
-        # 💡 [정답] 깃허브 금고의 '진짜 이름'을 정확히 호출!
-        GCP_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }} 
-      run: echo "$GCP_CREDENTIALS" > secret.json
-      
+    # 💡 [필살기] secret.json 파일 만드는 단계 원천 삭제!
+
     - name: 🌅 모닝 브리핑 생성 및 텔레그램 발송
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        # 💡 파일을 만들지 않고 파이썬 메모리로 다이렉트 전송!
+        GCP_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
       run: |
         python hyeoks_morning.py
