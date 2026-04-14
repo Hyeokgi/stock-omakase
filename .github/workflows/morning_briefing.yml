@@ -31,7 +31,7 @@ jobs:
         python -c "import os; open('secret.json', 'w').write(os.environ.get('SECRET_JSON', ''))"
       env:
         # 💡 여기가 제일 중요합니다!
-        SECRET_JSON: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+        SECRET_JSON: ${{ secrets.GCP_CREDENTIALS }}
     - name: 🌅 모닝 브리핑 생성 및 텔레그램 발송
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
