@@ -10,7 +10,44 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  build:name: 🌅 HYEOKS 모닝 브리핑
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '55 22 * * 0-4'
+
+concurrency:
+  group: hyeoks-google-sheet
+  cancel-in-progress: false
+
+jobs:
   build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: 📥 코드 가져오기
+      uses: actions/checkout@v4
+
+    - name: 🐍 파이썬 세팅
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: 📦 필수 라이브러리 설치
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests beautifulsoup4 google-genai>=0.1.2 gspread oauth2client
+
+    - name: 🌅 모닝 브리핑 생성 및 텔레그램 발송
+      env:
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        # 💡 [핵심] 수석님이 쓰시는 2개의 열쇠를 모두 파이썬으로 쏴줍니다!
+        KEY_1: ${{ secrets.GCP_CREDENTIALS }}
+        KEY_2: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+      run: |
+        python hyeoks_morning.py
     runs-on: ubuntu-latest
     steps:
     - name: 📥 코드 가져오기
