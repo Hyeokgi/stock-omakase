@@ -43,14 +43,12 @@ def get_after_hours_rate(code):
 
 def get_yesterday_korean_context():
     try:
-        # 💡 [핵심 패치] 파일(secret.json)을 아예 찾지 않고, 깃허브 변수에서 다이렉트로 읽어옵니다.
         gcp_creds_str = os.environ.get("GCP_CREDENTIALS")
         if not gcp_creds_str or len(gcp_creds_str.strip()) < 10:
             return "🚨 [진짜 구글시트 에러] 깃허브 환경변수(GCP_CREDENTIALS)가 비어있습니다."
         
         creds_dict = json.loads(gcp_creds_str)
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        # 파일 이름 대신 딕셔너리로 직접 인증 통과!
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         doc = client.open_by_url(SHEET_URL)
@@ -83,6 +81,8 @@ def get_yesterday_korean_context():
 
 def generate_morning_briefing(market_data, news_data, kor_context):
     client = genai.Client(api_key=GEMINI_API_KEY)
+    
+    # 💡 [핵심 패치] AI의 거짓말(0% 보합) 방지 및 퀀트 우량주 폄하 금지 로직 추가
     prompt = f"""너는 대한민국 최상위 1% 실전 트레이더를 위한 HYEOKS 리서치 센터의 수석 매크로 애널리스트야.
 아래의 데이터를 융합하여 오늘 아침 9시 장 개장 전 트레이더가 읽을 '모닝 브리핑'을 작성해라.
 
@@ -96,13 +96,15 @@ def generate_morning_briefing(market_data, news_data, kor_context):
 1. 군더더기 철저히 배제: "202X년 X월", 인사말, 서론, "보고자:" 등의 쓸데없는 양식을 절대 생성하지 마라. 오직 본문 3단 구성만 출력해라.
 2. 3단 구성 체재:
    - 🌎 [글로벌 매크로 요약]: 제공된 뉴스 헤드라인들을 바탕으로 간밤의 시장 분위기(미 증시, 환율, 주요 이슈)를 3줄로 요약.
-   - 🇰🇷 [어제 포착 종목 NXT 브리핑]: (핵심) 어제 포착된 종목들을 뭉뚱그려 설명하지 마라! 전달받은 종목명({kor_context})을 '반드시 하나씩 개별적으로 나열'하고, 각각의 시간외 등락률 수치를 적어라. 만약 "변동없음"이나 "확인불가"라면 "보합(0%) 마감"으로 간주하고, 이에 따른 오늘 아침 시초가 대응 전략(홀딩, 익절, 관망 등)을 종목별로 짧게 코멘트해라.
-   - 🎯 [오늘의 액션 플랜]: 주요 뉴스와 한국 시간외 데이터를 종합하여, 오늘 오전 9시~10시에 어떤 테마를 집중 타격하고 어떤 테마를 버려야 할지 실전 트레이딩 시나리오(Case 1, Case 2 등)를 구체적으로 제시해라.
+   
+   - 🇰🇷 [어제 포착 종목 NXT 브리핑]: 어제 포착된 종목들을 뭉뚱그려 설명하지 말고, 전달받은 종목명({kor_context})을 '반드시 하나씩 개별적으로 나열'하며 시간외 등락률을 적어라.
+     🚨 [데이터 팩트체크 주의]: 만약 데이터에 "확인불가", "데이터 수집불가" 등이 적혀있다면 절대 임의로 "0% 보합"이라고 짐작해서 거짓말하지 마라. "시간외 수집 누락(확인불가)"이라고 있는 그대로 팩트만 기재해라.
+     🚨 [비(非)주도주 존중 주의]: 여기에 나열된 어제 포착 종목들은 모두 HYEOKS 퀀트 시스템에서 80점 이상의 최고점을 받은 특A급 우량 종목들이다. 오늘 글로벌 메인 뉴스 테마와 엮이지 않았다는 이유만으로 "소외 가능성, 무조건 현금화" 운운하며 함부로 잡주 취급하거나 폄하하지 마라. 각 종목이 가진 개별적인 차트 모멘텀이나 원래의 테마가 유효함을 인정하고, 객관적인 홀딩/대응 관점을 짧게 코멘트해라.
+     
+   - 🎯 [오늘의 액션 플랜]: 주요 뉴스와 한국 시간외 데이터를 종합하여, 오늘 오전 9시~10시에 어떤 테마를 집중 타격하고 어떤 테마를 보수적으로 볼지 실전 트레이딩 시나리오(Case 1, Case 2 등)를 구체적으로 제시해라.
 """
     for i in range(10):
         try:
-            # 💡 [최종 수정] 단종된 2.0을 버리고, 가장 똑똑한 2.5-pro 로 원상복구! 
-            # (만약 에러가 난다면 'gemini-2.5-flash' 로 적으시면 무조건 통과됩니다.)
             response = client.models.generate_content(model='gemini-2.5-pro', contents=prompt)
             return response.text
         except Exception as e:
