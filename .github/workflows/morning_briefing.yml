@@ -26,12 +26,11 @@ jobs:
         python -m pip install --upgrade pip
         pip install requests beautifulsoup4 google-genai>=0.1.2 gspread oauth2client
 
-    - name: 🚀 구글 시트 보안 인증 파일(secret.json) 생성
-      run: |
-        python -c "import os; open('secret.json', 'w').write(os.environ.get('SECRET_JSON', ''))"
+    - name: 🚀 구글 시트 보안 인증 파일(secret.json) 만들기
       env:
-        # 💡 여기가 제일 중요합니다!
-        SECRET_JSON: ${{ secrets.GCP_CREDENTIALS }}
+        GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }} 
+      run: echo "$GCP_CREDENTIALS" > secret.json
+
     - name: 🌅 모닝 브리핑 생성 및 텔레그램 발송
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
