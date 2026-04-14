@@ -2,7 +2,6 @@ name: 🌅 HYEOKS 모닝 브리핑
 
 on:
   workflow_dispatch:
-  # 💡 [알람시계 유지] 매일 아침 7시 55분에 스스로 작동합니다.
   schedule:
     - cron: '55 22 * * 0-4'
 
@@ -27,17 +26,14 @@ jobs:
         python -m pip install --upgrade pip
         pip install requests beautifulsoup4 google-genai>=0.1.2 gspread oauth2client
 
-    - name: 🚀 구글 시트 보안 인증 파일(secret.json) 만들기
-      env:
-        # 💡 [핵심 복붙] scanner_run.yml 에서 완벽하게 작동하던 비밀번호 생성 로직!
-        GCP_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }} 
-      run: echo "$GCP_CREDENTIALS" > secret.json
+    # 💡 [핵심] secret.json 파일 만드는 단계를 아예 삭제해버렸습니다!
 
     - name: 🌅 모닝 브리핑 생성 및 텔레그램 발송
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      # 💡 [실행 파일 유지] 아침용 파이썬 스크립트를 실행합니다.
+        # 💡 [핵심] 파이썬이 직접 읽어갈 수 있도록 환경변수로 바로 쏴줍니다.
+        GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
       run: |
         python hyeoks_morning.py
