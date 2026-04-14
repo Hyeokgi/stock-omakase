@@ -731,7 +731,7 @@ if __name__ == "__main__":
     now_kst = datetime.datetime.now(KST)
     if now_kst.hour == 15 and 10 <= now_kst.minute < 20:
         # ⚠️ [필수] 여기에 아까 구글에서 발급받은 본인의 웹 앱 URL을 붙여넣으세요!
-        GOOGLE_WEBHOOK_URL = "https://script.google.com/macros/s/여기에_주소_붙여넣기/exec"
+        GOOGLE_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbytDXt5sdOFDB9cV1iiGXBV0ecYtQyrfQ4akk6bztMiMqrUzqidev64XTxNyffE_mqT/exec"
         
         print("⏳ AI 분석 완료. 최신 가격 갱신 및 리포트 생성을 위해 구글에 바통을 넘깁니다...")
         try:
