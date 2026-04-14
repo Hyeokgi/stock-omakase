@@ -42,19 +42,18 @@ def get_after_hours_rate(code):
     except:
         return "조회불가"
 
-# 💡 [핵심 패치] 파일을 거치지 않고 직접 권한을 획득하는 안전한 방식
 def get_yesterday_korean_context():
     try:
-        gcp_creds_str = os.environ.get("GCP_CREDENTIALS")
-        
-        # 🚨 여기서 걸린다면 100% 깃허브 시크릿에 문제가 있는 것입니다!
-        if not gcp_creds_str or len(gcp_creds_str.strip()) < 10:
-            return "구글 시트 연동 실패: 깃허브 시크릿(GCP_CREDENTIALS)이 텅 비어있습니다. 깃허브 Settings에서 이름을 다시 확인해주세요!"
+        # 💡 [핵심 패치] KEY_1이 비어있으면 자동으로 KEY_2를 찾아 여는 쌍끌이 스위치!
+        creds_str = os.environ.get("KEY_1")
+        if not creds_str or len(creds_str.strip()) < 10:
+            creds_str = os.environ.get("KEY_2")
+            
+        if not creds_str or len(creds_str.strip()) < 10:
+            return "구글 시트 연동 실패: 깃허브(Settings -> Secrets)에 키가 완전히 증발했습니다! 키를 새로 등록해주세요."
 
-        creds_dict = json.loads(gcp_creds_str)
+        creds_dict = json.loads(creds_str)
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        
-        # 파일 이름 대신 딕셔너리(사전) 형태로 직접 인증
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         doc = client.open_by_url(SHEET_URL)
