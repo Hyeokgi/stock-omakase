@@ -1,4 +1,4 @@
-import os, requests, datetime, time
+import os, requests, datetime, time, json
 from bs4 import BeautifulSoup
 from google import genai
 import gspread
@@ -13,7 +13,6 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit"
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
-# 💡 [핵심 패치] 해외망 차단이 없는 '네이버 주요 뉴스'로 우회하여 매크로 흐름 파악
 def get_us_market_summary():
     headers = {'User-Agent': 'Mozilla/5.0'}
     try:
@@ -50,10 +49,18 @@ def get_after_hours_rate(code):
 def get_yesterday_korean_context():
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
-        client = gspread.authorize(creds)
-        doc = client.open_by_url(SHEET_URL)
         
+        # 💡 [핵심 패치] secret.json 파일을 읽지 않습니다! 
+        # 깃허브에서 파이썬으로 쏴준 환경변수를 메모리에서 즉시 JSON으로 변환합니다.
+        creds_str = os.environ.get("GCP_CREDENTIALS")
+        if not creds_str:
+            return "구글 시트 연동 실패: GCP_CREDENTIALS 환경변수가 파이썬으로 전달되지 않았습니다."
+            
+        creds_dict = json.loads(creds_str)
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        client = gspread.authorize(creds)
+        
+        doc = client.open_by_url(SHEET_URL)
         scanner_sheet = doc.worksheet("스캐너_마스터")
         scanner_data = scanner_sheet.get_all_values()[1:6]
         
@@ -86,7 +93,7 @@ def generate_morning_briefing(market_data, news_data, kor_context):
 {kor_context}
 
 [작성 지침]
-1. 전문가의 고객 브리핑 어조 유지. 불필요한 서론 금지.
+1. 간결하고 묵직한 어조 유지. 불필요한 서론 금지.
 2. 3단 구성:
    - 🌎 [글로벌 매크로 요약]: 제공된 뉴스 헤드라인들을 바탕으로 간밤의 시장 분위기(미 증시 흐름, 주요 이슈 등)를 3줄로 핵심만 유추하여 요약.
    - 🇰🇷 [어제 포착 종목 NXT 브리핑]: 어제 포착된 종목들({kor_context})의 시간외 단일가 등락률에 대한 평가 코멘트 (상승 시 차익실현, 하락 시 지지 여부 등).
@@ -94,7 +101,7 @@ def generate_morning_briefing(market_data, news_data, kor_context):
 """
     for i in range(10):
         try:
-            # 💡 모델명을 gemini-1.5-pro 또는 gemini-2.0-flash 로 수정하십시오.
+            # 💡 최신 안정화 모델로 명칭 변경
             response = client.models.generate_content(model='gemini-1.5-pro', contents=prompt)
             return response.text
         except Exception as e:
