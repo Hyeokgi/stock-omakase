@@ -6,23 +6,24 @@ import urllib3
 import datetime
 import gspread
 import re
+import sys
 import xml.etree.ElementTree as ET
 from collections import Counter
 from oauth2client.service_account import ServiceAccountCredentials
-import sys
+import concurrent.futures # 💡 [초고속 패치] 30명의 종업원을 동시에 투입하는 멀티스레딩 모듈
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==========================================
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit"
-TARGET_PERCENT = 3.0
+TARGET_PERCENT = 5.0
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
 # 🌙 [야간 수면 모드 패치] 오후 8시 ~ 오전 7시 사이에는 서버 자원 보호를 위해 즉시 종료
 now_kst_check = datetime.datetime.now(KST)
 if now_kst_check.hour >= 20 or now_kst_check.hour < 7:
-    print(f"🌙 현재 시간({now_kst_check.strftime('%H:%M')}): 주식 시장 대기 시간입니다. HYEOKS 시스템을 휴식 모드로 전환합니다.")
-    sys.exit(0)  # 스크립트 즉시 종료 (아래 로직 실행 안 함)
+    print(f"🌙 현재 시간({now_kst_check.strftime('%H:%M')}): 주식 시장 대기 시간입니다. 시스템을 휴식 모드로 전환합니다.")
+    sys.exit(0)
 
 session = requests.Session()
 session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'})
@@ -73,7 +74,6 @@ AD_FILTER = [
     '연내', '내달', '오늘', '내일', '돌파', '연속', '급락', '투자', '매수', '매도', '수익'
 ]
 
-# 💡 [추가] 꼴도 보기 싫은 '좀비 테마' 블랙리스트 (여기에 단어를 추가하시면 아예 수집하지 않습니다)
 THEME_BLACKLIST = [
     '코로나19', '메르스', '지카바이러스', '우한폐렴', '원숭이두창', '엠폭스', '아프리카돼지열병', '구제역', '광우병'
 ]
@@ -87,8 +87,7 @@ def check_warning_market():
             ma20 = sum(prices) / 20
             if prices[0] < ma20:
                 return True
-    except:
-        pass
+    except: pass
     return False
 
 def search_code_from_naver(stock_name):
@@ -102,19 +101,23 @@ def search_code_from_naver(stock_name):
 
 def get_news_keywords():
     try:
+        # 💡 [수석님 패치] 뉴스는 1시간에 1번(매시 30분~39분 사이)만 수집하여 속도 최적화
+        now_minute = datetime.datetime.now(KST).minute
+        if not (30 <= now_minute < 40):
+            print("⏳ 뉴스 키워드 수집 스킵 (매시간 30분대에만 수집합니다)")
+            return pd.DataFrame() # 빈 프레임 넘기면 시트 업데이트 안 함
+
+        print("📰 뉴스 키워드 수집 중...")
         full_text = ""
         theme_phrases = []
-        
         for page in range(1, 10):
             url = f"https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258&page={page}"
             res = session.get(url, verify=False, timeout=5)
             soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
-            
             subjects = soup.select('.articleSubject a')
             for sub in subjects:
                 title_text = sub.get_text(strip=True)
                 full_text += title_text + " \n "
-                
                 matches = re.findall(r"['\"‘“](.*?)['\"’”]", title_text)
                 for m in matches:
                     clean = re.sub(r'(수혜|관련주|테마주|대장주|강세|상한가|특징주|급등|주목|부각)', '', m).strip()
@@ -122,14 +125,11 @@ def get_news_keywords():
                     if 1 < len(clean) <= 12 and clean.count(' ') <= 1:
                         if not any(ad in clean for ad in AD_FILTER):
                             theme_phrases.append(clean)
-                
                 matches2 = re.findall(r'([가-힣a-zA-Z0-9]+)(?:\s+)?(?:관련주|테마주|수혜주|대장주|섹터|주도주)', title_text)
                 for m in matches2:
                     m = re.sub(r'[^\w\s]', '', m).strip()
                     if 1 < len(m) <= 10 and not any(ad in m for ad in AD_FILTER):
                         theme_phrases.append(m)
-            time.sleep(0.3)
-            
         core_keywords = [
             '의료AI', '비만치료제', '전고체', '자율주행', '로봇', '반도체', '바이오시밀러', 
             '원격진료', '탈플라스틱', '신재생', '원전', '우주항공', 'UAM', '메타버스', 
@@ -140,8 +140,7 @@ def get_news_keywords():
         ]
         for word in core_keywords:
             count = full_text.count(word)
-            for _ in range(count):
-                theme_phrases.append(word)
+            for _ in range(count): theme_phrases.append(word)
 
         final_keywords = []
         for word in theme_phrases:
@@ -150,17 +149,14 @@ def get_news_keywords():
                 
         raw_top = Counter(final_keywords).most_common()
         top_10 = [(word, count) for word, count in raw_top if count > 1][:10]
-        
         if not top_10: return pd.DataFrame()
             
         now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M')
         return pd.DataFrame([[now_str, rank, word, count] for rank, (word, count) in enumerate(top_10, 1)], columns=['업데이트시간', '순위', '키워드', '언급횟수'])
-    except Exception as e:
-        return pd.DataFrame()
+    except Exception as e: return pd.DataFrame()
 
-market_cap_cache = {} 
+# 💡 더 이상 캐시를 쓰지 않고 요청 즉시 처리하는 라이트 함수로 변경
 def get_market_cap(code):
-    if code in market_cap_cache: return market_cap_cache[code]
     try:
         url = f"https://finance.naver.com/item/main.naver?code={code}"
         res = session.get(url, verify=False, timeout=3)
@@ -170,10 +166,8 @@ def get_market_cap(code):
         market_sum_str = market_sum_tag.text.replace(',', '').replace('\t', '').replace('\n', '').strip()
         if '조' in market_sum_str:
             parts = market_sum_str.split('조')
-            final_cap = int(parts[0].strip()) * 10000 + (int(parts[1].strip()) if len(parts)>1 and parts[1].strip() else 0)
-        else: final_cap = int(market_sum_str)
-        market_cap_cache[code] = final_cap
-        return final_cap
+            return int(parts[0].strip()) * 10000 + (int(parts[1].strip()) if len(parts)>1 and parts[1].strip() else 0)
+        else: return int(market_sum_str)
     except: return 999999 
 
 def get_real_money_themes():
@@ -183,14 +177,12 @@ def get_real_money_themes():
     res = session.get("https://finance.naver.com/sise/theme.naver", verify=False)
     soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
     
-    # 💡 [핵심 패치] 네이버 테마 긁어올 때, 블랙리스트에 있는 녀석들은 아예 입장도 안 함
     raw_themes = [{'name': a.text.strip(), 'url': "https://finance.naver.com" + a['href']} for tds in [tr.find_all('td') for tr in soup.find('table', {'class': 'type_1'}).find_all('tr')] if len(tds) > 1 for a in [tds[0].find('a')] if a]
     
     themes = []
     for t in raw_themes:
-        if not any(b in t['name'] for b in THEME_BLACKLIST):
-            themes.append(t)
-    themes = themes[:20]  # 블랙리스트 제거 후 가장 위에 있는 20개만 선별
+        if not any(b in t['name'] for b in THEME_BLACKLIST): themes.append(t)
+    themes = themes[:20] 
                     
     theme_data_list = []
     print("▶️ 실시간 주도 테마 수집 시작 (거래대금 필터링 + 등락률 랭킹)...")
@@ -212,15 +204,11 @@ def get_real_money_themes():
                             stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
                     except: continue
             
-            # 🚀 [1차: 거래대금으로 찐 종목 5개 선별]
             stocks_val = sorted(stocks, key=lambda x: x['value'], reverse=True)[:5]
-            
             if stocks_val and not (len(stocks_val) >= 2 and stocks_val[0]['value'] >= stocks_val[1]['value'] * 10):
-                # 🚀 [2차: 선별된 5개 안에서 대장주 서열은 '등락률' 순으로 재정렬]
                 stocks_rate = sorted(stocks_val, key=lambda x: x['rate'], reverse=True)
                 theme_data_list.append({'theme_name': theme['name'], 'stocks': stocks_rate})
         except: continue
-        time.sleep(0.1)
         
     if not theme_data_list: return pd.DataFrame(), is_market_closed, {}
     
@@ -232,34 +220,25 @@ def get_real_money_themes():
         theme_names = list(dict.fromkeys(t['theme_name'] for t in t_list))
         merged_name = " / ".join(theme_names) + f" (대장: {t_list[0]['stocks'][0]['name']})" if len(theme_names) > 1 else theme_names[0]
         unique_stocks = {s['code']: s for t in t_list for s in t['stocks']}
-        
-        # 🚀 [병합 시에도 거래대금 TOP5 선별 후, 등락률 순으로 최종 정렬]
         merged_stocks_val = sorted(unique_stocks.values(), key=lambda x: x['value'], reverse=True)[:5]
         merged_stocks_rate = sorted(merged_stocks_val, key=lambda x: x['rate'], reverse=True)
-        
         merged_themes.append({'theme_name': merged_name, 'theme_sum': sum(s['value'] for s in merged_stocks_val), 'stocks': merged_stocks_rate})
         
     merged_themes = sorted(merged_themes, key=lambda x: x['theme_sum'], reverse=True)
     
-    # 💡 [핵심 백업] 대시보드에서 통폐합(삭제) 당하기 전의 '모든 원본 테마 정보'를 사전으로 백업
     all_theme_map = {}
     for m_data in merged_themes:
         for idx, s in enumerate(m_data['stocks']):
             if s['name'] not in all_theme_map:
-                all_theme_map[s['name']] = {
-                    'theme_name': m_data['theme_name'],
-                    'is_leader': (idx == 0) # 1등 종목이면 대장주로 인식
-                }
+                all_theme_map[s['name']] = {'theme_name': m_data['theme_name'], 'is_leader': (idx == 0)}
 
     final_themes = []
     for m_data in merged_themes:
-        # 교집합 통폐합 로직 (대시보드 깔끔화용)
         if not any(len(set(s['code'] for s in m_data['stocks']).intersection(set(s['code'] for s in f_data['stocks']))) >= 2 for f_data in final_themes):
             final_themes.append(m_data)
         if len(final_themes) >= 10: break
             
     final_rows = [{'날짜': now.strftime('%Y-%m-%d'), **({'시간': time_str} if not is_market_closed else {}), '순위': rank, '테마명': t_data['theme_name'], '종목명': s['name'], '종목코드': s['code'], '등락률(%)': s['rate'], '거래대금(억원)': int(s['value']/100)} for rank, t_data in enumerate(final_themes, 1) for s in t_data['stocks']]
-    
     return pd.DataFrame(final_rows), is_market_closed, all_theme_map
 
 def get_naver_search_ranking():
@@ -329,54 +308,280 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
                 sheet.update(range_name="A1", values=[df.columns.values.tolist()] + df.values.tolist(), value_input_option="USER_ENTERED")
     except: pass
 
+# 💡 [초고속 패치] 단일 종목 분석 함수 (멀티스레딩을 위해 분리)
+def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map):
+    try:
+        # 1. 60일 차트 데이터 가져오기
+        url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=60&requestType=0"
+        root = ET.fromstring(session.get(url, verify=False, timeout=3).text)
+        
+        history = []
+        high_prices = []
+        items = root.findall(".//item")
+        for item in items:
+            data = item.get("data").split("|")
+            history.append({"close": int(data[4]), "volume": int(data[5]), "open": int(data[1])})
+            high_prices.append(int(data[2]))
+            
+        if len(history) < 1: return None
+        
+        today_data = items[-1].get("data").split("|")
+        open_price, today_high, today_low, current_price, today_vol = int(today_data[1]), int(today_data[2]), int(today_data[3]), int(today_data[4]), int(today_data[5])
+        if today_vol == 0: return None
+        
+        df_hist = pd.DataFrame(history)
+        prev_price = int(df_hist['close'].iloc[-2]) if len(df_hist) > 1 else current_price
+        change_rate = (current_price - prev_price) / prev_price if prev_price > 0 else 0.0
+        
+        yest_close = prev_price
+        trading_value = current_price * today_vol
+        high_60d = max(high_prices[:-1]) if len(high_prices) > 1 else today_high
+        
+        min_20d = int(df_hist['close'].tail(20).min()) if len(df_hist) >= 20 else int(df_hist['close'].min())
+        surge_rate_20d = (current_price - min_20d) / min_20d if min_20d > 0 else 0
+        is_high_altitude = surge_rate_20d >= 0.50 
+        
+        body_top = max(current_price, open_price)
+        body_bottom = min(current_price, open_price)
+        upper_shadow = today_high - body_top
+        real_body = body_top - body_bottom
+        
+        upper_shadow_ratio = upper_shadow / current_price if current_price > 0 else 0
+        is_long_shadow = (upper_shadow_ratio >= 0.05) or (upper_shadow_ratio >= 0.025 and upper_shadow > real_body * 1.5)
+        shadow_text = "⚠️ 윗꼬리 위험" if is_long_shadow else ("👑 깔끔한 단봉" if upper_shadow_ratio <= 0.015 else "🟡 보통 캔들")
+        
+        today_body_ratio = real_body / open_price if open_price > 0 else 0
+        is_today_yangbong = current_price >= open_price
+        gap_ratio = (open_price - prev_price) / prev_price if prev_price > 0 else 0
+        is_huge_gap = gap_ratio >= 0.04
+        
+        # 2. 한 번의 접속으로 시가총액과 재무상태(딱지/자본잠식) 동시 해결! (중복 제거)
+        risk_soup = BeautifulSoup(session.get(f"https://finance.naver.com/item/main.naver?code={code}", verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
+        
+        # 시가총액
+        market_sum_tag = risk_soup.find('em', id='_market_sum')
+        market_cap = 999999
+        if market_sum_tag:
+            market_sum_str = market_sum_tag.text.replace(',', '').replace('\t', '').replace('\n', '').strip()
+            if '조' in market_sum_str:
+                parts = market_sum_str.split('조')
+                market_cap = int(parts[0].strip()) * 10000 + (int(parts[1].strip()) if len(parts)>1 and parts[1].strip() else 0)
+            else: market_cap = int(market_sum_str)
+
+        # 재무 위험
+        is_junk = bool(risk_soup.find('img', alt=re.compile('관리종목|환기종목|거래정지|투자위험')))
+        is_financial_risk, is_chronic_loss = False, False
+        fin_table = risk_soup.find('table', {'class': 'tb_type1 tb_num tb_type1_ifrs'})
+        if fin_table:
+            op_profits = []
+            total_equity, capital_stock = None, None
+            for tr in fin_table.find('tbody').find_all('tr'):
+                th = tr.find('th')
+                if not th: continue
+                title = th.text.strip()
+                if title == '영업이익':
+                    for td in tr.find_all('td')[:3]:
+                        try: op_profits.append(float(td.text.replace(',', '').strip()))
+                        except: pass
+                elif title == '자본총계':
+                    for td in reversed(tr.find_all('td')):
+                        try: total_equity = float(td.text.replace(',', '').strip()); break
+                        except: pass
+                elif title == '자본금':
+                    for td in reversed(tr.find_all('td')):
+                        try: capital_stock = float(td.text.replace(',', '').strip()); break
+                        except: pass
+            if capital_stock and total_equity and total_equity < capital_stock: is_financial_risk = True
+            if len(op_profits) == 3 and all(p < 0 for p in op_profits): is_chronic_loss = True
+
+        # 3. 기관/외국인 가집계 데이터 가져오기
+        is_dual_buy, f_buy, i_buy, supply_text = False, 0, 0, ""
+        try:
+            today_trend = session.get(f"https://m.stock.naver.com/api/stock/{code}/investor/trend", verify=False, timeout=3).json().get('investorTrendList', [{}])[0]
+            f_buy, i_buy = int(str(today_trend.get('foreignerStraightPurchasePrice', '0')).replace(',', '')), int(str(today_trend.get('institutionStraightPurchasePrice', '0')).replace(',', ''))
+            if f_buy > 0 and i_buy > 0: is_dual_buy, supply_text = True, " (쌍끌이🔥)"
+            elif f_buy > 0: supply_text = " (외인매수)"
+            elif i_buy > 0: supply_text = " (기관매수)"
+        except: pass
+
+        # 지표 계산
+        ma5 = int(df_hist['close'].tail(5).mean()) if len(df_hist) >= 5 else current_price
+        ma20 = int(df_hist['close'].tail(20).mean()) if len(df_hist) >= 20 else current_price
+        std20 = df_hist['close'].tail(20).std(ddof=0) if len(df_hist) >= 20 else 0
+        disp_20 = (current_price / ma20) * 100 if ma20 > 0 else 100
+        disp_text = f"{disp_20:.1f}%"
+        
+        is_leader_history = False
+        for i in range(1, len(history)):
+            if history[i-1]['close'] > 0 and (high_prices[i] - history[i-1]['close']) / history[i-1]['close'] >= 0.22:
+                is_leader_history = True; break
+        leader_text = "🔥대장주(O)" if is_leader_history else "평범(X)"
+
+        upper_band = ma20 + (std20 * 2) 
+        lower_band = ma20 - (std20 * 2) 
+        band_width = (upper_band - lower_band) / ma20 if ma20 > 0 else 0 
+        
+        avg_vol_10 = df_hist['volume'].tail(11).head(10).mean() if len(df_hist) >= 2 else today_vol
+        vol_ratio = (today_vol / avg_vol_10) * 100 if avg_vol_10 > 0 else 0
+        is_converging = (band_width <= 0.20) or (ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035)
+        vol_status_text = "🟢 극감 (씨마름)" if vol_ratio <= 35 else ("🟢 감소 (안정)" if vol_ratio <= 60 else ("🔴 폭증 (과열)" if vol_ratio >= 200 else "🟡 보통"))
+        
+        if is_junk: signal = "🚨 [위험] 매매금지 (잡주/경고)"
+        elif is_financial_risk: signal = "🚨 [위험] 매매금지 (자본잠식위험)"
+        elif is_dual_buy and is_converging: signal = "🌟 모아가기 (쌍끌이)"
+        elif band_width <= 0.20 and current_price >= ma20: signal = "🚀 N자파동 (밴드돌파)" + supply_text if current_price >= upper_band * 0.98 else "👀 N자파동 (에너지응축)" + supply_text
+        elif ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035: signal = "📈 2차랠리 (이평수렴)" + supply_text if current_price > ma20 else "⏳ 이평선 저항" + supply_text
+        else: signal = "🟢 낙폭과대 (과매도)" + supply_text if current_price < lower_band else "⚡ 관망 (이격발생)" + supply_text
+        
+        is_near_high = current_price >= (high_60d * 0.90) or yest_close >= (high_60d * 0.90)
+        dist_text = "🎯 전고점 턱밑" if is_near_high else ("🟢 매물대 소화중" if current_price >= high_60d * 0.80 else "📉 이격 과다")
+
+        is_upper_limit = change_rate >= 0.295
+        is_danta_range = 0.17 <= change_rate < 0.295
+        
+        if name in theme_rank_dict:
+            my_theme_name = theme_rank_dict[name]['theme_name']
+            is_theme_leader_raw = theme_rank_dict[name]['is_leader']
+            has_theme = True
+        elif name in all_theme_map:
+            my_theme_name = all_theme_map[name]['theme_name']
+            is_theme_leader_raw = all_theme_map[name]['is_leader']
+            has_theme = True
+        else:
+            my_theme_name, is_theme_leader_raw, has_theme = "개별주/기타", False, False
+        
+        is_true_theme_leader = is_theme_leader_raw and (trading_value >= 100_000_000_000)
+        is_theme_daejang_sang = is_true_theme_leader and is_upper_limit and not (is_junk or is_financial_risk)
+        is_theme_daejang = is_true_theme_leader and is_danta_range and not (is_junk or is_financial_risk)
+        
+        is_real_hubal = has_theme and not is_theme_leader_raw
+        is_theme_hubal_sang = is_real_hubal and is_upper_limit and not (is_junk or is_financial_risk)
+        is_theme_hubal = is_real_hubal and is_danta_range and not (is_junk or is_financial_risk)
+        
+        is_individual = (not has_theme) or (is_theme_leader_raw and trading_value < 100_000_000_000)
+        is_individual_sang = is_individual and is_upper_limit and not (is_junk or is_financial_risk)
+        is_individual_surge = is_individual and is_danta_range and not (is_junk or is_financial_risk)
+
+        is_breakout_track = current_price >= ma20
+        track_type = "돌파" if is_breakout_track else "눌림"
+        quant_score = 0
+        
+        if not (is_junk or is_financial_risk):
+            if is_breakout_track:
+                if current_price >= (high_60d * 0.90): quant_score += 20
+                elif current_price >= (high_60d * 0.85): quant_score += 10
+                if vol_ratio >= 300: quant_score += 20
+                elif vol_ratio >= 150: quant_score += 10
+                if is_dual_buy: quant_score += 25
+                elif f_buy > 0 or i_buy > 0: quant_score += 10
+                if band_width <= 0.20: quant_score += 10
+                if ma5 > ma20 and current_price >= ma5: quant_score += 15
+            else:
+                if vol_ratio <= 35: quant_score += 20
+                elif vol_ratio <= 50: quant_score += 10
+                if is_today_yangbong or today_body_ratio <= 0.015: quant_score += 15
+                if ma20 * 0.95 <= current_price <= ma20 * 1.02: quant_score += 15
+                if is_dual_buy: quant_score += 15
+                elif f_buy > 0 or i_buy > 0: quant_score += 10
+                if band_width <= 0.15: quant_score += 15
+
+        flag_days = 0
+        for d in range(1, 4):
+            anchor_idx = -(d + 1)
+            if len(df_hist) >= abs(anchor_idx) + 1:
+                anchor_close = int(df_hist['close'].iloc[anchor_idx])
+                anchor_open = int(df_hist['open'].iloc[anchor_idx])
+                anchor_vol = int(df_hist['volume'].iloc[anchor_idx])
+                anchor_prev_close = int(df_hist['close'].iloc[anchor_idx - 1]) if len(df_hist) > abs(anchor_idx) + 1 else anchor_open
+                
+                anchor_tv = anchor_close * anchor_vol
+                anchor_change = (anchor_close - anchor_prev_close) / anchor_prev_close if anchor_prev_close > 0 else 0
+                hist_before_anchor = high_prices[:anchor_idx] if anchor_idx < -1 else high_prices[:-1]
+                high_60d_anchor = max(hist_before_anchor) if len(hist_before_anchor) > 0 else anchor_close
+                
+                if anchor_tv >= 80_000_000_000 and anchor_change >= 0.12 and anchor_close > anchor_open and (anchor_close >= high_60d_anchor * 0.90):
+                    is_holding = True
+                    for j in range(anchor_idx + 1, 0): 
+                        if not (anchor_close * 0.97 <= int(df_hist['close'].iloc[j]) <= anchor_close * 1.12): is_holding = False; break
+                        if ((int(df_hist['close'].iloc[j]) - int(df_hist['close'].iloc[j-1])) / int(df_hist['close'].iloc[j-1])) < -0.035: is_holding = False; break
+                        if int(df_hist['volume'].iloc[j]) > anchor_vol * 0.45: is_holding = False; break
+                    if is_holding: flag_days = d; break
+
+        if market_cap >= 50000:
+            is_ss_breakout = (trading_value >= 150_000_000_000) and (change_rate >= 0.025) and not is_long_shadow and is_near_high
+            is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 35) and (trading_value >= 80_000_000_000) and (change_rate >= 0.015) and not is_long_shadow
+            is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 35) and (vol_ratio <= 60) and (is_today_yangbong or today_body_ratio <= 0.02)
+        elif market_cap >= 10000:
+            is_ss_breakout = (trading_value >= 100_000_000_000) and (change_rate >= 0.04) and not is_long_shadow and is_near_high
+            is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 35) and (trading_value >= 60_000_000_000) and (change_rate >= 0.025) and not is_long_shadow
+            is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 35) and (vol_ratio <= 50) and (is_today_yangbong or today_body_ratio <= 0.015)
+        elif market_cap >= 5000:
+            is_ss_breakout = (trading_value >= 80_000_000_000) and (vol_ratio >= 150) and (change_rate >= 0.06) and not is_long_shadow and is_near_high
+            is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 40) and (trading_value >= 40_000_000_000) and (change_rate >= 0.04) and not is_long_shadow
+            is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 40) and (vol_ratio <= 40) and (is_today_yangbong or today_body_ratio <= 0.015)
+        else:
+            is_ss_breakout = (trading_value >= 50_000_000_000) and (vol_ratio >= 200) and (change_rate >= 0.08) and not is_long_shadow and is_near_high
+            is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 45) and (trading_value >= 30_000_000_000) and (change_rate >= 0.05) and not is_long_shadow
+            is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 45) and (vol_ratio <= 35) and (is_today_yangbong or today_body_ratio <= 0.01)
+
+        master_tajeom = "⏸️ 관망 및 대기"
+        if len(history) < 20: master_tajeom = "⚠️ 신규상장 (데이터 부족)"
+        elif is_junk: master_tajeom = "🚨 매매금지 (딱지)"
+        elif is_financial_risk: master_tajeom = "🚨 매매금지 (자본잠식)"
+        elif is_theme_daejang_sang: master_tajeom = "👑 [테마대장] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 50
+        elif is_theme_daejang: master_tajeom = "🚀 [테마대장] 당일 주도주" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 45
+        elif is_theme_hubal_sang: master_tajeom = "🔒 [후발주] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 40
+        elif is_theme_hubal: master_tajeom = "🏃 [후발주] 테마 추종" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 35
+        elif is_individual_sang: master_tajeom = "🔒 [개별주] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 30
+        elif is_individual_surge: master_tajeom = "🐎 [개별주] 나홀로 상승중" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 25
+        elif is_long_shadow: master_tajeom = "⚠️ 윗꼬리 위험 (매수금지)"
+        elif is_huge_gap: master_tajeom = "⚠️ 갭상승 과다 (추격금지)"
+        elif is_ss_breakout: master_tajeom = "👑 [핵심] 신고가 돌파" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 20
+        elif flag_days == 3: master_tajeom = "🎯 [타점] 눌림목 3일 차 완성 (비중 40%)" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 10
+        elif is_runner_up_breakout: master_tajeom = "👀 [관심] 돌파 턱밑 대기 (아차상)"; quant_score += 5
+        elif is_runner_up_pullback: master_tajeom = "👀 [관심] 눌림목 방어 테스트 (아차상)"; quant_score += 5
+        elif flag_days == 2: master_tajeom = "🚩 [분할매수] 눌림목 2일 차 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else "")
+        elif flag_days == 1: master_tajeom = "🚩 [분할매수] 단기 눌림 진입 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else "")
+        elif "🌟" in signal: master_tajeom = "🌟 [우량] 기관/외인 수급 유입"; quant_score += 15
+        elif change_rate >= 0.12 and trading_value >= 50_000_000_000: master_tajeom = "👀 [관심] 신규 기준봉 출현 (수급 집중)" + (" ⚠️(주의장세)" if is_warning_market else "")
+
+        score_display = f"{quant_score}점 ({track_type})"
+        if is_chronic_loss and "[" in master_tajeom:
+            quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️(3년적자)"
+        if is_high_altitude and "[" in master_tajeom:
+            quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️고공권(단기대응)"
+
+        return [
+            name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", 
+            int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, 
+            score_display, master_tajeom, today_high, today_low, high_60d, 
+            market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, quant_score, my_theme_name
+        ]
+    except Exception as e:
+        return None
+
 def update_technical_data(df_theme, all_theme_map):
     try:
-        print("▶️ 기술적 지표, 투트랙 채점(돌파/눌림 분리) 및 퀀트 아차상 판독 시작...")
-        
+        print("▶️ 기술적 지표 초고속 멀티스레딩 판독 시작...")
         is_warning_market = check_warning_market()
-        if is_warning_market:
-            print("⚠️ 코스닥 20일선 이탈(하락장) 감지! 돌파 타점에 경고 태그를 부착합니다.")
+        if is_warning_market: print("⚠️ 코스닥 20일선 이탈(하락장) 감지!")
         
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         doc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)).open_by_url(SHEET_URL)
-        
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
         target_names = set()
         
-        theme_rank_dict = {}
-
-        try:
-            raw_data = doc.worksheet("수급_Raw").get_all_values()
-            for row in raw_data[1:]:
-                if len(row) >= 7:
-                    stock_name = str(row[-4]).strip()
-                    val_str = str(row[-1]).replace(',', '').replace('억원', '').replace('"', '').strip()
-                    if val_str.isdigit() and int(val_str) >= 1000:
-                        if stock_name and stock_name not in ["#REF!", "로딩중...", "데이터대기", "FALSE"]:
-                            target_names.add(stock_name)
-        except: pass
-
-        try:
-            for row in doc.worksheet("대시보드").get_all_values()[4:]:
-                if len(row) > 2 and str(row[2]).strip() and str(row[2]).strip() != "#REF!": 
-                    target_names.add(str(row[2]).strip())
-        except: pass
-        
+        # 1. 스캔 타겟 압축 (과거 묵은 데이터 제외, 최신 주도주만 정밀 타격)
         if not df_theme.empty:
+            theme_rank_dict = {}
             theme_rank_tracker = {}
             for index, row in df_theme.iterrows():
-                t_rank = int(row['순위'])
-                s_name = row['종목명']
-                t_name = row['테마명']
-                
-                if t_rank not in theme_rank_tracker:
-                    theme_rank_tracker[t_rank] = []
-                    
+                t_rank, s_name, t_name = int(row['순위']), row['종목명'], row['테마명']
+                if t_rank not in theme_rank_tracker: theme_rank_tracker[t_rank] = []
                 theme_rank_tracker[t_rank].append(s_name)
                 is_leader_in_this_theme = (len(theme_rank_tracker[t_rank]) == 1)
                 
-                if s_name not in theme_rank_dict:
-                    theme_rank_dict[s_name] = {'theme_rank': t_rank, 'is_leader': is_leader_in_this_theme, 'theme_name': t_name}
+                if s_name not in theme_rank_dict: theme_rank_dict[s_name] = {'theme_rank': t_rank, 'is_leader': is_leader_in_this_theme, 'theme_name': t_name}
                 else:
                     if is_leader_in_this_theme:
                         theme_rank_dict[s_name]['is_leader'] = True
@@ -385,334 +590,22 @@ def update_technical_data(df_theme, all_theme_map):
             top_10_themes = df_theme[df_theme['순위'] <= 10]['종목명'].tolist()
             for t in top_10_themes: target_names.add(t)
             
-        # 💡 [추가] 대시보드에서 짤린 테마의 종목들도 모조리 스캐너 분석 대상에 강제 포함!
-        for t_name in all_theme_map.keys():
-            target_names.add(t_name)
+        for t_name in all_theme_map.keys(): target_names.add(t_name)
+
+        # 2. 타겟 종목 코드 변환 (사전 세팅)
+        target_dict = {}
+        for name in list(target_names):
+            code = name_to_code.get(name) or search_code_from_naver(name)
+            if code: target_dict[name] = code
 
         results = []
-        for name in list(target_names):
-            try:
-                code = name_to_code.get(name) or search_code_from_naver(name)
-                if not code: continue
-                
-                url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=60&requestType=0"
-                root = ET.fromstring(session.get(url, verify=False, timeout=3).text)
-                
-                history = []
-                high_prices = []
-                items = root.findall(".//item")
-                for item in items:
-                    data = item.get("data").split("|")
-                    history.append({"close": int(data[4]), "volume": int(data[5]), "open": int(data[1])})
-                    high_prices.append(int(data[2]))
-                    
-                if len(history) < 1: continue
-                
-                today_data = items[-1].get("data").split("|")
-                open_price = int(today_data[1])
-                today_high = int(today_data[2])
-                today_low = int(today_data[3])
-                current_price = int(today_data[4])
-                today_vol = int(today_data[5])
-                
-                if today_vol == 0:
-                    continue
-                
-                df_hist = pd.DataFrame(history)
-                prev_price = int(df_hist['close'].iloc[-2]) if len(df_hist) > 1 else current_price
-                change_rate = (current_price - prev_price) / prev_price if prev_price > 0 else 0.0
-                
-                yest_close = prev_price
-                yest_open = int(df_hist['open'].iloc[-2]) if len(df_hist) > 1 else yest_close
-                yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) > 1 else 0
-                yest_prev_close = int(df_hist['close'].iloc[-3]) if len(df_hist) > 2 else yest_open
-                
-                trading_value = current_price * today_vol
-                high_60d = max(high_prices[:-1]) if len(high_prices) > 1 else today_high
-                
-                min_20d = int(df_hist['close'].tail(20).min()) if len(df_hist) >= 20 else int(df_hist['close'].min())
-                surge_rate_20d = (current_price - min_20d) / min_20d if min_20d > 0 else 0
-                is_high_altitude = surge_rate_20d >= 0.50 
-                
-                body_top = max(current_price, open_price)
-                body_bottom = min(current_price, open_price)
-                upper_shadow = today_high - body_top
-                real_body = body_top - body_bottom
-                
-                upper_shadow_ratio = upper_shadow / current_price if current_price > 0 else 0
-                is_long_shadow = (upper_shadow_ratio >= 0.05) or (upper_shadow_ratio >= 0.025 and upper_shadow > real_body * 1.5)
-                shadow_text = "⚠️ 윗꼬리 위험" if is_long_shadow else ("👑 깔끔한 단봉" if upper_shadow_ratio <= 0.015 else "🟡 보통 캔들")
-                
-                today_body_ratio = real_body / open_price if open_price > 0 else 0
-                is_today_yangbong = current_price >= open_price
-                
-                gap_ratio = (open_price - prev_price) / prev_price if prev_price > 0 else 0
-                is_huge_gap = gap_ratio >= 0.04
-                
-                market_cap = get_market_cap(code)
-                
-                risk_soup = BeautifulSoup(session.get(f"https://finance.naver.com/item/main.naver?code={code}", verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
-                is_junk = bool(risk_soup.find('img', alt=re.compile('관리종목|환기종목|거래정지|투자위험')))
-                
-                is_financial_risk = False
-                is_chronic_loss = False
-                try:
-                    fin_table = risk_soup.find('table', {'class': 'tb_type1 tb_num tb_type1_ifrs'})
-                    if fin_table:
-                        op_profits = []
-                        total_equity = None
-                        capital_stock = None
-                        for tr in fin_table.find('tbody').find_all('tr'):
-                            th = tr.find('th')
-                            if not th: continue
-                            title = th.text.strip()
-                            if title == '영업이익':
-                                for td in tr.find_all('td')[:3]:
-                                    val = td.text.replace(',', '').strip()
-                                    try: op_profits.append(float(val))
-                                    except: pass
-                            elif title == '자본총계':
-                                for td in reversed(tr.find_all('td')):
-                                    val = td.text.replace(',', '').strip()
-                                    try: total_equity = float(val); break
-                                    except: pass
-                            elif title == '자본금':
-                                for td in reversed(tr.find_all('td')):
-                                    val = td.text.replace(',', '').strip()
-                                    try: capital_stock = float(val); break
-                                    except: pass
-                        
-                        if capital_stock and total_equity and total_equity < capital_stock:
-                            is_financial_risk = True
-                        if len(op_profits) == 3 and all(p < 0 for p in op_profits):
-                            is_chronic_loss = True
-                except: pass
-
-                is_dual_buy, f_buy, i_buy, supply_text = False, 0, 0, ""
-                try:
-                    today_trend = session.get(f"https://m.stock.naver.com/api/stock/{code}/investor/trend", verify=False, timeout=3).json().get('investorTrendList', [{}])[0]
-                    f_buy, i_buy = int(str(today_trend.get('foreignerStraightPurchasePrice', '0')).replace(',', '')), int(str(today_trend.get('institutionStraightPurchasePrice', '0')).replace(',', ''))
-                    if f_buy > 0 and i_buy > 0: is_dual_buy, supply_text = True, " (쌍끌이🔥)"
-                    elif f_buy > 0: supply_text = " (외인매수)"
-                    elif i_buy > 0: supply_text = " (기관매수)"
-                except: pass
-
-                ma5 = int(df_hist['close'].tail(5).mean()) if len(df_hist) >= 5 else current_price
-                ma20 = int(df_hist['close'].tail(20).mean()) if len(df_hist) >= 20 else current_price
-                std20 = df_hist['close'].tail(20).std(ddof=0) if len(df_hist) >= 20 else 0
-                
-                disp_20 = (current_price / ma20) * 100 if ma20 > 0 else 100
-                disp_text = f"{disp_20:.1f}%"
-                
-                is_leader_history = False
-                for i in range(1, len(history)):
-                    past_prev_c = history[i-1]['close']
-                    past_curr_h = high_prices[i]
-                    if past_prev_c > 0 and (past_curr_h - past_prev_c) / past_prev_c >= 0.22:
-                        is_leader_history = True
-                        break
-                leader_text = "🔥대장주(O)" if is_leader_history else "평범(X)"
-
-                upper_band = ma20 + (std20 * 2) 
-                lower_band = ma20 - (std20 * 2) 
-                band_width = (upper_band - lower_band) / ma20 if ma20 > 0 else 0 
-                
-                avg_vol_10 = df_hist['volume'].tail(11).head(10).mean() if len(df_hist) >= 2 else today_vol
-                vol_ratio = (today_vol / avg_vol_10) * 100 if avg_vol_10 > 0 else 0
-                is_converging = (band_width <= 0.20) or (ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035)
-                
-                vol_status_text = "🟢 극감 (씨마름)" if vol_ratio <= 35 else ("🟢 감소 (안정)" if vol_ratio <= 60 else ("🔴 폭증 (과열)" if vol_ratio >= 200 else "🟡 보통"))
-                
-                if is_junk: signal = "🚨 [위험] 매매금지 (잡주/경고)"
-                elif is_financial_risk: signal = "🚨 [위험] 매매금지 (자본잠식위험)"
-                elif is_dual_buy and is_converging: signal = "🌟 모아가기 (쌍끌이)"
-                elif band_width <= 0.20 and current_price >= ma20: signal = "🚀 N자파동 (밴드돌파)" + supply_text if current_price >= upper_band * 0.98 else "👀 N자파동 (에너지응축)" + supply_text
-                elif ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035: signal = "📈 2차랠리 (이평수렴)" + supply_text if current_price > ma20 else "⏳ 이평선 저항" + supply_text
-                else: signal = "🟢 낙폭과대 (과매도)" + supply_text if current_price < lower_band else "⚡ 관망 (이격발생)" + supply_text
-                
-                is_near_high = current_price >= (high_60d * 0.90) or yest_close >= (high_60d * 0.90)
-                dist_text = "🎯 전고점 턱밑" if is_near_high else ("🟢 매물대 소화중" if current_price >= high_60d * 0.80 else "📉 이격 과다")
-
-                is_upper_limit = change_rate >= 0.295
-                is_danta_range = 0.17 <= change_rate < 0.295
-                
-                if name in theme_rank_dict:
-                    my_theme_name = theme_rank_dict[name]['theme_name']
-                    is_theme_leader_raw = theme_rank_dict[name]['is_leader']
-                    has_theme = True
-                elif name in all_theme_map:
-                    my_theme_name = all_theme_map[name]['theme_name']
-                    is_theme_leader_raw = all_theme_map[name]['is_leader']
-                    has_theme = True
-                else:
-                    my_theme_name = "개별주/기타"
-                    is_theme_leader_raw = False
-                    has_theme = False
-                
-                is_true_theme_leader = is_theme_leader_raw and (trading_value >= 100_000_000_000)
-                is_weak_theme_leader = is_theme_leader_raw and (trading_value < 100_000_000_000)
-                
-                is_theme_daejang_sang = is_true_theme_leader and is_upper_limit and not (is_junk or is_financial_risk)
-                is_theme_daejang = is_true_theme_leader and is_danta_range and not (is_junk or is_financial_risk)
-                
-                is_real_hubal = has_theme and not is_theme_leader_raw
-                is_theme_hubal_sang = is_real_hubal and is_upper_limit and not (is_junk or is_financial_risk)
-                is_theme_hubal = is_real_hubal and is_danta_range and not (is_junk or is_financial_risk)
-                
-                is_individual = (not has_theme) or is_weak_theme_leader
-                is_individual_sang = is_individual and is_upper_limit and not (is_junk or is_financial_risk)
-                is_individual_surge = is_individual and is_danta_range and not (is_junk or is_financial_risk)
-
-                is_breakout_track = current_price >= ma20
-                track_type = "돌파" if is_breakout_track else "눌림"
-                quant_score = 0
-                
-                if not (is_junk or is_financial_risk):
-                    if is_breakout_track:
-                        if current_price >= (high_60d * 0.90): quant_score += 20
-                        elif current_price >= (high_60d * 0.85): quant_score += 10
-                        if vol_ratio >= 300: quant_score += 20
-                        elif vol_ratio >= 150: quant_score += 10
-                        if is_dual_buy: quant_score += 25
-                        elif f_buy > 0 or i_buy > 0: quant_score += 10
-                        if band_width <= 0.20: quant_score += 10
-                        if ma5 > ma20 and current_price >= ma5: quant_score += 15
-                    else:
-                        if vol_ratio <= 35: quant_score += 20
-                        elif vol_ratio <= 50: quant_score += 10
-                        if is_today_yangbong or today_body_ratio <= 0.015: quant_score += 15
-                        if ma20 * 0.95 <= current_price <= ma20 * 1.02: quant_score += 15
-                        if is_dual_buy: quant_score += 15
-                        elif f_buy > 0 or i_buy > 0: quant_score += 10
-                        if band_width <= 0.15: quant_score += 15
-
-                score_display = f"{quant_score}점 ({track_type})"
-
-                flag_days = 0
-                for d in range(1, 4):
-                    anchor_idx = -(d + 1)
-                    if len(df_hist) >= abs(anchor_idx) + 1:
-                        anchor_close = int(df_hist['close'].iloc[anchor_idx])
-                        anchor_open = int(df_hist['open'].iloc[anchor_idx])
-                        anchor_vol = int(df_hist['volume'].iloc[anchor_idx])
-                        anchor_prev_close = int(df_hist['close'].iloc[anchor_idx - 1]) if len(df_hist) > abs(anchor_idx) + 1 else anchor_open
-                        
-                        anchor_tv = anchor_close * anchor_vol
-                        anchor_change = (anchor_close - anchor_prev_close) / anchor_prev_close if anchor_prev_close > 0 else 0
-                        
-                        hist_before_anchor = high_prices[:anchor_idx] if anchor_idx < -1 else high_prices[:-1]
-                        high_60d_anchor = max(hist_before_anchor) if len(hist_before_anchor) > 0 else anchor_close
-                        is_near_high_anchor = anchor_close >= (high_60d_anchor * 0.90)
-                        
-                        if anchor_tv >= 80_000_000_000 and anchor_change >= 0.12 and anchor_close > anchor_open and is_near_high_anchor:
-                            is_holding = True
-                            for j in range(anchor_idx + 1, 0): 
-                                curr_close = int(df_hist['close'].iloc[j])
-                                curr_prev_close = int(df_hist['close'].iloc[j-1])
-                                curr_vol = int(df_hist['volume'].iloc[j])
-                                curr_change = (curr_close - curr_prev_close) / curr_prev_close if curr_prev_close > 0 else 0
-                                
-                                if not (anchor_close * 0.97 <= curr_close <= anchor_close * 1.12):
-                                    is_holding = False; break
-                                if curr_change < -0.035:
-                                    is_holding = False; break
-                                if curr_vol > anchor_vol * 0.45:
-                                    is_holding = False; break
-
-                            if is_holding:
-                                flag_days = d
-                                break
-                
-                if market_cap >= 50000:
-                    is_ss_breakout = (trading_value >= 150_000_000_000) and (change_rate >= 0.025) and not is_long_shadow and is_near_high
-                    is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 35) and (trading_value >= 80_000_000_000) and (change_rate >= 0.015) and not is_long_shadow
-                    is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 35) and (vol_ratio <= 60) and (is_today_yangbong or today_body_ratio <= 0.02)
-                
-                elif market_cap >= 10000:
-                    is_ss_breakout = (trading_value >= 100_000_000_000) and (change_rate >= 0.04) and not is_long_shadow and is_near_high
-                    is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 35) and (trading_value >= 60_000_000_000) and (change_rate >= 0.025) and not is_long_shadow
-                    is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 35) and (vol_ratio <= 50) and (is_today_yangbong or today_body_ratio <= 0.015)
-                
-                elif market_cap >= 5000:
-                    is_ss_breakout = (trading_value >= 80_000_000_000) and (vol_ratio >= 150) and (change_rate >= 0.06) and not is_long_shadow and is_near_high
-                    is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 40) and (trading_value >= 40_000_000_000) and (change_rate >= 0.04) and not is_long_shadow
-                    is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 40) and (vol_ratio <= 40) and (is_today_yangbong or today_body_ratio <= 0.015)
-                
-                else:
-                    is_ss_breakout = (trading_value >= 50_000_000_000) and (vol_ratio >= 200) and (change_rate >= 0.08) and not is_long_shadow and is_near_high
-                    is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 45) and (trading_value >= 30_000_000_000) and (change_rate >= 0.05) and not is_long_shadow
-                    is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 45) and (vol_ratio <= 35) and (is_today_yangbong or today_body_ratio <= 0.01)
-
-                master_tajeom = "⏸️ 관망 및 대기"
-                
-                if len(history) < 20: master_tajeom = "⚠️ 신규상장 (데이터 부족)"
-                elif is_junk: master_tajeom = "🚨 매매금지 (딱지)"
-                elif is_financial_risk: master_tajeom = "🚨 매매금지 (자본잠식)"
-                
-                elif is_theme_daejang_sang:
-                    master_tajeom = "👑 [테마대장] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else "")
-                    quant_score += 50; score_display = f"{quant_score}점 ({track_type})"
-                elif is_theme_daejang:
-                    master_tajeom = "🚀 [테마대장] 당일 주도주" + (" ⚠️(주의장세)" if is_warning_market else "")
-                    quant_score += 45; score_display = f"{quant_score}점 ({track_type})"
-                elif is_theme_hubal_sang:
-                    master_tajeom = "🔒 [후발주] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else "")
-                    quant_score += 40; score_display = f"{quant_score}점 ({track_type})"
-                elif is_theme_hubal:
-                    master_tajeom = "🏃 [후발주] 테마 추종" + (" ⚠️(주의장세)" if is_warning_market else "")
-                    quant_score += 35; score_display = f"{quant_score}점 ({track_type})"
-                elif is_individual_sang:
-                    master_tajeom = "🔒 [개별주] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else "")
-                    quant_score += 30; score_display = f"{quant_score}점 ({track_type})"
-                elif is_individual_surge:
-                    master_tajeom = "🐎 [개별주] 나홀로 상승중" + (" ⚠️(주의장세)" if is_warning_market else "")
-                    quant_score += 25; score_display = f"{quant_score}점 ({track_type})"
-                    
-                elif is_long_shadow: master_tajeom = "⚠️ 윗꼬리 위험 (매수금지)"
-                elif is_huge_gap: master_tajeom = "⚠️ 갭상승 과다 (추격금지)"
-                
-                elif is_ss_breakout: 
-                    master_tajeom = "👑 [핵심] 신고가 돌파 ⚠️(주의장세)" if is_warning_market else "👑 [핵심] 신고가 돌파"
-                    quant_score += 20; score_display = f"{quant_score}점 ({track_type})"
-                elif flag_days == 3:
-                    master_tajeom = "🎯 [타점] 눌림목 3일 차 완성 (비중 40%)" + (" ⚠️(주의장세)" if is_warning_market else "")
-                    quant_score += 10; score_display = f"{quant_score}점 ({track_type})"
-
-                elif is_runner_up_breakout:
-                    master_tajeom = "👀 [관심] 돌파 턱밑 대기 (아차상)"
-                    quant_score += 5; score_display = f"{quant_score}점 ({track_type})"
-                elif is_runner_up_pullback:
-                    master_tajeom = "👀 [관심] 눌림목 방어 테스트 (아차상)"
-                    quant_score += 5; score_display = f"{quant_score}점 ({track_type})"
-
-                elif flag_days == 2:
-                    master_tajeom = "🚩 [분할매수] 눌림목 2일 차 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else "")
-                elif flag_days == 1:
-                    master_tajeom = "🚩 [분할매수] 단기 눌림 진입 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else "")
-                elif "🌟" in signal: 
-                    master_tajeom = "🌟 [우량] 기관/외인 수급 유입" 
-                    quant_score += 15; score_display = f"{quant_score}점 ({track_type})"
-                elif change_rate >= 0.12 and trading_value >= 50_000_000_000: 
-                    master_tajeom = "👀 [관심] 신규 기준봉 출현 (수급 집중)" + (" ⚠️(주의장세)" if is_warning_market else "")
-
-                if is_chronic_loss and "[" in master_tajeom:
-                    quant_score -= 10
-                    score_display = f"{quant_score}점 ({track_type})"
-                    master_tajeom += " ⚠️(3년적자)"
-
-                if is_high_altitude and "[" in master_tajeom:
-                    quant_score -= 10
-                    score_display = f"{quant_score}점 ({track_type})"
-                    master_tajeom += " ⚠️고공권(단기대응)"
-
-                results.append([
-                    name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", 
-                    int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, 
-                    score_display, master_tajeom, today_high, today_low, high_60d, 
-                    market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, quant_score, my_theme_name
-                ])
-            except Exception as e:
-                continue
+        # 🚀 [초고속 패치] 30명의 종업원을 투입하여 150종목을 한 번에 스캔! (8분 -> 3초)
+        print(f"⚡ {len(target_dict)}개 종목을 30개의 스레드로 동시 타격합니다...")
+        with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
+            future_to_name = {executor.submit(analyze_single_stock, name, code, is_warning_market, theme_rank_dict, all_theme_map): name for name, code in target_dict.items()}
+            for future in concurrent.futures.as_completed(future_to_name):
+                res = future.result()
+                if res: results.append(res)
 
         results.sort(key=lambda x: x[19], reverse=True) 
         final_results = [r[:19] + [r[20]] for r in results]
@@ -723,7 +616,7 @@ def update_technical_data(df_theme, all_theme_map):
             helper_sheet.clear()
             headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "HYEOKS점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)", "윗꼬리판독", "전고점위치", "20일이격도", "대장주이력", "거래량상태", "소속테마"]
             helper_sheet.update(range_name="A1", values=[headers] + final_results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(final_results)}개 종목 판독 완료! (테마 복권 완료) 🚀")
+            print(f"✅ 총 {len(final_results)}개 종목 판독 완료! (초고속 멀티스레딩 완료) 🚀")
             
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
@@ -737,8 +630,8 @@ if __name__ == "__main__":
     # 💡 [릴레이 아키텍처 패치] 종가베팅 시간에만 가격수집기를 깨웁니다!
     now_kst = datetime.datetime.now(KST)
     if now_kst.hour == 15 and 10 <= now_kst.minute < 20:
-        # ⚠️ [필수] 여기에 아까 구글에서 발급받은 본인의 웹 앱 URL을 붙여넣으세요!
-        GOOGLE_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbytDXt5sdOFDB9cV1iiGXBV0ecYtQyrfQ4akk6bztMiMqrUzqidev64XTxNyffE_mqT/exec"
+        # ⚠️ [필수] 구글 스크립트 웹 앱 URL을 넣어주세요
+        GOOGLE_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbxyuSEjPmg8rZPjLlG-YKck07QYxmZm0HtxvWAumvV2zp7RRpVaKDo6D-CiQ6pLqKFm/exec"
         
         print("⏳ AI 분석 완료. 최신 가격 갱신 및 리포트 생성을 위해 구글에 바통을 넘깁니다...")
         try:
