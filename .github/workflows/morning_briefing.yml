@@ -27,12 +27,13 @@ jobs:
         python -m pip install --upgrade pip
         pip install requests beautifulsoup4 google-genai>=0.1.2 gspread oauth2client
 
-    - name: 🚀 구글 시트 보안 인증 파일 생성
-      env:
-        # 💡 [필살 수정] main.yml에서 성공했던 진짜 시크릿 이름인 GCP_CREDENTIALS를 사용합니다.
-        SECRET_JSON: ${{ secrets.GCP_CREDENTIALS }}
+    - name: 🚀 구글 시트 보안 인증 파일(secret.json) 생성
+      # 💡 [핵심] echo 대신 파이썬을 사용하여 시크릿을 안전하게 파일로 씁니다.
       run: |
-        echo "$SECRET_JSON" > secret.json
+        python -c "import os; open('secret.json', 'w').write(os.environ['SECRET_JSON'])"
+      env:
+        # ⚠️ 만약 에러가 계속되면 GCP_CREDENTIALS 를 GOOGLE_SHEETS_CREDENTIALS 로 바꿔보세요.
+        SECRET_JSON: ${{ secrets.GCP_CREDENTIALS }}
 
     - name: 🌅 모닝 브리핑 생성 및 텔레그램 발송
       env:
