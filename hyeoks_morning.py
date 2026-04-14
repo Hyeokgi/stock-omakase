@@ -1,4 +1,4 @@
-import os, requests, datetime, time, json
+import os, requests, datetime, time
 from bs4 import BeautifulSoup
 from google import genai
 import gspread
@@ -13,8 +13,9 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit"
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
+# 1. 뉴스 크롤링 (우회 완료)
 def get_us_market_summary():
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     try:
         res = requests.get("https://finance.naver.com/news/mainnews.naver", headers=headers, verify=False, timeout=5)
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
@@ -24,12 +25,12 @@ def get_us_market_summary():
             if subject and subject.find('a'):
                 news_items.append(f"- {subject.find('a').text.strip()}")
             if len(news_items) >= 15: break
-            
-        if not news_items: return "뉴스 수집 실패 (데이터 빔)", ""
+        if not news_items: return "뉴스 수집 실패", ""
         return "글로벌 및 국내 주요 금융 뉴스 헤드라인", "\n".join(news_items)
     except Exception as e:
-        return f"뉴스 수집 지연: {e}", ""
+        return f"뉴스 수집 에러: {e}", ""
 
+# 2. 시간외 단일가 크롤링
 def get_after_hours_rate(code):
     try:
         clean_code = str(code).replace("'", "").strip().zfill(6)
@@ -42,40 +43,44 @@ def get_after_hours_rate(code):
     except:
         return "조회불가"
 
+# 3. 한국장 데이터 로드 (에러 완벽 분리 및 네이버 차단 우회)
 def get_yesterday_korean_context():
+    # [STEP A] 구글 시트 데이터 가져오기
     try:
-        # 💡 [핵심 패치] KEY_1이 비어있으면 자동으로 KEY_2를 찾아 여는 쌍끌이 스위치!
-        creds_str = os.environ.get("KEY_1")
-        if not creds_str or len(creds_str.strip()) < 10:
-            creds_str = os.environ.get("KEY_2")
-            
-        if not creds_str or len(creds_str.strip()) < 10:
-            return "구글 시트 연동 실패: 깃허브(Settings -> Secrets)에 키가 완전히 증발했습니다! 키를 새로 등록해주세요."
-
-        creds_dict = json.loads(creds_str)
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
         client = gspread.authorize(creds)
         doc = client.open_by_url(SHEET_URL)
-        
         scanner_sheet = doc.worksheet("스캐너_마스터")
         scanner_data = scanner_sheet.get_all_values()[1:6]
-        
-        if not scanner_data or len(scanner_data[0]) < 13:
-            return "구글 시트 데이터 로드 실패 (빈 시트이거나 열 개수 부족)"
-
-        picks_info = []
-        for r in scanner_data:
-            if len(r) > 12 and r[0]:
-                name, theme, tajeom = r[0], r[4], r[12]
-                code_res = requests.get(f"https://m.stock.naver.com/api/search/all?keyword={name}", timeout=3).json()
-                code = code_res['result']['stocks'][0]['itemCode'] if code_res.get('result') and code_res['result'].get('stocks') else ""
-                nxt_rate = get_after_hours_rate(code) if code else "확인불가"
-                picks_info.append(f"▪️ [{name}] 테마: {theme} | 시간외(NXT) 등락률: {nxt_rate}")
-                
-        return "\n".join(picks_info)
     except Exception as e:
-        return f"구글 시트 연동 실패: {e}"
+        return f"🚨 [진짜 구글시트 에러] 권한을 확인하세요: {e}"
+
+    if not scanner_data or len(scanner_data[0]) < 13:
+        return "구글 시트 데이터가 비어있습니다."
+
+    picks_info = []
+    # 💡 [핵심 패치] 네이버 검색 API가 봇을 차단하지 못하도록 완벽한 브라우저 위장 헤더 추가!
+    naver_headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*'
+    }
+
+    # [STEP B] 종목 코드 알아내고 시간외 등락률 가져오기
+    for r in scanner_data:
+        if len(r) > 12 and r[0]:
+            name, theme = r[0], r[4]
+            try:
+                # 바로 이 부분이 지금까지 에러의 진짜 주범이었습니다!
+                code_res = requests.get(f"https://m.stock.naver.com/api/search/all?keyword={name}", headers=naver_headers, timeout=5).json()
+                code = code_res['result']['stocks'][0]['itemCode'] if code_res.get('result') and code_res['result'].get('stocks') else ""
+                nxt_rate = get_after_hours_rate(code) if code else "코드검색실패"
+                picks_info.append(f"▪️ [{name}] 테마: {theme} | 시간외(NXT) 등락률: {nxt_rate}")
+            except Exception as e:
+                # 네이버가 막혀도 구글 시트 에러라고 뻥치지 않고 정확히 종목별로 에러를 표기합니다.
+                picks_info.append(f"▪️ [{name}] 테마: {theme} | 시간외(NXT) 데이터 수집불가")
+                
+    return "\n".join(picks_info)
 
 def generate_morning_briefing(market_data, news_data, kor_context):
     client = genai.Client(api_key=GEMINI_API_KEY)
@@ -89,7 +94,7 @@ def generate_morning_briefing(market_data, news_data, kor_context):
 {kor_context}
 
 [작성 지침]
-1. 간결하고 묵직한 어조 유지. 불필요한 서론 금지.
+1. 전문가 브리핑 형식 어조 유지. 불필요한 서론 금지.
 2. 3단 구성:
    - 🌎 [글로벌 매크로 요약]: 제공된 뉴스 헤드라인들을 바탕으로 간밤의 시장 분위기를 3줄로 요약.
    - 🇰🇷 [어제 포착 종목 NXT 브리핑]: 어제 포착된 종목들({kor_context})의 시간외 단일가 등락률에 대한 평가 코멘트.
@@ -108,7 +113,8 @@ if __name__ == "__main__":
     market_data, news_data = get_us_market_summary()
     kor_context = get_yesterday_korean_context()
     
-    if "실패" in market_data or "실패" in kor_context or "지연" in market_data:
+    # 에러 필터링 로직: 구글 시트가 뻗었을 때만 스톱! (일부 종목 시간외 조회 실패는 패스)
+    if "실패" in market_data or "에러" in kor_context or "지연" in market_data:
         final_msg = f"🚨 [HYEOKS 시스템 경고] 모닝 데이터 수집 에러\n\n[에러 내용]\n- 뉴스 수집 상태: {market_data}\n- 한국장 상태: {kor_context}\n\n※ 문제를 수정해주세요."
     else:
         briefing_text = generate_morning_briefing(market_data, news_data, kor_context)
