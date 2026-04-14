@@ -3,7 +3,6 @@ name: 🌅 HYEOKS 모닝 브리핑
 on:
   workflow_dispatch:
   schedule:
-    # 한국 시간 아침 7시 55분 (UTC 22:55)
     - cron: '55 22 * * 0-4'
 
 concurrency:
@@ -27,13 +26,12 @@ jobs:
         python -m pip install --upgrade pip
         pip install requests beautifulsoup4 google-genai>=0.1.2 gspread oauth2client
 
-    - name: 🚀 구글 시트 보안 인증 파일(secret.json) 생성
-      # 💡 [핵심] echo 대신 파이썬을 사용하여 시크릿을 안전하게 파일로 씁니다.
-      run: |
-        python -c "import os; open('secret.json', 'w').write(os.environ['SECRET_JSON'])"
+    - name: 🚀 구글 시트 보안 인증 파일 생성
       env:
-        # ⚠️ 만약 에러가 계속되면 GCP_CREDENTIALS 를 GOOGLE_SHEETS_CREDENTIALS 로 바꿔보세요.
-        SECRET_JSON: ${{ secrets.GCP_CREDENTIALS }}
+        # 💡 [정답] 수석님이 ai_report.yml에서 성공하셨던 '진짜' 이름 그대로 복구!
+        SECRET_JSON: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+      run: |
+        echo "$SECRET_JSON" > secret.json
 
     - name: 🌅 모닝 브리핑 생성 및 텔레그램 발송
       env:
