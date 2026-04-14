@@ -3,6 +3,9 @@ from bs4 import BeautifulSoup
 from google import genai
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import urllib3
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -10,26 +13,24 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit"
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
+# 💡 [핵심 패치] 해외망 차단이 없는 '네이버 주요 뉴스'로 우회하여 매크로 흐름 파악
 def get_us_market_summary():
-    # 💡 [핵심 수정] 네이버 차단을 뚫기 위해 완벽한 실제 크롬 브라우저로 위장!
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Connection': 'keep-alive'
-    }
+    headers = {'User-Agent': 'Mozilla/5.0'}
     try:
-        res = requests.get("https://finance.naver.com/world/", headers=headers, timeout=5)
+        res = requests.get("https://finance.naver.com/news/mainnews.naver", headers=headers, verify=False, timeout=5)
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
-        indices = soup.select('.world_index .idx_tit, .world_index .idx_val, .world_index .idx_fluc')
-        market_data = " ".join([i.text.strip() for i in indices[:15]])
-        news_items = soup.select('.news_area .tit')
-        news_data = "\n".join([f"- {n.text.strip()}" for n in news_items[:5]])
-        
-        if not market_data: return "미 증시 수집 실패 (데이터 빔)", ""
-        return market_data, news_data
+        news_items = []
+        for dl in soup.find_all('dl'):
+            subject = dl.find(['dt', 'dd'], {'class': 'articleSubject'})
+            if subject and subject.find('a'):
+                title = subject.find('a').text.strip()
+                news_items.append(f"- {title}")
+            if len(news_items) >= 15: break
+            
+        if not news_items: return "뉴스 수집 실패 (데이터 빔)", ""
+        return "글로벌 및 국내 주요 금융 뉴스 헤드라인", "\n".join(news_items)
     except Exception as e:
-        return f"미 증시 수집 지연: {e}", ""
+        return f"뉴스 수집 지연: {e}", ""
 
 def get_after_hours_rate(code):
     try:
@@ -78,19 +79,18 @@ def generate_morning_briefing(market_data, news_data, kor_context):
     prompt = f"""너는 대한민국 최상위 1% 실전 트레이더를 위한 HYEOKS 리서치 센터의 수석 매크로 애널리스트야.
 아래의 데이터를 융합하여 '모닝 브리핑'을 작성해라.
 
-[밤사이 미국 데이터]
-미 증시 요약: {market_data}
-글로벌 뉴스: {news_data}
+[밤사이 글로벌/국내 주요 뉴스]
+{news_data}
 
 [어제 한국장 포착 종목 및 시간외(NXT) 결과]
 {kor_context}
 
 [작성 지침]
-1. 간결하고 묵직한 어조 유지. 불필요한 서론 금지.
+1. 전문가의 고객 브리핑 어조 유지. 불필요한 서론 금지.
 2. 3단 구성:
-   - 🌎 [글로벌 매크로 요약]: 간밤 미 증시와 뉴스의 핵심을 3줄로 요약.
+   - 🌎 [글로벌 매크로 요약]: 제공된 뉴스 헤드라인들을 바탕으로 간밤의 시장 분위기(미 증시 흐름, 주요 이슈 등)를 3줄로 핵심만 유추하여 요약.
    - 🇰🇷 [어제 포착 종목 NXT 브리핑]: 어제 포착된 종목들({kor_context})의 시간외 단일가 등락률에 대한 평가 코멘트 (상승 시 차익실현, 하락 시 지지 여부 등).
-   - 🎯 [오늘의 액션 플랜]: 미국의 매크로와 한국의 시간외 데이터를 종합한 오늘 오전 9시~10시 구체적 행동 지침 제시.
+   - 🎯 [오늘의 액션 플랜]: 주요 뉴스와 한국의 시간외 데이터를 종합한 오늘 오전 9시~10시 구체적 행동 지침 제시.
 """
     for i in range(10):
         try:
@@ -106,9 +106,8 @@ if __name__ == "__main__":
     market_data, news_data = get_us_market_summary()
     kor_context = get_yesterday_korean_context()
     
-    # 💡 [핵심 킬스위치] 데이터가 제대로 안 들어왔으면 AI 소설 금지! 직통 에러 텔레그램 발송
     if "실패" in market_data or "실패" in kor_context or "지연" in market_data:
-        final_msg = f"🚨 [HYEOKS 시스템 경고] 모닝 데이터 수집 에러\n\nAI가 소설을 쓰는 것을 방지하기 위해 브리핑 생성을 중단했습니다.\n\n[에러 내용]\n- 미 증시 상태: {market_data}\n- 한국장 상태: {kor_context}\n\n※ 구글 시트(secret.json) 서비스 계정 공유 권한을 확인하시기 바랍니다."
+        final_msg = f"🚨 [HYEOKS 시스템 경고] 모닝 데이터 수집 에러\n\n[에러 내용]\n- 뉴스 수집 상태: {market_data}\n- 한국장 상태: {kor_context}\n\n※ 문제를 수정해주세요."
     else:
         briefing_text = generate_morning_briefing(market_data, news_data, kor_context)
         today_str = datetime.datetime.now(KST).strftime('%Y년 %m월 %d일')
