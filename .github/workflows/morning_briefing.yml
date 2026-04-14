@@ -2,6 +2,7 @@ name: 🌅 HYEOKS 모닝 브리핑
 
 on:
   workflow_dispatch:
+  # 💡 [핵심] 어제 날아간 알람시계를 다시 장착합니다! (한국시간 오전 7시 55분)
   schedule:
     - cron: '55 22 * * 0-4'
 
