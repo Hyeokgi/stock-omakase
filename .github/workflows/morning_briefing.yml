@@ -28,10 +28,9 @@ jobs:
 
     - name: 🚀 구글 시트 보안 인증 파일(secret.json) 만들기
       env:
-        SECRET_JSON: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }} 
-      run: |
-        echo "$SECRET_JSON" > secret.json
-
+        GCP_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }} 
+      run: echo "$GOOGLE_SHEETS_CREDENTIALS" > secret.json
+      
     - name: 🌅 모닝 브리핑 생성 및 텔레그램 발송
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
