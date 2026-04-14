@@ -726,3 +726,19 @@ if __name__ == "__main__":
     df_news, df_naver, df_main_news = get_news_keywords(), get_naver_search_ranking(), get_naver_main_news()
     update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_closed)
     update_technical_data(df_theme, all_theme_map)
+    
+    # 💡 [릴레이 아키텍처 패치] 종가베팅 시간에만 가격수집기를 깨웁니다!
+    now_kst = datetime.datetime.now(KST)
+    if now_kst.hour == 15 and 10 <= now_kst.minute < 20:
+        # ⚠️ [필수] 여기에 아까 구글에서 발급받은 본인의 웹 앱 URL을 붙여넣으세요!
+        GOOGLE_WEBHOOK_URL = "https://script.google.com/macros/s/여기에_주소_붙여넣기/exec"
+        
+        print("⏳ AI 분석 완료. 최신 가격 갱신 및 리포트 생성을 위해 구글에 바통을 넘깁니다...")
+        try:
+            response = requests.post(GOOGLE_WEBHOOK_URL, timeout=30)
+            if response.status_code == 200:
+                print("✅ 바통 터치 성공! (가격수집기 -> ai_report 순차 실행 시작)")
+            else:
+                print(f"❌ 바통 터치 실패 (Status: {response.status_code})")
+        except Exception as e:
+            print(f"❌ 바통 터치 통신 에러: {e}")
