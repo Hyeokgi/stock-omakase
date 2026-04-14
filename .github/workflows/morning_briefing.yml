@@ -29,11 +29,9 @@ jobs:
 
     - name: 🚀 구글 시트 보안 인증 파일(secret.json) 만들기
       env:
-        # 💡 [핵심 해결] 금고에서 꺼낸 비밀번호에 'SECRET_JSON'이라는 이름표를 붙입니다.
-        SECRET_JSON: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }} 
-      run: |
-        # 💡 [핵심 해결] 그리고 정확히 'SECRET_JSON'을 꺼내서 파일에 씁니다.
-        echo "$SECRET_JSON" > secret.json
+        # 💡 [정답] 깃허브 금고의 '진짜 이름'을 정확히 호출!
+        GCP_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }} 
+      run: echo "$GCP_CREDENTIALS" > secret.json
       
     - name: 🌅 모닝 브리핑 생성 및 텔레그램 발송
       env:
