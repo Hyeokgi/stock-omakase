@@ -3,6 +3,7 @@ name: 🌅 HYEOKS 모닝 브리핑
 on:
   workflow_dispatch:
   schedule:
+    # 한국 시간 아침 7시 55분 (UTC 22:55)
     - cron: '55 22 * * 0-4'
 
 concurrency:
@@ -28,8 +29,11 @@ jobs:
 
     - name: 🚀 구글 시트 보안 인증 파일(secret.json) 만들기
       env:
-        GCP_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }} 
-      run: echo "$GOOGLE_SHEETS_CREDENTIALS" > secret.json
+        # 💡 [핵심 해결] 금고에서 꺼낸 비밀번호에 'SECRET_JSON'이라는 이름표를 붙입니다.
+        SECRET_JSON: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }} 
+      run: |
+        # 💡 [핵심 해결] 그리고 정확히 'SECRET_JSON'을 꺼내서 파일에 씁니다.
+        echo "$SECRET_JSON" > secret.json
       
     - name: 🌅 모닝 브리핑 생성 및 텔레그램 발송
       env:
