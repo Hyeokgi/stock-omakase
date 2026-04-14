@@ -31,8 +31,7 @@ jobs:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        # 💡 [핵심] 수석님이 쓰시는 2개의 열쇠를 모두 파이썬으로 쏴줍니다!
-        KEY_1: ${{ secrets.GCP_CREDENTIALS }}
-        KEY_2: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+        # 💡 [핵심] 파일(secret.json)을 만들지 않고 환경변수로 직접 주입!
+        GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
       run: |
         python hyeoks_morning.py
