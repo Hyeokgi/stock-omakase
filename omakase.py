@@ -9,13 +9,20 @@ import re
 import xml.etree.ElementTree as ET
 from collections import Counter
 from oauth2client.service_account import ServiceAccountCredentials
+import sys
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==========================================
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit"
-TARGET_PERCENT = 5.0
+TARGET_PERCENT = 3.0
 KST = datetime.timezone(datetime.timedelta(hours=9))
+
+# 🌙 [야간 수면 모드 패치] 오후 8시 ~ 오전 7시 사이에는 서버 자원 보호를 위해 즉시 종료
+now_kst_check = datetime.datetime.now(KST)
+if now_kst_check.hour >= 20 or now_kst_check.hour < 7:
+    print(f"🌙 현재 시간({now_kst_check.strftime('%H:%M')}): 주식 시장 대기 시간입니다. HYEOKS 시스템을 휴식 모드로 전환합니다.")
+    sys.exit(0)  # 스크립트 즉시 종료 (아래 로직 실행 안 함)
 
 session = requests.Session()
 session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'})
