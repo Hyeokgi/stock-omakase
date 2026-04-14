@@ -101,8 +101,9 @@ def generate_morning_briefing(market_data, news_data, kor_context):
 """
     for i in range(10):
         try:
-            # 💡 [핵심] 구글 최신 API가 지원하는 가장 빠르고 정확한 2.0 모델로 교체!
-            response = client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
+            # 💡 [최종 수정] 단종된 2.0을 버리고, 가장 똑똑한 2.5-pro 로 원상복구! 
+            # (만약 에러가 난다면 'gemini-2.5-flash' 로 적으시면 무조건 통과됩니다.)
+            response = client.models.generate_content(model='gemini-2.5-pro', contents=prompt)
             return response.text
         except Exception as e:
             if "503" in str(e) or "429" in str(e): time.sleep(30 * (i + 1))
