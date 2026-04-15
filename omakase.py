@@ -10,7 +10,7 @@ import sys
 import xml.etree.ElementTree as ET
 from collections import Counter
 from oauth2client.service_account import ServiceAccountCredentials
-import concurrent.futures # 💡 [초고속 패치] 30명의 종업원을 동시에 투입하는 멀티스레딩 모듈
+import concurrent.futures 
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -19,7 +19,6 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ
 TARGET_PERCENT = 5.0
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
-# 🌙 [야간 수면 모드 패치] 오후 8시 ~ 오전 7시 사이에는 서버 자원 보호를 위해 즉시 종료
 now_kst_check = datetime.datetime.now(KST)
 if now_kst_check.hour >= 20 or now_kst_check.hour < 7:
     print(f"🌙 현재 시간({now_kst_check.strftime('%H:%M')}): 주식 시장 대기 시간입니다. 시스템을 휴식 모드로 전환합니다.")
@@ -101,11 +100,10 @@ def search_code_from_naver(stock_name):
 
 def get_news_keywords():
     try:
-        # 💡 [수석님 패치] 뉴스는 1시간에 1번(매시 30분~39분 사이)만 수집하여 속도 최적화
         now_minute = datetime.datetime.now(KST).minute
         if not (30 <= now_minute < 40):
             print("⏳ 뉴스 키워드 수집 스킵 (매시간 30분대에만 수집합니다)")
-            return pd.DataFrame() # 빈 프레임 넘기면 시트 업데이트 안 함
+            return pd.DataFrame() 
 
         print("📰 뉴스 키워드 수집 중...")
         full_text = ""
@@ -155,7 +153,6 @@ def get_news_keywords():
         return pd.DataFrame([[now_str, rank, word, count] for rank, (word, count) in enumerate(top_10, 1)], columns=['업데이트시간', '순위', '키워드', '언급횟수'])
     except Exception as e: return pd.DataFrame()
 
-# 💡 더 이상 캐시를 쓰지 않고 요청 즉시 처리하는 라이트 함수로 변경
 def get_market_cap(code):
     try:
         url = f"https://finance.naver.com/item/main.naver?code={code}"
@@ -308,10 +305,8 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
                 sheet.update(range_name="A1", values=[df.columns.values.tolist()] + df.values.tolist(), value_input_option="USER_ENTERED")
     except: pass
 
-# 💡 [초고속 패치] 단일 종목 분석 함수 (멀티스레딩을 위해 분리)
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map):
     try:
-        # 1. 60일 차트 데이터 가져오기
         url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=60&requestType=0"
         root = ET.fromstring(session.get(url, verify=False, timeout=3).text)
         
@@ -355,10 +350,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         gap_ratio = (open_price - prev_price) / prev_price if prev_price > 0 else 0
         is_huge_gap = gap_ratio >= 0.04
         
-        # 2. 한 번의 접속으로 시가총액과 재무상태(딱지/자본잠식) 동시 해결! (중복 제거)
         risk_soup = BeautifulSoup(session.get(f"https://finance.naver.com/item/main.naver?code={code}", verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
         
-        # 시가총액
         market_sum_tag = risk_soup.find('em', id='_market_sum')
         market_cap = 999999
         if market_sum_tag:
@@ -368,7 +361,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 market_cap = int(parts[0].strip()) * 10000 + (int(parts[1].strip()) if len(parts)>1 and parts[1].strip() else 0)
             else: market_cap = int(market_sum_str)
 
-        # 재무 위험
         is_junk = bool(risk_soup.find('img', alt=re.compile('관리종목|환기종목|거래정지|투자위험')))
         is_financial_risk, is_chronic_loss = False, False
         fin_table = risk_soup.find('table', {'class': 'tb_type1 tb_num tb_type1_ifrs'})
@@ -394,7 +386,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if capital_stock and total_equity and total_equity < capital_stock: is_financial_risk = True
             if len(op_profits) == 3 and all(p < 0 for p in op_profits): is_chronic_loss = True
 
-        # 3. 기관/외국인 가집계 데이터 가져오기
         is_dual_buy, f_buy, i_buy, supply_text = False, 0, 0, ""
         try:
             today_trend = session.get(f"https://m.stock.naver.com/api/stock/{code}/investor/trend", verify=False, timeout=3).json().get('investorTrendList', [{}])[0]
@@ -404,7 +395,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             elif i_buy > 0: supply_text = " (기관매수)"
         except: pass
 
-        # 지표 계산
         ma5 = int(df_hist['close'].tail(5).mean()) if len(df_hist) >= 5 else current_price
         ma20 = int(df_hist['close'].tail(20).mean()) if len(df_hist) >= 20 else current_price
         std20 = df_hist['close'].tail(20).std(ddof=0) if len(df_hist) >= 20 else 0
@@ -571,7 +561,24 @@ def update_technical_data(df_theme, all_theme_map):
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
         target_names = set()
         
-        # 1. 스캔 타겟 압축 (과거 묵은 데이터 제외, 최신 주도주만 정밀 타격)
+        # 💡 [복구 패치] 스윙(눌림목) 타겟 확장을 위해 수급_Raw 및 대시보드의 기존 주도주 싹쓸이 추가!
+        try:
+            raw_data = doc.worksheet("수급_Raw").get_all_values()
+            for row in raw_data[1:]:
+                if len(row) >= 7:
+                    stock_name = str(row[-4]).strip()
+                    val_str = str(row[-1]).replace(',', '').replace('억원', '').replace('"', '').strip()
+                    if val_str.isdigit() and int(val_str) >= 1000:
+                        if stock_name and stock_name not in ["#REF!", "로딩중...", "데이터대기", "FALSE"]:
+                            target_names.add(stock_name)
+        except: pass
+
+        try:
+            for row in doc.worksheet("대시보드").get_all_values()[4:]:
+                if len(row) > 2 and str(row[2]).strip() and str(row[2]).strip() != "#REF!": 
+                    target_names.add(str(row[2]).strip())
+        except: pass
+
         if not df_theme.empty:
             theme_rank_dict = {}
             theme_rank_tracker = {}
@@ -592,14 +599,12 @@ def update_technical_data(df_theme, all_theme_map):
             
         for t_name in all_theme_map.keys(): target_names.add(t_name)
 
-        # 2. 타겟 종목 코드 변환 (사전 세팅)
         target_dict = {}
         for name in list(target_names):
             code = name_to_code.get(name) or search_code_from_naver(name)
             if code: target_dict[name] = code
 
         results = []
-        # 🚀 [초고속 패치] 30명의 종업원을 투입하여 150종목을 한 번에 스캔! (8분 -> 3초)
         print(f"⚡ {len(target_dict)}개 종목을 30개의 스레드로 동시 타격합니다...")
         with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
             future_to_name = {executor.submit(analyze_single_stock, name, code, is_warning_market, theme_rank_dict, all_theme_map): name for name, code in target_dict.items()}
@@ -627,19 +632,21 @@ if __name__ == "__main__":
     update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_closed)
     update_technical_data(df_theme, all_theme_map)
     
-    # 💡 [릴레이 아키텍처 패치] 깃허브 스케줄 지연 대비 + 중복 리포트 방지 로직
     now_kst = datetime.datetime.now(KST)
     
-    # 깃허브가 지각할 것을 대비해 시간을 15:10 ~ 15:50 으로 넉넉하게 확장!
+    # 💡 [릴레이 아키텍처 패치] 깃허브 스케줄 지연 대비 + 중복 리포트 방지 로직 (15:10 ~ 15:50 넉넉하게 확장)
     if now_kst.hour == 15 and 10 <= now_kst.minute <= 50:
         try:
-            # 오늘 리포트가 이미 발행되었는지 '리포트_게시' 시트를 보고 판단!
+            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+            creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
+            gc = gspread.authorize(creds)
+            doc = gc.open_by_url(SHEET_URL)
+            
             posted_data = doc.worksheet("리포트_게시").get_all_values()
             today_str = now_kst.strftime('%Y-%m-%d')
             already_posted = any(today_str in str(row[0]) for row in posted_data[:5] if row)
             
             if not already_posted:
-                # ⚠️ [필수] 구글 스크립트 웹 앱 URL (수석님 URL 유지)
                 GOOGLE_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbxyuSEjPmg8rZPjLlG-YKck07QYxmZm0HtxvWAumvV2zp7RRpVaKDo6D-CiQ6pLqKFm/exec"
                 
                 print("⏳ 아직 오늘 리포트가 없습니다! 구글에 바통을 넘깁니다...")
