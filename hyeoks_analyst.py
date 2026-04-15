@@ -1,4 +1,5 @@
 import os, re, time, base64, warnings, datetime, requests, markdown, pdfkit, gspread, PIL.Image 
+from bs4 import BeautifulSoup  # 💡 뉴스 크롤링을 위해 추가됨
 from oauth2client.service_account import ServiceAccountCredentials
 from google import genai
 warnings.filterwarnings("ignore")
@@ -21,6 +22,24 @@ except Exception as e:
     print(f"❌ API 초기화 실패: {e}")
     exit(1)
 
+# =====================================================================
+# 🎯 [신규 추가] 타겟 종목 당일 뉴스 스나이퍼 수집기
+# =====================================================================
+def get_target_stock_news(code):
+    """최종 픽(Pick)된 종목의 당일 최신 뉴스 헤드라인 3개를 긁어옵니다."""
+    try:
+        url = f"https://finance.naver.com/item/news_news.naver?code={code}&page=1"
+        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
+        soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
+        
+        news_list = []
+        for a_tag in soup.select('.title a')[:3]:  # 최신 뉴스 딱 3개만
+            news_list.append(f"- {a_tag.text.strip()}")
+            
+        return "\n".join(news_list) if news_list else "당일 개별 특징주 뉴스 없음"
+    except Exception:
+        return "개별 뉴스 수집 실패"
+        
 def safe_generate_content(contents):
     for i in range(10): 
         try:
@@ -37,7 +56,7 @@ def safe_generate_content(contents):
     raise Exception("❌ 10번의 재시도에도 구글 서버가 문을 열어주지 않습니다. 30분 뒤에 다시 실행해 주세요.")
 
 # =====================================================================
-# 🌐 [신규 추가] 미국 연준(FRED) 매크로 유동성 수집기
+# 🌐 [기존 유지] 미국 연준(FRED) 매크로 유동성 수집기
 # =====================================================================
 def get_global_liquidity_data():
     print("🌐 글로벌 유동성(FRED) 데이터 수집 중...")
@@ -141,6 +160,9 @@ try:
         code_match = re.search(r'\d{6}', raw_code)
         target_code = code_match.group() if code_match else (valid_short_candidates[0]['code'] if st_type == "short" else valid_mid_candidates[0]['code'])
 
+        # 💡 [핵심 패치] 타겟 종목이 결정되었으니, 즉시 네이버에서 당일 최신 뉴스를 긁어옵니다.
+        target_specific_news = get_target_stock_news(target_code)
+
         best_pick = next((item for item in (valid_short_candidates if st_type=="short" else valid_mid_candidates) if item["code"] == target_code), (valid_short_candidates[0] if st_type=="short" else valid_mid_candidates[0]))
         target_name = best_pick['name']
         print(f"🎯 [{st_type.upper()}] 최종 픽: {target_name} ({target_code})")
@@ -153,12 +175,14 @@ try:
 
         warn = "\n[필수 경고] 고공권 판정. 비중을 절반으로 줄이고 칼손절 요망." if "고공권" in best_pick['tajeom'] else ("\n[필수 경고] 주의 장세. 오버나잇 비중 축소 요망." if is_korean_market_down else "")
 
-        # 💡 [본문 프롬프트 패치] 리포트 내용에 FRED 유동성 분석을 강제로 포함시킴
+        # 💡 [본문 프롬프트 패치] 당일 최신 뉴스 제공 및 동적 테마 발굴(Rule 8) 지시 추가!
         base_prompt = f"""너는 대한민국 최상위 1% 실전 트레이더들의 피 말리는 호가창 감각과 'HYEOKS 리서치'의 정교한 펀더멘털/매크로 분석력을 완벽하게 결합한 수석 퀀트 애널리스트야.
 제공된 일봉 차트(Vision)와 데이터를 바탕으로 심층 리포트를 작성해라. 
 
 [입력 데이터]
 종목: {best_pick['info']}
+🔥 당일 타겟 종목 최신 뉴스:
+{target_specific_news}
 매크로 환경: 나스닥 {nasdaq}, 환율 {exchange_rate}, 유가 {wti_oil}, 국내증시 {market_status_text}
 글로벌 유동성 현황:
 {liquidity_data}
@@ -177,6 +201,7 @@ try:
 5. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:O 형식 출력.
 6. 대장주/후발주 팩트체크: 후발주일 경우 과대포장하지 말고 '짝짓기 매매'의 명확한 한계를 지적해라.
 7. 익일 시가 갭 대응: 과도한 갭 상승 시 추격 금지 및 장중 눌림목 대기 시나리오를 명시해라.
+8. 숨겨진 상승 모멘텀 팩트체크: 제공된 [소속테마]가 과거의 낡은 분류이거나 현재 주가 급등을 설명하기에 빈약하다면, 함께 제공된 [🔥 당일 타겟 종목 최신 뉴스]를 즉시 분석해라. 뉴스를 바탕으로 "이 종목은 표면적으로 OO테마로 묶여있으나, 오늘의 진짜 폭등 이유는 뉴스에서 확인된 XX 모멘텀 때문이다"라고 숨겨진 진짜 테마와 상승 모멘텀을 날카롭게 짚어내라.
 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'X' if st_type=='short' else 'O'}
 
 [출력 양식 (마크다운 유지)]
@@ -192,7 +217,7 @@ try:
 </div>
 
 ## 1. 펀더멘털 및 매크로 유동성 심층 고찰
-(현재 글로벌 유동성(FRED) 지표의 흐름을 명확히 해석하여, 이것이 시장 전체와 해당 종목의 주도력에 미치는 영향을 논리적으로 증명할 것.)
+(현재 글로벌 유동성(FRED) 지표의 흐름을 명확히 해석하여, 이것이 시장 전체와 해당 종목의 주도력에 미치는 영향을 논리적으로 증명할 것. 또한 당일 뉴스를 바탕으로 숨겨진 진짜 모멘텀을 밝혀낼 것.)
 
 ## 2. 시각적 차트 판독 및 거래량 딥리딩
 (주요 매물대, 이평선 이격도, 최근 VCP 거래량 증감의 특징을 시각적으로 해부할 것.)
