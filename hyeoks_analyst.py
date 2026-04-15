@@ -102,8 +102,25 @@ try:
         cand_info = f"종목:{name}({code}), 현재가:{change_rate}, 타점:{tajeom}, 퀀트점수:{score_str}, 테마:{r[19] if len(r)>19 else ''}"
         cand_data = {'name': name, 'code': code, 'tajeom': tajeom, 'info': cand_info}
         
-        if "돌파" in score_str or "주도주" in tajeom: valid_short_candidates.append(cand_data)
-        else: valid_mid_candidates.append(cand_data)
+        # 💡 [진화된 타점 분류 로직] 단순히 20일선 돌파 여부가 아니라 '마스터 타점'의 성격을 분석
+        if "상한가" in tajeom or "주도주" in tajeom or "신고가" in tajeom or "나홀로" in tajeom:
+            valid_short_candidates.append(cand_data)
+        elif "관망" in tajeom or "대기" in tajeom or "후발주" in tajeom or "눌림" in tajeom or "수급 유입" in tajeom:
+            valid_mid_candidates.append(cand_data)
+        else:
+            if "돌파" in score_str: valid_short_candidates.append(cand_data)
+            else: valid_mid_candidates.append(cand_data)
+
+    # 🛡️ [불사조 방어막] 오늘처럼 장이 너무 뜨거워 스윙 종목이 0개라면 시스템을 멈추지 말고 강제 분배!
+    if not valid_mid_candidates and valid_short_candidates:
+        print("⚠️ 전 종목이 단기 급등 상태입니다! 단기 후보군 하위 종목을 스윙(눌림 대기) 후보로 차출합니다.")
+        valid_mid_candidates = valid_short_candidates[-3:] # 점수 낮은 3개를 스윙으로
+        valid_short_candidates = valid_short_candidates[:-3]
+        
+    if not valid_short_candidates and valid_mid_candidates:
+        print("⚠️ 전 종목이 눌림목 상태입니다! 스윙 후보군 상위 종목을 단기(돌파 대기) 후보로 차출합니다.")
+        valid_short_candidates = valid_mid_candidates[:3]
+        valid_mid_candidates = valid_mid_candidates[3:]
 
     market_status_text = "코스피/코스닥 20일선 이탈 (하락 변동성 장세)" if is_korean_market_down else "코스피/코스닥 안정화 (추세 추종 베팅 가능)"
 
