@@ -627,18 +627,28 @@ if __name__ == "__main__":
     update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_closed)
     update_technical_data(df_theme, all_theme_map)
     
-    # 💡 [릴레이 아키텍처 패치] 종가베팅 시간에만 가격수집기를 깨웁니다!
+    # 💡 [릴레이 아키텍처 패치] 깃허브 스케줄 지연 대비 + 중복 리포트 방지 로직
     now_kst = datetime.datetime.now(KST)
-    if now_kst.hour == 15 and 10 <= now_kst.minute < 20:
-        # ⚠️ [필수] 구글 스크립트 웹 앱 URL을 넣어주세요
-        GOOGLE_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbxyuSEjPmg8rZPjLlG-YKck07QYxmZm0HtxvWAumvV2zp7RRpVaKDo6D-CiQ6pLqKFm/exec"
-        
-        print("⏳ AI 분석 완료. 최신 가격 갱신 및 리포트 생성을 위해 구글에 바통을 넘깁니다...")
+    
+    # 깃허브가 지각할 것을 대비해 시간을 15:10 ~ 15:50 으로 넉넉하게 확장!
+    if now_kst.hour == 15 and 10 <= now_kst.minute <= 50:
         try:
-            response = requests.post(GOOGLE_WEBHOOK_URL, timeout=30)
-            if response.status_code == 200:
-                print("✅ 바통 터치 성공! (가격수집기 -> ai_report 순차 실행 시작)")
+            # 오늘 리포트가 이미 발행되었는지 '리포트_게시' 시트를 보고 판단!
+            posted_data = doc.worksheet("리포트_게시").get_all_values()
+            today_str = now_kst.strftime('%Y-%m-%d')
+            already_posted = any(today_str in str(row[0]) for row in posted_data[:5] if row)
+            
+            if not already_posted:
+                # ⚠️ [필수] 구글 스크립트 웹 앱 URL (수석님 URL 유지)
+                GOOGLE_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbxyuSEjPmg8rZPjLlG-YKck07QYxmZm0HtxvWAumvV2zp7RRpVaKDo6D-CiQ6pLqKFm/exec"
+                
+                print("⏳ 아직 오늘 리포트가 없습니다! 구글에 바통을 넘깁니다...")
+                response = requests.post(GOOGLE_WEBHOOK_URL, timeout=30)
+                if response.status_code == 200:
+                    print("✅ 바통 터치 성공! (가격수집기 -> ai_report 순차 실행 시작)")
+                else:
+                    print(f"❌ 바통 터치 실패 (Status: {response.status_code})")
             else:
-                print(f"❌ 바통 터치 실패 (Status: {response.status_code})")
+                print("✅ 오늘 리포트가 이미 발행되었으므로 릴레이를 생략합니다.")
         except Exception as e:
             print(f"❌ 바통 터치 통신 에러: {e}")
