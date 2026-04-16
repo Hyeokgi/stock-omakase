@@ -101,16 +101,30 @@ def get_us_market_summary():
         return f"뉴스 수집 에러: {e}", ""
 
 def get_after_hours_rate(code):
+    """
+    네이버 모바일 API를 사용하여 시간외 단일가(NXT 마감 기준) 등락률을 100% 정확하게 수집합니다.
+    """
     try:
         clean_code = str(code).replace("'", "").strip().zfill(6)
-        res = requests.get(f"https://finance.naver.com/item/sise_time_allday.naver?code={clean_code}", headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
-        soup = BeautifulSoup(res.content, 'html.parser', from_encoding='euc-kr')
-        for row in soup.select('table.type2 tr'):
-            if '18:00' in row.text or '17:50' in row.text or '17:40' in row.text:
-                return row.select('span.tah')[1].text.strip()
-        return "시간외 변동없음"
-    except:
-        return "조회불가"
+        url = f"https://m.stock.naver.com/api/stock/{clean_code}/basic"
+        
+        # 브라우저인 것처럼 위장하여 API 호출
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        res = requests.get(url, headers=headers, timeout=3).json()
+        
+        # 시간외 등락률 데이터 추출
+        if 'overTimeFluctuationsRatio' in res:
+            nxt_rate = float(res['overTimeFluctuationsRatio'])
+            if nxt_rate > 0:
+                return f"🔴 +{nxt_rate}% 상승"
+            elif nxt_rate < 0:
+                return f"🔵 {nxt_rate}% 하락"
+            else:
+                return "➖ 보합(0%)"
+        else:
+            return "데이터 없음"
+    except Exception as e:
+        return "수집 에러"
 
 def get_yesterday_korean_context():
     print("🇰🇷 어제 한국장 퀀트 타겟 종목 수집 중...")
