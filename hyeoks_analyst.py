@@ -1,5 +1,5 @@
 import os, re, time, base64, warnings, datetime, requests, markdown, pdfkit, gspread, PIL.Image 
-from bs4 import BeautifulSoup  # 💡 뉴스 크롤링을 위해 추가됨
+from bs4 import BeautifulSoup  
 from oauth2client.service_account import ServiceAccountCredentials
 from google import genai
 warnings.filterwarnings("ignore")
@@ -11,7 +11,6 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxyuSEjPmg8rZPjLlG-YKck07QYxmZm0HtxvWAumvV2zp7RRpVaKDo6D-CiQ6pLqKFm/exec"
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
-# 💡 FRED API 키 추가
 FRED_API_KEY = "eed13162f33f0ad6547783b9bb27190b"
 
 print("🤖 [HYEOKS 리서치 센터] 매크로 융합 2.5-Pro 무한 돌파(Zombie) 엔진 가동...")
@@ -22,20 +21,14 @@ except Exception as e:
     print(f"❌ API 초기화 실패: {e}")
     exit(1)
 
-# =====================================================================
-# 🎯 [신규 추가] 타겟 종목 당일 뉴스 스나이퍼 수집기
-# =====================================================================
 def get_target_stock_news(code):
-    """최종 픽(Pick)된 종목의 당일 최신 뉴스 헤드라인 3개를 긁어옵니다."""
     try:
         url = f"https://finance.naver.com/item/news_news.naver?code={code}&page=1"
         res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
-        
         news_list = []
-        for a_tag in soup.select('.title a')[:3]:  # 최신 뉴스 딱 3개만
+        for a_tag in soup.select('.title a')[:3]:  
             news_list.append(f"- {a_tag.text.strip()}")
-            
         return "\n".join(news_list) if news_list else "당일 개별 특징주 뉴스 없음"
     except Exception:
         return "개별 뉴스 수집 실패"
@@ -49,15 +42,12 @@ def safe_generate_content(contents):
             print(f"⚠️ [돌파 시도 {i+1}/10] 서버 응답: {e}")
             if "503" in err_str or "unavailable" in err_str or "429" in err_str or "quota" in err_str:
                 wait_time = 30 * (i + 1)
-                print(f"🚨 서버 혼잡. {wait_time}초 동안 숨을 고른 후 다시 문을 두드립니다...")
+                print(f"🚨 서버 혼잡. {wait_time}초 대기 후 재시도...")
                 time.sleep(wait_time)
             else: 
                 raise e 
-    raise Exception("❌ 10번의 재시도에도 구글 서버가 문을 열어주지 않습니다. 30분 뒤에 다시 실행해 주세요.")
+    raise Exception("❌ 구글 서버 응답 불가")
 
-# =====================================================================
-# 🌐 [기존 유지] 미국 연준(FRED) 매크로 유동성 수집기
-# =====================================================================
 def get_global_liquidity_data():
     print("🌐 글로벌 유동성(FRED) 데이터 수집 중...")
     indicators = {
@@ -67,21 +57,16 @@ def get_global_liquidity_data():
         "WALCL": "연준 총자산", 
         "M2SL": "M2 통화량" 
     }
-    
     liquidity_report = []
     for series_id, name in indicators.items():
         try:
             url = f"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={FRED_API_KEY}&file_type=json&sort_order=desc&limit=2"
             res = requests.get(url, timeout=5).json()
             if 'observations' in res and len(res['observations']) >= 2:
-                latest = res['observations'][0]
-                prev = res['observations'][1]
+                latest, prev = res['observations'][0], res['observations'][1]
                 if latest['value'] == '.' or prev['value'] == '.': continue
-                
-                latest_val = float(latest['value'])
-                prev_val = float(prev['value'])
+                latest_val, prev_val = float(latest['value']), float(prev['value'])
                 diff = latest_val - prev_val
-                
                 trend = f"🔺 증가 (+{diff:,.2f})" if diff > 0 else (f"🔻 감소 ({diff:,.2f})" if diff < 0 else "➖ 변동없음")
                 formatted_val = f"{latest_val:,.2f}%" if series_id == "BAMLH0A0HYM2" else f"{latest_val:,.1f}"
                 liquidity_report.append(f"- {name}: {formatted_val} ({trend})")
@@ -90,7 +75,6 @@ def get_global_liquidity_data():
     return "\n".join(liquidity_report) if liquidity_report else "유동성 데이터 수집 불가"
 
 try:
-    # 1. 시트 및 매크로 데이터 수집
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
     gc = gspread.authorize(creds)
@@ -100,16 +84,13 @@ try:
     nasdaq, exchange_rate, wti_oil = macro_sheet[1][4], macro_sheet[1][6], macro_sheet[1][7]
     tech_data = doc.worksheet("주가데이터_보조").get_all_values()[1:30]
     
-    # 💡 FRED 유동성 데이터 수집 실행
     liquidity_data = get_global_liquidity_data()
-    
     valid_short_candidates, valid_mid_candidates = [], []
     is_korean_market_down = False 
 
     for r in tech_data:
         if len(r) < 10: continue
-        name = str(r[0]).strip()
-        code = str(r[1]).replace("'", "").strip().zfill(6)
+        name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
         change_rate, score_str, tajeom = str(r[3]), str(r[8]), str(r[9])
         shadow_status = str(r[14]) if len(r)>14 else ""
         
@@ -121,7 +102,6 @@ try:
         cand_info = f"종목:{name}({code}), 현재가:{change_rate}, 타점:{tajeom}, 퀀트점수:{score_str}, 테마:{r[19] if len(r)>19 else ''}"
         cand_data = {'name': name, 'code': code, 'tajeom': tajeom, 'info': cand_info}
         
-        # 💡 [진화된 타점 분류 로직] 단순히 20일선 돌파 여부가 아니라 '마스터 타점'의 성격을 분석
         if "상한가" in tajeom or "주도주" in tajeom or "신고가" in tajeom or "나홀로" in tajeom:
             valid_short_candidates.append(cand_data)
         elif "관망" in tajeom or "대기" in tajeom or "후발주" in tajeom or "눌림" in tajeom or "수급 유입" in tajeom:
@@ -130,14 +110,13 @@ try:
             if "돌파" in score_str: valid_short_candidates.append(cand_data)
             else: valid_mid_candidates.append(cand_data)
 
-    # 🛡️ [불사조 방어막] 오늘처럼 장이 너무 뜨거워 스윙 종목이 0개라면 시스템을 멈추지 말고 강제 분배!
     if not valid_mid_candidates and valid_short_candidates:
-        print("⚠️ 전 종목이 단기 급등 상태입니다! 단기 후보군 하위 종목을 스윙(눌림 대기) 후보로 차출합니다.")
-        valid_mid_candidates = valid_short_candidates[-3:] # 점수 낮은 3개를 스윙으로
+        print("⚠️ 전 종목 단기 급등 상태! 하위 종목을 스윙으로 차출합니다.")
+        valid_mid_candidates = valid_short_candidates[-3:] 
         valid_short_candidates = valid_short_candidates[:-3]
         
     if not valid_short_candidates and valid_mid_candidates:
-        print("⚠️ 전 종목이 눌림목 상태입니다! 스윙 후보군 상위 종목을 단기(돌파 대기) 후보로 차출합니다.")
+        print("⚠️ 전 종목 눌림목 상태! 상위 종목을 단기로 차출합니다.")
         valid_short_candidates = valid_mid_candidates[:3]
         valid_mid_candidates = valid_mid_candidates[3:]
 
@@ -153,14 +132,12 @@ try:
             c_str = "\n".join([c['info'] for c in valid_mid_candidates])
             s_msg = "매크로 불안 속에서도 악성 매도가 씨마른 완벽한 눌림목 스윙 1종목"
 
-        # 💡 [프롬프트 패치] 유동성에 따른 AI의 종목 선택 기준(Pick) 강화
-        pick_prompt = f"너는 실전 트레이더의 직감을 가진 수석 퀀트 애널리스트야. 매크로 환경(나스닥:{nasdaq}, 환율:{exchange_rate}, 유가:{wti_oil}, 한국증시:{market_status_text})과 [글로벌 유동성 지표]\n{liquidity_data}\n를 분석해. 만약 유동성이 축소(스프레드 상승, 역레포 증가 등) 중이라면 가장 보수적이고 방어력이 강한 종목을, 유동성이 공급 중이라면 가장 폭발적인 1등 주도주를 골라. [후보군] {c_str} [지시] 후보 중 '{s_msg}'을 딱 1개만 골라서 '6자리 종목코드 숫자'만 출력해."
+        pick_prompt = f"너는 실전 트레이더의 직감을 가진 수석 퀀트 애널리스트야. 매크로(나스닥:{nasdaq}, 환율:{exchange_rate}, 한국증시:{market_status_text})와 [유동성]\n{liquidity_data}\n를 분석해. 유동성이 축소 중이면 보수적 방어종목을, 공급 중이면 폭발적 주도주를 골라. [후보군] {c_str} [지시] 후보 중 '{s_msg}'을 딱 1개만 골라서 '6자리 종목코드 숫자'만 출력해."
         
         raw_code = safe_generate_content(pick_prompt).text
         code_match = re.search(r'\d{6}', raw_code)
         target_code = code_match.group() if code_match else (valid_short_candidates[0]['code'] if st_type == "short" else valid_mid_candidates[0]['code'])
 
-        # 💡 [핵심 패치] 타겟 종목이 결정되었으니, 즉시 네이버에서 당일 최신 뉴스를 긁어옵니다.
         target_specific_news = get_target_stock_news(target_code)
 
         best_pick = next((item for item in (valid_short_candidates if st_type=="short" else valid_mid_candidates) if item["code"] == target_code), (valid_short_candidates[0] if st_type=="short" else valid_mid_candidates[0]))
@@ -168,15 +145,21 @@ try:
         print(f"🎯 [{st_type.upper()}] 최종 픽: {target_name} ({target_code})")
 
         img_path = f"temp_{target_code}.png"
-        img_res = requests.get(f"https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{target_code}.png", headers={'User-Agent': 'Mozilla/5.0'})
-        with open(img_path, 'wb') as f: f.write(img_res.content)
-        img = PIL.Image.open(img_path)
-        img.thumbnail((800, 800))
+        
+        # 🛡️ [절대 방어막] 네이버가 이미지를 안 줘도 시스템이 죽지 않게 보호합니다!
+        try:
+            img_res = requests.get(f"https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{target_code}.png", headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
+            with open(img_path, 'wb') as f: f.write(img_res.content)
+            img = PIL.Image.open(img_path)
+            img.thumbnail((800, 800))
+        except Exception as e:
+            print(f"⚠️ 차트 이미지 로드 에러 발생 (빈 이미지로 대체하여 시스템 다운 방어): {e}")
+            img = PIL.Image.new('RGB', (800, 800), color=(255, 255, 255))
+            img.save(img_path)
 
         warn = "\n[필수 경고] 고공권 판정. 비중을 절반으로 줄이고 칼손절 요망." if "고공권" in best_pick['tajeom'] else ("\n[필수 경고] 주의 장세. 오버나잇 비중 축소 요망." if is_korean_market_down else "")
 
-        # 💡 [본문 프롬프트 패치] 당일 최신 뉴스 제공 및 동적 테마 발굴(Rule 8) 지시 추가!
-        base_prompt = f"""너는 대한민국 최상위 1% 실전 트레이더들의 피 말리는 호가창 감각과 'HYEOKS 리서치'의 정교한 펀더멘털/매크로 분석력을 완벽하게 결합한 수석 퀀트 애널리스트야.
+        base_prompt = f"""너는 대한민국 최상위 1% 실전 트레이더들의 감각을 가진 퀀트 애널리스트야.
 제공된 일봉 차트(Vision)와 데이터를 바탕으로 심층 리포트를 작성해라. 
 
 [입력 데이터]
@@ -189,41 +172,36 @@ try:
 {warn}
 
 [HYEOKS 딥리딩 절대 지침 - 명심해라]
-1. 분량 초정밀 제어: 각 섹션의 핵심만 타격하여, 차트 이미지 포함 정확히 2페이지 분량으로 텍스트 길이를 절묘하게 맞춰라.
-2. 은어 금지: 'SS급', '개미털기' 등 저급한 은어나 이모지를 쓰지 마라. 품격 있는 문어체 유지.
-3. 3D 입체 분석 (유동성 강조): 
-   - [매크로 & 유동성]: 제공된 FRED 유동성(TGA, 역레포, 스프레드 등)을 분석하여 현재 증시에 스마트머니가 들어오는지 나가는지 논증하고, 이것이 해당 종목의 상승 추세에 어떤 영향을 미칠지 서술해라.
-   - [펀더멘털/테마]: 이 기업의 잠재력과 테마 강도.
-   - [수급]: 거래량 폭증과 스마트머니 유입의 인과관계.
-4. 실전 야수의 타점 설계: 
-   - 단기 돌파: 9시~9시 30분 아침 투매 공략 및 '5분봉 리테스트(눌림목)' 진입 등 구체적인 시나리오 제시.
-   - 스윙 눌림목: VCP, 5일선 변곡점 등 하방 경직성 확인 후 종가베팅 타점 제시.
+1. 분량 초정밀 제어: 차트 이미지 포함 정확히 2페이지 분량으로 텍스트 길이를 절묘하게 맞춰라.
+2. 은어 금지: 품격 있는 문어체 유지.
+3. 3D 입체 분석: FRED 유동성을 분석하여 현재 증시에 스마트머니가 들어오는지 나가는지 논증해라.
+4. 실전 야수의 타점 설계: 5분봉 리테스트 또는 VCP 변곡점 등 구체적인 시나리오 제시.
 5. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:O 형식 출력.
-6. 대장주/후발주 팩트체크: 후발주일 경우 과대포장하지 말고 '짝짓기 매매'의 명확한 한계를 지적해라.
-7. 익일 시가 갭 대응: 과도한 갭 상승 시 추격 금지 및 장중 눌림목 대기 시나리오를 명시해라.
-8. 숨겨진 상승 모멘텀 팩트체크: 제공된 [소속테마]가 과거의 낡은 분류이거나 현재 주가 급등을 설명하기에 빈약하다면, 함께 제공된 [🔥 당일 타겟 종목 최신 뉴스]를 즉시 분석해라. 뉴스를 바탕으로 "이 종목은 표면적으로 OO테마로 묶여있으나, 오늘의 진짜 폭등 이유는 뉴스에서 확인된 XX 모멘텀 때문이다"라고 숨겨진 진짜 테마와 상승 모멘텀을 날카롭게 짚어내라.
+6. 대장주/후발주 팩트체크: 후발주일 경우 짝짓기 매매의 한계를 지적해라.
+7. 익일 시가 갭 대응: 과도한 갭 상승 시 추격 금지 시나리오 명시.
+8. 숨겨진 상승 모멘텀 팩트체크: 제공된 [소속테마]가 빈약하다면, [🔥 당일 타겟 종목 최신 뉴스]를 분석해 "이 종목은 표면적으로 OO테마나, 실제로는 뉴스에서 확인된 XX 모멘텀 때문이다"라고 짚어내라.
 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'X' if st_type=='short' else 'O'}
 
 [출력 양식 (마크다운 유지)]
 <div class="broker-name">HYEOKS SECURITIES | {'SHORT-TERM' if st_type=='short' else 'MID-TERM'} STRATEGY</div>
 <div class="header">
 <p class="stock-title">{target_name} ({target_code})</p>
-<p class="subtitle">{'매물대 진공 구간 돌파 및 5분봉 리테스트 공략' if st_type=='short' else 'VCP 거래량 급감 및 5일선 변곡점 종가베팅'}: (여기에 통찰력 있는 소제목 작성)</p>
+<p class="subtitle">{'매물대 진공 구간 돌파 및 5분봉 리테스트 공략' if st_type=='short' else 'VCP 거래량 급감 및 5일선 변곡점 종가베팅'}: (소제목 작성)</p>
 </div>
 
 <div class="summary-box">
 <strong>💡 Company Brief | HYEOKS 퀀트 데스크</strong><br><br>
-(기업의 펀더멘털, 핵심 테마, 모멘텀을 3~4문장으로 밀도 있게 압축 요약.)
+(기업 펀더멘털 압축 요약)
 </div>
 
 ## 1. 펀더멘털 및 매크로 유동성 심층 고찰
-(현재 글로벌 유동성(FRED) 지표의 흐름을 명확히 해석하여, 이것이 시장 전체와 해당 종목의 주도력에 미치는 영향을 논리적으로 증명할 것. 또한 당일 뉴스를 바탕으로 숨겨진 진짜 모멘텀을 밝혀낼 것.)
+(FRED 지표 흐름 해석 및 당일 뉴스를 바탕으로 숨겨진 진짜 모멘텀 밝혀내기)
 
 ## 2. 시각적 차트 판독 및 거래량 딥리딩
-(주요 매물대, 이평선 이격도, 최근 VCP 거래량 증감의 특징을 시각적으로 해부할 것.)
+(주요 매물대, 이평선 이격도, 최근 VCP 거래량 증감 해부)
 
 ## 3. 실전 타점 시나리오 및 리스크 관리 전략
-(위에서 지시한 '실전 야수의 타점(5분봉 리테스트 등)' 적용. 1차/2차 진입 가격, 구체적 시나리오, 목표가/손절가를 명확히 서술할 것.)
+(1차/2차 진입 가격, 구체적 시나리오, 목표가/손절가)
 """
         response = safe_generate_content([base_prompt, img])
         img.close()
