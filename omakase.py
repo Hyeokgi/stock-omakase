@@ -634,8 +634,8 @@ if __name__ == "__main__":
     
     now_kst = datetime.datetime.now(KST)
     
-    # 💡 [릴레이 아키텍처 패치] 깃허브 스케줄 지연 대비 + 중복 리포트 방지 로직 (15:10 ~ 15:50 넉넉하게 확장)
-    if now_kst.hour == 15 and 10 <= now_kst.minute <= 50:
+    # 💡 [릴레이 아키텍처 패치] 초고속 스캐너를 위해 시간 제한 해제 (15:00 ~ 15:50)
+    if now_kst.hour == 15 and 0 <= now_kst.minute <= 50:
         try:
             scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
             creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
