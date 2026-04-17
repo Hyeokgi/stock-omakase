@@ -2,6 +2,7 @@ name: 🎯 오후 3시 정각 종가베팅 스캐너
 
 on:
   workflow_dispatch:
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -28,3 +29,14 @@ jobs:
         
     - name: Run Main Engine
       run: python omakase.py
+
+    # 💡 [신규 추가] 구글 시트가 넉넉히 저장될 때까지 5분 대기
+    - name: ⏳ 데이터 동기화 대기 (5분)
+      run: sleep 300
+
+    # 💡 [신규 추가] 깃허브 내부에서 곧바로 ai_report.yml을 강제 호출!
+    - name: 🎯 AI 리포트 발송 트리거 (ai_report.yml 호출)
+      uses: peter-evans/repository-dispatch@v2
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        event-type: trigger-ai-report
