@@ -16,7 +16,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==========================================
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit"
-TARGET_PERCENT = 5.0
+# 💡 [군집성 필터 패치 1] 기준을 3%로 낮추어 테마의 확산(온기)을 더 정밀하게 감지합니다.
+TARGET_PERCENT = 3.0
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
 now_kst_check = datetime.datetime.now(KST)
@@ -182,7 +183,7 @@ def get_real_money_themes():
     themes = themes[:20] 
                     
     theme_data_list = []
-    print("▶️ 실시간 주도 테마 수집 시작 (거래대금 필터링 + 등락률 랭킹)...")
+    print("▶️ 실시간 주도 테마 수집 시작 (군집성 필터 적용)...")
     for theme in themes:
         try:
             soup = BeautifulSoup(session.get(theme['url'], verify=False).content, 'html.parser', from_encoding='cp949')
@@ -202,7 +203,9 @@ def get_real_money_themes():
                     except: continue
             
             stocks_val = sorted(stocks, key=lambda x: x['value'], reverse=True)[:5]
-            if stocks_val and not (len(stocks_val) >= 2 and stocks_val[0]['value'] >= stocks_val[1]['value'] * 10):
+            
+            # 💡 [군집성 필터 패치 2] 3% 이상 급등한 유의미한 종목이 '최소 2개 이상'일 때만 진짜 테마로 인정!
+            if len(stocks_val) >= 2:
                 stocks_rate = sorted(stocks_val, key=lambda x: x['rate'], reverse=True)
                 theme_data_list.append({'theme_name': theme['name'], 'stocks': stocks_rate})
         except: continue
@@ -561,7 +564,6 @@ def update_technical_data(df_theme, all_theme_map):
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
         target_names = set()
         
-        # 💡 [복구 패치] 스윙(눌림목) 타겟 확장을 위해 수급_Raw 및 대시보드의 기존 주도주 싹쓸이 추가!
         try:
             raw_data = doc.worksheet("수급_Raw").get_all_values()
             for row in raw_data[1:]:
@@ -634,7 +636,7 @@ if __name__ == "__main__":
     
     now_kst = datetime.datetime.now(KST)
     
-    # 💡 [릴레이 아키텍처 패치] 초고속 스캐너를 위해 시간 제한 해제 (15:00 ~ 15:50)
+    # 💡 [릴레이 아키텍처 패치] 구글 웹훅으로 15시 ~ 15시 50분 사이 바통 터치 로직 원상 복구!
     if now_kst.hour == 15 and 0 <= now_kst.minute <= 50:
         try:
             scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
