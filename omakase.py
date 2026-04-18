@@ -540,16 +540,31 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if is_high_altitude and "[" in master_tajeom:
             quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️고공권(단기대응)"
 
-        # 💡 [신규 추가] 시간외 및 NXT 종가 수집 로직
+        # 💡 [핵심 패치] 네이버 금융 '시간외 단일가' 웹페이지 크롤링 엔진 장착! (영구 기록 포획)
         nxt_text = "➖ 대기/보합"
         try:
-            basic_res = session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", verify=False, timeout=3).json()
-            if 'overTimeFluctuationsRatio' in basic_res:
-                nxt_rate = float(basic_res['overTimeFluctuationsRatio'])
-                if nxt_rate > 0: nxt_text = f"🔴 +{nxt_rate}% 상승"
-                elif nxt_rate < 0: nxt_text = f"🔵 {nxt_rate}% 하락"
-                else: nxt_text = "➖ 보합(0%)"
-        except:
+            # 주말이든 언제든 데이터가 살아있는 시간외 단일가 탭(HTML)을 직접 긁어옵니다.
+            time_url = f"https://finance.naver.com/item/time.naver?code={code}"
+            time_res = session.get(time_url, verify=False, timeout=3)
+            time_soup = BeautifulSoup(time_res.content, 'html.parser', from_encoding='euc-kr')
+            
+            # 시간외 단일가 표에서 가장 최근 체결가(첫 번째 줄)의 등락률을 찾습니다.
+            trs = time_soup.find_all('tr')
+            for tr in trs:
+                tds = tr.find_all('td')
+                # 데이터가 정상적으로 들어있는 줄(1시간 간격 체결가)을 찾으면 즉시 멈춥니다.
+                if len(tds) >= 4 and "18:00" <= tds[0].text.strip() <= "18:10": 
+                    # 등락폭(전일비)과 퍼센트(등락률)를 잡습니다.
+                    change_td = tds[2].text.strip() # 등락률(%)
+                    sign_img = tds[1].find('img') # 상승/하락 기호 이미지
+                    
+                    if sign_img and "상승" in sign_img['alt']:
+                        nxt_text = f"🔴 +{change_td}% 상승"
+                    elif sign_img and "하락" in sign_img['alt']:
+                        nxt_text = f"🔵 -{change_td}% 하락"
+                    break # 가장 최근(18:00 종가) 하나만 찾으면 루프 종료
+        except Exception as e:
+            print(f"시간외 크롤링 에러({name}): {e}")
             pass
 
         return [
@@ -623,14 +638,12 @@ def update_technical_data(df_theme, all_theme_map):
                 if res: results.append(res)
 
         results.sort(key=lambda x: x[19], reverse=True) 
-        # 💡 [핵심 패치] quant_score(19번)는 정렬용으로만 쓰고 삭제하되, 테마(20번)와 NXT데이터(21번)를 뒤에 붙입니다.
         final_results = [r[:19] + [r[20], r[21]] for r in results]
 
         if final_results:
             try: helper_sheet = doc.worksheet("주가데이터_보조")
             except: helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="21")
             helper_sheet.clear()
-            # 💡 헤더에 "시간외(NXT)" 추가!
             headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "HYEOKS점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)", "윗꼬리판독", "전고점위치", "20일이격도", "대장주이력", "거래량상태", "소속테마", "시간외(NXT)"]
             helper_sheet.update(range_name="A1", values=[headers] + final_results, value_input_option="USER_ENTERED")
             print(f"✅ 총 {len(final_results)}개 종목 판독 완료! (NXT 시간외 데이터 수집 성공) 🚀")
