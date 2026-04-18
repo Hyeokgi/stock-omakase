@@ -91,7 +91,8 @@ try:
     for r in tech_data:
         if len(r) < 10: continue
         name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
-        change_rate, score_str, tajeom = str(r[3]), str(r[8]), str(r[9])
+        # 💡 r[2] (실제 원화 가격)을 current_price 변수로 뽑아냅니다.
+        current_price, change_rate, score_str, tajeom = str(r[2]), str(r[3]), str(r[8]), str(r[9])
         shadow_status = str(r[14]) if len(r)>14 else ""
         nxt_rate = str(r[20]) if len(r)>20 else "확인불가"
         
@@ -100,7 +101,8 @@ try:
         if "윗꼬리 위험" in shadow_status or "윗꼬리" in tajeom: continue 
         if re.search(r'매수금지|자본잠식|딱지|관망|데이터 부족', tajeom): continue 
             
-        cand_info = f"종목:{name}({code}), 현재가:{change_rate}, 타점:{tajeom}, 퀀트점수:{score_str}, 테마:{r[19] if len(r)>19 else ''}, 시간외:{nxt_rate}"
+        # 💡 현재가 란에 "13,820원 (+22.30%)" 형태로 완벽하게 꽂아줍니다!
+        cand_info = f"종목:{name}({code}), 현재가:{current_price}원 ({change_rate}), 타점:{tajeom}, 퀀트점수:{score_str}, 테마:{r[19] if len(r)>19 else ''}, 시간외:{nxt_rate}"
         cand_data = {'name': name, 'code': code, 'tajeom': tajeom, 'info': cand_info}
         
         if "상한가" in tajeom or "주도주" in tajeom or "신고가" in tajeom or "나홀로" in tajeom:
