@@ -540,31 +540,34 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if is_high_altitude and "[" in master_tajeom:
             quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️고공권(단기대응)"
 
-        # 💡 [핵심 패치] 네이버 금융 '시간외 단일가' 웹페이지 크롤링 엔진 장착! (영구 기록 포획)
+        # 💡 [하이브리드 포획 엔진] 1순위: 모바일 API (NXT 8시 포획) / 2순위: PC 웹페이지 (주말/정규 6시 복원)
         nxt_text = "➖ 대기/보합"
         try:
-            # 주말이든 언제든 데이터가 살아있는 시간외 단일가 탭(HTML)을 직접 긁어옵니다.
-            time_url = f"https://finance.naver.com/item/time.naver?code={code}"
-            time_res = session.get(time_url, verify=False, timeout=3)
-            time_soup = BeautifulSoup(time_res.content, 'html.parser', from_encoding='euc-kr')
+            # 1. 모바일 API 찌르기 (평일 20:00 이전에는 살아있음)
+            basic_res = session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", verify=False, timeout=3).json()
+            nxt_rate = float(basic_res.get('overTimeFluctuationsRatio', 0))
             
-            # 시간외 단일가 표에서 가장 최근 체결가(첫 번째 줄)의 등락률을 찾습니다.
-            trs = time_soup.find_all('tr')
-            for tr in trs:
-                tds = tr.find_all('td')
-                # 데이터가 정상적으로 들어있는 줄(1시간 간격 체결가)을 찾으면 즉시 멈춥니다.
-                if len(tds) >= 4 and "18:00" <= tds[0].text.strip() <= "18:10": 
-                    # 등락폭(전일비)과 퍼센트(등락률)를 잡습니다.
-                    change_td = tds[2].text.strip() # 등락률(%)
-                    sign_img = tds[1].find('img') # 상승/하락 기호 이미지
-                    
-                    if sign_img and "상승" in sign_img['alt']:
-                        nxt_text = f"🔴 +{change_td}% 상승"
-                    elif sign_img and "하락" in sign_img['alt']:
-                        nxt_text = f"🔵 -{change_td}% 하락"
-                    break # 가장 최근(18:00 종가) 하나만 찾으면 루프 종료
+            if nxt_rate != 0:
+                if nxt_rate > 0: nxt_text = f"🔴 +{nxt_rate}% 상승 (NXT 종합)"
+                else: nxt_text = f"🔵 {nxt_rate}% 하락 (NXT 종합)"
+            else:
+                # 2. 리셋된 주말이라면? PC 웹페이지(HTML)를 긁어서 금요일 18:00 정규 종가라도 강제 복원!
+                time_url = f"https://finance.naver.com/item/time.naver?code={code}"
+                time_res = session.get(time_url, verify=False, timeout=3)
+                time_soup = BeautifulSoup(time_res.content, 'html.parser', from_encoding='euc-kr')
+                
+                trs = time_soup.find_all('tr')
+                for tr in trs:
+                    tds = tr.find_all('td')
+                    if len(tds) >= 4 and "18:00" <= tds[0].text.strip() <= "18:10": 
+                        change_td = tds[2].text.strip()
+                        sign_img = tds[1].find('img')
+                        if sign_img and "상승" in sign_img.get('alt', ''):
+                            nxt_text = f"🔴 +{change_td}% 상승 (18:00 정규)"
+                        elif sign_img and "하락" in sign_img.get('alt', ''):
+                            nxt_text = f"🔵 -{change_td}% 하락 (18:00 정규)"
+                        break
         except Exception as e:
-            print(f"시간외 크롤링 에러({name}): {e}")
             pass
 
         return [
