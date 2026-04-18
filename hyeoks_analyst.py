@@ -93,7 +93,6 @@ try:
         name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
         change_rate, score_str, tajeom = str(r[3]), str(r[8]), str(r[9])
         shadow_status = str(r[14]) if len(r)>14 else ""
-        # 💡 [패치] NXT 시간외 등락률을 21번째 열에서 가져옴 (추가 정보)
         nxt_rate = str(r[20]) if len(r)>20 else "확인불가"
         
         if "주의장세" in tajeom: is_korean_market_down = True
@@ -148,7 +147,6 @@ try:
 
         img_path = f"temp_{target_code}.png"
         
-        # 🛡️ [절대 방어막] 네이버가 이미지를 안 줘도 시스템이 죽지 않게 보호합니다!
         try:
             img_res = requests.get(f"https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{target_code}.png", headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
             with open(img_path, 'wb') as f: f.write(img_res.content)
@@ -174,14 +172,10 @@ try:
 {warn}
 
 [HYEOKS 딥리딩 절대 지침 - 명심해라]
-1. 분량 초정밀 제어: 차트 이미지 포함 정확히 2페이지 분량으로 텍스트 길이를 절묘하게 맞춰라.
-2. 은어 금지: 품격 있는 문어체 유지.
-3. 3D 입체 분석: FRED 유동성을 분석하여 현재 증시에 스마트머니가 들어오는지 나가는지 논증해라.
-4. 실전 야수의 타점 설계: 5분봉 리테스트 또는 VCP 변곡점 등 구체적인 시나리오 제시. 특히 시간외 데이터를 바탕으로 익일 갭 상승/하락에 대한 타점도 제시할 것.
-5. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:O 형식 출력.
-6. 대장주/후발주 팩트체크: 후발주일 경우 짝짓기 매매의 한계를 지적해라.
-7. 익일 시가 갭 대응: 과도한 갭 상승 시 추격 금지 시나리오 명시.
-8. 숨겨진 상승 모멘텀 팩트체크: 제공된 [소속테마]가 빈약하다면, [🔥 당일 타겟 종목 최신 뉴스]를 분석해 "이 종목은 표면적으로 OO테마나, 실제로는 뉴스에서 확인된 XX 모멘텀 때문이다"라고 짚어내라.
+1. 레이아웃 강제 통제: 1번, 2번 항목은 절대 길게 쓰지 말고, 각각 핵심만 4~5줄 이내로 아주 짧게 요약해라. 그래야 1페이지 안에 모두 들어간다.
+2. 가격 창조 금지: 본문에서 특정 가격을 언급할 때는 반드시 [입력 데이터]에 제공된 '현재가'만을 사용해라. 절대 임의의 주가(예: 2,700원 등)를 상상해서 적지 마라.
+3. 전략의 일관성: {st_type} 전략에 맞게 서술해라. 돌파 매매면 돌파만, 눌림목이면 눌림목만 서술하고 두 전략을 섞지 마라.
+4. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:O 형식 출력.
 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'X' if st_type=='short' else 'O'}
 
 [출력 양식 (마크다운 유지)]
@@ -193,17 +187,19 @@ try:
 
 <div class="summary-box">
 <strong>💡 Company Brief | HYEOKS 퀀트 데스크</strong><br><br>
-(기업 펀더멘털 압축 요약)
+(기업 펀더멘털 아주 짧게 3줄 압축 요약)
 </div>
 
 ## 1. 펀더멘털 및 매크로 유동성 심층 고찰
-(FRED 지표 흐름 해석 및 당일 뉴스를 바탕으로 숨겨진 진짜 모멘텀 밝혀내기)
+(FRED 지표 흐름 해석 및 당일 뉴스를 바탕으로 핵심 모멘텀 4줄 이내 요약)
 
 ## 2. 시각적 차트 판독 및 거래량 딥리딩
-(주요 매물대, 이평선 이격도, 최근 VCP 거래량 증감 해부)
+(최근 거래량 증감 및 현재가 기준 핵심 기술적 위치 4줄 이내 요약)
+
+<div style="page-break-before: always;"></div>
 
 ## 3. 실전 타점 시나리오 및 리스크 관리 전략
-(1차/2차 진입 가격, 구체적 시나리오, 목표가/손절가)
+(시간외 데이터를 반영한 익일 시가 갭 대응 시나리오, 1차/2차 진입 가격, 목표가/손절가를 매우 상세하게 작성할 것)
 """
         response = safe_generate_content([base_prompt, img])
         img.close()
@@ -215,6 +211,10 @@ try:
         if match:
             pick_data = {'name': target_name, 'code': target_code, 'target': int(match.group(1).replace(',', '')), 'stop': int(match.group(2).replace(',', '')), 'split': match.group(3) == 'O'}
             raw_report = re.sub(r'\[DATA\].*', '', raw_report, flags=re.DOTALL).strip()
+        
+        # 💡 [패치] HTML 변환 시 AI가 실수로 무시했을 경우를 대비해, 3번 항목 앞에서 물리적으로 페이지를 가릅니다.
+        raw_report = raw_report.replace("## 3. 실전 타점 시나리오", "<div class='page-break'></div>\n\n## 3. 실전 타점 시나리오")
+        
         return raw_report, target_code, pick_data
 
     report_short, code_short, pick_short = generate_hyeoks_report("short")
@@ -236,7 +236,7 @@ try:
 
         for r in hold_data[1:]:
             if len(r) < 10 or not r[0]: continue
-            # 💡 [버그 수정 패치] 딱 10개만 받아서 뒷부분의 찌꺼기 데이터 충돌 방지!
+            # 💡 [에러 해결의 핵심] 딱 10개만 자릅니다!
             name, code, avg_p, inv_amt, _, _, b_date, t_p, s_p, manual = r[:10]
             avg_p, inv_amt, t_p, s_p = int(float(str(avg_p).replace(',',''))), int(float(str(inv_amt).replace(',',''))), int(float(str(t_p).replace(',',''))), int(float(str(s_p).replace(',','')))
             
@@ -269,8 +269,9 @@ try:
 
     update_portfolio([pick_short, pick_mid])
 
+    # 💡 [CSS 패치] .page-break 클래스로 강제 페이지 넘김 보장
     css = "<style>body{font-family:'NanumGothic',sans-serif;line-height:1.8;padding:30px;color:#222;font-size:110%;}.broker-name{color:#1a365d;font-weight:bold;font-size:22px;margin-bottom:15px;border-bottom:3px solid #1a365d;padding-bottom:10px;}.stock-title{font-size:32px;font-weight:900;margin:0;}.subtitle{font-size:18px;color:#2b6cb0;font-weight:bold;}.summary-box{background:#f8fafc;padding:20px;border-left:5px solid #1a365d;margin:20px 0;border-radius:5px;}h2{color:#1a365d;border-bottom:2px solid #edf2f7;margin-top:30px;padding-bottom:8px;}p{margin-bottom:15px;word-break:keep-all;}img{max-width:90%;border:1px solid #cbd5e0;border-radius:8px;}.chart-container{text-align:center;margin-top:40px;page-break-inside:avoid;}.page-break{page-break-before:always;}</style>"
-    html = f"<!DOCTYPE html><html><head><meta charset='utf-8'>{css}</head><body>{markdown.markdown(report_short)}<div class='chart-container'><h3>📊 차트 판독</h3><img src='https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{code_short}.png'></div><div class='page-break'></div>{markdown.markdown(report_mid)}<div class='chart-container'><h3>📊 차트 판독</h3><img src='https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{code_mid}.png'></div></body></html>"
+    html = f"<!DOCTYPE html><html><head><meta charset='utf-8'>{css}</head><body>{report_short}<div class='chart-container'><h3>📊 차트 판독</h3><img src='https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{code_short}.png'></div><div class='page-break'></div>{report_mid}<div class='chart-container'><h3>📊 차트 판독</h3><img src='https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{code_mid}.png'></div></body></html>"
 
     pdf_file = f"HYEOKS_Report_{datetime.datetime.now(KST).strftime('%Y%m%d')}.pdf"
     pdfkit.from_string(html, pdf_file, options={'encoding': "UTF-8", 'enable-local-file-access': None})
