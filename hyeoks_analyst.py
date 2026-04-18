@@ -93,13 +93,15 @@ try:
         name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
         change_rate, score_str, tajeom = str(r[3]), str(r[8]), str(r[9])
         shadow_status = str(r[14]) if len(r)>14 else ""
+        # 💡 [패치] NXT 시간외 등락률을 21번째 열에서 가져옴 (추가 정보)
+        nxt_rate = str(r[20]) if len(r)>20 else "확인불가"
         
         if "주의장세" in tajeom: is_korean_market_down = True
         if "상한가" in tajeom or "29." in change_rate or "30." in change_rate: continue 
         if "윗꼬리 위험" in shadow_status or "윗꼬리" in tajeom: continue 
         if re.search(r'매수금지|자본잠식|딱지|관망|데이터 부족', tajeom): continue 
             
-        cand_info = f"종목:{name}({code}), 현재가:{change_rate}, 타점:{tajeom}, 퀀트점수:{score_str}, 테마:{r[19] if len(r)>19 else ''}"
+        cand_info = f"종목:{name}({code}), 현재가:{change_rate}, 타점:{tajeom}, 퀀트점수:{score_str}, 테마:{r[19] if len(r)>19 else ''}, 시간외:{nxt_rate}"
         cand_data = {'name': name, 'code': code, 'tajeom': tajeom, 'info': cand_info}
         
         if "상한가" in tajeom or "주도주" in tajeom or "신고가" in tajeom or "나홀로" in tajeom:
@@ -175,7 +177,7 @@ try:
 1. 분량 초정밀 제어: 차트 이미지 포함 정확히 2페이지 분량으로 텍스트 길이를 절묘하게 맞춰라.
 2. 은어 금지: 품격 있는 문어체 유지.
 3. 3D 입체 분석: FRED 유동성을 분석하여 현재 증시에 스마트머니가 들어오는지 나가는지 논증해라.
-4. 실전 야수의 타점 설계: 5분봉 리테스트 또는 VCP 변곡점 등 구체적인 시나리오 제시.
+4. 실전 야수의 타점 설계: 5분봉 리테스트 또는 VCP 변곡점 등 구체적인 시나리오 제시. 특히 시간외 데이터를 바탕으로 익일 갭 상승/하락에 대한 타점도 제시할 것.
 5. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:O 형식 출력.
 6. 대장주/후발주 팩트체크: 후발주일 경우 짝짓기 매매의 한계를 지적해라.
 7. 익일 시가 갭 대응: 과도한 갭 상승 시 추격 금지 시나리오 명시.
@@ -234,7 +236,7 @@ try:
 
         for r in hold_data[1:]:
             if len(r) < 10 or not r[0]: continue
-            # 💡 [패치] r[:10]으로 딱 앞의 10개만 잘라서 변수에 넣습니다!
+            # 💡 [버그 수정 패치] 딱 10개만 받아서 뒷부분의 찌꺼기 데이터 충돌 방지!
             name, code, avg_p, inv_amt, _, _, b_date, t_p, s_p, manual = r[:10]
             avg_p, inv_amt, t_p, s_p = int(float(str(avg_p).replace(',',''))), int(float(str(inv_amt).replace(',',''))), int(float(str(t_p).replace(',',''))), int(float(str(s_p).replace(',','')))
             
