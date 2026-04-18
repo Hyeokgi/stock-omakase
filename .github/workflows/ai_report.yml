@@ -2,9 +2,6 @@ name: 🤖 HYEOKS AI 리서치 퍼블리셔
 
 on: 
   workflow_dispatch:
-  # 💡 [핵심 패치] scanner_run.yml이 5분 대기 후 쏘는 신호를 받는 수신기 장착!
-  repository_dispatch:
-    types: [trigger-ai-report]
 
 # 💡 [핵심 방패 장착] main.yml과 완벽하게 동일한 대기열 그룹 지정!
 concurrency:
