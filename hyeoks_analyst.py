@@ -159,7 +159,6 @@ try:
 
         warn = "\n[필수 경고] 고공권 판정. 비중을 절반으로 줄이고 칼손절 요망." if "고공권" in best_pick['tajeom'] else ("\n[필수 경고] 주의 장세. 오버나잇 비중 축소 요망." if is_korean_market_down else "")
 
-        # 💡 [핵심 패치 1] 글자 수 족쇄(4줄 요약)를 완벽히 풀어버리고, 예전의 훌륭한 뼈대로 롤백! + 가격 환각 방지 추가!
         base_prompt = f"""너는 대한민국 최상위 1% 실전 트레이더들의 감각을 가진 퀀트 애널리스트야.
 제공된 일봉 차트(Vision)와 데이터를 바탕으로 심층 리포트를 작성해라. 
 
@@ -266,31 +265,10 @@ try:
 
     update_portfolio([pick_short, pick_mid])
 
-    # 💡 [핵심 패치 2] HTML 레이아웃 물리적 통제 복구 (디자인 원상복구 + 강제 페이지 넘김)
+    # 💡 [레이아웃 패치] 강제 페이지 분할 로직 제거. 자연스럽게 내용이 이어지도록 원상 복구!
     css = "<style>body{font-family:'NanumGothic',sans-serif;line-height:1.8;padding:30px;color:#222;font-size:110%;}.broker-name{color:#1a365d;font-weight:bold;font-size:22px;margin-bottom:15px;border-bottom:3px solid #1a365d;padding-bottom:10px;}.stock-title{font-size:32px;font-weight:900;margin:0;}.subtitle{font-size:18px;color:#2b6cb0;font-weight:bold;}.summary-box{background:#f8fafc;padding:20px;border-left:5px solid #1a365d;margin:20px 0;border-radius:5px;}h2{color:#1a365d;border-bottom:2px solid #edf2f7;margin-top:30px;padding-bottom:8px;}p{margin-bottom:15px;word-break:keep-all;}img{max-width:90%;border:1px solid #cbd5e0;border-radius:8px;}.chart-container{text-align:center;margin-top:40px;page-break-inside:avoid;}.page-break{page-break-before:always;}</style>"
     
-    # AI가 만든 마크다운 텍스트를 물리적으로 반으로 가릅니다. (3번 항목에서 자르기)
-    def split_report(report_text):
-        parts = report_text.split("## 3. 실전 타점 시나리오")
-        if len(parts) > 1:
-            return markdown.markdown(parts[0]), markdown.markdown("## 3. 실전 타점 시나리오" + parts[1])
-        return markdown.markdown(report_text), ""
-
-    html_short_1, html_short_2 = split_report(report_short)
-    html_mid_1, html_mid_2 = split_report(report_mid)
-
-    # 1페이지(1~2번 항목) -> 2페이지(3번 항목 + 차트) 구조 확립
-    html = f"""<!DOCTYPE html><html><head><meta charset='utf-8'>{css}</head><body>
-    {html_short_1}
-    <div class='page-break'></div>
-    {html_short_2}
-    <div class='chart-container'><h3>📊 차트 판독</h3><img src='https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{code_short}.png'></div>
-    <div class='page-break'></div>
-    {html_mid_1}
-    <div class='page-break'></div>
-    {html_mid_2}
-    <div class='chart-container'><h3>📊 차트 판독</h3><img src='https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{code_mid}.png'></div>
-    </body></html>"""
+    html = f"<!DOCTYPE html><html><head><meta charset='utf-8'>{css}</head><body>{markdown.markdown(report_short)}<div class='chart-container'><h3>📊 차트 판독</h3><img src='https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{code_short}.png'></div><div class='page-break'></div>{markdown.markdown(report_mid)}<div class='chart-container'><h3>📊 차트 판독</h3><img src='https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{code_mid}.png'></div></body></html>"
 
     pdf_file = f"HYEOKS_Report_{datetime.datetime.now(KST).strftime('%Y%m%d')}.pdf"
     pdfkit.from_string(html, pdf_file, options={'encoding': "UTF-8", 'enable-local-file-access': None})
