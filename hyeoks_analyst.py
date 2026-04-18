@@ -234,7 +234,8 @@ try:
 
         for r in hold_data[1:]:
             if len(r) < 10 or not r[0]: continue
-            name, code, avg_p, inv_amt, _, _, b_date, t_p, s_p, manual = r
+            # 💡 [패치] r[:10]으로 딱 앞의 10개만 잘라서 변수에 넣습니다!
+            name, code, avg_p, inv_amt, _, _, b_date, t_p, s_p, manual = r[:10]
             avg_p, inv_amt, t_p, s_p = int(float(str(avg_p).replace(',',''))), int(float(str(inv_amt).replace(',',''))), int(float(str(t_p).replace(',',''))), int(float(str(s_p).replace(',','')))
             
             clean_code = str(code).replace("'", "").strip().zfill(6)
