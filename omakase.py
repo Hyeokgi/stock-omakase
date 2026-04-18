@@ -16,7 +16,6 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==========================================
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit"
-# 💡 [군집성 필터 패치 1] 기준을 3%로 낮추어 테마의 확산(온기)을 더 정밀하게 감지합니다.
 TARGET_PERCENT = 3.0
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
@@ -103,10 +102,8 @@ def get_news_keywords():
     try:
         now_minute = datetime.datetime.now(KST).minute
         if not (30 <= now_minute < 40):
-            print("⏳ 뉴스 키워드 수집 스킵 (매시간 30분대에만 수집합니다)")
             return pd.DataFrame() 
 
-        print("📰 뉴스 키워드 수집 중...")
         full_text = ""
         theme_phrases = []
         for page in range(1, 10):
@@ -204,7 +201,6 @@ def get_real_money_themes():
             
             stocks_val = sorted(stocks, key=lambda x: x['value'], reverse=True)[:5]
             
-            # 💡 [군집성 필터 패치 2] 3% 이상 급등한 유의미한 종목이 '최소 2개 이상'일 때만 진짜 테마로 인정!
             if len(stocks_val) >= 2:
                 stocks_rate = sorted(stocks_val, key=lambda x: x['rate'], reverse=True)
                 theme_data_list.append({'theme_name': theme['name'], 'stocks': stocks_rate})
@@ -544,11 +540,23 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if is_high_altitude and "[" in master_tajeom:
             quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️고공권(단기대응)"
 
+        # 💡 [신규 추가] 시간외 및 NXT 종가 수집 로직
+        nxt_text = "➖ 대기/보합"
+        try:
+            basic_res = session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", verify=False, timeout=3).json()
+            if 'overTimeFluctuationsRatio' in basic_res:
+                nxt_rate = float(basic_res['overTimeFluctuationsRatio'])
+                if nxt_rate > 0: nxt_text = f"🔴 +{nxt_rate}% 상승"
+                elif nxt_rate < 0: nxt_text = f"🔵 {nxt_rate}% 하락"
+                else: nxt_text = "➖ 보합(0%)"
+        except:
+            pass
+
         return [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", 
             int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, 
             score_display, master_tajeom, today_high, today_low, high_60d, 
-            market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, quant_score, my_theme_name
+            market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, quant_score, my_theme_name, nxt_text
         ]
     except Exception as e:
         return None
@@ -615,15 +623,17 @@ def update_technical_data(df_theme, all_theme_map):
                 if res: results.append(res)
 
         results.sort(key=lambda x: x[19], reverse=True) 
-        final_results = [r[:19] + [r[20]] for r in results]
+        # 💡 [핵심 패치] quant_score(19번)는 정렬용으로만 쓰고 삭제하되, 테마(20번)와 NXT데이터(21번)를 뒤에 붙입니다.
+        final_results = [r[:19] + [r[20], r[21]] for r in results]
 
         if final_results:
             try: helper_sheet = doc.worksheet("주가데이터_보조")
-            except: helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="20")
+            except: helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="21")
             helper_sheet.clear()
-            headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "HYEOKS점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)", "윗꼬리판독", "전고점위치", "20일이격도", "대장주이력", "거래량상태", "소속테마"]
+            # 💡 헤더에 "시간외(NXT)" 추가!
+            headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "HYEOKS점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)", "윗꼬리판독", "전고점위치", "20일이격도", "대장주이력", "거래량상태", "소속테마", "시간외(NXT)"]
             helper_sheet.update(range_name="A1", values=[headers] + final_results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(final_results)}개 종목 판독 완료! (초고속 멀티스레딩 완료) 🚀")
+            print(f"✅ 총 {len(final_results)}개 종목 판독 완료! (NXT 시간외 데이터 수집 성공) 🚀")
             
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
@@ -636,7 +646,6 @@ if __name__ == "__main__":
     
     now_kst = datetime.datetime.now(KST)
     
-    # 💡 [릴레이 아키텍처 패치] 구글 웹훅으로 15시 ~ 15시 50분 사이 바통 터치 로직 원상 복구!
     if now_kst.hour == 15 and 0 <= now_kst.minute <= 50:
         try:
             scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
