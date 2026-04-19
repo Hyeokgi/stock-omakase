@@ -1,11 +1,12 @@
 name: Stock Omakase Auto Scraper
 
 on:
-  workflow_dispatch: # 수동 버튼 (테스트용)
+  workflow_dispatch: # 수동 버튼
   schedule:
-    - cron: '*/10 * * * 1-5' # 💡 [복구 완료] 깃허브의 알람 부활! (월~금 10분마다 무한 가동)
+    # 💡 [월요일 아침 보장 패치] UTC 일요일(0) ~ 금요일(5) 설정
+    # 한국 시간 기준: 일요일 09:00 ~ 토요일 08:50 (주중 전 구간 포함)
+    - cron: '*/10 * * * 0-5'
 
-# 💡 [핵심 패치] 구글 시트 충돌 방지 대기열 (ai_report.yml과 동일한 그룹명)
 concurrency:
   group: hyeoks-google-sheet
   cancel-in-progress: false
