@@ -569,7 +569,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         program_text = "확인불가"
         try:
-            # 💡 네이버 투자자별 매매동향 페이지에서 프로그램 순매수 긁어오기
+            # 💡 네이버 투자자별 매매동향 페이지에서 프로그램 순매수(주) 긁어오기
             frgn_url = f"https://finance.naver.com/item/frgn.naver?code={code}"
             frgn_res = session.get(frgn_url, verify=False, timeout=3)
             frgn_soup = BeautifulSoup(frgn_res.content, 'html.parser', from_encoding='euc-kr')
@@ -578,10 +578,27 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 cols = r_tag.select("td")
                 # 날짜 데이터가 있는 유효한 첫 번째 행(당일) 찾기
                 if len(cols) >= 9 and cols[0].text.strip().replace('.', '').isdigit():
-                    pg_val = cols[6].text.strip() # 7번째 열이 '프로그램' 순매수
-                    if pg_val.startswith('+'): program_text = f"🔴 {pg_val}주 순매수"
-                    elif pg_val.startswith('-'): program_text = f"🔵 {pg_val}주 순매도"
-                    else: program_text = f"{pg_val}주"
+                    pg_val_str = cols[6].text.strip().replace(',', '') # 7번째 열: 프로그램 순매수
+                    
+                    if pg_val_str and pg_val_str != '0':
+                        pg_vol = int(pg_val_str) # 순매수 수량(주)
+                        # 💡 [핵심 패치] 수량 × 현재가 = 금액(원) 계산 후 '억원' 단위로 환산
+                        pg_amount_eok = (pg_vol * current_price) / 100000000 
+                        
+                        if pg_vol > 0:
+                            # 양수(매수)일 경우
+                            if pg_amount_eok >= 1: 
+                                program_text = f"🔴 +{int(pg_amount_eok):,}억원 순매수"
+                            else: 
+                                program_text = f"🔴 +{int(pg_amount_eok * 100):,}백만원 순매수"
+                        else:
+                            # 음수(매도)일 경우
+                            if abs(pg_amount_eok) >= 1:
+                                program_text = f"🔵 {int(pg_amount_eok):,}억원 순매도"
+                            else:
+                                program_text = f"🔵 {int(pg_amount_eok * 100):,}백만원 순매도"
+                    else:
+                        program_text = "0원 (보합)"
                     break
         except Exception:
             pass
