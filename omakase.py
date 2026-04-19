@@ -527,8 +527,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         elif is_huge_gap: master_tajeom = "⚠️ 갭상승 과다 (추격금지)"
         elif is_ss_breakout: master_tajeom = "👑 [핵심] 신고가 돌파" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 20
         elif flag_days == 3: master_tajeom = "🎯 [타점] 눌림목 3일 차 완성 (비중 40%)" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 10
-        elif is_runner_up_breakout: master_tajeom = "👀 [관심] 돌파 턱밑 대기 (아차상)"; quant_score += 5
-        elif is_runner_up_pullback: master_tajeom = "👀 [관심] 눌림목 방어 테스트 (아차상)"; quant_score += 5
+        elif is_runner_up_breakout: master_tajeom = "👀 [관심] 돌파 턱밑 대기"; quant_score += 5
+        elif is_runner_up_pullback: master_tajeom = "👀 [관심] 눌림목 방어 테스트"; quant_score += 5
         elif flag_days == 2: master_tajeom = "🚩 [분할매수] 눌림목 2일 차 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else "")
         elif flag_days == 1: master_tajeom = "🚩 [분할매수] 단기 눌림 진입 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else "")
         elif "🌟" in signal: master_tajeom = "🌟 [우량] 기관/외인 수급 유입"; quant_score += 15
@@ -538,7 +538,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if is_chronic_loss and "[" in master_tajeom:
             quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️(3년적자)"
         if is_high_altitude and "[" in master_tajeom:
-            quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️고공권(단기대응)"
+            quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️고가(단기)"
 
         # 💡 [하이브리드 포획 엔진] 1순위: 모바일 API (NXT 8시 포획) / 2순위: PC 웹페이지 (주말/정규 6시 복원)
         nxt_text = "➖ 대기/보합"
@@ -578,7 +578,32 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         ]
     except Exception as e:
         return None
+        program_text = "확인불가"
+        try:
+            # 💡 네이버 투자자별 매매동향 페이지에서 프로그램 순매수 긁어오기
+            frgn_url = f"https://finance.naver.com/item/frgn.naver?code={code}"
+            frgn_res = session.get(frgn_url, verify=False, timeout=3)
+            frgn_soup = BeautifulSoup(frgn_res.content, 'html.parser', from_encoding='euc-kr')
+            rows = frgn_soup.select("table.type2 > tr")
+            for r_tag in rows:
+                cols = r_tag.select("td")
+                # 날짜 데이터가 있는 유효한 첫 번째 행(당일) 찾기
+                if len(cols) >= 9 and cols[0].text.strip().replace('.', '').isdigit():
+                    pg_val = cols[6].text.strip() # 7번째 열이 '프로그램' 순매수
+                    if pg_val.startswith('+'): program_text = f"🔴 {pg_val}주 순매수"
+                    elif pg_val.startswith('-'): program_text = f"🔵 {pg_val}주 순매도"
+                    else: program_text = f"{pg_val}주"
+                    break
+        except Exception:
+            pass
 
+        # ✅ 마지막 리턴 값에 program_text 추가 (총 22개 데이터)
+        return [
+            name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", 
+            int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, 
+            score_display, master_tajeom, today_high, today_low, high_60d, 
+            market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, quant_score, my_theme_name, nxt_text, program_text
+        ]
 def update_technical_data(df_theme, all_theme_map):
     try:
         print("▶️ 기술적 지표 초고속 멀티스레딩 판독 시작...")
@@ -647,7 +672,7 @@ def update_technical_data(df_theme, all_theme_map):
             try: helper_sheet = doc.worksheet("주가데이터_보조")
             except: helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="21")
             helper_sheet.clear()
-            headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "HYEOKS점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)", "윗꼬리판독", "전고점위치", "20일이격도", "대장주이력", "거래량상태", "소속테마", "시간외(NXT)"]
+            headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "HYEOKS점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)", "윗꼬리판독", "전고점위치", "20일이격도", "대장주이력", "거래량상태", "소속테마", "시간외(NXT)", "프로그램(당일)"]
             helper_sheet.update(range_name="A1", values=[headers] + final_results, value_input_option="USER_ENTERED")
             print(f"✅ 총 {len(final_results)}개 종목 판독 완료! (NXT 시간외 데이터 수집 성공) 🚀")
             
