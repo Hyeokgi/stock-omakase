@@ -1,7 +1,9 @@
 name: Stock Omakase Auto Scraper
 
 on:
-  workflow_dispatch: # 💡 게으른 깃허브 알람은 삭제! 오직 구글의 원격 명령만 받는다!
+  workflow_dispatch: # 수동 버튼 (테스트용)
+  schedule:
+    - cron: '*/10 * * * 1-5' # 💡 [복구 완료] 깃허브의 알람 부활! (월~금 10분마다 무한 가동)
 
 # 💡 [핵심 패치] 구글 시트 충돌 방지 대기열 (ai_report.yml과 동일한 그룹명)
 concurrency:
