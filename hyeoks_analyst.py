@@ -95,14 +95,14 @@ try:
         current_price, change_rate, score_str, tajeom = str(r[2]), str(r[3]), str(r[8]), str(r[9])
         shadow_status = str(r[14]) if len(r)>14 else ""
         nxt_rate = str(r[20]) if len(r)>20 else "확인불가"
-        
+        program_rate = str(r[21]) if len(r)>21 else "확인불가"
         if "주의장세" in tajeom: is_korean_market_down = True
         if "상한가" in tajeom or "29." in change_rate or "30." in change_rate: continue 
         if "윗꼬리 위험" in shadow_status or "윗꼬리" in tajeom: continue 
         if re.search(r'매수금지|자본잠식|딱지|관망|데이터 부족', tajeom): continue 
             
         # 💡 현재가 란에 "13,820원 (+22.30%)" 형태로 완벽하게 꽂아줍니다!
-        cand_info = f"종목:{name}({code}), 현재가:{current_price}원 ({change_rate}), 타점:{tajeom}, 퀀트점수:{score_str}, 테마:{r[19] if len(r)>19 else ''}, 시간외:{nxt_rate}"
+        cand_info = f"종목:{name}({code}), 현재가:{current_price}원 ({change_rate}), 타점:{tajeom}, 퀀트점수:{score_str}, 테마:{r[19] if len(r)>19 else ''}, 시간외:{nxt_rate}, 프로그램:{program_rate}"
         cand_data = {'name': name, 'code': code, 'tajeom': tajeom, 'info': cand_info}
         
         if "상한가" in tajeom or "주도주" in tajeom or "신고가" in tajeom or "나홀로" in tajeom:
@@ -180,6 +180,7 @@ try:
 4. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:O 형식 출력.
 5. 대장주/후발주 팩트체크: 후발주일 경우 짝짓기 매매의 한계를 지적해라.
 6. 익일 시가 갭 대응: 제공된 [시간외] 데이터를 바탕으로 익일 갭 상승/하락에 대한 구체적인 타점을 제시할 것.
+7. 프로그램 수급 연계: 제공된 [프로그램] 매수/매도 현황을 분석하여, 기관/외인의 알고리즘 매수가 해당 종목의 주가 상승(또는 지지력)을 어떻게 뒷받침하고 있는지 반드시 리포트 본문에 서술할 것.
 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'X' if st_type=='short' else 'O'}
 
 [출력 양식 (마크다운 유지)]
