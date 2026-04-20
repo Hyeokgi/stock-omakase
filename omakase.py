@@ -541,48 +541,47 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️고가(단기)"
 
         nxt_text = "➖ 대기/보합"
+        
+        # [플랜 A] 네이버 모바일 전용 시간외 API 시도
         try:
-            # ----------------------------------------------------
-            # [플랜 A] 네이버 모바일 API (NXT 및 시간외 종합 데이터)
-            # ----------------------------------------------------
-            basic_res = session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", verify=False, timeout=3).json()
-            
-            # API에서 시간외/NXT 등락률 키값 추출 (timeExtra 또는 overTime)
-            nxt_rate_str = basic_res.get('timeExtraFluctuationsRatio') or basic_res.get('overTimeFluctuationsRatio') or "0"
-            nxt_rate = float(nxt_rate_str)
-            
-            if nxt_rate != 0.0:
-                if nxt_rate > 0: nxt_text = f"🔴 +{nxt_rate}% (시간외/NXT)"
-                else: nxt_text = f"🔵 {nxt_rate}% (시간외/NXT)"
-            else:
-                # ----------------------------------------------------
-                # [플랜 B] 강력한 HTML 크롤링 (가장 최근 체결된 10분 데이터)
-                # 이전처럼 18:00를 기다리지 않고, "가장 위에 있는 최신 체결가"를 즉시 뽑습니다.
-                # ----------------------------------------------------
+            time_extra_url = f"https://m.stock.naver.com/api/stock/{code}/time-extra"
+            krx_res = session.get(time_extra_url, verify=False, timeout=3).json()
+            if krx_res and 'overTimeFluctuationsRatio' in krx_res:
+                krx_rate = float(krx_res['overTimeFluctuationsRatio'])
+                if krx_rate > 0: nxt_text = f"🔴 +{krx_rate}% (API)"
+                elif krx_rate < 0: nxt_text = f"🔵 {krx_rate}% (API)"
+                elif krx_rate == 0.0: nxt_text = "➖ 0.00% (보합)"
+        except Exception:
+            pass
+
+        # [플랜 B] API가 실패했거나 여전히 대기 상태면, 확실한 PC 화면 무식하게 긁기
+        if "대기" in nxt_text:
+            try:
                 time_url = f"https://finance.naver.com/item/time.naver?code={code}"
                 time_res = session.get(time_url, verify=False, timeout=3)
                 time_soup = BeautifulSoup(time_res.content, 'html.parser', from_encoding='euc-kr')
                 
+                # 시간외 단일가 테이블의 모든 행(tr)을 뒤집니다.
                 trs = time_soup.find_all('tr')
                 for tr in trs:
                     tds = tr.find_all('td')
-                    # td가 4개 이상이고, 첫 번째 td에 시간(:)이 포함된 유효 데이터인 경우
+                    # td가 4개 이상이고, 첫 번째 칸에 시간(:) 글자가 있는 '진짜 체결 데이터'만 찾습니다.
                     if len(tds) >= 4 and ":" in tds[0].text:
-                        latest_time = tds[0].text.strip() # 예: "16:10", "17:50", "18:00"
+                        latest_time = tds[0].text.strip() # 예: "17:50", "18:00" 등
                         change_td = tds[2].text.strip()
                         sign_img = tds[1].find('img')
                         
                         if sign_img and "상승" in sign_img.get('alt', ''):
-                            nxt_text = f"🔴 +{change_td}% ({latest_time} 체결)"
+                            nxt_text = f"🔴 +{change_td}% ({latest_time})"
                         elif sign_img and "하락" in sign_img.get('alt', ''):
-                            nxt_text = f"🔵 -{change_td}% ({latest_time} 체결)"
-                        elif change_td == "0":
-                            nxt_text = f"➖ 0.00% ({latest_time} 보합)"
-                            
-                        break # 최신 데이터 1개만 찾고 바로 검색 종료!
+                            nxt_text = f"🔵 -{change_td}% ({latest_time})"
+                        elif change_td == "0" or change_td == "0.00":
+                            nxt_text = f"➖ 0.00% ({latest_time})"
                         
-        except Exception as e:
-            pass # 에러 발생 시 기존 ➖ 대기/보합 유지
+                        # 가장 위에 있는 최신 체결가 1개만 찾고 반복문을 종료합니다!
+                        break 
+            except Exception:
+                pass
             
         program_text = "확인불가"
         try:
