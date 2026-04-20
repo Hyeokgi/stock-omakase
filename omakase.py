@@ -547,31 +547,28 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         # ----------------------------------------------------
         nxt_text = "➖ 대기/보합"
         try:
+            # 1. 네이버 모바일 API 데이터 호출
             basic_res = session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", verify=False, timeout=3).json()
+            nxt_rate = 0.0
             
-            # 네이버 API가 제공하는 NXT 전용 데이터만 핀포인트로 추출
-            nxt_rate_str = str(basic_res.get('nxtFluctuationsRatio') or basic_res.get('timeExtraFluctuationsRatio') or '0')
-            
-            if nxt_rate_str.strip() and nxt_rate_str != '0':
-                nxt_rate = float(nxt_rate_str)
-                if nxt_rate > 0:
-                    nxt_text = f"🔴 +{nxt_rate}% (NXT)"
-                elif nxt_rate < 0:
-                    nxt_text = f"🔵 {nxt_rate}% (NXT)"
-        except Exception:
-            pass
-            
-        program_text = "확인불가"
+            # 2. 명시적인 등락률 키값 탐색
+            for key in ['timeExtraFluctuationsRatio', 'overTimeFluctuationsRatio']:
+                val = basic_res.get(key)
+                if val is not None and str(val).strip() != "":
+                    try:
+                        if float(val) != 0.0:
+                            nxt_rate = float(val)
+                            break
+                    except ValueError:
+                        pass
                     
             # 3. 💡 [핵심: 강제 계산 엔진] 등락률이 0이거나 야간이라 지워졌을 경우!
             if nxt_rate == 0.0:
                 try:
-                    # 정규장 종가와 시간외 가격을 숫자로 빼옵니다.
                     reg_close = float(str(basic_res.get('closePrice', '0')).replace(',', ''))
                     extra_price_str = str(basic_res.get('timeExtraClosePrice') or basic_res.get('overTimeClosePrice') or '0').replace(',', '')
                     extra_price = float(extra_price_str)
                     
-                    # 두 가격이 모두 존재하고, 서로 다를 경우에만 직접 퍼센트를 계산합니다.
                     if reg_close > 0 and extra_price > 0 and reg_close != extra_price:
                         nxt_rate = round(((extra_price - reg_close) / reg_close) * 100, 2)
                 except ValueError:
@@ -583,7 +580,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             elif nxt_rate < 0: 
                 nxt_text = f"🔵 {nxt_rate}% (시간외/NXT)"
             elif basic_res.get('timeExtraClosePrice') or basic_res.get('overTimeClosePrice'):
-                # 가격 데이터는 있는데 변동이 0인 경우
                 nxt_text = "➖ 0.00% (보합)"
             
         except Exception:
