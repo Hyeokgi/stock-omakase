@@ -11,7 +11,40 @@ import xml.etree.ElementTree as ET
 from collections import Counter
 from oauth2client.service_account import ServiceAccountCredentials
 import concurrent.futures 
+import os  # (이미 상단에 있다면 생략 가능)
 
+# ==========================================
+# 💡 [신규 탑재] 한국투자증권 API 인증 엔진
+# ==========================================
+KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
+KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
+KIS_URL_BASE = "https://openapi.koreainvestment.com:9443"
+
+def get_kis_access_token():
+    if not KIS_APP_KEY or not KIS_APP_SECRET:
+        return None
+    headers = {"content-type": "application/json"}
+    body = {
+        "grant_type": "client_credentials",
+        "appkey": KIS_APP_KEY,
+        "appsecret": KIS_APP_SECRET
+    }
+    try:
+        res = requests.post(f"{KIS_URL_BASE}/oauth2/tokenP", headers=headers, json=body, timeout=5)
+        if res.status_code == 200:
+            return res.json().get("access_token")
+    except Exception as e:
+        print(f"❌ KIS API 토큰 발급 에러: {e}")
+    return None
+
+# 스캐너 가동 시 딱 한 번만 토큰을 발급받아 30개 종목이 돌려 씁니다.
+print("🔑 한국투자증권 API 접근 토큰 발급을 시도합니다...")
+KIS_TOKEN = get_kis_access_token()
+if KIS_TOKEN:
+    print("✅ KIS 토큰 발급 성공! (API 기관망 연결 완료)")
+else:
+    print("⚠️ KIS 토큰 발급 실패 (Key를 확인해주세요)")
+# ==========================================
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==========================================
