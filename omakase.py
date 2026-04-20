@@ -544,20 +544,25 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         nxt_text = "➖ 대기/보합"
         try:
-            # 1. 네이버 모바일 API 데이터 호출
-            basic_res = session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", verify=False, timeout=3).json()
-            nxt_rate = 0.0
+            # 💡 [진짜 시간외 단일가 PC 페이지 주소]
+            time_url = f"https://finance.naver.com/item/sise_time_over.naver?code={code}"
+            time_res = session.get(time_url, verify=False, timeout=3)
+            time_soup = BeautifulSoup(time_res.content, 'html.parser', from_encoding='euc-kr')
             
-            # 2. 명시적인 등락률 키값 탐색 (네이버가 아직 %를 지우지 않았을 때)
-            for key in ['timeExtraFluctuationsRatio', 'overTimeFluctuationsRatio']:
-                val = basic_res.get(key)
-                if val is not None and str(val).strip() != "":
-                    try:
-                        if float(val) != 0.0:
-                            nxt_rate = float(val)
-                            break
-                    except ValueError:
-                        pass
+            # 첫 번째 유효한 체결 데이터(가장 최신) 가져오기
+            for tr in time_soup.find_all('tr'):
+                tds = tr.find_all('td')
+                if len(tds) >= 4 and ":" in tds[0].text:
+                    latest_time = tds[0].text.strip()
+                    change_td = tds[2].text.strip()
+                    sign_img = tds[1].find('img')
+                    
+                    if sign_img and "상승" in sign_img.get('alt', ''): nxt_text = f"🔴 +{change_td}% ({latest_time})"
+                    elif sign_img and "하락" in sign_img.get('alt', ''): nxt_text = f"🔵 -{change_td}% ({latest_time})"
+                    else: nxt_text = f"➖ 0.00% ({latest_time})"
+                    break
+        except Exception:
+            pass
                     
             # 3. 💡 [핵심: 강제 계산 엔진] 등락률이 0이거나 야간이라 지워졌을 경우!
             if nxt_rate == 0.0:
