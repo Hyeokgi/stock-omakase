@@ -543,47 +543,47 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️고가(단기)"
 
         nxt_text = "➖ 대기/보합"
-        
-        # [플랜 A] 네이버 모바일 전용 시간외 API 시도
         try:
-            time_extra_url = f"https://m.stock.naver.com/api/stock/{code}/time-extra"
-            krx_res = session.get(time_extra_url, verify=False, timeout=3).json()
-            if krx_res and 'overTimeFluctuationsRatio' in krx_res:
-                krx_rate = float(krx_res['overTimeFluctuationsRatio'])
-                if krx_rate > 0: nxt_text = f"🔴 +{krx_rate}% (API)"
-                elif krx_rate < 0: nxt_text = f"🔵 {krx_rate}% (API)"
-                elif krx_rate == 0.0: nxt_text = "➖ 0.00% (보합)"
+            # 1. 네이버 모바일 API 데이터 호출
+            basic_res = session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", verify=False, timeout=3).json()
+            nxt_rate = 0.0
+            
+            # 2. 명시적인 등락률 키값 탐색 (네이버가 아직 %를 지우지 않았을 때)
+            for key in ['timeExtraFluctuationsRatio', 'overTimeFluctuationsRatio']:
+                val = basic_res.get(key)
+                if val is not None and str(val).strip() != "":
+                    try:
+                        if float(val) != 0.0:
+                            nxt_rate = float(val)
+                            break
+                    except ValueError:
+                        pass
+                    
+            # 3. 💡 [핵심: 강제 계산 엔진] 등락률이 0이거나 야간이라 지워졌을 경우!
+            if nxt_rate == 0.0:
+                try:
+                    # 정규장 종가와 시간외 가격을 숫자로 빼옵니다.
+                    reg_close = float(str(basic_res.get('closePrice', '0')).replace(',', ''))
+                    extra_price_str = str(basic_res.get('timeExtraClosePrice') or basic_res.get('overTimeClosePrice') or '0').replace(',', '')
+                    extra_price = float(extra_price_str)
+                    
+                    # 두 가격이 모두 존재하고, 서로 다를 경우에만 직접 퍼센트를 계산합니다.
+                    if reg_close > 0 and extra_price > 0 and reg_close != extra_price:
+                        nxt_rate = round(((extra_price - reg_close) / reg_close) * 100, 2)
+                except ValueError:
+                    pass
+            
+            # 4. 최종 텍스트 조립
+            if nxt_rate > 0: 
+                nxt_text = f"🔴 +{nxt_rate}% (시간외/NXT)"
+            elif nxt_rate < 0: 
+                nxt_text = f"🔵 {nxt_rate}% (시간외/NXT)"
+            elif basic_res.get('timeExtraClosePrice') or basic_res.get('overTimeClosePrice'):
+                # 가격 데이터는 있는데 변동이 0인 경우
+                nxt_text = "➖ 0.00% (보합)"
+            
         except Exception:
             pass
-
-        # [플랜 B] API가 실패했거나 여전히 대기 상태면, 확실한 PC 화면 무식하게 긁기
-        if "대기" in nxt_text:
-            try:
-                time_url = f"https://finance.naver.com/item/time.naver?code={code}"
-                time_res = session.get(time_url, verify=False, timeout=3)
-                time_soup = BeautifulSoup(time_res.content, 'html.parser', from_encoding='euc-kr')
-                
-                # 시간외 단일가 테이블의 모든 행(tr)을 뒤집니다.
-                trs = time_soup.find_all('tr')
-                for tr in trs:
-                    tds = tr.find_all('td')
-                    # td가 4개 이상이고, 첫 번째 칸에 시간(:) 글자가 있는 '진짜 체결 데이터'만 찾습니다.
-                    if len(tds) >= 4 and ":" in tds[0].text:
-                        latest_time = tds[0].text.strip() # 예: "17:50", "18:00" 등
-                        change_td = tds[2].text.strip()
-                        sign_img = tds[1].find('img')
-                        
-                        if sign_img and "상승" in sign_img.get('alt', ''):
-                            nxt_text = f"🔴 +{change_td}% ({latest_time})"
-                        elif sign_img and "하락" in sign_img.get('alt', ''):
-                            nxt_text = f"🔵 -{change_td}% ({latest_time})"
-                        elif change_td == "0" or change_td == "0.00":
-                            nxt_text = f"➖ 0.00% ({latest_time})"
-                        
-                        # 가장 위에 있는 최신 체결가 1개만 찾고 반복문을 종료합니다!
-                        break 
-            except Exception:
-                pass
             
         program_text = "확인불가"
         try:
