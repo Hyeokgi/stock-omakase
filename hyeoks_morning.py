@@ -162,9 +162,42 @@ if __name__ == "__main__":
         today_str = datetime.datetime.now(KST).strftime('%Y년 %m월 %d일')
         final_msg = f"🌅 [HYEOKS 모닝 브리핑] - {today_str}\n\n{briefing_text}"
     
+    # print("📲 텔레그램 발송 중...")
+    # requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
+    #               data={'chat_id': TELEGRAM_CHAT_ID, 'text': final_briefing, 'parse_mode': 'Markdown'})
+    # print("✅ 모든 프로세스 완료!")
+
+    # === 💡 [수정할 코드] 강력한 발송 엔진 및 에러 추적기 ===
     print("📲 텔레그램 발송 중...")
-    requests.post(
-        f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-        json={'chat_id': TELEGRAM_CHAT_ID, 'text': final_msg, 'parse_mode': 'Markdown'}
-    )
-    print("✅ 모든 프로세스 완료!")
+    
+    # 1. 텔레그램 마크다운 V2 파싱 에러를 방지하기 위한 특수문자 무력화 (이스케이프 처리)
+    # AI가 자주 쓰는 특수문자 중 짝이 안 맞으면 에러를 내는 것들을 안전하게 처리합니다.
+    safe_briefing = final_briefing.replace('!', '\!').replace('.', '\.').replace('-', '\-').replace('(', '\(').replace(')', '\)').replace('+', '\+').replace('=', '\=').replace('>', '\>').replace('<', '\<')
+
+    # 2. 메시지 전송 및 결과 확인
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        'chat_id': TELEGRAM_CHAT_ID, 
+        'text': safe_briefing, 
+        'parse_mode': 'MarkdownV2' # V2로 업그레이드
+    }
+    
+    response = requests.post(url, data=payload)
+    
+    if response.status_code == 200:
+        print("✅ 텔레그램 발송 성공! 모든 프로세스 완료!")
+    else:
+        print(f"❌ 텔레그램 발송 실패! (상태 코드: {response.status_code})")
+        print(f"🚨 텔레그램 서버 에러 메시지: {response.text}")
+        
+        # 마크다운 에러일 경우, 서식을 다 빼고 일반 텍스트(Plain Text)로 재전송 시도!
+        print("🔄 일반 텍스트 모드로 재전송을 시도합니다...")
+        fallback_payload = {
+            'chat_id': TELEGRAM_CHAT_ID, 
+            'text': final_briefing # 원본 텍스트 그대로
+        }
+        fallback_res = requests.post(url, data=fallback_payload)
+        if fallback_res.status_code == 200:
+             print("✅ 일반 텍스트 재전송 성공!")
+        else:
+             print("❌ 재전송도 실패했습니다. 토큰이나 텍스트 길이를 확인하세요.")
