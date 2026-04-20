@@ -11,10 +11,24 @@ import xml.etree.ElementTree as ET
 from collections import Counter
 from oauth2client.service_account import ServiceAccountCredentials
 import concurrent.futures 
-import os  # (이미 상단에 있다면 생략 가능)
+import os
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==========================================
-# 💡 [신규 탑재] 한국투자증권 API 인증 엔진
+# 기본 설정
+# ==========================================
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit"
+TARGET_PERCENT = 3.0
+KST = datetime.timezone(datetime.timedelta(hours=9))
+
+now_kst_check = datetime.datetime.now(KST)
+if now_kst_check.hour >= 23 or now_kst_check.hour < 7:
+    print(f"🌙 현재 시간({now_kst_check.strftime('%H:%M')}): 주식 시장 대기 시간입니다. 시스템을 휴식 모드로 전환합니다.")
+    sys.exit(0)
+
+# ==========================================
+# 💡 [신규 탑재] 한국투자증권 API 인증 엔진 (구글 시트 1일 1회 캐싱)
 # ==========================================
 KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
@@ -23,40 +37,76 @@ KIS_URL_BASE = "https://openapi.koreainvestment.com:9443"
 def get_kis_access_token():
     if not KIS_APP_KEY or not KIS_APP_SECRET:
         return None
-    headers = {"content-type": "application/json"}
-    body = {
-        "grant_type": "client_credentials",
-        "appkey": KIS_APP_KEY,
-        "appsecret": KIS_APP_SECRET
-    }
+        
     try:
+        # 1. 구글 시트 '⚙️설정' 탭 연결
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        gc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope))
+        doc = gc.open_by_url(SHEET_URL)
+        setting_sheet = doc.worksheet("⚙️설정")
+        
+        records = setting_sheet.get_all_values()
+        
+        token_row_idx = -1
+        date_row_idx = -1
+        saved_token = ""
+        saved_date = ""
+        
+        # 2. 시트에서 기존 토큰과 발급 날짜 찾기
+        for i, row in enumerate(records):
+            if len(row) >= 2:
+                if row[0] == "KIS_TOKEN":
+                    token_row_idx = i + 1
+                    saved_token = row[1]
+                elif row[0] == "KIS_TOKEN_DATE":
+                    date_row_idx = i + 1
+                    saved_date = row[1]
+        
+        now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d')
+        
+        # 3. 오늘 날짜의 토큰이 이미 시트에 있다면 재사용! (1일 1회 원칙)
+        if saved_date == now_str and saved_token:
+            print("♻️ 구글 시트에서 기존 KIS 토큰을 불러옵니다. (안전)")
+            return saved_token
+            
+        # 4. 없거나 만료되었다면 KIS 서버에 새로 발급 요청
+        print("🆕 KIS 토큰을 새로 발급합니다...")
+        headers = {"content-type": "application/json"}
+        body = {
+            "grant_type": "client_credentials",
+            "appkey": KIS_APP_KEY,
+            "appsecret": KIS_APP_SECRET
+        }
         res = requests.post(f"{KIS_URL_BASE}/oauth2/tokenP", headers=headers, json=body, timeout=5)
+        
         if res.status_code == 200:
-            return res.json().get("access_token")
+            new_token = res.json().get("access_token")
+            
+            # 5. 새로 발급받은 토큰과 날짜를 구글 시트에 업데이트
+            if token_row_idx != -1:
+                setting_sheet.update_cell(token_row_idx, 2, new_token)
+            else:
+                setting_sheet.append_row(["KIS_TOKEN", new_token])
+                
+            if date_row_idx != -1:
+                setting_sheet.update_cell(date_row_idx, 2, now_str)
+            else:
+                setting_sheet.append_row(["KIS_TOKEN_DATE", now_str])
+                
+            return new_token
+        else:
+            print(f"❌ KIS API 토큰 발급 에러: {res.text}")
+            
     except Exception as e:
-        print(f"❌ KIS API 토큰 발급 에러: {e}")
+        print(f"❌ KIS 토큰 관리 에러: {e}")
     return None
 
-# 스캐너 가동 시 딱 한 번만 토큰을 발급받아 30개 종목이 돌려 씁니다.
-print("🔑 한국투자증권 API 접근 토큰 발급을 시도합니다...")
+print("🔑 한국투자증권 API 접근 토큰을 준비합니다...")
 KIS_TOKEN = get_kis_access_token()
 if KIS_TOKEN:
-    print("✅ KIS 토큰 발급 성공! (API 기관망 연결 완료)")
+    print("✅ KIS 토큰 준비 완료! (API 기관망 연결 상태)")
 else:
-    print("⚠️ KIS 토큰 발급 실패 (Key를 확인해주세요)")
-# ==========================================
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-# ==========================================
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit"
-TARGET_PERCENT = 3.0
-KST = datetime.timezone(datetime.timedelta(hours=9))
-
-now_kst_check = datetime.datetime.now(KST)
-
-if now_kst_check.hour >= 23 or now_kst_check.hour < 7:
-    print(f"🌙 현재 시간({now_kst_check.strftime('%H:%M')}): 주식 시장 대기 시간입니다. 시스템을 휴식 모드로 전환합니다.")
-    sys.exit(0)
+    print("⚠️ KIS 토큰 준비 실패 (Key를 확인해주세요)")
 
 session = requests.Session()
 session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'})
