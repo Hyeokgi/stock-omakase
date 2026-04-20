@@ -542,31 +542,30 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         nxt_text = "➖ 대기/보합"
         try:
+            # ----------------------------------------------------
+            # [플랜 A] NXT 애프터마켓 (또는 기본 시간외) 실시간 데이터 우선 탐색
+            # ----------------------------------------------------
             basic_res = session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", verify=False, timeout=3).json()
             nxt_rate = float(basic_res.get('overTimeFluctuationsRatio', 0))
             
             if nxt_rate != 0:
-                if nxt_rate > 0: nxt_text = f"🔴 +{nxt_rate}% 상승 (NXT 종합)"
-                else: nxt_text = f"🔵 {nxt_rate}% 하락 (NXT 종합)"
+                if nxt_rate > 0: nxt_text = f"🔴 +{nxt_rate}% (NXT 진행중)"
+                else: nxt_text = f"🔵 {nxt_rate}% (NXT 진행중)"
             else:
-                time_url = f"https://finance.naver.com/item/time.naver?code={code}"
-                time_res = session.get(time_url, verify=False, timeout=3)
-                time_soup = BeautifulSoup(time_res.content, 'html.parser', from_encoding='euc-kr')
+                # ----------------------------------------------------
+                # [플랜 B] NXT가 없는 소형주/신규주 -> KRX 10분 단위 시간외 단일가 탐색
+                # ----------------------------------------------------
+                time_extra_url = f"https://m.stock.naver.com/api/stock/{code}/time-extra"
+                krx_res = session.get(time_extra_url, verify=False, timeout=3).json()
                 
-                trs = time_soup.find_all('tr')
-                for tr in trs:
-                    tds = tr.find_all('td')
-                    if len(tds) >= 4 and "18:00" <= tds[0].text.strip() <= "18:10": 
-                        change_td = tds[2].text.strip()
-                        sign_img = tds[1].find('img')
-                        if sign_img and "상승" in sign_img.get('alt', ''):
-                            nxt_text = f"🔴 +{change_td}% 상승 (18:00 정규)"
-                        elif sign_img and "하락" in sign_img.get('alt', ''):
-                            nxt_text = f"🔵 -{change_td}% 하락 (18:00 정규)"
-                        break
-        except Exception as e:
+                if krx_res and 'overTimeClosePrice' in krx_res:
+                    krx_rate = float(krx_res.get('overTimeFluctuationsRatio', 0))
+                    if krx_rate != 0.0:
+                        if krx_rate > 0: nxt_text = f"🔴 +{krx_rate}% (시간외 단일가)"
+                        else: nxt_text = f"🔵 {krx_rate}% (시간외 단일가)"
+        except Exception:
             pass
-
+            
         program_text = "확인불가"
         try:
             # 💡 네이버 투자자별 매매동향 페이지에서 프로그램 순매수(주) 긁어오기
