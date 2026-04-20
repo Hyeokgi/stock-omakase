@@ -542,27 +542,26 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if is_high_altitude and "[" in master_tajeom:
             quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️고가(단기)"
 
+        # ----------------------------------------------------
+        # 💡 [초경량 패치] NXT 시세 전용 수집기 (KRX 시간외 단일가 폐기)
+        # ----------------------------------------------------
         nxt_text = "➖ 대기/보합"
         try:
-            # 💡 [진짜 시간외 단일가 PC 페이지 주소]
-            time_url = f"https://finance.naver.com/item/sise_time_over.naver?code={code}"
-            time_res = session.get(time_url, verify=False, timeout=3)
-            time_soup = BeautifulSoup(time_res.content, 'html.parser', from_encoding='euc-kr')
+            basic_res = session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", verify=False, timeout=3).json()
             
-            # 첫 번째 유효한 체결 데이터(가장 최신) 가져오기
-            for tr in time_soup.find_all('tr'):
-                tds = tr.find_all('td')
-                if len(tds) >= 4 and ":" in tds[0].text:
-                    latest_time = tds[0].text.strip()
-                    change_td = tds[2].text.strip()
-                    sign_img = tds[1].find('img')
-                    
-                    if sign_img and "상승" in sign_img.get('alt', ''): nxt_text = f"🔴 +{change_td}% ({latest_time})"
-                    elif sign_img and "하락" in sign_img.get('alt', ''): nxt_text = f"🔵 -{change_td}% ({latest_time})"
-                    else: nxt_text = f"➖ 0.00% ({latest_time})"
-                    break
+            # 네이버 API가 제공하는 NXT 전용 데이터만 핀포인트로 추출
+            nxt_rate_str = str(basic_res.get('nxtFluctuationsRatio') or basic_res.get('timeExtraFluctuationsRatio') or '0')
+            
+            if nxt_rate_str.strip() and nxt_rate_str != '0':
+                nxt_rate = float(nxt_rate_str)
+                if nxt_rate > 0:
+                    nxt_text = f"🔴 +{nxt_rate}% (NXT)"
+                elif nxt_rate < 0:
+                    nxt_text = f"🔵 {nxt_rate}% (NXT)"
         except Exception:
             pass
+            
+        program_text = "확인불가"
                     
             # 3. 💡 [핵심: 강제 계산 엔진] 등락률이 0이거나 야간이라 지워졌을 경우!
             if nxt_rate == 0.0:
