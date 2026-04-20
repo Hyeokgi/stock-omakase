@@ -547,44 +547,47 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         # ----------------------------------------------------
         nxt_text = "➖ 대기/보합"
         try:
-            # 1. 네이버 모바일 API 데이터 호출
+            # 1. 네이버 모바일 API 호출
             basic_res = session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", verify=False, timeout=3).json()
-            nxt_rate = 0.0
             
-            # 2. 명시적인 등락률 키값 탐색
-            for key in ['timeExtraFluctuationsRatio', 'overTimeFluctuationsRatio']:
-                val = basic_res.get(key)
-                if val is not None and str(val).strip() != "":
-                    try:
-                        if float(val) != 0.0:
-                            nxt_rate = float(val)
-                            break
-                    except ValueError:
-                        pass
+            # 2. 💡 우리가 일봉 차트에서 이미 확보해둔 '진짜 15:30 정규 종가'
+            reg_close = float(current_price)
+            nxt_price = 0.0
+            
+            # 3. 수석님 제보 반영: 네이버가 뱉는 모든 '현재가' 종류 싹쓸이 (덮어쓰기 대비)
+            candidates = [
+                str(basic_res.get('nxtClosePrice') or '0'),
+                str(basic_res.get('timeExtraClosePrice') or '0'),
+                str(basic_res.get('overTimeClosePrice') or '0'),
+                str(basic_res.get('closePrice') or '0') # 현재가에 덮어씌워진 경우 여기서 걸림!
+            ]
+            
+            # 4. 정규장 종가와 '단 1원'이라도 다른 가격이 발견되면 그것이 바로 시간외 가격!
+            for cand in candidates:
+                cand_val = float(cand.replace(',', ''))
+                if cand_val > 0 and cand_val != reg_close:
+                    nxt_price = cand_val
+                    break
                     
-            # 3. 💡 [핵심: 강제 계산 엔진] 등락률이 0이거나 야간이라 지워졌을 경우!
-            if nxt_rate == 0.0:
-                try:
-                    reg_close = float(str(basic_res.get('closePrice', '0')).replace(',', ''))
-                    extra_price_str = str(basic_res.get('timeExtraClosePrice') or basic_res.get('overTimeClosePrice') or '0').replace(',', '')
-                    extra_price = float(extra_price_str)
+            # 5. 1원이라도 차이가 나면 직접 수학적으로 %를 계산해 버립니다.
+            if nxt_price > 0:
+                nxt_rate = round(((nxt_price - reg_close) / reg_close) * 100, 2)
+                if nxt_rate > 0: nxt_text = f"🔴 +{nxt_rate}% (시간외/NXT)"
+                elif nxt_rate < 0: nxt_text = f"🔵 {nxt_rate}% (시간외/NXT)"
+            else:
+                # 가격 변동이 없더라도 네이버가 명시적으로 %를 줬는지 마지막 체크
+                rates = [str(basic_res.get('nxtFluctuationsRatio') or '0'), str(basic_res.get('timeExtraFluctuationsRatio') or '0')]
+                for r in rates:
+                    r_val = float(r.replace(',', '')) if r.strip() else 0.0
+                    if r_val > 0: nxt_text = f"🔴 +{r_val}% (시간외/NXT)"; break
+                    elif r_val < 0: nxt_text = f"🔵 {r_val}% (시간외/NXT)"; break
                     
-                    if reg_close > 0 and extra_price > 0 and reg_close != extra_price:
-                        nxt_rate = round(((extra_price - reg_close) / reg_close) * 100, 2)
-                except ValueError:
-                    pass
-            
-            # 4. 최종 텍스트 조립
-            if nxt_rate > 0: 
-                nxt_text = f"🔴 +{nxt_rate}% (시간외/NXT)"
-            elif nxt_rate < 0: 
-                nxt_text = f"🔵 {nxt_rate}% (시간외/NXT)"
-            elif basic_res.get('timeExtraClosePrice') or basic_res.get('overTimeClosePrice'):
-                nxt_text = "➖ 0.00% (보합)"
-            
+                # 그래도 없으면 정말로 거래가 없었던 완벽한 보합
+                if "대기/보합" in nxt_text and (basic_res.get('nxtClosePrice') or basic_res.get('timeExtraClosePrice')):
+                    nxt_text = "➖ 0.00% (보합)"
+                    
         except Exception:
-            pass
-            
+            pass            
         program_text = "확인불가"
         try:
             # 💡 네이버 투자자별 매매동향 페이지에서 프로그램 순매수(주) 긁어오기
