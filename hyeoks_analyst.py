@@ -91,18 +91,17 @@ try:
     for r in tech_data:
         if len(r) < 10: continue
         name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
-        # 💡 r[2] (실제 원화 가격)을 current_price 변수로 뽑아냅니다.
         current_price, change_rate, score_str, tajeom = str(r[2]), str(r[3]), str(r[8]), str(r[9])
         shadow_status = str(r[14]) if len(r)>14 else ""
-        nxt_rate = str(r[20]) if len(r)>20 else "확인불가"
         program_rate = str(r[21]) if len(r)>21 else "확인불가"
+        
         if "주의장세" in tajeom: is_korean_market_down = True
         if "상한가" in tajeom or "29." in change_rate or "30." in change_rate: continue 
         if "윗꼬리 위험" in shadow_status or "윗꼬리" in tajeom: continue 
         if re.search(r'매수금지|자본잠식|딱지|관망|데이터 부족', tajeom): continue 
             
-        # 💡 현재가 란에 "13,820원 (+22.30%)" 형태로 완벽하게 꽂아줍니다!
-        cand_info = f"종목:{name}({code}), 현재가:{current_price}원 ({change_rate}), 타점:{tajeom}, 퀀트점수:{score_str}, 테마:{r[19] if len(r)>19 else ''}, 시간외:{nxt_rate}, 프로그램:{program_rate}"
+        # 💡 [시간외 삭제 패치] 정보에서 시간외 데이터 제거
+        cand_info = f"종목:{name}({code}), 현재가:{current_price}원 ({change_rate}), 타점:{tajeom}, 퀀트점수:{score_str}, 테마:{r[19] if len(r)>19 else ''}, 프로그램:{program_rate}"
         cand_data = {'name': name, 'code': code, 'tajeom': tajeom, 'info': cand_info}
         
         if "상한가" in tajeom or "주도주" in tajeom or "신고가" in tajeom or "나홀로" in tajeom:
@@ -179,8 +178,7 @@ try:
 3. 전략의 일관성 (JuJu-Strategy 적용): {st_type} 전략에 맞게 서술하되 두 전략을 절대 섞지 마라. 'short'일 경우 당일 수급 기반의 공격적 돌파/리테스트 타점만 서술해라. 'mid'일 경우 차트의 현재 위치가 지루하게 모아가는 '선형 매집' 구간인지, 비중을 강력하게 실어야 할 '플랫폼(발판) 형성' 구간인지 명확히 진단하고, 거래량 급감 후 살짝 들어오는 예비 신호를 찾아 분석해라.
 4. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:O 형식 출력.
 5. 대장주/후발주 팩트체크: 후발주일 경우 짝짓기 매매의 한계를 지적해라.
-6. 익일 시가 갭 대응: 제공된 [시간외] 데이터를 바탕으로 익일 갭 상승/하락에 대한 구체적인 타점을 제시할 것.
-7. 프로그램 수급 연계: 제공된 [프로그램] 매수/매도 현황을 분석하여, 기관/외인의 알고리즘 매수가 해당 종목의 주가 상승(또는 지지력)을 어떻게 뒷받침하고 있는지 반드시 리포트 본문에 서술할 것.
+6. 프로그램 수급 연계: 제공된 [프로그램] 매수/매도 현황을 분석하여, 기관/외인의 알고리즘 매수가 해당 종목의 주가 상승(또는 지지력)을 어떻게 뒷받침하고 있는지 반드시 리포트 본문에 서술할 것.
 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'X' if st_type=='short' else 'O'}
 
 [출력 양식 (마크다운 유지)]
@@ -202,7 +200,7 @@ try:
 (주요 매물대, 선형/플랫폼 형성 여부, 최근 거래량 증감 해부)
 
 ## 3. 실전 타점 시나리오 및 리스크 관리 전략
-(시간외 데이터를 반영한 익일 시가 갭 대응 시나리오, 1차/2차 진입 가격, 목표가/손절가를 매우 상세하게 작성할 것)
+(익일 시가 대응 시나리오, 1차/2차 진입 가격, 목표가/손절가를 매우 상세하게 작성할 것)
 """
         response = safe_generate_content([base_prompt, img])
         img.close()
@@ -268,7 +266,6 @@ try:
 
     update_portfolio([pick_short, pick_mid])
 
-    # 💡 [레이아웃 패치] 강제 페이지 분할 로직 제거. 자연스럽게 내용이 이어지도록 원상 복구!
     css = "<style>body{font-family:'NanumGothic',sans-serif;line-height:1.8;padding:30px;color:#222;font-size:110%;}.broker-name{color:#1a365d;font-weight:bold;font-size:22px;margin-bottom:15px;border-bottom:3px solid #1a365d;padding-bottom:10px;}.stock-title{font-size:32px;font-weight:900;margin:0;}.subtitle{font-size:18px;color:#2b6cb0;font-weight:bold;}.summary-box{background:#f8fafc;padding:20px;border-left:5px solid #1a365d;margin:20px 0;border-radius:5px;}h2{color:#1a365d;border-bottom:2px solid #edf2f7;margin-top:30px;padding-bottom:8px;}p{margin-bottom:15px;word-break:keep-all;}img{max-width:90%;border:1px solid #cbd5e0;border-radius:8px;}.chart-container{text-align:center;margin-top:40px;page-break-inside:avoid;}.page-break{page-break-before:always;}</style>"
     
     html = f"<!DOCTYPE html><html><head><meta charset='utf-8'>{css}</head><body>{markdown.markdown(report_short)}<div class='chart-container'><h3>📊 차트 판독</h3><img src='https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{code_short}.png'></div><div class='page-break'></div>{markdown.markdown(report_mid)}<div class='chart-container'><h3>📊 차트 판독</h3><img src='https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{code_mid}.png'></div></body></html>"
