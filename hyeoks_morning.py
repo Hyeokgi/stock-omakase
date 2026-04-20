@@ -166,17 +166,23 @@ if __name__ == "__main__":
     # === 💡 [초강력 가독성 패치] 파이썬 자체 클렌징 엔진 ===
     print("📲 텔레그램 발송 중...")
     
-    # 1. AI가 뱉어낸 시각적 찌꺼기(마크다운 기호)를 파이썬이 싹 청소합니다.
-    clean_briefing = final_briefing.replace('**', '')       # 굵은글씨 별표 찌꺼기 완벽 제거
-    clean_briefing = clean_briefing.replace('### ', '📍 ')  # H3 헤딩 기호 변환
-    clean_briefing = clean_briefing.replace('## ', '📍 ')   # H2 헤딩 기호 변환
-    clean_briefing = clean_briefing.replace('<', '[').replace('>', ']') # 꺾쇠를 대괄호로 통일
-    
-    # 2. 리스트 앞에 붙은 혼자 있는 별표(*)도 깔끔한 하위 네모(▫️)로 바꿉니다.
     import re
+    # 1. 시각적 찌꺼기(마크다운 볼드체 및 헤딩) 제거
+    clean_briefing = final_briefing.replace('**', '')       
+    clean_briefing = clean_briefing.replace('### ', '📍 ')  
+    clean_briefing = clean_briefing.replace('## ', '📍 ')   
+    
+    # 🚨 문제의 주범이었던 꺾쇠(<, >) 강제 변환 코드는 삭제했습니다!
+    # 대신 AI가 강조용으로 쓴 <핵심어> 형태를 [핵심어]로 안전하게만 바꿔줍니다.
+    clean_briefing = re.sub(r'<([^>]+)>', r'[\1]', clean_briefing)
+    
+    # 2. 리스트의 별표(*)는 하위 네모(▫️)로 깔끔하게 변환
     clean_briefing = re.sub(r'^\s*\*\s+', '▫️ ', clean_briefing, flags=re.MULTILINE)
     
-    # 3. 에러를 유발하는 parse_mode를 아예 빼버리고 순수 텍스트+이모지로만 안전하게 쏩니다.
+    # 3. 💡 [핵심 패치] AI가 출력한 인용구(>) 기호를 세련된 핀(📌) 이모지로 변환!
+    clean_briefing = re.sub(r'^\s*>\s*', '📌 ', clean_briefing, flags=re.MULTILINE)
+    
+    # 4. 에러를 유발하는 parse_mode를 빼고 순수 텍스트+이모지로 안전하게 전송
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         'chat_id': TELEGRAM_CHAT_ID, 
@@ -190,7 +196,6 @@ if __name__ == "__main__":
     else:
         print(f"❌ 텔레그램 발송 실패! (상태 코드: {response.status_code})")
         print(f"🚨 텔레그램 서버 에러 메시지: {response.text}")
-        
         print("🔄 일반 텍스트 모드로 재전송을 시도합니다...")
         fallback_payload = {
             'chat_id': TELEGRAM_CHAT_ID, 
