@@ -48,7 +48,7 @@ def get_global_liquidity_data():
     return "\n".join(liquidity_report) if liquidity_report else "유동성 데이터 수집 실패"
 
 # =====================================================================
-# 2. 📰 뉴스 및 한국장 데이터 수집 (NXT 크로스체크 매칭 로직)
+# 2. 📰 뉴스 및 한국장 데이터 수집
 # =====================================================================
 def get_us_market_summary():
     headers = {'User-Agent': 'Mozilla/5.0'}
@@ -79,17 +79,8 @@ def get_yesterday_korean_context():
         client = gspread.authorize(creds)
         doc = client.open_by_url(SHEET_URL)
         
-        # 1. 스캐너_마스터에서 어제 시장을 지배한 상위 5개 대장주 이름 추출
         scanner_sheet = doc.worksheet("스캐너_마스터")
         scanner_data = scanner_sheet.get_all_values()[1:6]
-
-        # 💡 [퍼즐 완성] 주가데이터_보조 시트에서 시간외(NXT) 데이터를 추출하여 매핑 딕셔너리 생성
-        helper_sheet = doc.worksheet("주가데이터_보조")
-        helper_data = helper_sheet.get_all_values()[1:]
-        nxt_map = {}
-        for row in helper_data:
-            if len(row) >= 21:  # 21번째 열 (인덱스 20)이 시간외(NXT)
-                nxt_map[row[0].strip()] = row[20].strip()
 
     except Exception as e:
         return f"🚨 권한 또는 JSON 파싱 오류: {e}"
@@ -100,10 +91,9 @@ def get_yesterday_korean_context():
     picks_info = []
     for r in scanner_data:
         if len(r) > 4 and r[0]:
-            # 💡 [핵심 버그 패치] r[1]에 있는 '현재가'도 같이 뽑아서 AI에게 전달합니다!
             name, current_price, theme = r[0].strip(), r[1].strip(), r[4]
-            nxt_rate = nxt_map.get(name, "시간외 수집 누락(확인불가)")
-            picks_info.append(f"▪️ [{name}] 종가: {current_price}원 | 테마: {theme} | 시간외(NXT) 등락률: {nxt_rate}")
+            # 💡 [시간외 삭제 패치] 시간외 데이터를 제외하고 종가와 테마만 팩트로 꽂아줍니다!
+            picks_info.append(f"▪️ [{name}] 종가: {current_price}원 | 테마: {theme}")
                 
     return "\n".join(picks_info)
 
@@ -123,14 +113,14 @@ def generate_morning_briefing(market_data, news_data, kor_context, liquidity_dat
 [밤사이 글로벌/국내 주요 뉴스]
 {news_data}
 
-[어제 한국장 포착 종목 및 시간외(NXT) 결과]
+[어제 한국장 포착 종목 결과]
 {kor_context}
 
 [작성 절대 지침 - 어기면 시스템 다운됨]
 1. 군더더기 철저히 배제: 인사말, 서론, "보고자:" 등의 쓸데없는 양식을 절대 생성하지 마라. 오직 본문 4단 구성만 출력해라.
 2. 4단 구성 체재:
    - 🌎 [글로벌 유동성 및 매크로 요약]: 제공된 FRED 유동성 지표의 증감을 분석하여 현재 시장에 '실제 스마트머니'가 들어오는지 진단해라.
-   - 🇰🇷 [어제 포착 종목 NXT 브리핑]: 전달받은 어제 포착 종목명을 하나씩 나열해라. 제공된 종가와 시간외 등락률 수치를 팩트 그대로 적어라.
+   - 🇰🇷 [어제 포착 종목 브리핑]: 전달받은 어제 포착 종목명을 하나씩 나열해라. 제공된 종가 수치를 팩트 그대로 적어라.
    - 🎯 [오늘의 액션 플랜]: 유동성 지표와 뉴스를 종합하여 실전 트레이딩 시나리오를 구체적으로 제시해라.
      🚨 [절대 규칙 1 - 투 트랙(Two-Track) 전략 필수]: 
         * 1순위 타겟: 반드시 [어제 한국장 포착 종목]에 나열된 '퀀트 검증 대장주' 안에서 선정하여 눌림/돌파 타점을 제시해라.
@@ -160,26 +150,17 @@ if __name__ == "__main__":
     else:
         briefing_text = generate_morning_briefing(market_data, news_data, kor_context, liquidity_data)
         today_str = datetime.datetime.now(KST).strftime('%Y년 %m월 %d일')
-        final_msg = f"🌅 [HYEOKS 모닝 브리핑] - {today_str}\n\n{briefing_text}"
+        final_briefing = f"🌅 [HYEOKS 모닝 브리핑] - {today_str}\n\n{briefing_text}"
     
-    # print("📲 텔레그램 발송 중...")
-    # requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
-    #               data={'chat_id': TELEGRAM_CHAT_ID, 'text': final_briefing, 'parse_mode': 'Markdown'})
-    # print("✅ 모든 프로세스 완료!")
-
-    # === 💡 [수정할 코드] 강력한 발송 엔진 및 에러 추적기 ===
     print("📲 텔레그램 발송 중...")
     
-    # 1. 텔레그램 마크다운 V2 파싱 에러를 방지하기 위한 특수문자 무력화 (이스케이프 처리)
-    # AI가 자주 쓰는 특수문자 중 짝이 안 맞으면 에러를 내는 것들을 안전하게 처리합니다.
     safe_briefing = final_briefing.replace('!', '\!').replace('.', '\.').replace('-', '\-').replace('(', '\(').replace(')', '\)').replace('+', '\+').replace('=', '\=').replace('>', '\>').replace('<', '\<')
 
-    # 2. 메시지 전송 및 결과 확인
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         'chat_id': TELEGRAM_CHAT_ID, 
         'text': safe_briefing, 
-        'parse_mode': 'MarkdownV2' # V2로 업그레이드
+        'parse_mode': 'MarkdownV2'
     }
     
     response = requests.post(url, data=payload)
@@ -190,11 +171,10 @@ if __name__ == "__main__":
         print(f"❌ 텔레그램 발송 실패! (상태 코드: {response.status_code})")
         print(f"🚨 텔레그램 서버 에러 메시지: {response.text}")
         
-        # 마크다운 에러일 경우, 서식을 다 빼고 일반 텍스트(Plain Text)로 재전송 시도!
         print("🔄 일반 텍스트 모드로 재전송을 시도합니다...")
         fallback_payload = {
             'chat_id': TELEGRAM_CHAT_ID, 
-            'text': final_briefing # 원본 텍스트 그대로
+            'text': final_briefing
         }
         fallback_res = requests.post(url, data=fallback_payload)
         if fallback_res.status_code == 200:
