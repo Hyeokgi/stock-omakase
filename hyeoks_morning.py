@@ -163,15 +163,24 @@ if __name__ == "__main__":
         today_str = datetime.datetime.now(KST).strftime('%Y년 %m월 %d일')
         final_briefing = f"🌅 [HYEOKS 모닝 브리핑] - {today_str}\n\n{briefing_text}"
     
+    # === 💡 [초강력 가독성 패치] 파이썬 자체 클렌징 엔진 ===
     print("📲 텔레그램 발송 중...")
     
-    safe_briefing = final_briefing.replace('!', '\!').replace('.', '\.').replace('-', '\-').replace('(', '\(').replace(')', '\)').replace('+', '\+').replace('=', '\=').replace('>', '\>').replace('<', '\<')
-
+    # 1. AI가 뱉어낸 시각적 찌꺼기(마크다운 기호)를 파이썬이 싹 청소합니다.
+    clean_briefing = final_briefing.replace('**', '')       # 굵은글씨 별표 찌꺼기 완벽 제거
+    clean_briefing = clean_briefing.replace('### ', '📍 ')  # H3 헤딩 기호 변환
+    clean_briefing = clean_briefing.replace('## ', '📍 ')   # H2 헤딩 기호 변환
+    clean_briefing = clean_briefing.replace('<', '[').replace('>', ']') # 꺾쇠를 대괄호로 통일
+    
+    # 2. 리스트 앞에 붙은 혼자 있는 별표(*)도 깔끔한 하위 네모(▫️)로 바꿉니다.
+    import re
+    clean_briefing = re.sub(r'^\s*\*\s+', '▫️ ', clean_briefing, flags=re.MULTILINE)
+    
+    # 3. 에러를 유발하는 parse_mode를 아예 빼버리고 순수 텍스트+이모지로만 안전하게 쏩니다.
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         'chat_id': TELEGRAM_CHAT_ID, 
-        'text': safe_briefing, 
-        'parse_mode': 'MarkdownV2'
+        'text': clean_briefing
     }
     
     response = requests.post(url, data=payload)
