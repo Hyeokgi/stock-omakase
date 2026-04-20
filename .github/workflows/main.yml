@@ -32,8 +32,12 @@ jobs:
 
       - name: 비밀번호 파일(secret.json) 만들기
         env:
-          GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }} 
+          GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
         run: echo "$GCP_CREDENTIALS" > secret.json
 
       - name: 파이썬 실행!
+        env:
+          # 💡 [핵심 패치] 파이썬이 실행될 때 깃허브 금고에서 열쇠를 꺼내어 쥐여줍니다!
+          KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }} 
         run: python omakase.py
