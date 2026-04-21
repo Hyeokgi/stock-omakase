@@ -624,8 +624,46 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if is_high_altitude and "[" in master_tajeom:
             quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️고가(단기)"
 
-        # 💡 [최종 결정] 불확실한 시간외/NXT 크롤링 전면 폐기 (스캐너 속도 및 안정성 극대화)
-        nxt_text = "➖"
+       # ----------------------------------------------------
+        # 💡 [최종 병기] KIS API 직결 시간외(NXT/단일가) 수집 엔진
+        # ----------------------------------------------------
+        nxt_text = "➖ 0.00% (보합)"
+        if KIS_TOKEN: # 최상단에서 발급받은 무적의 토큰을 꺼내 씁니다.
+            try:
+                headers = {
+                    "authorization": f"Bearer {KIS_TOKEN}",
+                    "appkey": KIS_APP_KEY,
+                    "appsecret": KIS_APP_SECRET,
+                    "tr_id": "FHKST01010100", # 한국투자증권 '주식현재가 시세' 호출 코드
+                    "custtype": "P" # P: 개인
+                }
+                params = {
+                    "fid_cond_mrkt_div_code": "J", # 주식, ETF, ETN
+                    "fid_input_iscd": code         # 6자리 종목코드
+                }
+                
+                # 💡 네이버에서 3~4초 대기하던 것을 KIS API로 0.1초 만에 타격!
+                kis_url = f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-price"
+                kis_res = session.get(kis_url, headers=headers, params=params, timeout=3).json()
+                
+                # API 응답 성공 시
+                if kis_res.get("rt_cd") == "0":
+                    output = kis_res.get("output", {})
+                    
+                    # 'ovtm_untp_prdy_ctrt' = 시간외 단일가 전일 대비율 (%)
+                    ovtm_rate_str = output.get("ovtm_untp_prdy_ctrt", "0")
+                    ovtm_rate = float(ovtm_rate_str)
+                    
+                    # 가격 변동이 있을 경우에만 색상 텍스트 적용
+                    if ovtm_rate > 0:
+                        nxt_text = f"🔴 +{ovtm_rate}% (시간외)"
+                    elif ovtm_rate < 0:
+                        nxt_text = f"🔵 {ovtm_rate}% (시간외)"
+                        
+            except Exception as e:
+                nxt_text = "⚠️ API 통신지연"
+        else:
+            nxt_text = "⚠️ 토큰 없음"
             
         program_text = "확인불가"
         try:
