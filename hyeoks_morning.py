@@ -67,84 +67,52 @@ def search_code_from_naver(stock_name):
     return None
 
 def get_vip_deep_dive_data(code, kis_token):
-    # 기본값 세팅
     vip = {"체결강도": "야간초기화(0%)", "신용잔고율": "확인불가", "수급트렌드": "뚜렷한 연속 매수 없음", "펀더멘털": "N/A"}
-    
-    if not (kis_token and KIS_APP_KEY and KIS_APP_SECRET):
-        return "⚠️ KIS API 토큰 없음 (데이터 수집 불가)"
-
     req = requests.Session()
+    req.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'})
     
-    # 공통 헤더 세팅
-    headers = {
-        "authorization": f"Bearer {kis_token}",
-        "appkey": KIS_APP_KEY,
-        "appsecret": KIS_APP_SECRET,
-        "custtype": "P" # P: 개인
-    }
-
-    # ==========================================================
-    # 1. KIS API 호출: [국내주식 현재가 시세] (체결강도, 신용비율, PER, PBR)
-    # ==========================================================
-    try:
-        headers["tr_id"] = "FHKST01010100"
-        params_price = {
-            "fid_cond_mrkt_div_code": "J",
-            "fid_input_iscd": code
-        }
-        res_price = req.get("https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price", headers=headers, params=params_price, timeout=3).json()
-        
-        if res_price.get("rt_cd") == "0":
-            output = res_price.get("output", {})
-            
-            # 체결강도 (vlsr)
-            vlsr = output.get("vlsr", "0")
-            vip["체결강도"] = f"{vlsr}%" if vlsr != "0" and vlsr != "" else "야간초기화(0%)"
-            
-            # 신용잔고율 (hts_avls_rt: HTS 신용융자비율)
-            credit = output.get("hts_avls_rt", "0")
-            vip["신용잔고율"] = f"{credit}%" if credit != "0" and credit != "" else "0.00%"
-            
-            # 펀더멘털 (PER, PBR)
-            per = output.get("per", "N/A")
-            pbr = output.get("pbr", "N/A")
-            vip["펀더멘털"] = f"PER: {per} / PBR: {pbr}"
-    except Exception as e:
-        print(f"⚠️ KIS 현재가 API 에러 ({code}): {e}")
-
-    # ==========================================================
-    # 2. KIS API 호출: [국내주식 종목별 투자자] (외국인/기관 연속 수급)
-    # ==========================================================
-    try:
-        headers["tr_id"] = "FHKST01010900"
-        params_investor = {
-            "fid_cond_mrkt_div_code": "J",
-            "fid_input_iscd": code
-        }
-        res_inv = req.get("https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-investor", headers=headers, params=params_investor, timeout=3).json()
-        
-        if res_inv.get("rt_cd") == "0":
-            inv_list = res_inv.get("output", [])
-            f_con, i_con = 0, 0
-            
-            # 외국인 연속 순매수 일수 계산 (frgn_ntby_qty: 외국인 순매수 수량)
-            for day in inv_list:
-                if int(day.get("frgn_ntby_qty", "0")) > 0: f_con += 1
-                else: break
+    # 1. KIS API 호출: 체결강도, PER, PBR
+    if kis_token and KIS_APP_KEY and KIS_APP_SECRET:
+        try:
+            headers = {"authorization": f"Bearer {kis_token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "tr_id": "FHKST01010100", "custtype": "P"}
+            res_price = req.get("https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price", headers=headers, params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}, verify=False, timeout=3).json()
+            if res_price.get("rt_cd") == "0":
+                output = res_price.get("output", {})
                 
-            # 기관 연속 순매수 일수 계산 (orgn_ntby_qty: 기관 순매수 수량)
-            for day in inv_list:
-                if int(day.get("orgn_ntby_qty", "0")) > 0: i_con += 1
-                else: break
+                vlsr = output.get("vlsr", "0")
+                vip["체결강도"] = f"{vlsr}%" if vlsr != "0" and vlsr != "" else "야간초기화(0%)"
                 
-            trends = []
-            if f_con > 1: trends.append(f"외국인 {f_con}일 연속 매수")
-            if i_con > 1: trends.append(f"기관 {i_con}일 연속 매수")
-            if trends: vip["수급트렌드"] = " / ".join(trends)
-            
-    except Exception as e:
-        print(f"⚠️ KIS 수급 API 에러 ({code}): {e}")
+                per = output.get("per", "N/A")
+                pbr = output.get("pbr", "N/A")
+                vip["펀더멘털"] = f"PER: {per} / PBR: {pbr}"
+        except: pass
 
+        # 2. KIS API 호출: 수급트렌드 (외인/기관 연속 매수)
+        try:
+            headers["tr_id"] = "FHKST01010900"
+            res_inv = req.get("https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-investor", headers=headers, params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}, verify=False, timeout=3).json()
+            if res_inv.get("rt_cd") == "0":
+                inv_list = res_inv.get("output", [])
+                f_con, i_con = 0, 0
+                for day in inv_list:
+                    if int(day.get("frgn_ntby_qty", "0")) > 0: f_con += 1
+                    else: break
+                for day in inv_list:
+                    if int(day.get("orgn_ntby_qty", "0")) > 0: i_con += 1
+                    else: break
+                trends = []
+                if f_con > 1: trends.append(f"외국인 {f_con}일 연속 매수")
+                if i_con > 1: trends.append(f"기관 {i_con}일 연속 매수")
+                if trends: vip["수급트렌드"] = " / ".join(trends)
+        except: pass
+
+    # 3. Naver 핀셋 크롤링: 신용잔고율 (가장 정확한 빚투 데이터)
+    try:
+        main_soup = BeautifulSoup(req.get(f"https://finance.naver.com/item/main.naver?code={code}", verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
+        credit_tag = main_soup.find('em', id='_credit_ratio')
+        if credit_tag: vip["신용잔고율"] = f"{credit_tag.text.strip()}%"
+    except: pass
+    
     return f"⚡체결강도:{vip['체결강도']} | ⚠️신용비율:{vip['신용잔고율']} | 📈수급:{vip['수급트렌드']} | 📊{vip['펀더멘털']}"
 def get_us_market_summary():
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'}
