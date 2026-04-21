@@ -32,5 +32,7 @@ jobs:
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         # 💡 [핵심] 파일(secret.json)을 만들지 않고 환경변수로 직접 주입!
         GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+        KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+        KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
       run: |
         python hyeoks_morning.py
