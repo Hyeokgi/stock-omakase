@@ -653,7 +653,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         elif flag_days == 2: master_tajeom = "🚩 [분할매수] 눌림목 2일 차 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else "")
         elif flag_days == 1: master_tajeom = "🚩 [분할매수] 단기 눌림 진입 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else "")
         elif "🌟" in signal: master_tajeom = "🌟 [우량] 기관/외인 수급 유입"; quant_score += 15
-        elif change_rate >= 0.12 and trading_value >= 50_000_000_000: master_tajeom = "👀 [관심] 신규 기준봉 출현 (수급 집중)" + (" ⚠️(주의장세)" if is_warning_market else "")
+        elif change_rate >= 0.12 and trading_value >= 50_000_000_000: 
+            dynamic_supply = supply_text if supply_text != "" else " (대규모 거래대금)"
+            master_tajeom = f"👀 [관심] 신규 기준봉 출현{dynamic_supply}" + (" ⚠️(주의장세)" if is_warning_market else "")
         score_display = f"{quant_score}점 ({track_type})"
         if is_chronic_loss and "[" in master_tajeom:
             quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️(3년적자)"
