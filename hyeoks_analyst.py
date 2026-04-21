@@ -2,6 +2,9 @@ import os, re, time, base64, warnings, datetime, requests, markdown, pdfkit, gsp
 from bs4 import BeautifulSoup  
 from oauth2client.service_account import ServiceAccountCredentials
 from google import genai
+import urllib3
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings("ignore")
 
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit"
@@ -29,7 +32,8 @@ except Exception as e:
 def get_target_stock_news(code):
     try:
         url = f"https://finance.naver.com/item/news_news.naver?code={code}&page=1"
-        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'}
+        res = requests.get(url, headers=headers, verify=False, timeout=3)
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
         news_list = []
         for a_tag in soup.select('.title a')[:3]:  
@@ -39,56 +43,55 @@ def get_target_stock_news(code):
         return "개별 뉴스 수집 실패"
 
 # =================================================================
-# 💎 [신규 탑재] VIP 심층 데이터 수집 엔진 (체결강도, 신용비율, 연속수급)
+# 💎 [100% KIS API 직결] VIP 심층 데이터 수집 엔진 (신용비율 영구 삭제)
 # =================================================================
 def get_vip_deep_dive_data(code, kis_token):
-    vip = {
-        "체결강도": "확인불가",
-        "신용잔고율": "확인불가",
-        "수급트렌드": "뚜렷한 연속 순매수 없음",
-        "펀더멘털": "확인불가"
-    }
+    vip = {"체결강도": "야간초기화(0%)", "수급트렌드": "뚜렷한 연속 매수 없음", "펀더멘털": "N/A"}
+    
+    if not (kis_token and KIS_APP_KEY and KIS_APP_SECRET):
+        return "⚠️ KIS API 토큰 없음"
+
     req = requests.Session()
-    req.headers.update({'User-Agent': 'Mozilla/5.0'})
+    headers = {
+        "authorization": f"Bearer {kis_token}",
+        "appkey": KIS_APP_KEY,
+        "appsecret": KIS_APP_SECRET,
+        "custtype": "P"
+    }
     
-    # 1. KIS API: 10호가 뚫어버리는 체결강도 (100% 이상 매수우위)
-    if kis_token and KIS_APP_KEY and KIS_APP_SECRET:
-        try:
-            headers = {"authorization": f"Bearer {kis_token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "tr_id": "FHKST01010100", "custtype": "P"}
-            res = req.get("https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price", headers=headers, params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}, timeout=3).json()
-            if res.get("rt_cd") == "0":
-                vip["체결강도"] = f"{res['output'].get('vlsr', '0')}%"
-        except: pass
-        
-    # 2. Naver: 신용잔고율(빚투 물량) & 펀더멘털(PER/PBR)
+    # 1. KIS API: 10호가 체결강도 및 펀더멘털(PER/PBR)
     try:
-        main_soup = BeautifulSoup(req.get(f"https://finance.naver.com/item/main.naver?code={code}", timeout=3).content, 'html.parser', from_encoding='cp949')
-        credit_tag = main_soup.find('em', id='_credit_ratio')
-        if credit_tag: vip["신용잔고율"] = f"{credit_tag.text.strip()}%"
-        
-        per = main_soup.find('em', id='_per').text.strip() if main_soup.find('em', id='_per') else "N/A"
-        pbr = main_soup.find('em', id='_pbr').text.strip() if main_soup.find('em', id='_pbr') else "N/A"
-        vip["펀더멘털"] = f"PER: {per} / PBR: {pbr}"
+        headers["tr_id"] = "FHKST01010100"
+        res_price = req.get("https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price", headers=headers, params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}, verify=False, timeout=3).json()
+        if res_price.get("rt_cd") == "0":
+            output = res_price.get("output", {})
+            vlsr = output.get("vlsr", "0")
+            vip["체결강도"] = f"{vlsr}%" if vlsr != "0" and vlsr != "" else "야간초기화(0%)"
+            per = output.get("per", "N/A")
+            pbr = output.get("pbr", "N/A")
+            vip["펀더멘털"] = f"PER: {per} / PBR: {pbr}"
+    except: pass
+
+    # 2. KIS API: 메이저 연속 순매수 일수
+    try:
+        headers["tr_id"] = "FHKST01010900"
+        res_inv = req.get("https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-investor", headers=headers, params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}, verify=False, timeout=3).json()
+        if res_inv.get("rt_cd") == "0":
+            inv_list = res_inv.get("output", [])
+            f_con, i_con = 0, 0
+            for day in inv_list:
+                if int(day.get("frgn_ntby_qty", "0")) > 0: f_con += 1
+                else: break
+            for day in inv_list:
+                if int(day.get("orgn_ntby_qty", "0")) > 0: i_con += 1
+                else: break
+            trends = []
+            if f_con > 1: trends.append(f"외국인 {f_con}거래일 연속 매수")
+            if i_con > 1: trends.append(f"기관 {i_con}거래일 연속 매수")
+            if trends: vip["수급트렌드"] = " / ".join(trends)
     except: pass
     
-    # 3. Naver: 메이저 연속 순매수 일수 (진짜 스마트머니 판독)
-    try:
-        trend_res = req.get(f"https://m.stock.naver.com/api/stock/{code}/investor/trend", timeout=3).json().get('investorTrendList', [])
-        f_con, i_con = 0, 0
-        for t in trend_res:
-            if int(str(t.get('foreignerStraightPurchasePrice', '0')).replace(',', '')) > 0: f_con += 1
-            else: break
-        for t in trend_res:
-            if int(str(t.get('institutionStraightPurchasePrice', '0')).replace(',', '')) > 0: i_con += 1
-            else: break
-        
-        trends = []
-        if f_con > 1: trends.append(f"외국인 {f_con}거래일 연속 순매수")
-        if i_con > 1: trends.append(f"기관 {i_con}거래일 연속 순매수")
-        if trends: vip["수급트렌드"] = " / ".join(trends)
-    except: pass
-    
-    return f"⚡ 체결강도: {vip['체결강도']}\n⚠️ 신용잔고율: {vip['신용잔고율']}\n📈 수급트렌드: {vip['수급트렌드']}\n📊 펀더멘털: {vip['펀더멘털']}"
+    return f"⚡체결강도:{vip['체결강도']} | 📈수급:{vip['수급트렌드']} | 📊{vip['펀더멘털']}"
 # =================================================================
 
 def safe_generate_content(contents):
@@ -138,7 +141,7 @@ try:
     gc = gspread.authorize(creds)
     doc = gc.open_by_url(SHEET_URL)
 
-    # 💡 [신규] 구글 시트에서 KIS 토큰 불러오기 (API 호출용)
+    # 💡 구글 시트에서 KIS 토큰 불러오기 (API 호출용)
     KIS_TOKEN = ""
     try:
         setting_sheet = doc.worksheet("⚙️설정")
@@ -211,14 +214,14 @@ try:
         target_name = best_pick['name']
         print(f"🎯 [{st_type.upper()}] 최종 픽: {target_name} ({target_code})")
 
-        # 💡 [신규] 최종 선정된 1개 종목에 대해서만 VIP 심층 데이터를 땡겨옵니다!
-        print(f"🔍 {target_name} VIP 심층 데이터(호가/신용/연속수급) 추출 중...")
+        print(f"🔍 {target_name} VIP 심층 데이터(체결강도/연속수급) 추출 중...")
         vip_info = get_vip_deep_dive_data(target_code, KIS_TOKEN)
         target_specific_news = get_target_stock_news(target_code)
 
         img_path = f"temp_{target_code}.png"
         try:
-            img_res = requests.get(f"https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{target_code}.png", headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'}
+            img_res = requests.get(f"https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{target_code}.png", headers=headers, verify=False, timeout=5)
             with open(img_path, 'wb') as f: f.write(img_res.content)
             img = PIL.Image.open(img_path)
             img.thumbnail((800, 800))
@@ -249,7 +252,7 @@ try:
 3. 전략의 일관성: {st_type} 전략에 맞게 서술하되 두 전략을 섞지 마라.
 4. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:O 형식 출력.
 5. 프로그램 수급 연계: 제공된 [프로그램] 현황을 분석하여 주가 상승을 어떻게 뒷받침하는지 서술할 것.
-6. 💎 VIP 심층 해부: 제공된 [VIP 심층 데이터]의 체결강도(100% 이상시 매수우위), 신용잔고율(빚투 리스크), 연속 수급트렌드, 펀더멘털을 종합하여 이 종목의 폭발력과 숨겨진 리스크를 전문가처럼 날카롭게 리포트에 녹여내라.
+6. 💎 VIP 심층 해부: 제공된 [VIP 심층 데이터]의 체결강도(100% 이상시 매수우위), 연속 수급트렌드, 펀더멘털을 종합하여 이 종목의 폭발력과 숨겨진 리스크를 전문가처럼 날카롭게 리포트에 녹여내라.
 
 [출력 양식 (마크다운 유지)]
 <div class="broker-name">HYEOKS SECURITIES | {'SHORT-TERM' if st_type=='short' else 'MID-TERM'} STRATEGY</div>
@@ -260,7 +263,7 @@ try:
 
 <div class="summary-box">
 <strong>💡 Company Brief & VIP Data | HYEOKS 퀀트 데스크</strong><br><br>
-(기업 펀더멘털 요약 및 체결강도/연속수급/신용비율 핵심 수치 코멘트)
+(기업 펀더멘털 요약 및 체결강도/연속수급 핵심 수치 코멘트)
 </div>
 
 ## 1. 펀더멘털 및 매크로 유동성 심층 고찰
@@ -269,7 +272,7 @@ try:
 (기존 거래량 분석에 체결강도와 연속 순매수 트렌드를 덧붙여 세력의 진짜 의도 파악)
 
 ## 3. 실전 타점 시나리오 및 리스크 관리 전략
-(신용비율 등 리스크 요인을 반영한 상세한 액션 플랜 작성)
+(리스크 요인을 반영한 상세한 액션 플랜 작성)
 
 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'X' if st_type=='short' else 'O'}
 """
@@ -301,7 +304,8 @@ try:
         
         today = datetime.datetime.now(KST).strftime('%Y-%m-%d')
         new_hold, closed = [], []
-        req = requests.Session(); req.headers.update({'User-Agent': 'Mozilla/5.0'})
+        req = requests.Session()
+        req.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'})
 
         for r in hold_data[1:]:
             if len(r) < 10 or not r[0]: continue
@@ -309,7 +313,7 @@ try:
             avg_p, inv_amt, t_p, s_p = int(float(str(avg_p).replace(',',''))), int(float(str(inv_amt).replace(',',''))), int(float(str(t_p).replace(',',''))), int(float(str(s_p).replace(',','')))
             
             clean_code = str(code).replace("'", "").strip().zfill(6)
-            try: curr_p = int(req.get(f"https://m.stock.naver.com/api/stock/{clean_code}/basic", timeout=3).json()['closePrice'].replace(',',''))
+            try: curr_p = int(req.get(f"https://m.stock.naver.com/api/stock/{clean_code}/basic", verify=False, timeout=3).json()['closePrice'].replace(',',''))
             except: curr_p = avg_p 
 
             rtn = (curr_p - avg_p) / avg_p if avg_p > 0 else 0
@@ -320,7 +324,7 @@ try:
 
         for p in picks:
             if not p: continue
-            try: curr_p = int(req.get(f"https://m.stock.naver.com/api/stock/{p['code']}/basic", timeout=3).json()['closePrice'].replace(',',''))
+            try: curr_p = int(req.get(f"https://m.stock.naver.com/api/stock/{p['code']}/basic", verify=False, timeout=3).json()['closePrice'].replace(',',''))
             except: continue
             idx = next((i for i, v in enumerate(new_hold) if v[0] == p['name']), -1)
             if idx != -1:
