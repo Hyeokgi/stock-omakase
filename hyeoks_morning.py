@@ -69,15 +69,19 @@ def get_vip_deep_dive_data(code, kis_token):
     req = requests.Session()
     req.headers.update({'User-Agent': 'Mozilla/5.0'})
     
+    # 1. KIS API (체결강도) - 아침 7시 30분에는 서버 리셋으로 0%가 될 수 있음을 감안
     if kis_token and KIS_APP_KEY and KIS_APP_SECRET:
         try:
             headers = {"authorization": f"Bearer {kis_token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "tr_id": "FHKST01010100", "custtype": "P"}
-            res = req.get("https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price", headers=headers, params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}, timeout=3).json()
-            if res.get("rt_cd") == "0": vip["체결강도"] = f"{res['output'].get('vlsr', '0')}%"
+            res = req.get("https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price", headers=headers, params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}, verify=False, timeout=3).json()
+            if res.get("rt_cd") == "0": 
+                vlsr = res['output'].get('vlsr', '0')
+                vip["체결강도"] = f"{vlsr}%" if vlsr != "0" else "야간초기화(0%)"
         except: pass
         
+    # 2. Naver 신용잔고율 및 펀더멘털 (verify=False 장착!)
     try:
-        main_soup = BeautifulSoup(req.get(f"https://finance.naver.com/item/main.naver?code={code}", timeout=3).content, 'html.parser', from_encoding='cp949')
+        main_soup = BeautifulSoup(req.get(f"https://finance.naver.com/item/main.naver?code={code}", verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
         credit_tag = main_soup.find('em', id='_credit_ratio')
         if credit_tag: vip["신용잔고율"] = f"{credit_tag.text.strip()}%"
         per = main_soup.find('em', id='_per').text.strip() if main_soup.find('em', id='_per') else "N/A"
@@ -85,8 +89,9 @@ def get_vip_deep_dive_data(code, kis_token):
         vip["펀더멘털"] = f"PER: {per} / PBR: {pbr}"
     except: pass
     
+    # 3. Naver 수급 트렌드 (verify=False 장착!)
     try:
-        trend_res = req.get(f"https://m.stock.naver.com/api/stock/{code}/investor/trend", timeout=3).json().get('investorTrendList', [])
+        trend_res = req.get(f"https://m.stock.naver.com/api/stock/{code}/investor/trend", verify=False, timeout=3).json().get('investorTrendList', [])
         f_con, i_con = 0, 0
         for t in trend_res:
             if int(str(t.get('foreignerStraightPurchasePrice', '0')).replace(',', '')) > 0: f_con += 1
