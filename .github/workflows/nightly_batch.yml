@@ -2,8 +2,8 @@ name: 🌙 HYEOKS 심야 배치 (시간외 수집)
 
 on: 
   schedule:
-    # 한국시간(KST) 기준 밤 21시 30분 = UTC 기준 12시 30분 (월~금요일만 실행)
-    - cron: '30 12 * * 1-5'
+    # 한국시간(KST) 밤 8시 30분 (NXT 야간거래 20:00 종료 후)
+    - cron: '30 11 * * 1-5'
   workflow_dispatch:
 
 concurrency:
