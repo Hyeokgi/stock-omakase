@@ -625,50 +625,64 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️고가(단기)"
 
         # ----------------------------------------------------
-        # 💡 [최종 병기] KRX 시간외 단일가 + NXT 통합 수집 엔진
+        # 💡 [진짜 최종] 모바일 API(NXT) + PC 크롤링(시외) 이중 방어 엔진
         # ----------------------------------------------------
         nxt_text = "➖ 0.00% (보합)"
         try:
-            # 1. 동시 타격(TPS) 제한이 없는 네이버 모바일 통합 API (KRX + NXT 모두 제공)
-            basic_res = session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", verify=False, timeout=3).json()
-            
-            # 2. 💡 우리가 일봉 차트(fchart)에서 확보해둔 '절대 변하지 않는 15:30 정규 종가'
             reg_close = float(current_price) 
-            
-            # 3. 네이버가 야간에 덮어씌우는 모든 종류의 현재가를 싹쓸이합니다.
-            # 우선순위: NXT -> 시간외 단일가 -> 야간에 덮어씌워진 일반 현재가
-            cands = [
-                ("NXT", str(basic_res.get('nxtClosePrice') or '0')),
-                ("시외", str(basic_res.get('timeExtraClosePrice') or '0')),
-                ("야간", str(basic_res.get('closePrice') or '0'))
-            ]
-            
             best_rate = 0.0
             trade_type = ""
             
-            for t_name, cand_str in cands:
-                cand_val = float(cand_str.replace(',', ''))
-                # 정규장 종가와 단 1원이라도 다르면 시간외 거래가 발생한 것! (수동 계산)
-                if cand_val > 0 and cand_val != reg_close:
-                    best_rate = round(((cand_val - reg_close) / reg_close) * 100, 2)
-                    trade_type = t_name
-                    break
+            # 1. 네이버 모바일 API (NXT 및 시간외 1차 확인)
+            basic_res = session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", verify=False, timeout=3).json()
             
-            # 4. 강제 계산된 퍼센트 출력
+            nxt_price = float(str(basic_res.get('nxtClosePrice') or '0').replace(',', ''))
+            nxt_rate = float(str(basic_res.get('nxtFluctuationsRatio') or '0').replace(',', ''))
+            
+            ext_price = float(str(basic_res.get('timeExtraClosePrice') or '0').replace(',', ''))
+            ext_rate = float(str(basic_res.get('timeExtraFluctuationsRatio') or '0').replace(',', ''))
+            
+            # NXT 우선 확인
+            if nxt_price > 0 and nxt_price != reg_close:
+                best_rate = nxt_rate if nxt_rate != 0.0 else round(((nxt_price - reg_close) / reg_close) * 100, 2)
+                trade_type = "NXT"
+            # NXT 없으면 모바일 API 시간외 확인
+            elif ext_price > 0 and ext_price != reg_close:
+                best_rate = ext_rate if ext_rate != 0.0 else round(((ext_price - reg_close) / reg_close) * 100, 2)
+                trade_type = "시외"
+            
+            # 2. 모바일 API가 초기화되었거나 0일 경우 -> 네이버 PC '시간외 단일가' 전용 페이지 강력 크롤링
+            if best_rate == 0.0:
+                time_url = f"https://finance.naver.com/item/sise_time_over.naver?code={code}"
+                time_res = session.get(time_url, verify=False, timeout=3)
+                time_soup = BeautifulSoup(time_res.content, 'html.parser', from_encoding='euc-kr')
+                
+                # 가장 최신 체결가(가장 위쪽의 유효 데이터) 찾기
+                for tr in time_soup.find_all('tr'):
+                    tds = tr.find_all('td')
+                    if len(tds) >= 4 and ":" in tds[0].text:
+                        change_td = tds[2].text.strip()
+                        sign_img = tds[1].find('img')
+                        if sign_img:
+                            alt_text = sign_img.get('alt', '')
+                            try:
+                                pc_rate = float(change_td.replace('%', '').strip())
+                                if "상승" in alt_text:
+                                    best_rate = pc_rate
+                                    trade_type = "시외"
+                                    break
+                                elif "하락" in alt_text:
+                                    best_rate = -pc_rate
+                                    trade_type = "시외"
+                                    break
+                            except: pass
+            
+            # 3. 텍스트 조립
             if best_rate > 0: 
                 nxt_text = f"🔴 +{best_rate}% ({trade_type})"
             elif best_rate < 0: 
                 nxt_text = f"🔵 {best_rate}% ({trade_type})"
-            else:
-                # 가격 변동이 없어도 네이버가 명시적으로 뱉어준 등락률 데이터가 있는지 최종 확인
-                nxt_r = float(str(basic_res.get('nxtFluctuationsRatio') or '0').replace(',', ''))
-                ext_r = float(str(basic_res.get('timeExtraFluctuationsRatio') or '0').replace(',', ''))
                 
-                if nxt_r != 0.0: 
-                    nxt_text = f"🔴 +{nxt_r}% (NXT)" if nxt_r > 0 else f"🔵 {nxt_r}% (NXT)"
-                elif ext_r != 0.0: 
-                    nxt_text = f"🔴 +{ext_r}% (시외)" if ext_r > 0 else f"🔵 {ext_r}% (시외)"
-                    
         except Exception:
             pass
             
