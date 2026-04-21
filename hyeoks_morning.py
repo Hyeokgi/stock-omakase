@@ -13,6 +13,11 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit"
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
+# ==========================================
+# 💡 KIS API 환경 변수
+# ==========================================
+KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
+KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
 FRED_API_KEY = "eed13162f33f0ad6547783b9bb27190b"
 
 # =====================================================================
@@ -48,8 +53,55 @@ def get_global_liquidity_data():
     return "\n".join(liquidity_report) if liquidity_report else "유동성 데이터 수집 실패"
 
 # =====================================================================
-# 2. 📰 뉴스 및 한국장 데이터 수집
+# 2. 💎 VIP 데이터 추출 및 종목 정보 수집기
 # =====================================================================
+def search_code_from_naver(stock_name):
+    try:
+        url = f"https://m.stock.naver.com/api/search/all?keyword={stock_name}"
+        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3).json()
+        if res.get('result') and res['result'].get('stocks'):
+            return res['result']['stocks'][0]['itemCode']
+    except: pass
+    return None
+
+def get_vip_deep_dive_data(code, kis_token):
+    vip = {"체결강도": "확인불가", "신용잔고율": "확인불가", "수급트렌드": "뚜렷한 연속 순매수 없음", "펀더멘털": "확인불가"}
+    req = requests.Session()
+    req.headers.update({'User-Agent': 'Mozilla/5.0'})
+    
+    if kis_token and KIS_APP_KEY and KIS_APP_SECRET:
+        try:
+            headers = {"authorization": f"Bearer {kis_token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "tr_id": "FHKST01010100", "custtype": "P"}
+            res = req.get("https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price", headers=headers, params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}, timeout=3).json()
+            if res.get("rt_cd") == "0": vip["체결강도"] = f"{res['output'].get('vlsr', '0')}%"
+        except: pass
+        
+    try:
+        main_soup = BeautifulSoup(req.get(f"https://finance.naver.com/item/main.naver?code={code}", timeout=3).content, 'html.parser', from_encoding='cp949')
+        credit_tag = main_soup.find('em', id='_credit_ratio')
+        if credit_tag: vip["신용잔고율"] = f"{credit_tag.text.strip()}%"
+        per = main_soup.find('em', id='_per').text.strip() if main_soup.find('em', id='_per') else "N/A"
+        pbr = main_soup.find('em', id='_pbr').text.strip() if main_soup.find('em', id='_pbr') else "N/A"
+        vip["펀더멘털"] = f"PER: {per} / PBR: {pbr}"
+    except: pass
+    
+    try:
+        trend_res = req.get(f"https://m.stock.naver.com/api/stock/{code}/investor/trend", timeout=3).json().get('investorTrendList', [])
+        f_con, i_con = 0, 0
+        for t in trend_res:
+            if int(str(t.get('foreignerStraightPurchasePrice', '0')).replace(',', '')) > 0: f_con += 1
+            else: break
+        for t in trend_res:
+            if int(str(t.get('institutionStraightPurchasePrice', '0')).replace(',', '')) > 0: i_con += 1
+            else: break
+        trends = []
+        if f_con > 1: trends.append(f"외국인 {f_con}일 연속 매수")
+        if i_con > 1: trends.append(f"기관 {i_con}일 연속 매수")
+        if trends: vip["수급트렌드"] = " / ".join(trends)
+    except: pass
+    
+    return f"⚡체결강도:{vip['체결강도']} | ⚠️신용비율:{vip['신용잔고율']} | 📈수급:{vip['수급트렌드']} | 📊{vip['펀더멘털']}"
+
 def get_us_market_summary():
     headers = {'User-Agent': 'Mozilla/5.0'}
     try:
@@ -67,7 +119,7 @@ def get_us_market_summary():
         return f"뉴스 수집 에러: {e}", ""
 
 def get_yesterday_korean_context():
-    print("🇰🇷 어제 한국장 퀀트 타겟 종목 수집 중...")
+    print("🇰🇷 어제 한국장 퀀트 타겟 종목 및 VIP 심층 데이터 수집 중...")
     try:
         gcp_creds_str = os.environ.get("GCP_CREDENTIALS")
         if not gcp_creds_str or len(gcp_creds_str.strip()) < 10:
@@ -79,8 +131,19 @@ def get_yesterday_korean_context():
         client = gspread.authorize(creds)
         doc = client.open_by_url(SHEET_URL)
         
+        # KIS 토큰 확보
+        kis_token = ""
+        try:
+            setting_sheet = doc.worksheet("⚙️설정")
+            for row in setting_sheet.get_all_values():
+                if len(row) >= 2 and row[0] == "KIS_TOKEN":
+                    kis_token = row[1]
+                    break
+        except: pass
+
         scanner_sheet = doc.worksheet("스캐너_마스터")
-        scanner_data = scanner_sheet.get_all_values()[1:6]
+        # 💡 [핵심] 상위 4개 종목으로 압축하여 수집합니다!
+        scanner_data = scanner_sheet.get_all_values()[1:5]
 
     except Exception as e:
         return f"🚨 권한 또는 JSON 파싱 오류: {e}"
@@ -92,8 +155,16 @@ def get_yesterday_korean_context():
     for r in scanner_data:
         if len(r) > 4 and r[0]:
             name, current_price, theme = r[0].strip(), r[1].strip(), r[4]
-            # 💡 [시간외 삭제 패치] 시간외 데이터를 제외하고 종가와 테마만 팩트로 꽂아줍니다!
-            picks_info.append(f"▪️ [{name}] 종가: {current_price}원 | 테마: {theme}")
+            program = r[16] if len(r) > 16 else "확인불가"
+            
+            # 종목코드를 찾아 VIP 데이터 추출
+            code = search_code_from_naver(name)
+            vip_data = "VIP 데이터 확인불가"
+            if code:
+                print(f"🔍 [{name}] VIP 데이터(체결강도/수급) 수집 중...")
+                vip_data = get_vip_deep_dive_data(code, kis_token)
+
+            picks_info.append(f"▪️ [{name}] 종가: {current_price}원 | 테마: {theme}\n  [당일 프로그램] {program}\n  [VIP 딥리딩] {vip_data}")
                 
     return "\n".join(picks_info)
 
@@ -102,9 +173,6 @@ def get_yesterday_korean_context():
 # =====================================================================
 def generate_morning_briefing(market_data, news_data, kor_context, liquidity_data):
     print("🤖 AI 매크로 분석 및 리포트 작성 중...")
-    
-    # 💡 구글 검색 툴을 활성화하여 AI가 간밤의 시간외/NXT 이슈를 자체 검색할 수 있도록 옵션을 추가할 수 있지만,
-    # 우선 제공된 데이터를 기반으로 가장 날카로운 추론을 하도록 프롬프트를 고도화합니다.
     client = genai.Client(api_key=GEMINI_API_KEY)
     
     prompt = f"""너는 대한민국 최상위 1% 실전 트레이더를 위한 HYEOKS 리서치 센터의 수석 매크로/퀀트 애널리스트야.
@@ -116,31 +184,30 @@ def generate_morning_briefing(market_data, news_data, kor_context, liquidity_dat
 [밤사이 글로벌/국내 주요 뉴스]
 {news_data}
 
-[어제 한국장 포착 주요 종목]
+[어제 포착된 핵심 종목 및 VIP 심층 데이터]
 {kor_context}
 
-[HYEOKS 리서치 작성 지침 - 가독성 절대 규칙]
-1. 🚨 볼드체(**) 전면 금지: 텍스트에 ** 기호를 절대 사용하지 마라. 모바일 화면에서 눈이 매우 피로해진다. 
+[HYEOKS 리서치 작성 지침 - 가독성 및 퀄리티 절대 규칙]
+1. 🚨 볼드체 전면 금지: 텍스트에 별표 두 개 기호를 절대 사용하지 마라. 모바일 화면에서 눈이 매우 피로해진다. 
 2. 대체 강조법: 종목명이나 핵심 키워드를 강조하고 싶을 때는 [종목명], <핵심어> 형태로 기호를 묶어서 표현해라.
-3. 시각적 여백 활용: 글머리 기호(▪️, ▫️, 📌, 💡, 🚨)와 인용구 기호(>)를 적극 활용하여 줄바꿈을 자주 하고, 글이 뭉쳐 보이지 않게 깔끔하게 정돈해라.
-4. 유연한 리포트 구조:
+3. 시각적 여백 활용: 글머리 기호(▪️, ▫️, 📌, 💡, 🚨)와 인용구 기호(>)를 적극 활용하여 줄바꿈을 자주 하고, 깔끔하게 정돈해라.
+4. 유연한 리포트 구조 (압축된 VIP 브리핑):
    🌎 [HYEOKS 매크로 & 유동성 뷰]
    - FRED 유동성 지표와 밤사이 뉴스를 종합하여 자금의 성격(위험선호 vs 방어적 선별장세) 진단.
    
    🎯 [오늘의 주도 예상 섹터]
-   - 수급이 폭발할 강력한 테마/섹터 2~3개를 선정하고 짧고 명확하게 근거 제시.
+   - 수급이 폭발할 강력한 테마/섹터 2~3개를 선정하고 명확하게 근거 제시.
    
    📈 [HYEOKS 톱픽 & 액션 플랜]
-   - 총 5~6개의 추천 종목 선정 (어제 포착 종목 위주되 뉴스 기반 신규 주도주 추가 가능).
+   - 🚨 주의: 무조건 많은 종목을 나열하지 마라. 각 주도 섹터별로 1~2개씩 압축하여, 총 3~4개의 핵심 추천 종목만 브리핑해라.
    - 각 종목별 작성 포맷 예시:
      > [종목명]
-     - 흐름 추론: (전날 시간외 흐름 및 뉴스 임팩트 추론)
-     - 액션 플랜: (시가 갭 대응 전략. 단, 제공되지 않은 정확한 가격(원)을 임의로 지어내지 말고 '전일 종가 부근', '시초가 대비 -3%' 등 기술적 기준점 활용)
+     - 핵심 모멘텀 & 수급: (제공된 [VIP 딥리딩] 데이터의 체결강도, 연속 순매수 일수, 신용비율 및 [당일 프로그램] 매수 현황을 팩트 기반으로 서술하여 세력의 진짜 매집 의도를 날카롭게 파악할 것)
+     - 액션 플랜: (시가 갭 대응 전략 및 전일 종가 기반의 기술적 타점 제시)
 5. 군더더기 배제: 인사말, 서론 등은 생략.
 """
     for i in range(10):
         try:
-            # 기본 모델 생성 (필요 시 Search Grounding 옵션 추가 가능)
             response = client.models.generate_content(model='gemini-2.5-pro', contents=prompt)
             return response.text
         except Exception as e:
@@ -167,22 +234,14 @@ if __name__ == "__main__":
     print("📲 텔레그램 발송 중...")
     
     import re
-    # 1. 시각적 찌꺼기(마크다운 볼드체 및 헤딩) 제거
     clean_briefing = final_briefing.replace('**', '')       
     clean_briefing = clean_briefing.replace('### ', '📍 ')  
     clean_briefing = clean_briefing.replace('## ', '📍 ')   
     
-    # 🚨 문제의 주범이었던 꺾쇠(<, >) 강제 변환 코드는 삭제했습니다!
-    # 대신 AI가 강조용으로 쓴 <핵심어> 형태를 [핵심어]로 안전하게만 바꿔줍니다.
     clean_briefing = re.sub(r'<([^>]+)>', r'[\1]', clean_briefing)
-    
-    # 2. 리스트의 별표(*)는 하위 네모(▫️)로 깔끔하게 변환
     clean_briefing = re.sub(r'^\s*\*\s+', '▫️ ', clean_briefing, flags=re.MULTILINE)
-    
-    # 3. 💡 [핵심 패치] AI가 출력한 인용구(>) 기호를 세련된 핀(📌) 이모지로 변환!
     clean_briefing = re.sub(r'^\s*>\s*', '📌 ', clean_briefing, flags=re.MULTILINE)
     
-    # 4. 에러를 유발하는 parse_mode를 빼고 순수 텍스트+이모지로 안전하게 전송
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         'chat_id': TELEGRAM_CHAT_ID, 
