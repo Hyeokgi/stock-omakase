@@ -624,7 +624,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if is_high_altitude and "[" in master_tajeom:
             quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️고가(단기)"
 
-       # ----------------------------------------------------
+        # ----------------------------------------------------
         # 💡 [최종 병기] KIS API 직결 시간외 단일가/NXT 수집 엔진
         # ----------------------------------------------------
         nxt_text = "➖ 0.00% (보합)"
