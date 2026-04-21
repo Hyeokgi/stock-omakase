@@ -53,26 +53,24 @@ def get_global_liquidity_data():
     return "\n".join(liquidity_report) if liquidity_report else "유동성 데이터 수집 실패"
 
 # =====================================================================
-# 2. 💎 VIP 데이터 추출 및 종목 정보 수집기
+# 2. 💎 VIP 데이터 추출 및 종목 정보 수집기 (네이버 우회 및 인코딩 패치)
 # =====================================================================
 def search_code_from_naver(stock_name):
     try:
-        url = f"https://m.stock.naver.com/api/search/all?keyword={stock_name}"
-        # 💡 [핵심 패치 1] verify=False 장착 및 PC 봇 우회 헤더 적용 (이제 코드를 무조건 찾아옵니다)
+        url = "https://m.stock.naver.com/api/search/all"
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'}
-        res = requests.get(url, headers=headers, verify=False, timeout=3).json()
+        # 💡 [오류 수정] 한글 깨짐 방지를 위해 params로 안전하게 전달!
+        res = requests.get(url, headers=headers, params={'keyword': stock_name}, verify=False, timeout=3).json()
         if res.get('result') and res['result'].get('stocks'):
             return res['result']['stocks'][0]['itemCode']
     except: pass
     return None
 
 def get_vip_deep_dive_data(code, kis_token):
-    vip = {"체결강도": "확인불가", "신용잔고율": "확인불가", "수급트렌드": "뚜렷한 연속 순매수 없음", "펀더멘털": "확인불가"}
+    vip = {"체결강도": "확인불가", "신용잔고율": "확인불가", "수급트렌드": "뚜렷한 연속 매수 없음", "펀더멘털": "N/A"}
     req = requests.Session()
-    # 💡 [핵심 패치 2] VIP 수집기 전체에 네이버 차단 방지용 크롬 헤더 일괄 적용
     req.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'})
     
-    # 1. KIS API (체결강도)
     if kis_token and KIS_APP_KEY and KIS_APP_SECRET:
         try:
             headers = {"authorization": f"Bearer {kis_token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "tr_id": "FHKST01010100", "custtype": "P"}
@@ -82,7 +80,6 @@ def get_vip_deep_dive_data(code, kis_token):
                 vip["체결강도"] = f"{vlsr}%" if vlsr != "0" else "야간초기화(0%)"
         except: pass
         
-    # 2. Naver 신용잔고율 및 펀더멘털
     try:
         main_soup = BeautifulSoup(req.get(f"https://finance.naver.com/item/main.naver?code={code}", verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
         credit_tag = main_soup.find('em', id='_credit_ratio')
@@ -92,7 +89,6 @@ def get_vip_deep_dive_data(code, kis_token):
         vip["펀더멘털"] = f"PER: {per} / PBR: {pbr}"
     except: pass
     
-    # 3. Naver 수급 트렌드
     try:
         trend_res = req.get(f"https://m.stock.naver.com/api/stock/{code}/investor/trend", verify=False, timeout=3).json().get('investorTrendList', [])
         f_con, i_con = 0, 0
@@ -111,7 +107,7 @@ def get_vip_deep_dive_data(code, kis_token):
     return f"⚡체결강도:{vip['체결강도']} | ⚠️신용비율:{vip['신용잔고율']} | 📈수급:{vip['수급트렌드']} | 📊{vip['펀더멘털']}"
 
 def get_us_market_summary():
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'}
     try:
         print("📰 네이버 주요 뉴스 수집 중...")
         res = requests.get("https://finance.naver.com/news/mainnews.naver", headers=headers, verify=False, timeout=5)
@@ -149,8 +145,14 @@ def get_yesterday_korean_context():
                     break
         except: pass
 
+        # 💡 [핵심 패치] 네이버에 의존하지 않고, 우리 구글 시트 '기업정보'에서 종목코드를 100% 매칭합니다!
+        name_to_code = {}
+        try:
+            company_sheet = doc.worksheet("기업정보").get_all_values()
+            name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in company_sheet[1:] if len(row) >= 3}
+        except: pass
+
         scanner_sheet = doc.worksheet("스캐너_마스터")
-        # 💡 [핵심] 상위 4개 종목으로 압축하여 수집합니다!
         scanner_data = scanner_sheet.get_all_values()[1:5]
 
     except Exception as e:
@@ -165,19 +167,22 @@ def get_yesterday_korean_context():
             name, current_price, theme = r[0].strip(), r[1].strip(), r[4]
             program = r[16] if len(r) > 16 else "확인불가"
             
-            # 종목코드를 찾아 VIP 데이터 추출
-            code = search_code_from_naver(name)
+            # 💡 구글 시트에서 먼저 찾고, 없으면 네이버 안전 검색으로 폴백(Fallback)
+            code = name_to_code.get(name) or search_code_from_naver(name)
+            
             vip_data = "VIP 데이터 확인불가"
             if code:
-                print(f"🔍 [{name}] VIP 데이터(체결강도/수급) 수집 중...")
+                print(f"🔍 [{name} ({code})] VIP 데이터 수집 중...")
                 vip_data = get_vip_deep_dive_data(code, kis_token)
+            else:
+                print(f"❌ [{name}] 종목 코드를 찾을 수 없습니다.")
 
             picks_info.append(f"▪️ [{name}] 종가: {current_price}원 | 테마: {theme}\n  [당일 프로그램] {program}\n  [VIP 딥리딩] {vip_data}")
                 
     return "\n".join(picks_info)
 
 # =====================================================================
-# 3. 🧠 투 트랙(Quant + News) 전략 AI 프롬프트 (유연성 & 통찰력 강화)
+# 3. 🧠 투 트랙(Quant + News) 전략 AI 프롬프트
 # =====================================================================
 def generate_morning_briefing(market_data, news_data, kor_context, liquidity_data):
     print("🤖 AI 매크로 분석 및 리포트 작성 중...")
@@ -209,14 +214,14 @@ def generate_morning_briefing(market_data, news_data, kor_context, liquidity_dat
    [파트 2: 종목별 심층 분석 (파란색 뱃지)]
    🟦 [종목명]
    🔹 핵심 모멘텀 & VIP 수급
-   ▫️ [🤖프로그램: 데이터] [⚡체결강도: 데이터] [⚠️신용: 데이터] [📈수급: 데이터]
+   ▫️ [🤖프로그램: 데이터] [⚡체결강도: 데이터] [⚠️신용: 데이터] [📈수급: 데이터] [📊기본: 데이터]
    ▫️ (VIP 데이터와 뉴스를 융합한 세력의 매집 의도 및 상승 논리 분석)
    🔹 실전 액션 플랜
    ▫️ 진입: (시가 갭 대응 전략 및 1차 진입 타점)
    ▫️ 대응: (주요 지지선 및 돌파 목표가)
 
 3. 데이터 뱃지(Badge) 통일화: 
-   [핵심 모멘텀 & VIP 수급] 바로 밑에 반드시 `▫️ [🤖프로그램: ~] [⚡체결강도: ~] [⚠️신용: ~] [📈수급: ~]` 형태의 한 줄 요약 뱃지를 달아라.
+   [핵심 모멘텀 & VIP 수급] 바로 밑에 반드시 `▫️ [🤖프로그램: ~] [⚡체결강도: ~] [⚠️신용: ~] [📈수급: ~] [📊기본: ~]` 형태의 한 줄 요약 뱃지를 달아라. 없는 데이터는 생략해도 좋으나 뱃지 형태는 지켜라.
 4. 압축 브리핑: 시장을 주도할 핵심 테마 내에서 총 3~4개의 핵심 추천 종목만 엄선하여 브리핑해라.
 5. 군더더기 배제: 인사말, 서론 등은 생략.
 """
@@ -248,16 +253,11 @@ if __name__ == "__main__":
     print("📲 텔레그램 발송 중...")
     
     import re
-    # 1. 시각적 찌꺼기(마크다운 별표 및 헤딩) 제거
     clean_briefing = final_briefing.replace('**', '')       
     clean_briefing = clean_briefing.replace('### ', '▶️ ')  
     clean_briefing = clean_briefing.replace('## ', '▶️ ')   
     
-    # 2. 임의의 꺾쇠를 대괄호로 통일하여 정돈
     clean_briefing = re.sub(r'<([^>]+)>', r'[\1]', clean_briefing)
-    
-    # 🚨 기존에 핀(📌)을 무한 증식시키던 정규식은 모두 삭제했습니다! 
-    # 이제 AI가 출력한 🟦, 🔹, ▫️ 기호가 그대로 예쁘게 유지됩니다.
     
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
@@ -271,8 +271,7 @@ if __name__ == "__main__":
         print("✅ 텔레그램 발송 성공! 모든 프로세스 완료!")
     else:
         print(f"❌ 텔레그램 발송 실패! (상태 코드: {response.status_code})")
-        print(f"🚨 텔레그램 서버 에러 메시지: {response.text}")
         print("🔄 일반 텍스트 모드로 재전송을 시도합니다...")
         fallback_res = requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID, 'text': final_briefing})
         if fallback_res.status_code == 200: print("✅ 일반 텍스트 재전송 성공!")
-        else: print("❌ 재전송도 실패했습니다. 토큰이나 텍스트 길이를 확인하세요.")
+        else: print("❌ 재전송도 실패했습니다.")
