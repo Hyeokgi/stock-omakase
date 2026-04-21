@@ -1,9 +1,9 @@
 name: 🌙 HYEOKS 심야 배치 (시간외 수집)
 
 on: 
-  schedule:
-    # 한국시간(KST) 밤 8시 30분 (NXT 야간거래 20:00 종료 후)
-    - cron: '30 11 * * 1-5'
+  # 외부(구글)에서 보내는 원격 신호를 받기 위해 수신기(dispatch)를 켭니다.
+  repository_dispatch:
+    types: [trigger-nightly-batch]
   workflow_dispatch:
 
 concurrency:
