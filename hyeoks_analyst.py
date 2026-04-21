@@ -11,6 +11,11 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxyuSEjPmg8rZPjLlG-YKck07QYxmZm0HtxvWAumvV2zp7RRpVaKDo6D-CiQ6pLqKFm/exec"
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
+# ==========================================
+# 💡 [신규] KIS API 환경 변수
+# ==========================================
+KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
+KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
 FRED_API_KEY = "eed13162f33f0ad6547783b9bb27190b"
 
 print("🤖 [HYEOKS 리서치 센터] 매크로 융합 2.5-Pro 무한 돌파(Zombie) 엔진 가동...")
@@ -32,7 +37,60 @@ def get_target_stock_news(code):
         return "\n".join(news_list) if news_list else "당일 개별 특징주 뉴스 없음"
     except Exception:
         return "개별 뉴스 수집 실패"
+
+# =================================================================
+# 💎 [신규 탑재] VIP 심층 데이터 수집 엔진 (체결강도, 신용비율, 연속수급)
+# =================================================================
+def get_vip_deep_dive_data(code, kis_token):
+    vip = {
+        "체결강도": "확인불가",
+        "신용잔고율": "확인불가",
+        "수급트렌드": "뚜렷한 연속 순매수 없음",
+        "펀더멘털": "확인불가"
+    }
+    req = requests.Session()
+    req.headers.update({'User-Agent': 'Mozilla/5.0'})
+    
+    # 1. KIS API: 10호가 뚫어버리는 체결강도 (100% 이상 매수우위)
+    if kis_token and KIS_APP_KEY and KIS_APP_SECRET:
+        try:
+            headers = {"authorization": f"Bearer {kis_token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "tr_id": "FHKST01010100", "custtype": "P"}
+            res = req.get("https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price", headers=headers, params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}, timeout=3).json()
+            if res.get("rt_cd") == "0":
+                vip["체결강도"] = f"{res['output'].get('vlsr', '0')}%"
+        except: pass
         
+    # 2. Naver: 신용잔고율(빚투 물량) & 펀더멘털(PER/PBR)
+    try:
+        main_soup = BeautifulSoup(req.get(f"https://finance.naver.com/item/main.naver?code={code}", timeout=3).content, 'html.parser', from_encoding='cp949')
+        credit_tag = main_soup.find('em', id='_credit_ratio')
+        if credit_tag: vip["신용잔고율"] = f"{credit_tag.text.strip()}%"
+        
+        per = main_soup.find('em', id='_per').text.strip() if main_soup.find('em', id='_per') else "N/A"
+        pbr = main_soup.find('em', id='_pbr').text.strip() if main_soup.find('em', id='_pbr') else "N/A"
+        vip["펀더멘털"] = f"PER: {per} / PBR: {pbr}"
+    except: pass
+    
+    # 3. Naver: 메이저 연속 순매수 일수 (진짜 스마트머니 판독)
+    try:
+        trend_res = req.get(f"https://m.stock.naver.com/api/stock/{code}/investor/trend", timeout=3).json().get('investorTrendList', [])
+        f_con, i_con = 0, 0
+        for t in trend_res:
+            if int(str(t.get('foreignerStraightPurchasePrice', '0')).replace(',', '')) > 0: f_con += 1
+            else: break
+        for t in trend_res:
+            if int(str(t.get('institutionStraightPurchasePrice', '0')).replace(',', '')) > 0: i_con += 1
+            else: break
+        
+        trends = []
+        if f_con > 1: trends.append(f"외국인 {f_con}거래일 연속 순매수")
+        if i_con > 1: trends.append(f"기관 {i_con}거래일 연속 순매수")
+        if trends: vip["수급트렌드"] = " / ".join(trends)
+    except: pass
+    
+    return f"⚡ 체결강도: {vip['체결강도']}\n⚠️ 신용잔고율: {vip['신용잔고율']}\n📈 수급트렌드: {vip['수급트렌드']}\n📊 펀더멘털: {vip['펀더멘털']}"
+# =================================================================
+
 def safe_generate_content(contents):
     for i in range(10): 
         try:
@@ -80,6 +138,16 @@ try:
     gc = gspread.authorize(creds)
     doc = gc.open_by_url(SHEET_URL)
 
+    # 💡 [신규] 구글 시트에서 KIS 토큰 불러오기 (API 호출용)
+    KIS_TOKEN = ""
+    try:
+        setting_sheet = doc.worksheet("⚙️설정")
+        for row in setting_sheet.get_all_values():
+            if len(row) >= 2 and row[0] == "KIS_TOKEN":
+                KIS_TOKEN = row[1]
+                break
+    except: pass
+
     macro_sheet = doc.worksheet("시장요약").get_all_values()
     nasdaq, exchange_rate, wti_oil = macro_sheet[1][4], macro_sheet[1][6], macro_sheet[1][7]
     tech_data = doc.worksheet("주가데이터_보조").get_all_values()[1:30]
@@ -100,7 +168,6 @@ try:
         if "윗꼬리 위험" in shadow_status or "윗꼬리" in tajeom: continue 
         if re.search(r'매수금지|자본잠식|딱지|관망|데이터 부족', tajeom): continue 
             
-        # 💡 [시간외 삭제 패치] 정보에서 시간외 데이터 제거
         cand_info = f"종목:{name}({code}), 현재가:{current_price}원 ({change_rate}), 타점:{tajeom}, 퀀트점수:{score_str}, 테마:{r[19] if len(r)>19 else ''}, 프로그램:{program_rate}"
         cand_data = {'name': name, 'code': code, 'tajeom': tajeom, 'info': cand_info}
         
@@ -140,21 +207,23 @@ try:
         code_match = re.search(r'\d{6}', raw_code)
         target_code = code_match.group() if code_match else (valid_short_candidates[0]['code'] if st_type == "short" else valid_mid_candidates[0]['code'])
 
-        target_specific_news = get_target_stock_news(target_code)
-
         best_pick = next((item for item in (valid_short_candidates if st_type=="short" else valid_mid_candidates) if item["code"] == target_code), (valid_short_candidates[0] if st_type=="short" else valid_mid_candidates[0]))
         target_name = best_pick['name']
         print(f"🎯 [{st_type.upper()}] 최종 픽: {target_name} ({target_code})")
 
+        # 💡 [신규] 최종 선정된 1개 종목에 대해서만 VIP 심층 데이터를 땡겨옵니다!
+        print(f"🔍 {target_name} VIP 심층 데이터(호가/신용/연속수급) 추출 중...")
+        vip_info = get_vip_deep_dive_data(target_code, KIS_TOKEN)
+        target_specific_news = get_target_stock_news(target_code)
+
         img_path = f"temp_{target_code}.png"
-        
         try:
             img_res = requests.get(f"https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{target_code}.png", headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
             with open(img_path, 'wb') as f: f.write(img_res.content)
             img = PIL.Image.open(img_path)
             img.thumbnail((800, 800))
         except Exception as e:
-            print(f"⚠️ 차트 이미지 로드 에러 발생 (빈 이미지로 대체하여 시스템 다운 방어): {e}")
+            print(f"⚠️ 차트 이미지 로드 에러 발생: {e}")
             img = PIL.Image.new('RGB', (800, 800), color=(255, 255, 255))
             img.save(img_path)
 
@@ -165,6 +234,8 @@ try:
 
 [입력 데이터]
 종목: {best_pick['info']}
+💎 [VIP 심층 데이터]
+{vip_info}
 🔥 당일 타겟 종목 최신 뉴스:
 {target_specific_news}
 매크로 환경: 나스닥 {nasdaq}, 환율 {exchange_rate}, 유가 {wti_oil}, 국내증시 {market_status_text}
@@ -174,12 +245,11 @@ try:
 
 [HYEOKS 딥리딩 절대 지침 - 명심해라]
 1. 분량 자유도: 1번, 2번 항목은 너의 전문적인 통찰력을 발휘하여 충분히 길고 논리적으로 서술해라. 
-2. 가격 창조 금지 (매우 중요): 본문에서 특정 가격을 언급할 때는 반드시 [입력 데이터]에 제공된 '현재가'만을 사용해라. 절대 임의의 주가(예: 2,700원 등)를 상상해서 적지 마라.
-3. 전략의 일관성 (JuJu-Strategy 적용): {st_type} 전략에 맞게 서술하되 두 전략을 절대 섞지 마라. 'short'일 경우 당일 수급 기반의 공격적 돌파/리테스트 타점만 서술해라. 'mid'일 경우 차트의 현재 위치가 지루하게 모아가는 '선형 매집' 구간인지, 비중을 강력하게 실어야 할 '플랫폼(발판) 형성' 구간인지 명확히 진단하고, 거래량 급감 후 살짝 들어오는 예비 신호를 찾아 분석해라.
+2. 가격 창조 금지 (매우 중요): 본문에서 특정 가격을 언급할 때는 반드시 [입력 데이터]에 제공된 '현재가'만을 사용해라.
+3. 전략의 일관성: {st_type} 전략에 맞게 서술하되 두 전략을 섞지 마라.
 4. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:O 형식 출력.
-5. 대장주/후발주 팩트체크: 후발주일 경우 짝짓기 매매의 한계를 지적해라.
-6. 프로그램 수급 연계: 제공된 [프로그램] 매수/매도 현황을 분석하여, 기관/외인의 알고리즘 매수가 해당 종목의 주가 상승(또는 지지력)을 어떻게 뒷받침하고 있는지 반드시 리포트 본문에 서술할 것.
-[DATA] 목표가:00000, 손절가:00000, 분할매수:{'X' if st_type=='short' else 'O'}
+5. 프로그램 수급 연계: 제공된 [프로그램] 현황을 분석하여 주가 상승을 어떻게 뒷받침하는지 서술할 것.
+6. 💎 VIP 심층 해부: 제공된 [VIP 심층 데이터]의 체결강도(100% 이상시 매수우위), 신용잔고율(빚투 리스크), 연속 수급트렌드, 펀더멘털을 종합하여 이 종목의 폭발력과 숨겨진 리스크를 전문가처럼 날카롭게 리포트에 녹여내라.
 
 [출력 양식 (마크다운 유지)]
 <div class="broker-name">HYEOKS SECURITIES | {'SHORT-TERM' if st_type=='short' else 'MID-TERM'} STRATEGY</div>
@@ -189,18 +259,19 @@ try:
 </div>
 
 <div class="summary-box">
-<strong>💡 Company Brief | HYEOKS 퀀트 데스크</strong><br><br>
-(기업 펀더멘털 압축 요약)
+<strong>💡 Company Brief & VIP Data | HYEOKS 퀀트 데스크</strong><br><br>
+(기업 펀더멘털 요약 및 체결강도/연속수급/신용비율 핵심 수치 코멘트)
 </div>
 
 ## 1. 펀더멘털 및 매크로 유동성 심층 고찰
-(FRED 지표 흐름 해석 및 당일 뉴스를 바탕으로 숨겨진 진짜 모멘텀을 심층 분석)
 
-## 2. 시각적 차트 판독 및 거래량 딥리딩
-(주요 매물대, 선형/플랫폼 형성 여부, 최근 거래량 증감 해부)
+## 2. 시각적 차트 판독 및 스마트머니(VIP) 딥리딩
+(기존 거래량 분석에 체결강도와 연속 순매수 트렌드를 덧붙여 세력의 진짜 의도 파악)
 
 ## 3. 실전 타점 시나리오 및 리스크 관리 전략
-(익일 시가 대응 시나리오, 1차/2차 진입 가격, 목표가/손절가를 매우 상세하게 작성할 것)
+(신용비율 등 리스크 요인을 반영한 상세한 액션 플랜 작성)
+
+[DATA] 목표가:00000, 손절가:00000, 분할매수:{'X' if st_type=='short' else 'O'}
 """
         response = safe_generate_content([base_prompt, img])
         img.close()
