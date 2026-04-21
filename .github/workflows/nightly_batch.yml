@@ -1,7 +1,7 @@
 name: 🌙 HYEOKS 심야 배치 (시간외 수집)
 
 on: 
-  # 외부(구글)에서 보내는 원격 신호를 받기 위해 수신기(dispatch)를 켭니다.
+  # 구글 앱스 스크립트(GAS)의 원격 신호를 받는 수신기
   repository_dispatch:
     types: [trigger-nightly-batch]
   workflow_dispatch:
@@ -26,7 +26,7 @@ jobs:
     - name: 📦 필수 라이브러리 설치
       run: |
         python -m pip install --upgrade pip
-        pip install requests gspread oauth2client urllib3 beautifulsoup4
+        pip install requests gspread oauth2client urllib3
 
     - name: 🌙 심야 데이터 수집기 실행
       env:
