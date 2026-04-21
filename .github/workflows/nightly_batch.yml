@@ -1,0 +1,40 @@
+name: 🌙 HYEOKS 심야 배치 (시간외 수집)
+
+on: 
+  schedule:
+    # 한국시간(KST) 기준 밤 21시 30분 = UTC 기준 12시 30분 (월~금요일만 실행)
+    - cron: '30 12 * * 1-5'
+  workflow_dispatch:
+
+concurrency:
+  group: hyeoks-google-sheet
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 📥 코드 가져오기
+      uses: actions/checkout@v4
+
+    - name: 🐍 파이썬 세팅
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: 📦 필수 라이브러리 설치
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests gspread oauth2client urllib3
+
+    - name: 🌙 심야 데이터 수집기 실행
+      env:
+        GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+        KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+      run: |
+        python hyeoks_nightly.py
