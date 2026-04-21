@@ -1,14 +1,10 @@
 name: Stock Omakase Auto Scraper
 
 on:
-  workflow_dispatch: # 수동 버튼
-  schedule:
-    # 💡 [월요일 아침 보장 패치] UTC 일요일(0) ~ 금요일(5) 설정
-    # 한국 시간 기준: 일요일 09:00 ~ 토요일 08:50 (주중 전 구간 포함)
-    - cron: '*/10 * * * 0-5'
-
+  workflow_dispatch: # 💡 구글(GAS) 원격 신호 수신 및 수동 실행 버튼
+  
 concurrency:
-  group: hyeoks-google-sheet
+  group: hyeoks-omakase-scanner
   cancel-in-progress: false
 
 jobs:
