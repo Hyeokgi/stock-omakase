@@ -469,14 +469,47 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if capital_stock and total_equity and total_equity < capital_stock: is_financial_risk = True
             if len(op_profits) == 3 and all(p < 0 for p in op_profits): is_chronic_loss = True
 
+        # =================================================================
+        # 💡 [핵심 1] 스마트머니(외국인/기관/프로그램) 선제적 수집 및 융합
+        # =================================================================
         is_dual_buy, f_buy, i_buy, supply_text = False, 0, 0, ""
         try:
             today_trend = session.get(f"https://m.stock.naver.com/api/stock/{code}/investor/trend", verify=False, timeout=3).json().get('investorTrendList', [{}])[0]
-            f_buy, i_buy = int(str(today_trend.get('foreignerStraightPurchasePrice', '0')).replace(',', '')), int(str(today_trend.get('institutionStraightPurchasePrice', '0')).replace(',', ''))
-            if f_buy > 0 and i_buy > 0: is_dual_buy, supply_text = True, " (쌍끌이🔥)"
-            elif f_buy > 0: supply_text = " (외인매수)"
-            elif i_buy > 0: supply_text = " (기관매수)"
+            f_buy = int(str(today_trend.get('foreignerStraightPurchasePrice', '0')).replace(',', ''))
+            i_buy = int(str(today_trend.get('institutionStraightPurchasePrice', '0')).replace(',', ''))
+            if f_buy > 0 and i_buy > 0: is_dual_buy = True
         except: pass
+
+        program_text = "확인불가"
+        pg_amount_eok = 0
+        try:
+            frgn_url = f"https://finance.naver.com/item/frgn.naver?code={code}"
+            frgn_res = session.get(frgn_url, verify=False, timeout=3)
+            frgn_soup = BeautifulSoup(frgn_res.content, 'html.parser', from_encoding='euc-kr')
+            rows = frgn_soup.select("table.type2 > tr")
+            for r_tag in rows:
+                cols = r_tag.select("td")
+                if len(cols) >= 9 and cols[0].text.strip().replace('.', '').isdigit():
+                    pg_val_str = cols[6].text.strip().replace(',', '') 
+                    if pg_val_str and pg_val_str != '0':
+                        pg_vol = int(pg_val_str)
+                        pg_amount_eok = (pg_vol * current_price) / 100000000 
+                        
+                        if pg_vol > 0:
+                            program_text = f"🔴 +{int(pg_amount_eok):,}억원 순매수" if pg_amount_eok >= 1 else f"🔴 +{int(pg_amount_eok * 100):,}백만원 순매수"
+                        else:
+                            program_text = f"🔵 {int(pg_amount_eok):,}억원 순매도" if abs(pg_amount_eok) >= 1 else f"🔵 {int(pg_amount_eok * 100):,}백만원 순매도"
+                    else:
+                        program_text = "0원 (보합)"
+                    break
+        except: pass
+
+        # 수급 텍스트 융합 (프로그램과 외인/기관 동시 매수 시 시그널 강화)
+        if is_dual_buy and pg_amount_eok >= 20: supply_text = " (🔥메이저 싹쓸이)"
+        elif is_dual_buy: supply_text = " (쌍끌이 유입)"
+        elif pg_amount_eok >= 30: supply_text = " (🔥프로그램 폭발)"
+        elif f_buy > 0: supply_text = " (외인 매수)"
+        elif i_buy > 0: supply_text = " (기관 매수)"
 
         ma5 = int(df_hist['close'].tail(5).mean()) if len(df_hist) >= 5 else current_price
         ma20 = int(df_hist['close'].tail(20).mean()) if len(df_hist) >= 20 else current_price
@@ -526,37 +559,43 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_true_theme_leader = is_theme_leader_raw and (trading_value >= 100_000_000_000)
         is_theme_daejang_sang = is_true_theme_leader and is_upper_limit and not (is_junk or is_financial_risk)
         is_theme_daejang = is_true_theme_leader and is_danta_range and not (is_junk or is_financial_risk)
-        
         is_real_hubal = has_theme and not is_theme_leader_raw
         is_theme_hubal_sang = is_real_hubal and is_upper_limit and not (is_junk or is_financial_risk)
         is_theme_hubal = is_real_hubal and is_danta_range and not (is_junk or is_financial_risk)
-        
         is_individual = (not has_theme) or (is_theme_leader_raw and trading_value < 100_000_000_000)
         is_individual_sang = is_individual and is_upper_limit and not (is_junk or is_financial_risk)
         is_individual_surge = is_individual and is_danta_range and not (is_junk or is_financial_risk)
 
         is_breakout_track = current_price >= ma20
         track_type = "돌파" if is_breakout_track else "눌림"
-        quant_score = 0
         
+        # =================================================================
+        # 💡 [핵심 2] 스마트머니 폭발적 가중치 부여 (Quant Score)
+        # =================================================================
+        quant_score = 0
         if not (is_junk or is_financial_risk):
             if is_breakout_track:
-                if current_price >= (high_60d * 0.90): quant_score += 20
-                elif current_price >= (high_60d * 0.85): quant_score += 10
-                if vol_ratio >= 300: quant_score += 20
-                elif vol_ratio >= 150: quant_score += 10
-                if is_dual_buy: quant_score += 25
-                elif f_buy > 0 or i_buy > 0: quant_score += 10
+                if current_price >= (high_60d * 0.90): quant_score += 15
+                elif current_price >= (high_60d * 0.85): quant_score += 5
+                if vol_ratio >= 300: quant_score += 10
+                elif vol_ratio >= 150: quant_score += 5
                 if band_width <= 0.20: quant_score += 10
-                if ma5 > ma20 and current_price >= ma5: quant_score += 15
+                if ma5 > ma20 and current_price >= ma5: quant_score += 10
             else:
-                if vol_ratio <= 35: quant_score += 20
-                elif vol_ratio <= 50: quant_score += 10
-                if is_today_yangbong or today_body_ratio <= 0.015: quant_score += 15
-                if ma20 * 0.95 <= current_price <= ma20 * 1.02: quant_score += 15
-                if is_dual_buy: quant_score += 15
-                elif f_buy > 0 or i_buy > 0: quant_score += 10
-                if band_width <= 0.15: quant_score += 15
+                if vol_ratio <= 35: quant_score += 15
+                elif vol_ratio <= 50: quant_score += 5
+                if is_today_yangbong or today_body_ratio <= 0.015: quant_score += 10
+                if ma20 * 0.95 <= current_price <= ma20 * 1.02: quant_score += 10
+                if band_width <= 0.15: quant_score += 10
+            
+            # 🚀 수급 가중치 (최대 50점 부여) - 수급이 깡패다!
+            if is_dual_buy: quant_score += 20
+            elif f_buy > 0 or i_buy > 0: quant_score += 10
+            
+            if pg_amount_eok >= 50: quant_score += 30      # 50억 이상 쓸어담음
+            elif pg_amount_eok >= 20: quant_score += 20    # 20억 이상 매수
+            elif pg_amount_eok >= 10: quant_score += 10    # 10억 이상 매수
+            elif pg_amount_eok <= -20: quant_score -= 20   # 대량 매도 폭탄 감점
 
         flag_days = 0
         for d in range(1, 4):
@@ -580,22 +619,19 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         if int(df_hist['volume'].iloc[j]) > anchor_vol * 0.45: is_holding = False; break
                     if is_holding: flag_days = d; break
 
-        if market_cap >= 50000:
-            is_ss_breakout = (trading_value >= 150_000_000_000) and (change_rate >= 0.025) and not is_long_shadow and is_near_high
-            is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 35) and (trading_value >= 80_000_000_000) and (change_rate >= 0.015) and not is_long_shadow
-            is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 35) and (vol_ratio <= 60) and (is_today_yangbong or today_body_ratio <= 0.02)
-        elif market_cap >= 10000:
-            is_ss_breakout = (trading_value >= 100_000_000_000) and (change_rate >= 0.04) and not is_long_shadow and is_near_high
-            is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 35) and (trading_value >= 60_000_000_000) and (change_rate >= 0.025) and not is_long_shadow
-            is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 35) and (vol_ratio <= 50) and (is_today_yangbong or today_body_ratio <= 0.015)
-        elif market_cap >= 5000:
-            is_ss_breakout = (trading_value >= 80_000_000_000) and (vol_ratio >= 150) and (change_rate >= 0.06) and not is_long_shadow and is_near_high
-            is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 40) and (trading_value >= 40_000_000_000) and (change_rate >= 0.04) and not is_long_shadow
-            is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 40) and (vol_ratio <= 40) and (is_today_yangbong or today_body_ratio <= 0.015)
-        else:
-            is_ss_breakout = (trading_value >= 50_000_000_000) and (vol_ratio >= 200) and (change_rate >= 0.08) and not is_long_shadow and is_near_high
-            is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 45) and (trading_value >= 30_000_000_000) and (change_rate >= 0.05) and not is_long_shadow
-            is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 45) and (vol_ratio <= 35) and (is_today_yangbong or today_body_ratio <= 0.01)
+        # 돌파/눌림 기본 조건
+        is_ss_breakout = (trading_value >= 100_000_000_000) and (change_rate >= 0.04) and not is_long_shadow and is_near_high
+        is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 50) and (trading_value >= 50_000_000_000) and (change_rate >= 0.02) and not is_long_shadow
+        is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 45) and (vol_ratio <= 50) and (is_today_yangbong or today_body_ratio <= 0.02)
+
+        # =================================================================
+        # 💡 [핵심 3] 오후 3시 종가베팅(Overnight) 전용 판독 로직
+        # =================================================================
+        now_kst_tajeom = datetime.datetime.now(KST)
+        is_overnight_time = (now_kst_tajeom.hour == 15 and now_kst_tajeom.minute <= 30)
+        
+        # 종가베팅 조건: 오후 3시 이후 + 메이저 수급 확인(10억 이상 or 쌍끌이) + 고가 유지(윗꼬리 없음) + 20일선 위
+        is_overnight_candidate = is_overnight_time and (quant_score >= 50) and (pg_amount_eok >= 10 or is_dual_buy) and (current_price >= today_high * 0.94) and is_breakout_track and not is_long_shadow
 
         master_tajeom = "⏸️ 관망 및 대기"
         if len(history) < 20: master_tajeom = "⚠️ 신규상장 (데이터 부족)"
@@ -606,6 +642,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         elif is_theme_hubal_sang: master_tajeom = "🔒 [후발주] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 40
         elif is_theme_hubal: master_tajeom = "🏃 [후발주] 테마 추종" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 35
         elif is_individual_sang: master_tajeom = "🔒 [개별주] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 30
+        elif is_overnight_candidate: master_tajeom = "🌙 [종가베팅] 메이저 수급 폭발" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 30
         elif is_individual_surge: master_tajeom = "🐎 [개별주] 나홀로 상승중" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 25
         elif is_long_shadow: master_tajeom = "⚠️ 윗꼬리 위험 (매수금지)"
         elif is_huge_gap: master_tajeom = "⚠️ 갭상승 과다 (추격금지)"
@@ -617,7 +654,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         elif flag_days == 1: master_tajeom = "🚩 [분할매수] 단기 눌림 진입 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else "")
         elif "🌟" in signal: master_tajeom = "🌟 [우량] 기관/외인 수급 유입"; quant_score += 15
         elif change_rate >= 0.12 and trading_value >= 50_000_000_000: master_tajeom = "👀 [관심] 신규 기준봉 출현 (수급 집중)" + (" ⚠️(주의장세)" if is_warning_market else "")
-
         score_display = f"{quant_score}점 ({track_type})"
         if is_chronic_loss and "[" in master_tajeom:
             quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️(3년적자)"
