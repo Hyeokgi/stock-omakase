@@ -106,14 +106,22 @@ def get_vip_deep_dive_data(code, kis_token):
                 if trends: vip["수급트렌드"] = " / ".join(trends)
         except: pass
 
-    # 3. Naver 핀셋 크롤링: 신용잔고율 (가장 정확한 빚투 데이터)
+    # 3. 💡 Naver 핀셋 크롤링: 신용잔고율 (절대 파싱 패치)
     try:
+        import re
         main_soup = BeautifulSoup(req.get(f"https://finance.naver.com/item/main.naver?code={code}", verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
-        credit_tag = main_soup.find('em', id='_credit_ratio')
-        if credit_tag: vip["신용잔고율"] = f"{credit_tag.text.strip()}%"
+        
+        # '신용비율'이라는 단어가 들어간 th 태그를 찾고, 그 바로 옆의 td 값을 강제로 뜯어옵니다.
+        credit_th = main_soup.find('th', string=re.compile('신용비율'))
+        if credit_th:
+            credit_td = credit_th.find_next_sibling('td')
+            if credit_td:
+                credit_val = credit_td.text.strip()
+                vip["신용잔고율"] = credit_val if "%" in credit_val else f"{credit_val}%"
     except: pass
     
     return f"⚡체결강도:{vip['체결강도']} | ⚠️신용비율:{vip['신용잔고율']} | 📈수급:{vip['수급트렌드']} | 📊{vip['펀더멘털']}"
+    
 def get_us_market_summary():
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'}
     try:
