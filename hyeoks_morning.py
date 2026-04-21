@@ -58,7 +58,9 @@ def get_global_liquidity_data():
 def search_code_from_naver(stock_name):
     try:
         url = f"https://m.stock.naver.com/api/search/all?keyword={stock_name}"
-        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3).json()
+        # 💡 [핵심 패치 1] verify=False 장착 및 PC 봇 우회 헤더 적용 (이제 코드를 무조건 찾아옵니다)
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'}
+        res = requests.get(url, headers=headers, verify=False, timeout=3).json()
         if res.get('result') and res['result'].get('stocks'):
             return res['result']['stocks'][0]['itemCode']
     except: pass
@@ -67,9 +69,10 @@ def search_code_from_naver(stock_name):
 def get_vip_deep_dive_data(code, kis_token):
     vip = {"체결강도": "확인불가", "신용잔고율": "확인불가", "수급트렌드": "뚜렷한 연속 순매수 없음", "펀더멘털": "확인불가"}
     req = requests.Session()
-    req.headers.update({'User-Agent': 'Mozilla/5.0'})
+    # 💡 [핵심 패치 2] VIP 수집기 전체에 네이버 차단 방지용 크롬 헤더 일괄 적용
+    req.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'})
     
-    # 1. KIS API (체결강도) - 아침 7시 30분에는 서버 리셋으로 0%가 될 수 있음을 감안
+    # 1. KIS API (체결강도)
     if kis_token and KIS_APP_KEY and KIS_APP_SECRET:
         try:
             headers = {"authorization": f"Bearer {kis_token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "tr_id": "FHKST01010100", "custtype": "P"}
@@ -79,7 +82,7 @@ def get_vip_deep_dive_data(code, kis_token):
                 vip["체결강도"] = f"{vlsr}%" if vlsr != "0" else "야간초기화(0%)"
         except: pass
         
-    # 2. Naver 신용잔고율 및 펀더멘털 (verify=False 장착!)
+    # 2. Naver 신용잔고율 및 펀더멘털
     try:
         main_soup = BeautifulSoup(req.get(f"https://finance.naver.com/item/main.naver?code={code}", verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
         credit_tag = main_soup.find('em', id='_credit_ratio')
@@ -89,7 +92,7 @@ def get_vip_deep_dive_data(code, kis_token):
         vip["펀더멘털"] = f"PER: {per} / PBR: {pbr}"
     except: pass
     
-    # 3. Naver 수급 트렌드 (verify=False 장착!)
+    # 3. Naver 수급 트렌드
     try:
         trend_res = req.get(f"https://m.stock.naver.com/api/stock/{code}/investor/trend", verify=False, timeout=3).json().get('investorTrendList', [])
         f_con, i_con = 0, 0
