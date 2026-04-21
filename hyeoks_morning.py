@@ -187,24 +187,26 @@ def generate_morning_briefing(market_data, news_data, kor_context, liquidity_dat
 [어제 포착된 핵심 종목 및 VIP 심층 데이터]
 {kor_context}
 
-[HYEOKS 리서치 작성 지침 - 가독성 및 퀄리티 절대 규칙]
-1. 🚨 볼드체 전면 금지: 텍스트에 별표 두 개 기호를 절대 사용하지 마라. 모바일 화면에서 눈이 매우 피로해진다. 
-2. 대체 강조법: 종목명이나 핵심 키워드를 강조하고 싶을 때는 [종목명], <핵심어> 형태로 기호를 묶어서 표현해라.
-3. 시각적 여백 활용: 글머리 기호(▪️, ▫️, 📌, 💡, 🚨)와 인용구 기호(>)를 적극 활용하여 줄바꿈을 자주 하고, 깔끔하게 정돈해라.
-4. 유연한 리포트 구조 (압축된 VIP 브리핑):
-   🌎 [HYEOKS 매크로 & 유동성 뷰]
-   - FRED 유동성 지표와 밤사이 뉴스를 종합하여 자금의 성격(위험선호 vs 방어적 선별장세) 진단.
-   
-   🎯 [오늘의 주도 예상 섹터]
-   - 수급이 폭발할 강력한 테마/섹터 2~3개를 선정하고 명확하게 근거 제시.
-   
-   📈 [HYEOKS 톱픽 & 액션 플랜]
-   - 🚨 주의: 무조건 많은 종목을 나열하지 마라. 각 주도 섹터별로 1~2개씩 압축하여, 총 3~4개의 핵심 추천 종목만 브리핑해라.
-   - 각 종목별 작성 포맷 예시:
-     > [종목명]
-     - 핵심 모멘텀 & 수급: (제공된 [VIP 딥리딩] 데이터의 체결강도, 연속 순매수 일수, 신용비율 및 [당일 프로그램] 매수 현황을 팩트 기반으로 서술하여 세력의 진짜 매집 의도를 날카롭게 파악할 것)
-     - 액션 플랜: (시가 갭 대응 전략 및 전일 종가 기반의 기술적 타점 제시)
+[HYEOKS 리서치 작성 지침 - 가독성 및 보고서 통일성 절대 규칙]
+1. 🚨 볼드체(**) 전면 금지.
+2. 보고서 계층 구조(Hierarchy) 엄수: 아래의 도형 기호만 사용하여 증권사 VIP 리포트처럼 완벽히 정돈해라. 임의로 기호를 섞어 쓰거나 남발하지 마라.
+   - 대분류 (섹터 및 종목명): 🟦 [종목명]
+   - 중분류 (분석 항목): 🔹 핵심 모멘텀 & VIP 수급 / 🔹 실전 액션 플랜
+   - 소분류 (상세 내용): ▫️ (내용 서술)
+3. 데이터 뱃지(Badge) 통일화 (절대 규칙):
+   수급과 VIP 데이터를 줄글 속에 중구난방으로 쓰지 마라. 반드시 [핵심 모멘텀 & VIP 수급] 항목 바로 밑에 한 줄로 통일된 데이터 뱃지를 달아준 뒤, 그 밑에 해설을 적어라.
+   👉 (작성 예시): ▫️ [🤖프로그램: +1,295억원] [⚡체결강도: 145%] [⚠️신용: 1.2%] [📈수급: 외국인 2일 매수]
+4. 압축 브리핑: 각 주도 섹터별로 1~2개씩 압축하여, 총 3~4개의 핵심 추천 종목만 브리핑해라.
 5. 군더더기 배제: 인사말, 서론 등은 생략.
+
+[종목별 출력 포맷 예시 - 이 양식을 무조건 지킬 것]
+🟦 [주성엔지니어링]
+🔹 핵심 모멘텀 & VIP 수급
+▫️ [🤖프로그램: +1,295억원] [⚡체결강도: 150%] [⚠️신용: 1.5%] [📈수급: 기관 3일 연속 매수]
+▫️ (제공된 데이터와 뉴스를 바탕으로 세력의 매집 의도를 날카롭게 1~2줄로 서술)
+🔹 실전 액션 플랜
+▫️ 진입: (시가 갭 대응 전략 및 1차 진입 타점)
+▫️ 대응: (지지선 및 전고점 돌파 목표가 제시)
 """
     for i in range(10):
         try:
@@ -234,13 +236,16 @@ if __name__ == "__main__":
     print("📲 텔레그램 발송 중...")
     
     import re
+    # 1. 시각적 찌꺼기(마크다운 별표 및 헤딩) 제거
     clean_briefing = final_briefing.replace('**', '')       
-    clean_briefing = clean_briefing.replace('### ', '📍 ')  
-    clean_briefing = clean_briefing.replace('## ', '📍 ')   
+    clean_briefing = clean_briefing.replace('### ', '▶️ ')  
+    clean_briefing = clean_briefing.replace('## ', '▶️ ')   
     
+    # 2. 임의의 꺾쇠를 대괄호로 통일하여 정돈
     clean_briefing = re.sub(r'<([^>]+)>', r'[\1]', clean_briefing)
-    clean_briefing = re.sub(r'^\s*\*\s+', '▫️ ', clean_briefing, flags=re.MULTILINE)
-    clean_briefing = re.sub(r'^\s*>\s*', '📌 ', clean_briefing, flags=re.MULTILINE)
+    
+    # 🚨 기존에 핀(📌)을 무한 증식시키던 정규식은 모두 삭제했습니다! 
+    # 이제 AI가 출력한 🟦, 🔹, ▫️ 기호가 그대로 예쁘게 유지됩니다.
     
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
@@ -256,12 +261,6 @@ if __name__ == "__main__":
         print(f"❌ 텔레그램 발송 실패! (상태 코드: {response.status_code})")
         print(f"🚨 텔레그램 서버 에러 메시지: {response.text}")
         print("🔄 일반 텍스트 모드로 재전송을 시도합니다...")
-        fallback_payload = {
-            'chat_id': TELEGRAM_CHAT_ID, 
-            'text': final_briefing
-        }
-        fallback_res = requests.post(url, data=fallback_payload)
-        if fallback_res.status_code == 200:
-             print("✅ 일반 텍스트 재전송 성공!")
-        else:
-             print("❌ 재전송도 실패했습니다. 토큰이나 텍스트 길이를 확인하세요.")
+        fallback_res = requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID, 'text': final_briefing})
+        if fallback_res.status_code == 200: print("✅ 일반 텍스트 재전송 성공!")
+        else: print("❌ 재전송도 실패했습니다. 토큰이나 텍스트 길이를 확인하세요.")
