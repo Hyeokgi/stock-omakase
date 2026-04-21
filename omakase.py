@@ -625,56 +625,52 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️고가(단기)"
 
         # ----------------------------------------------------
-        # 💡 [최종 병기] KIS API 직결 시간외 단일가/NXT 수집 엔진
+        # 💡 [최종 병기] KRX 시간외 단일가 + NXT 통합 수집 엔진
         # ----------------------------------------------------
         nxt_text = "➖ 0.00% (보합)"
-        if KIS_TOKEN: # 최상단에서 발급받은 무적의 토큰을 꺼내 씁니다.
-            try:
-                headers = {
-                    "content-type": "application/json; charset=utf-8",
-                    "authorization": f"Bearer {KIS_TOKEN}",
-                    "appkey": KIS_APP_KEY,
-                    "appsecret": KIS_APP_SECRET,
-                    "tr_id": "FHKST01010200", # 💡 [변경] 국내주식 시간외단일가결제 현재가 전용 TR
-                    "custtype": "P" # P: 개인
-                }
-                params = {
-                    "fid_cond_mrkt_div_code": "J", # 주식, ETF, ETN
-                    "fid_input_iscd": code         # 6자리 종목코드
-                }
+        try:
+            # 1. 동시 타격(TPS) 제한이 없는 네이버 모바일 통합 API (KRX + NXT 모두 제공)
+            basic_res = session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", verify=False, timeout=3).json()
+            
+            # 2. 💡 우리가 일봉 차트(fchart)에서 확보해둔 '절대 변하지 않는 15:30 정규 종가'
+            reg_close = float(current_price) 
+            
+            # 3. 네이버가 야간에 덮어씌우는 모든 종류의 현재가를 싹쓸이합니다.
+            # 우선순위: NXT -> 시간외 단일가 -> 야간에 덮어씌워진 일반 현재가
+            cands = [
+                ("NXT", str(basic_res.get('nxtClosePrice') or '0')),
+                ("시외", str(basic_res.get('timeExtraClosePrice') or '0')),
+                ("야간", str(basic_res.get('closePrice') or '0'))
+            ]
+            
+            best_rate = 0.0
+            trade_type = ""
+            
+            for t_name, cand_str in cands:
+                cand_val = float(cand_str.replace(',', ''))
+                # 정규장 종가와 단 1원이라도 다르면 시간외 거래가 발생한 것! (수동 계산)
+                if cand_val > 0 and cand_val != reg_close:
+                    best_rate = round(((cand_val - reg_close) / reg_close) * 100, 2)
+                    trade_type = t_name
+                    break
+            
+            # 4. 강제 계산된 퍼센트 출력
+            if best_rate > 0: 
+                nxt_text = f"🔴 +{best_rate}% ({trade_type})"
+            elif best_rate < 0: 
+                nxt_text = f"🔵 {best_rate}% ({trade_type})"
+            else:
+                # 가격 변동이 없어도 네이버가 명시적으로 뱉어준 등락률 데이터가 있는지 최종 확인
+                nxt_r = float(str(basic_res.get('nxtFluctuationsRatio') or '0').replace(',', ''))
+                ext_r = float(str(basic_res.get('timeExtraFluctuationsRatio') or '0').replace(',', ''))
                 
-                kis_url = f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-time-overthe-price" # 💡 [변경] 시간외 전용 엔드포인트
-                kis_res = session.get(kis_url, headers=headers, params=params, timeout=3).json()
-                
-                if kis_res.get("rt_cd") == "0":
-                    output = kis_res.get("output", {})
+                if nxt_r != 0.0: 
+                    nxt_text = f"🔴 +{nxt_r}% (NXT)" if nxt_r > 0 else f"🔵 {nxt_r}% (NXT)"
+                elif ext_r != 0.0: 
+                    nxt_text = f"🔴 +{ext_r}% (시외)" if ext_r > 0 else f"🔵 {ext_r}% (시외)"
                     
-                    # 💡 시간외 단일가 전일 대비율 (%) 추출
-                    # KIS API 문서 기준, 시간외 단일가 API의 출력 필드 중 대비율을 찾습니다.
-                    # 필드명은 API 업데이트에 따라 변경될 수 있으므로, 대비율 필드(ovtm_untp_prdy_ctrt)를 우선 탐색합니다.
-                    ovtm_rate_str = output.get("ovtm_untp_prdy_ctrt")
-                    
-                    if not ovtm_rate_str:
-                         # 만약 해당 필드가 없다면, 시간외 현재가와 정규장 종가를 비교하여 직접 계산합니다.
-                         ovtm_price_str = output.get("stck_prpr") # 시간외 현재가
-                         if ovtm_price_str and int(ovtm_price_str) > 0 and current_price > 0:
-                             ovtm_price = float(ovtm_price_str)
-                             ovtm_rate = round(((ovtm_price - current_price) / current_price) * 100, 2)
-                         else:
-                             ovtm_rate = 0.0
-                    else:
-                        ovtm_rate = float(ovtm_rate_str)
-
-                    # 가격 변동이 있을 경우에만 색상 텍스트 적용
-                    if ovtm_rate > 0:
-                        nxt_text = f"🔴 +{ovtm_rate}% (시외/NXT)"
-                    elif ovtm_rate < 0:
-                        nxt_text = f"🔵 {ovtm_rate}% (시외/NXT)"
-                        
-            except Exception as e:
-                nxt_text = "⚠️ API 통신지연"
-        else:
-            nxt_text = "⚠️ 토큰 없음"
+        except Exception:
+            pass
             
         program_text = "확인불가"
         try:
