@@ -295,7 +295,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         high_prices = []
         items = root.findall(".//item")
         
-        # 💡 [수정] 저가(low) 및 고가(high) 데이터도 딕셔너리에 완벽하게 저장 (플랫폼 판독용)
         for item in items:
             data = item.get("data").split("|")
             history.append({
@@ -330,9 +329,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         upper_shadow = today_high - body_top
         real_body = body_top - body_bottom
         
+        # 💡 [V6.3 전문화] 윗꼬리 텍스트 변경
         upper_shadow_ratio = upper_shadow / current_price if current_price > 0 else 0
         is_long_shadow = (upper_shadow_ratio >= 0.05) or (upper_shadow_ratio >= 0.025 and upper_shadow > real_body * 1.5)
-        shadow_text = "⚠️ 윗꼬리 위험" if is_long_shadow else ("👑 깔끔한 단봉" if upper_shadow_ratio <= 0.015 else "🟡 보통 캔들")
+        shadow_text = "⚠️ [캔들] 저항 출회" if is_long_shadow else ("👑 [캔들] 몸통 마감" if upper_shadow_ratio <= 0.015 else "🟡 [캔들] 일반형")
         
         today_body_ratio = real_body / open_price if open_price > 0 else 0
         is_today_yangbong = current_price >= open_price
@@ -383,8 +383,13 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if f_buy > 0 and i_buy > 0: is_dual_buy = True
         except: pass
 
+        # =================================================================
+        # 💡 [V6.3 전문화] 프로그램 비율 기반 배지 처리
+        # =================================================================
         program_text = "확인불가"
         pg_amount_eok = 0
+        pg_ratio = 0.0
+
         try:
             frgn_url = f"https://finance.naver.com/item/frgn.naver?code={code}"
             frgn_res = session.get(frgn_url, verify=False, timeout=3)
@@ -394,21 +399,33 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 cols = r_tag.select("td")
                 if len(cols) >= 9 and cols[0].text.strip().replace('.', '').isdigit():
                     pg_val_str = cols[6].text.strip().replace(',', '') 
+                    
                     if pg_val_str and pg_val_str != '0':
-                        pg_vol = int(pg_val_str)
-                        pg_amount_eok = (pg_vol * current_price) / 100000000 
+                        pg_vol = int(pg_val_str) 
+                        pg_amount_won = pg_vol * current_price 
+                        pg_amount_eok = pg_amount_won / 100_000_000 
                         
-                        if pg_vol > 0: program_text = f"🔴 +{int(pg_amount_eok):,}억원 순매수" if pg_amount_eok >= 1 else f"🔴 +{int(pg_amount_eok * 100):,}백만원 순매수"
-                        else: program_text = f"🔵 {int(pg_amount_eok):,}억원 순매도" if abs(pg_amount_eok) >= 1 else f"🔵 {int(pg_amount_eok * 100):,}백만원 순매도"
-                    else: program_text = "0원 (보합)"
+                        if trading_value > 0:
+                            pg_ratio = (abs(pg_amount_won) / trading_value) * 100
+                            
+                        # 새로운 퀀트 스펙 텍스트 포맷
+                        if pg_amount_eok >= 30 and pg_ratio >= 10.0:
+                            program_text = f"🔴 [P.대량유입] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+                        elif pg_amount_eok >= 10 and pg_ratio >= 5.0:
+                            program_text = f"🔴 [P.매수우위] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+                        elif pg_amount_eok <= -30 and pg_ratio >= 10.0:
+                            program_text = f"🔵 [P.대량출회] {int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+                        elif pg_amount_eok <= -10 and pg_ratio >= 5.0:
+                            program_text = f"🔵 [P.매도우위] {int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+                        else:
+                            sign = "+" if pg_amount_eok > 0 else ""
+                            program_text = f"⚪ [P.관망중] {sign}{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+                    else:
+                        program_text = "⚪ [P.관망중] 0원 (0.0%)"
                     break
-        except: pass
+        except Exception: pass
 
-        if is_dual_buy and pg_amount_eok >= 20: supply_text = " (🔥메이저 싹쓸이)"
-        elif is_dual_buy: supply_text = " (쌍끌이 유입)"
-        elif pg_amount_eok >= 30: supply_text = " (🔥프로그램 폭발)"
-        elif f_buy > 0: supply_text = " (외인 매수)"
-        elif i_buy > 0: supply_text = " (기관 매수)"
+        if is_dual_buy: supply_text = " (외인+기관 양매수)"
 
         ma5 = int(df_hist['close'].tail(5).mean()) if len(df_hist) >= 5 else current_price
         ma20 = int(df_hist['close'].tail(20).mean()) if len(df_hist) >= 20 else current_price
@@ -426,14 +443,13 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         lower_band = ma20 - (std20 * 2) 
         band_width = (upper_band - lower_band) / ma20 if ma20 > 0 else 0 
         
+        # 💡 [V6.3 전문화] 거래량 텍스트 변경
         avg_vol_10 = df_hist['volume'].tail(11).head(10).mean() if len(df_hist) >= 2 else today_vol
         vol_ratio = (today_vol / avg_vol_10) * 100 if avg_vol_10 > 0 else 0
         is_converging = (band_width <= 0.20) or (ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035)
-        vol_status_text = "🟢 극감 (씨마름)" if vol_ratio <= 35 else ("🟢 감소 (안정)" if vol_ratio <= 60 else ("🔴 폭증 (과열)" if vol_ratio >= 200 else "🟡 보통"))
+        vol_status_text = "🟢 [V.에너지응축]" if vol_ratio <= 35 else ("🟢 [V.거래감소]" if vol_ratio <= 60 else ("🔴 [V.거래과열]" if vol_ratio >= 200 else "🟡 [V.평년수준]"))
+        vol_ratio_text = f"{int(vol_ratio):,}% (급증)" if vol_ratio >= 150 else f"{int(vol_ratio):,}%"
         
-        # =================================================================
-        # 💡 [신규] 플랫폼(박스권) 탈출 로직 완벽 구현
-        # =================================================================
         box_ratio = 999
         if len(df_hist) >= 20:
             max_20d_box = int(df_hist['high'].tail(20).max())
@@ -441,12 +457,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if min_20d_box > 0:
                 box_ratio = (max_20d_box - min_20d_box) / min_20d_box
         
-        # 조건: 15% 이내 횡보 + 오늘 거래량 5배 폭발 + 20일선 위로 강한 돌파(양봉)
         is_platform_breakout = (box_ratio <= 0.15) and (vol_ratio >= 500) and (current_price > ma20) and is_today_yangbong
-        # =================================================================
 
-        if is_junk: signal = "🚨 [위험] 매매금지 (잡주/경고)"
-        elif is_financial_risk: signal = "🚨 [위험] 매매금지 (자본잠식위험)"
+        if is_junk: signal = "🚨 매매제한 (관리/주의)"
+        elif is_financial_risk: signal = "🚨 매매제한 (재무위험)"
         elif is_platform_breakout: signal = "📦 플랫폼 탈출 (스윙)" + supply_text
         elif is_dual_buy and is_converging: signal = "🌟 모아가기 (쌍끌이)"
         elif band_width <= 0.20 and current_price >= ma20: signal = "🚀 N자파동 (밴드돌파)" + supply_text if current_price >= upper_band * 0.98 else "👀 N자파동 (에너지응축)" + supply_text
@@ -483,7 +497,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_breakout_track = current_price >= ma20
         track_type = "돌파" if is_breakout_track else "눌림"
         
-        # 💡 [수급 깡패 최우선 스코어링]
+        # 💡 [V6.3 전문화] 수급 가중치 (프로그램 텍스트 기반)
         quant_score = 0
         if not (is_junk or is_financial_risk):
             if is_breakout_track:
@@ -500,13 +514,12 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 if ma20 * 0.95 <= current_price <= ma20 * 1.02: quant_score += 10
                 if band_width <= 0.15: quant_score += 10
             
-            if is_dual_buy: quant_score += 20
-            elif f_buy > 0 or i_buy > 0: quant_score += 10
+            if "대량유입" in program_text: quant_score += 30
+            elif "매수우위" in program_text: quant_score += 15
+            elif "대량출회" in program_text: quant_score -= 20
+            elif "매도우위" in program_text: quant_score -= 10
             
-            if pg_amount_eok >= 50: quant_score += 30      
-            elif pg_amount_eok >= 20: quant_score += 20    
-            elif pg_amount_eok >= 10: quant_score += 10    
-            elif pg_amount_eok <= -20: quant_score -= 20   
+            if is_dual_buy: quant_score += 15
 
         flag_days = 0
         for d in range(1, 4):
@@ -538,20 +551,20 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_overnight_time = (now_kst_tajeom.hour == 15 and now_kst_tajeom.minute <= 30)
         is_overnight_candidate = is_overnight_time and (quant_score >= 50) and (pg_amount_eok >= 10 or is_dual_buy) and (current_price >= today_high * 0.94) and is_breakout_track and not is_long_shadow
 
-        # 💡 타점 우선순위 부여 (플랫폼 돌파 뱃지 스위치)
+        # 💡 [V6.3 전문화] 마스터 타점 텍스트 변경
         master_tajeom = "⏸️ 관망 및 대기"
         if len(history) < 20: master_tajeom = "⚠️ 신규상장 (데이터 부족)"
-        elif is_junk: master_tajeom = "🚨 매매금지 (딱지)"
-        elif is_financial_risk: master_tajeom = "🚨 매매금지 (자본잠식)"
+        elif is_junk: master_tajeom = "🚨 매매제한 (관리/주의)"
+        elif is_financial_risk: master_tajeom = "🚨 매매제한 (재무위험)"
         elif is_theme_daejang_sang: master_tajeom = "👑 [테마대장] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 50
         elif is_theme_daejang: master_tajeom = "🚀 [테마대장] 당일 주도주" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 45
         elif is_platform_breakout: master_tajeom = "📦 [스윙] 플랫폼 돌파 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 40
         elif is_theme_hubal_sang: master_tajeom = "🔒 [후발주] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 40
         elif is_theme_hubal: master_tajeom = "🏃 [후발주] 테마 추종" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 35
         elif is_individual_sang: master_tajeom = "🔒 [개별주] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 30
-        elif is_overnight_candidate: master_tajeom = "🌙 [종가베팅] 메이저 수급 폭발" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 30
-        elif is_individual_surge: master_tajeom = "🐎 [개별주] 나홀로 상승중" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 25
-        elif is_long_shadow: master_tajeom = "⚠️ 윗꼬리 위험 (매수금지)"
+        elif is_overnight_candidate: master_tajeom = "🌙 [종가베팅] 메이저 수급 확인" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 30
+        elif is_individual_surge: master_tajeom = "🐎 [개별주] 독자 모멘텀" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 25
+        elif is_long_shadow: master_tajeom = "⚠️ [캔들] 저항 출회 (매수금지)"
         elif is_huge_gap: master_tajeom = "⚠️ 갭상승 과다 (추격금지)"
         elif is_ss_breakout: master_tajeom = "👑 [핵심] 신고가 돌파" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 20
         elif flag_days == 3: master_tajeom = "🎯 [타점] 눌림목 3일 차 완성 (비중 40%)" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 10
@@ -612,7 +625,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         return [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", 
-            int(ma5), int(ma20), f"{int(vol_ratio):,}% 폭발🔥", signal, 
+            int(ma5), int(ma20), vol_ratio_text, signal, 
             score_display, master_tajeom, today_high, today_low, high_60d, 
             market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, quant_score, my_theme_name, nxt_text, program_text
         ]
