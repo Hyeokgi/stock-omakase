@@ -28,7 +28,7 @@ if now_kst_check.hour >= 23 or now_kst_check.hour < 7:
     sys.exit(0)
 
 # ==========================================
-# 💡 [신규 탑재] 한국투자증권 API 인증 엔진 (구글 시트 1일 1회 캐싱)
+# 💡 한국투자증권 API 인증 엔진 (구글 시트 1일 1회 캐싱)
 # ==========================================
 KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
@@ -39,137 +39,66 @@ def get_kis_access_token():
         return None
         
     try:
-        # 1. 구글 시트 '⚙️설정' 탭 연결
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         gc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope))
         doc = gc.open_by_url(SHEET_URL)
         setting_sheet = doc.worksheet("⚙️설정")
         
         records = setting_sheet.get_all_values()
+        token_row_idx, date_row_idx = -1, -1
+        saved_token, saved_date = "", ""
         
-        token_row_idx = -1
-        date_row_idx = -1
-        saved_token = ""
-        saved_date = ""
-        
-        # 2. 시트에서 기존 토큰과 발급 날짜 찾기
         for i, row in enumerate(records):
             if len(row) >= 2:
                 if row[0] == "KIS_TOKEN":
-                    token_row_idx = i + 1
-                    saved_token = row[1]
+                    token_row_idx, saved_token = i + 1, row[1]
                 elif row[0] == "KIS_TOKEN_DATE":
-                    date_row_idx = i + 1
-                    saved_date = row[1]
+                    date_row_idx, saved_date = i + 1, row[1]
         
         now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d')
         
-        # 3. 오늘 날짜의 토큰이 이미 시트에 있다면 재사용! (1일 1회 원칙)
         if saved_date == now_str and saved_token:
             print("♻️ 구글 시트에서 기존 KIS 토큰을 불러옵니다. (안전)")
             return saved_token
             
-        # 4. 없거나 만료되었다면 KIS 서버에 새로 발급 요청
         print("🆕 KIS 토큰을 새로 발급합니다...")
         headers = {"content-type": "application/json"}
-        body = {
-            "grant_type": "client_credentials",
-            "appkey": KIS_APP_KEY,
-            "appsecret": KIS_APP_SECRET
-        }
+        body = {"grant_type": "client_credentials", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET}
         res = requests.post(f"{KIS_URL_BASE}/oauth2/tokenP", headers=headers, json=body, timeout=5)
         
         if res.status_code == 200:
             new_token = res.json().get("access_token")
-            
-            # 5. 새로 발급받은 토큰과 날짜를 구글 시트에 업데이트
-            if token_row_idx != -1:
-                setting_sheet.update_cell(token_row_idx, 2, new_token)
-            else:
-                setting_sheet.append_row(["KIS_TOKEN", new_token])
+            if token_row_idx != -1: setting_sheet.update_cell(token_row_idx, 2, new_token)
+            else: setting_sheet.append_row(["KIS_TOKEN", new_token])
                 
-            if date_row_idx != -1:
-                setting_sheet.update_cell(date_row_idx, 2, now_str)
-            else:
-                setting_sheet.append_row(["KIS_TOKEN_DATE", now_str])
-                
+            if date_row_idx != -1: setting_sheet.update_cell(date_row_idx, 2, now_str)
+            else: setting_sheet.append_row(["KIS_TOKEN_DATE", now_str])
             return new_token
         else:
             print(f"❌ KIS API 토큰 발급 에러: {res.text}")
-            
     except Exception as e:
         print(f"❌ KIS 토큰 관리 에러: {e}")
     return None
 
 print("🔑 한국투자증권 API 접근 토큰을 준비합니다...")
 KIS_TOKEN = get_kis_access_token()
-if KIS_TOKEN:
-    print("✅ KIS 토큰 준비 완료! (API 기관망 연결 상태)")
-else:
-    print("⚠️ KIS 토큰 준비 실패 (Key를 확인해주세요)")
+if KIS_TOKEN: print("✅ KIS 토큰 준비 완료!")
+else: print("⚠️ KIS 토큰 준비 실패")
 
 session = requests.Session()
 session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'})
 # ==========================================
 
-STOPWORDS = [
-    '코스피', '코스닥', '증시', '주식', '투자', '종목', '시장', '지수', '대형주', '중소형주', 
-    '외인', '기관', '개인', '외국인', '매수', '매도', '순매수', '순매도', '거래', '대금', 
-    '주가', '펀드', '사모', '상장', '상폐', '공모', '특징주', '테마', '테마주', '관련', '관련주', 
-    '수혜', '수혜주', '장세', '개장', '출발', '마감', '초반', '후반', '오전', '오후', '장중',
-    '증권', '증권사', '운용', '자사', '괴리', '프리미어', '가치', '밸류', '공시', '병합', '분할',
-    '상승', '하락', '급등', '급락', '강세', '약세', '폭락', '반등', '조정', '랠리', '위축', 
-    '냉각', '훈풍', '안도', '불안', '쇼크', '서프라이즈', '돌파', '경신', '연속', '최고', '최저', 
-    '신고가', '신저가', '최고치', '최저치', '최고가', '최저가', '급증', '급감', '확산', '진정', 
-    '완화', '악화', '개선', '회복', '최대', '사상', '역대', '최초', '최신', '규모', '수준', '가격', 
-    '목표가', '상향', '하향', '박살', '킬러', '대규모', '변동', '오픈', '호재', '연계', '대비',
-    '경제', '금융', '기업', '정부', '자산', '머니', '한국', '미국', '국내', '글로벌', '뉴욕', 
-    '회장', '대표', '임원', '주주', '총회', '이유', '때문', '달러', '금리', '인상', '인하', '동결', 
-    '연준', '파월', '물가', '지표', '고용', '기름값', '주유소', '석유', '신용', '수익', '매출', 
-    '적자', '흑자', '배당', '지분', '인수', '합병', '사업', '추진', '공급', '계약', '체결', 
-    '실적', '발표', '이익', '반사이익', '현금', '자회사', '계열사', '지주사', '관계사', '기내식', '서비스',
-    '오늘', '내일', '이번', '주간', '월간', '분기', '시간', '하루', '하루만', '올해', '내년', 
-    '지난해', '전일', '전주', '전월', '동기', '내달', '연말', '연초', '이날', '당일', '최근', 
-    '현재', '이후', '이전', '상반기', '하반기', '당분간',
-    '예상', '전망', '기대', '우려', '경고', '목표', '분석', '평가', '결정', '검토', '참여', 
-    '진출', '포기', '중단', '재개', '완료', '시작', '종료', '영향', '타격', '피해', '직격탄', 
-    '부양', '지원', '규제', '단속', '강화', '철폐', '폐지', '유지', '보류', '달성', '기준',
-    '행사', '이사', '의결', '개정', '취지', '적극', '개최', '진행', '예정', '상황', '필요', '대응',
-    '마련', '운영', '관리', '적용', '이용', '사용', '활용', '확보', '제공', '구축', '기반', '중심',
-    '노력', '계획', '정도', '경우', '이상', '이하', '가운데', '가장', '포함', '제외', '기대감',
-    '우려감', '불확실성', '가능성', '움직임', '분위기', '흐름', '국면', '대목', '차원', '입장',
-    '배경', '결과', '모습', '모멘텀', '현상', '차이', '비중', '비율', '단계', '목적', '대상',
-    '조원', '억원', '만원', '천원', '전문', '현지', '사회', '생산자', '제도', '재고', '면제',
-    '속보', '단독', '기자', '특파원', '앵커', '저작권', '무단', '전재', '재배포', '금지', '뉴스',
-    '보도', '자료', '사진', '관계자', '주장', '설명', '강조', '위원회', '법안', '회의', '통과',
-    '정책', '의원', '장관', '페이지', '주소', '입력', '방문', '삭제', '요청', '정확', '확인',
-    '문의', '사항', '고객', '센터', '안내', '감사', '반대', '선임', '공개', '자본', '공개',
-    '이란', '국민연금', '종전', '전쟁', '트럼프', '제안', '찬성', '대통령', '사내', '협상',
-    '출시', '계좌', '중동', '상품', '체제', '변경', '투자증권', '성장', '시그널', '신규',
-    '정치', '외교', '합의', '수출', '수입', '도입', '본격', '소식', '임박', '부각', '주도'
-]
-
-AD_FILTER = [
-    '펀드', '투어', '캠페인', '서비스', '최초', '강화', '고객', '연금', '마스터', 
-    '코리아', '정책', '개최', '박람회', '전시회', '프로모션', '할인', '기획전', 
-    '페스티벌', '출시', '협약', 'MOU', '체결', '선정', '어워드', '스마트픽',
-    '팔자', '사자', '증가', '감소', '목표', '꺾인', '주석', '전망', '우려', '기대',
-    '연내', '내달', '오늘', '내일', '돌파', '연속', '급락', '투자', '매수', '매도', '수익'
-]
-
-THEME_BLACKLIST = [
-    '코로나19', '메르스', '지카바이러스', '우한폐렴', '원숭이두창', '엠폭스', '아프리카돼지열병', '구제역', '광우병', '야놀자(Yanolja)', '리비안(RIVIAN)'
-]
+STOPWORDS = ['코스피', '코스닥', '증시', '주식', '투자', '종목', '시장', '지수', '대형주', '중소형주', '외인', '기관', '개인', '외국인', '매수', '매도', '순매수', '순매도', '거래', '대금', '주가', '펀드', '사모', '상장', '상폐', '공모', '특징주', '테마', '테마주', '관련', '관련주', '수혜', '수혜주', '장세', '개장', '출발', '마감', '초반', '후반', '오전', '오후', '장중', '증권', '증권사', '운용', '자사', '괴리', '프리미어', '가치', '밸류', '공시', '병합', '분할', '상승', '하락', '급등', '급락', '강세', '약세', '폭락', '반등', '조정', '랠리', '위축', '냉각', '훈풍', '안도', '불안', '쇼크', '서프라이즈', '돌파', '경신', '연속', '최고', '최저', '신고가', '신저가', '최고치', '최저치', '최고가', '최저가', '급증', '급감', '확산', '진정', '완화', '악화', '개선', '회복', '최대', '사상', '역대', '최초', '최신', '규모', '수준', '가격', '목표가', '상향', '하향', '박살', '킬러', '대규모', '변동', '오픈', '호재', '연계', '대비', '경제', '금융', '기업', '정부', '자산', '머니', '한국', '미국', '국내', '글로벌', '뉴욕', '회장', '대표', '임원', '주주', '총회', '이유', '때문', '달러', '금리', '인상', '인하', '동결', '연준', '파월', '물가', '지표', '고용', '기름값', '주유소', '석유', '신용', '수익', '매출', '적자', '흑자', '배당', '지분', '인수', '합병', '사업', '추진', '공급', '계약', '체결', '실적', '발표', '이익', '반사이익', '현금', '자회사', '계열사', '지주사', '관계사', '기내식', '서비스', '오늘', '내일', '이번', '주간', '월간', '분기', '시간', '하루', '하루만', '올해', '내년', '지난해', '전일', '전주', '전월', '동기', '내달', '연말', '연초', '이날', '당일', '최근', '현재', '이후', '이전', '상반기', '하반기', '당분간', '예상', '전망', '기대', '우려', '경고', '목표', '분석', '평가', '결정', '검토', '참여', '진출', '포기', '중단', '재개', '완료', '시작', '종료', '영향', '타격', '피해', '직격탄', '부양', '지원', '규제', '단속', '강화', '철폐', '폐지', '유지', '보류', '달성', '기준', '행사', '이사', '의결', '개정', '취지', '적극', '개최', '진행', '예정', '상황', '필요', '대응', '마련', '운영', '관리', '적용', '이용', '사용', '활용', '확보', '제공', '구축', '기반', '중심', '노력', '계획', '정도', '경우', '이상', '이하', '가운데', '가장', '포함', '제외', '기대감', '우려감', '불확실성', '가능성', '움직임', '분위기', '흐름', '국면', '대목', '차원', '입장', '배경', '결과', '모습', '모멘텀', '현상', '차이', '비중', '비율', '단계', '목적', '대상', '조원', '억원', '만원', '천원', '전문', '현지', '사회', '생산자', '제도', '재고', '면제', '속보', '단독', '기자', '특파원', '앵커', '저작권', '무단', '전재', '재배포', '금지', '뉴스', '보도', '자료', '사진', '관계자', '주장', '설명', '강조', '위원회', '법안', '회의', '통과', '정책', '의원', '장관', '페이지', '주소', '입력', '방문', '삭제', '요청', '정확', '확인', '문의', '사항', '고객', '센터', '안내', '감사', '반대', '선임', '공개', '자본', '공개', '이란', '국민연금', '종전', '전쟁', '트럼프', '제안', '찬성', '대통령', '사내', '협상', '출시', '계좌', '중동', '상품', '체제', '변경', '투자증권', '성장', '시그널', '신규', '정치', '외교', '합의', '수출', '수입', '도입', '본격', '소식', '임박', '부각', '주도']
+AD_FILTER = ['펀드', '투어', '캠페인', '서비스', '최초', '강화', '고객', '연금', '마스터', '코리아', '정책', '개최', '박람회', '전시회', '프로모션', '할인', '기획전', '페스티벌', '출시', '협약', 'MOU', '체결', '선정', '어워드', '스마트픽', '팔자', '사자', '증가', '감소', '목표', '꺾인', '주석', '전망', '우려', '기대', '연내', '내달', '오늘', '내일', '돌파', '연속', '급락', '투자', '매수', '매도', '수익']
+THEME_BLACKLIST = ['코로나19', '메르스', '지카바이러스', '우한폐렴', '원숭이두창', '엠폭스', '아프리카돼지열병', '구제역', '광우병', '야놀자(Yanolja)', '리비안(RIVIAN)']
 
 def check_warning_market():
     try:
         url = "https://m.stock.naver.com/api/index/KOSDAQ/price?pageSize=20&page=1"
         res = session.get(url, verify=False, timeout=3).json()
         prices = [float(item['closePrice'].replace(',', '')) for item in res]
-        if len(prices) == 20:
-            ma20 = sum(prices) / 20
-            if prices[0] < ma20:
-                return True
+        if len(prices) == 20: return prices[0] < (sum(prices) / 20)
     except: pass
     return False
 
@@ -177,68 +106,43 @@ def search_code_from_naver(stock_name):
     try:
         url = f"https://m.stock.naver.com/api/search/all?keyword={stock_name}"
         data = session.get(url).json()
-        if data.get('result') and data['result'].get('stocks'):
-            return data['result']['stocks'][0]['itemCode']
+        if data.get('result') and data['result'].get('stocks'): return data['result']['stocks'][0]['itemCode']
     except: pass
     return None
 
 def get_news_keywords():
     try:
         now_minute = datetime.datetime.now(KST).minute
-        if not (30 <= now_minute < 40):
-            return pd.DataFrame() 
-
+        if not (30 <= now_minute < 40): return pd.DataFrame() 
         full_text = ""
         theme_phrases = []
         for page in range(1, 10):
             url = f"https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258&page={page}"
             res = session.get(url, verify=False, timeout=5)
             soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
-            subjects = soup.select('.articleSubject a')
-            for sub in subjects:
+            for sub in soup.select('.articleSubject a'):
                 title_text = sub.get_text(strip=True)
                 full_text += title_text + " \n "
-                matches = re.findall(r"['\"‘“](.*?)['\"’”]", title_text)
-                for m in matches:
+                for m in re.findall(r"['\"‘“](.*?)['\"’”]", title_text):
                     clean = re.sub(r'(수혜|관련주|테마주|대장주|강세|상한가|특징주|급등|주목|부각)', '', m).strip()
                     clean = re.sub(r'[^\w\s]', '', clean).strip()
-                    if 1 < len(clean) <= 12 and clean.count(' ') <= 1:
-                        if not any(ad in clean for ad in AD_FILTER):
-                            theme_phrases.append(clean)
-                matches2 = re.findall(r'([가-힣a-zA-Z0-9]+)(?:\s+)?(?:관련주|테마주|수혜주|대장주|섹터|주도주)', title_text)
-                for m in matches2:
+                    if 1 < len(clean) <= 12 and clean.count(' ') <= 1 and not any(ad in clean for ad in AD_FILTER):
+                        theme_phrases.append(clean)
+                for m in re.findall(r'([가-힣a-zA-Z0-9]+)(?:\s+)?(?:관련주|테마주|수혜주|대장주|섹터|주도주)', title_text):
                     m = re.sub(r'[^\w\s]', '', m).strip()
-                    if 1 < len(m) <= 10 and not any(ad in m for ad in AD_FILTER):
-                        theme_phrases.append(m)
-        core_keywords = [
-            '의료AI', '비만치료제', '전고체', '자율주행', '로봇', '반도체', '바이오시밀러', 
-            '원격진료', '탈플라스틱', '신재생', '원전', '우주항공', 'UAM', '메타버스', 
-            'OLED', 'LFP', 'HBM', 'CXL', '온디바이스', 'AI', '초전도체', '양자암호', 
-            '저전력', '데이터센터', '웹툰', '비트코인', 'STO', '밸류업', '방산', '조선',
-            '피지컬AI', '전력설비', '유리기판', '액침냉각', '엔터', '화장품', '미용기기',
-            '제약', '바이오', '이차전지', '2차전지', '폐배터리', '수소', '태양광', '마이크로바이옴'
-        ]
-        for word in core_keywords:
-            count = full_text.count(word)
-            for _ in range(count): theme_phrases.append(word)
-
-        final_keywords = []
-        for word in theme_phrases:
-            if word not in STOPWORDS and not any(junk in word for junk in ['특징주', '강세', '급등', '상승', '하락']):
-                final_keywords.append(word)
-                
-        raw_top = Counter(final_keywords).most_common()
-        top_10 = [(word, count) for word, count in raw_top if count > 1][:10]
+                    if 1 < len(m) <= 10 and not any(ad in m for ad in AD_FILTER): theme_phrases.append(m)
+        core_keywords = ['의료AI', '비만치료제', '전고체', '자율주행', '로봇', '반도체', '바이오시밀러', '원격진료', '탈플라스틱', '신재생', '원전', '우주항공', 'UAM', '메타버스', 'OLED', 'LFP', 'HBM', 'CXL', '온디바이스', 'AI', '초전도체', '양자암호', '저전력', '데이터센터', '웹툰', '비트코인', 'STO', '밸류업', '방산', '조선', '피지컬AI', '전력설비', '유리기판', '액침냉각', '엔터', '화장품', '미용기기', '제약', '바이오', '이차전지', '2차전지', '폐배터리', '수소', '태양광', '마이크로바이옴']
+        for word in core_keywords: theme_phrases.extend([word] * full_text.count(word))
+        final_keywords = [word for word in theme_phrases if word not in STOPWORDS and not any(junk in word for junk in ['특징주', '강세', '급등', '상승', '하락'])]
+        top_10 = [(word, count) for word, count in Counter(final_keywords).most_common() if count > 1][:10]
         if not top_10: return pd.DataFrame()
-            
         now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M')
         return pd.DataFrame([[now_str, rank, word, count] for rank, (word, count) in enumerate(top_10, 1)], columns=['업데이트시간', '순위', '키워드', '언급횟수'])
     except Exception as e: return pd.DataFrame()
 
 def get_market_cap(code):
     try:
-        url = f"https://finance.naver.com/item/main.naver?code={code}"
-        res = session.get(url, verify=False, timeout=3)
+        res = session.get(f"https://finance.naver.com/item/main.naver?code={code}", verify=False, timeout=3)
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
         market_sum_tag = soup.find('em', id='_market_sum')
         if not market_sum_tag: return 999999 
@@ -255,13 +159,8 @@ def get_real_money_themes():
     time_str = now.strftime('%H:%M')
     res = session.get("https://finance.naver.com/sise/theme.naver", verify=False)
     soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
-    
     raw_themes = [{'name': a.text.strip(), 'url': "https://finance.naver.com" + a['href']} for tds in [tr.find_all('td') for tr in soup.find('table', {'class': 'type_1'}).find_all('tr')] if len(tds) > 1 for a in [tds[0].find('a')] if a]
-    
-    themes = []
-    for t in raw_themes:
-        if not any(b in t['name'] for b in THEME_BLACKLIST): themes.append(t)
-    themes = themes[:20] 
+    themes = [t for t in raw_themes if not any(b in t['name'] for b in THEME_BLACKLIST)][:20] 
                     
     theme_data_list = []
     print("▶️ 실시간 주도 테마 수집 시작 (군집성 필터 적용)...")
@@ -284,7 +183,6 @@ def get_real_money_themes():
                     except: continue
             
             stocks_val = sorted(stocks, key=lambda x: x['value'], reverse=True)[:5]
-            
             if len(stocks_val) >= 2:
                 stocks_rate = sorted(stocks_val, key=lambda x: x['rate'], reverse=True)
                 theme_data_list.append({'theme_name': theme['name'], 'stocks': stocks_rate})
@@ -396,9 +294,17 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         history = []
         high_prices = []
         items = root.findall(".//item")
+        
+        # 💡 [수정] 저가(low) 및 고가(high) 데이터도 딕셔너리에 완벽하게 저장 (플랫폼 판독용)
         for item in items:
             data = item.get("data").split("|")
-            history.append({"close": int(data[4]), "volume": int(data[5]), "open": int(data[1])})
+            history.append({
+                "open": int(data[1]),
+                "high": int(data[2]),
+                "low": int(data[3]),
+                "close": int(data[4]), 
+                "volume": int(data[5])
+            })
             high_prices.append(int(data[2]))
             
         if len(history) < 1: return None
@@ -469,9 +375,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if capital_stock and total_equity and total_equity < capital_stock: is_financial_risk = True
             if len(op_profits) == 3 and all(p < 0 for p in op_profits): is_chronic_loss = True
 
-        # =================================================================
-        # 💡 [핵심 1] 스마트머니(외국인/기관/프로그램) 선제적 수집 및 융합
-        # =================================================================
         is_dual_buy, f_buy, i_buy, supply_text = False, 0, 0, ""
         try:
             today_trend = session.get(f"https://m.stock.naver.com/api/stock/{code}/investor/trend", verify=False, timeout=3).json().get('investorTrendList', [{}])[0]
@@ -495,16 +398,12 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         pg_vol = int(pg_val_str)
                         pg_amount_eok = (pg_vol * current_price) / 100000000 
                         
-                        if pg_vol > 0:
-                            program_text = f"🔴 +{int(pg_amount_eok):,}억원 순매수" if pg_amount_eok >= 1 else f"🔴 +{int(pg_amount_eok * 100):,}백만원 순매수"
-                        else:
-                            program_text = f"🔵 {int(pg_amount_eok):,}억원 순매도" if abs(pg_amount_eok) >= 1 else f"🔵 {int(pg_amount_eok * 100):,}백만원 순매도"
-                    else:
-                        program_text = "0원 (보합)"
+                        if pg_vol > 0: program_text = f"🔴 +{int(pg_amount_eok):,}억원 순매수" if pg_amount_eok >= 1 else f"🔴 +{int(pg_amount_eok * 100):,}백만원 순매수"
+                        else: program_text = f"🔵 {int(pg_amount_eok):,}억원 순매도" if abs(pg_amount_eok) >= 1 else f"🔵 {int(pg_amount_eok * 100):,}백만원 순매도"
+                    else: program_text = "0원 (보합)"
                     break
         except: pass
 
-        # 수급 텍스트 융합 (프로그램과 외인/기관 동시 매수 시 시그널 강화)
         if is_dual_buy and pg_amount_eok >= 20: supply_text = " (🔥메이저 싹쓸이)"
         elif is_dual_buy: supply_text = " (쌍끌이 유입)"
         elif pg_amount_eok >= 30: supply_text = " (🔥프로그램 폭발)"
@@ -532,8 +431,23 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_converging = (band_width <= 0.20) or (ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035)
         vol_status_text = "🟢 극감 (씨마름)" if vol_ratio <= 35 else ("🟢 감소 (안정)" if vol_ratio <= 60 else ("🔴 폭증 (과열)" if vol_ratio >= 200 else "🟡 보통"))
         
+        # =================================================================
+        # 💡 [신규] 플랫폼(박스권) 탈출 로직 완벽 구현
+        # =================================================================
+        box_ratio = 999
+        if len(df_hist) >= 20:
+            max_20d_box = int(df_hist['high'].tail(20).max())
+            min_20d_box = int(df_hist['low'].tail(20).min())
+            if min_20d_box > 0:
+                box_ratio = (max_20d_box - min_20d_box) / min_20d_box
+        
+        # 조건: 15% 이내 횡보 + 오늘 거래량 5배 폭발 + 20일선 위로 강한 돌파(양봉)
+        is_platform_breakout = (box_ratio <= 0.15) and (vol_ratio >= 500) and (current_price > ma20) and is_today_yangbong
+        # =================================================================
+
         if is_junk: signal = "🚨 [위험] 매매금지 (잡주/경고)"
         elif is_financial_risk: signal = "🚨 [위험] 매매금지 (자본잠식위험)"
+        elif is_platform_breakout: signal = "📦 플랫폼 탈출 (스윙)" + supply_text
         elif is_dual_buy and is_converging: signal = "🌟 모아가기 (쌍끌이)"
         elif band_width <= 0.20 and current_price >= ma20: signal = "🚀 N자파동 (밴드돌파)" + supply_text if current_price >= upper_band * 0.98 else "👀 N자파동 (에너지응축)" + supply_text
         elif ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035: signal = "📈 2차랠리 (이평수렴)" + supply_text if current_price > ma20 else "⏳ 이평선 저항" + supply_text
@@ -569,9 +483,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_breakout_track = current_price >= ma20
         track_type = "돌파" if is_breakout_track else "눌림"
         
-        # =================================================================
-        # 💡 [핵심 2] 스마트머니 폭발적 가중치 부여 (Quant Score)
-        # =================================================================
+        # 💡 [수급 깡패 최우선 스코어링]
         quant_score = 0
         if not (is_junk or is_financial_risk):
             if is_breakout_track:
@@ -588,14 +500,13 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 if ma20 * 0.95 <= current_price <= ma20 * 1.02: quant_score += 10
                 if band_width <= 0.15: quant_score += 10
             
-            # 🚀 수급 가중치 (최대 50점 부여) - 수급이 깡패다!
             if is_dual_buy: quant_score += 20
             elif f_buy > 0 or i_buy > 0: quant_score += 10
             
-            if pg_amount_eok >= 50: quant_score += 30      # 50억 이상 쓸어담음
-            elif pg_amount_eok >= 20: quant_score += 20    # 20억 이상 매수
-            elif pg_amount_eok >= 10: quant_score += 10    # 10억 이상 매수
-            elif pg_amount_eok <= -20: quant_score -= 20   # 대량 매도 폭탄 감점
+            if pg_amount_eok >= 50: quant_score += 30      
+            elif pg_amount_eok >= 20: quant_score += 20    
+            elif pg_amount_eok >= 10: quant_score += 10    
+            elif pg_amount_eok <= -20: quant_score -= 20   
 
         flag_days = 0
         for d in range(1, 4):
@@ -619,26 +530,22 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         if int(df_hist['volume'].iloc[j]) > anchor_vol * 0.45: is_holding = False; break
                     if is_holding: flag_days = d; break
 
-        # 돌파/눌림 기본 조건
         is_ss_breakout = (trading_value >= 100_000_000_000) and (change_rate >= 0.04) and not is_long_shadow and is_near_high
         is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 50) and (trading_value >= 50_000_000_000) and (change_rate >= 0.02) and not is_long_shadow
         is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 45) and (vol_ratio <= 50) and (is_today_yangbong or today_body_ratio <= 0.02)
 
-        # =================================================================
-        # 💡 [핵심 3] 오후 3시 종가베팅(Overnight) 전용 판독 로직
-        # =================================================================
         now_kst_tajeom = datetime.datetime.now(KST)
         is_overnight_time = (now_kst_tajeom.hour == 15 and now_kst_tajeom.minute <= 30)
-        
-        # 종가베팅 조건: 오후 3시 이후 + 메이저 수급 확인(10억 이상 or 쌍끌이) + 고가 유지(윗꼬리 없음) + 20일선 위
         is_overnight_candidate = is_overnight_time and (quant_score >= 50) and (pg_amount_eok >= 10 or is_dual_buy) and (current_price >= today_high * 0.94) and is_breakout_track and not is_long_shadow
 
+        # 💡 타점 우선순위 부여 (플랫폼 돌파 뱃지 스위치)
         master_tajeom = "⏸️ 관망 및 대기"
         if len(history) < 20: master_tajeom = "⚠️ 신규상장 (데이터 부족)"
         elif is_junk: master_tajeom = "🚨 매매금지 (딱지)"
         elif is_financial_risk: master_tajeom = "🚨 매매금지 (자본잠식)"
         elif is_theme_daejang_sang: master_tajeom = "👑 [테마대장] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 50
         elif is_theme_daejang: master_tajeom = "🚀 [테마대장] 당일 주도주" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 45
+        elif is_platform_breakout: master_tajeom = "📦 [스윙] 플랫폼 돌파 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 40
         elif is_theme_hubal_sang: master_tajeom = "🔒 [후발주] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 40
         elif is_theme_hubal: master_tajeom = "🏃 [후발주] 테마 추종" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 35
         elif is_individual_sang: master_tajeom = "🔒 [개별주] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 30
@@ -656,46 +563,36 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         elif change_rate >= 0.12 and trading_value >= 50_000_000_000: 
             dynamic_supply = supply_text if supply_text != "" else " (대규모 거래대금)"
             master_tajeom = f"👀 [관심] 신규 기준봉 출현{dynamic_supply}" + (" ⚠️(주의장세)" if is_warning_market else "")
+            
         score_display = f"{quant_score}점 ({track_type})"
         if is_chronic_loss and "[" in master_tajeom:
             quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️(3년적자)"
         if is_high_altitude and "[" in master_tajeom:
             quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️고가(단기)"
 
-        # ----------------------------------------------------
-        # 💡 [진짜 최종] 모바일 API(NXT) + PC 크롤링(시외) 이중 방어 엔진
-        # ----------------------------------------------------
         nxt_text = "➖ 0.00% (보합)"
         try:
             reg_close = float(current_price) 
             best_rate = 0.0
             trade_type = ""
             
-            # 1. 네이버 모바일 API (NXT 및 시간외 1차 확인)
             basic_res = session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", verify=False, timeout=3).json()
-            
             nxt_price = float(str(basic_res.get('nxtClosePrice') or '0').replace(',', ''))
             nxt_rate = float(str(basic_res.get('nxtFluctuationsRatio') or '0').replace(',', ''))
-            
             ext_price = float(str(basic_res.get('timeExtraClosePrice') or '0').replace(',', ''))
             ext_rate = float(str(basic_res.get('timeExtraFluctuationsRatio') or '0').replace(',', ''))
             
-            # NXT 우선 확인
             if nxt_price > 0 and nxt_price != reg_close:
                 best_rate = nxt_rate if nxt_rate != 0.0 else round(((nxt_price - reg_close) / reg_close) * 100, 2)
                 trade_type = "NXT"
-            # NXT 없으면 모바일 API 시간외 확인
             elif ext_price > 0 and ext_price != reg_close:
                 best_rate = ext_rate if ext_rate != 0.0 else round(((ext_price - reg_close) / reg_close) * 100, 2)
                 trade_type = "시외"
             
-            # 2. 모바일 API가 초기화되었거나 0일 경우 -> 네이버 PC '시간외 단일가' 전용 페이지 강력 크롤링
             if best_rate == 0.0:
                 time_url = f"https://finance.naver.com/item/sise_time_over.naver?code={code}"
                 time_res = session.get(time_url, verify=False, timeout=3)
                 time_soup = BeautifulSoup(time_res.content, 'html.parser', from_encoding='euc-kr')
-                
-                # 가장 최신 체결가(가장 위쪽의 유효 데이터) 찾기
                 for tr in time_soup.find_all('tr'):
                     tds = tr.find_all('td')
                     if len(tds) >= 4 and ":" in tds[0].text:
@@ -705,59 +602,13 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                             alt_text = sign_img.get('alt', '')
                             try:
                                 pc_rate = float(change_td.replace('%', '').strip())
-                                if "상승" in alt_text:
-                                    best_rate = pc_rate
-                                    trade_type = "시외"
-                                    break
-                                elif "하락" in alt_text:
-                                    best_rate = -pc_rate
-                                    trade_type = "시외"
-                                    break
+                                if "상승" in alt_text: best_rate = pc_rate; trade_type = "시외"; break
+                                elif "하락" in alt_text: best_rate = -pc_rate; trade_type = "시외"; break
                             except: pass
             
-            # 3. 텍스트 조립
-            if best_rate > 0: 
-                nxt_text = f"🔴 +{best_rate}% ({trade_type})"
-            elif best_rate < 0: 
-                nxt_text = f"🔵 {best_rate}% ({trade_type})"
-                
-        except Exception:
-            pass
-            
-        program_text = "확인불가"
-        try:
-            # 💡 네이버 투자자별 매매동향 페이지에서 프로그램 순매수(주) 긁어오기
-            frgn_url = f"https://finance.naver.com/item/frgn.naver?code={code}"
-            frgn_res = session.get(frgn_url, verify=False, timeout=3)
-            frgn_soup = BeautifulSoup(frgn_res.content, 'html.parser', from_encoding='euc-kr')
-            rows = frgn_soup.select("table.type2 > tr")
-            for r_tag in rows:
-                cols = r_tag.select("td")
-                # 날짜 데이터가 있는 유효한 첫 번째 행(당일) 찾기
-                if len(cols) >= 9 and cols[0].text.strip().replace('.', '').isdigit():
-                    pg_val_str = cols[6].text.strip().replace(',', '') # 7번째 열: 프로그램 순매수
-                    
-                    if pg_val_str and pg_val_str != '0':
-                        pg_vol = int(pg_val_str) # 순매수 수량(주)
-                        pg_amount_eok = (pg_vol * current_price) / 100000000 
-                        
-                        if pg_vol > 0:
-                            # 양수(매수)일 경우
-                            if pg_amount_eok >= 1: 
-                                program_text = f"🔴 +{int(pg_amount_eok):,}억원 순매수"
-                            else: 
-                                program_text = f"🔴 +{int(pg_amount_eok * 100):,}백만원 순매수"
-                        else:
-                            # 음수(매도)일 경우
-                            if abs(pg_amount_eok) >= 1:
-                                program_text = f"🔵 {int(pg_amount_eok):,}억원 순매도"
-                            else:
-                                program_text = f"🔵 {int(pg_amount_eok * 100):,}백만원 순매도"
-                    else:
-                        program_text = "0원 (보합)"
-                    break
-        except Exception:
-            pass
+            if best_rate > 0: nxt_text = f"🔴 +{best_rate}% ({trade_type})"
+            elif best_rate < 0: nxt_text = f"🔵 {best_rate}% ({trade_type})"
+        except Exception: pass
 
         return [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", 
@@ -831,7 +682,6 @@ def update_technical_data(df_theme, all_theme_map):
 
         results.sort(key=lambda x: x[19], reverse=True) 
         
-        # 💡 [정상화] r[21] (시간외 껍데기 ➖), r[22] (프로그램 당일 데이터) 유지
         final_results = [r[:19] + [r[20], r[21], r[22]] for r in results]
 
         if final_results:
