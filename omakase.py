@@ -23,8 +23,8 @@ TARGET_PERCENT = 3.0
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
 now_kst_check = datetime.datetime.now(KST)
-if now_kst_check.hour >= 1 or now_kst_check.hour < 7:
-    print(f"🌙 현재 시간({now_kst_check.strftime('%H:%M')}): 주식 시장 대기 시간입니다. 시스템을 휴식 모드로 전환합니다.")
+if 2 <= now_kst_check.hour < 7:
+    print(f"🌙 현재 시간({now_kst_check.strftime('%H:%M')}): 시스템을 휴식 모드로 전환합니다. (02시~07시)")
     sys.exit(0)
 
 # ==========================================
