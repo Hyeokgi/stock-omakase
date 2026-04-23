@@ -23,6 +23,7 @@ TARGET_PERCENT = 3.0
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
 now_kst_check = datetime.datetime.now(KST)
+# 💡 수석님의 원활한 테스트를 위해 새벽 2시~7시만 휴식하도록 유지
 if 2 <= now_kst_check.hour < 7:
     print(f"🌙 현재 시간({now_kst_check.strftime('%H:%M')}): 시스템을 휴식 모드로 전환합니다. (02시~07시)")
     sys.exit(0)
@@ -86,59 +87,78 @@ if KIS_TOKEN: print("✅ KIS 토큰 준비 완료!")
 else: print("⚠️ KIS 토큰 준비 실패")
 
 session = requests.Session()
-session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'})
+session.headers.update({'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15'}) # 모바일 봇 우회 세팅
 
 # ==========================================
-# 💡 [신규 엔진 1] 다음(Daum) 시간외 단일가 수집기
+# 💡 [V6.5 딥다이브 엔진] 네이버 시간외/NXT 융단 폭격 수집기
 # ==========================================
-def get_daum_after_hours_price(code):
-    if len(code) != 6: return 0.0
-    url = f"https://finance.daum.net/api/quotes/A{code}"
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Referer': f'https://finance.daum.net/quotes/A{code}',
-        'Accept': 'application/json, text/javascript, */*; q=0.01'
-    }
+def get_naver_deep_dive_after_price(code, current_price):
+    best_rate = 0.0
+    trade_type = ""
+    target_price = 0.0
+    
+    # 1타겟: integrationInfo (야간 유지력 가장 좋음)
     try:
-        res = requests.get(url, headers=headers, verify=False, timeout=3)
-        if res.status_code == 200:
-            data = res.json()
-            after_price = data.get('timeExtraPrice') or data.get('overTimePrice') or 0
-            return float(after_price)
+        res = session.get(f"https://m.stock.naver.com/api/stock/{code}/integrationInfo", verify=False, timeout=3).json()
+        
+        # NXT 우선 탐색
+        nxt = res.get('nxtPrice') or res.get('nxtClosePrice')
+        if nxt and float(str(nxt).replace(',', '')) > 0 and float(str(nxt).replace(',', '')) != current_price:
+            target_price = float(str(nxt).replace(',', ''))
+            trade_type = "NXT"
+        else:
+            # 시간외 탐색
+            after = res.get('afterClosePrice') or res.get('timeExtraClosePrice') or res.get('timeExtraPrice')
+            if after and float(str(after).replace(',', '')) > 0 and float(str(after).replace(',', '')) != current_price:
+                target_price = float(str(after).replace(',', ''))
+                trade_type = "시외"
+                
+        if target_price > 0:
+            best_rate = round(((target_price - current_price) / current_price) * 100, 2)
+            if best_rate != 0.0:
+                return target_price, best_rate, trade_type
     except: pass
-    return 0.0
 
-# ==========================================
-# 💡 [신규 엔진 2] NXT 공식 홈페이지 수집기
-# ==========================================
-def get_nxt_official_price(code):
-    url = "https://www.nextrade.co.kr/api/transactionStatus/selectTransactionStatusList.do"
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Referer': 'https://www.nextrade.co.kr/menu/transactionStatusMain/menuList.do',
-        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'Accept': 'application/json, text/javascript, */*; q=0.01'
-    }
-    # NXT 홈페이지 API를 호출하기 위한 페이로드 (전체 리스트 호출용)
-    payload = {
-        'srchMktId': 'ALL',
-        'srchSecGrpId': 'ST',
-        'srchTrdDate': datetime.datetime.now(KST).strftime('%Y%m%d')
-    }
+    # 2타겟: basic (전통적인 방식)
     try:
-        res = requests.post(url, headers=headers, data=payload, verify=False, timeout=5)
-        if res.status_code == 200:
-            data_list = res.json().get('data', [])
-            # 응답 리스트에서 해당 종목 코드를 찾음 (NXT 코드는 보통 'A005930' 형태이거나 '005930' 형태임)
-            for item in data_list:
-                if str(item.get('isuCd', '')).endswith(code) or str(item.get('isuSrtCd', '')).endswith(code):
-                    # NXT 종가 추출 (필드명은 실제 응답 구조에 맞게 매핑)
-                    nxt_price = item.get('clpr') or item.get('trdClpr') or item.get('closePrice') or 0
-                    nxt_rate = item.get('flucRt') or item.get('cmpprevddRate') or 0
-                    if nxt_price and float(str(nxt_price).replace(',', '')) > 0:
-                        return float(str(nxt_price).replace(',', '')), float(str(nxt_rate).replace(',', ''))
+        res = session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", verify=False, timeout=3).json()
+        nxt_price = float(str(res.get('nxtClosePrice') or '0').replace(',', ''))
+        ext_price = float(str(res.get('timeExtraClosePrice') or '0').replace(',', ''))
+        
+        if nxt_price > 0 and nxt_price != current_price:
+            target_price = nxt_price
+            trade_type = "NXT"
+        elif ext_price > 0 and ext_price != current_price:
+            target_price = ext_price
+            trade_type = "시외"
+            
+        if target_price > 0:
+            best_rate = round(((target_price - current_price) / current_price) * 100, 2)
+            if best_rate != 0.0:
+                return target_price, best_rate, trade_type
     except: pass
-    return 0.0, 0.0
+    
+    # 3타겟: PC 시간외 단일가 페이지 강제 크롤링 (가장 무식하지만 확실한 방법)
+    try:
+        time_url = f"https://finance.naver.com/item/sise_time_over.naver?code={code}"
+        time_soup = BeautifulSoup(session.get(time_url, verify=False, timeout=3).content, 'html.parser', from_encoding='euc-kr')
+        for tr in time_soup.find_all('tr'):
+            tds = tr.find_all('td')
+            if len(tds) >= 4 and ":" in tds[0].text: # 체결 시간이 있는 유효 행
+                change_td = tds[2].text.strip()
+                sign_img = tds[1].find('img')
+                if sign_img:
+                    alt_text = sign_img.get('alt', '')
+                    try:
+                        pc_rate = float(change_td.replace('%', '').strip())
+                        if "상승" in alt_text: 
+                            return 0.0, pc_rate, "시외"
+                        elif "하락" in alt_text: 
+                            return 0.0, -pc_rate, "시외"
+                    except: pass
+    except: pass
+
+    return 0.0, 0.0, ""
 
 STOPWORDS = ['코스피', '코스닥', '증시', '주식', '투자', '종목', '시장', '지수', '대형주', '중소형주', '외인', '기관', '개인', '외국인', '매수', '매도', '순매수', '순매도', '거래', '대금', '주가', '펀드', '사모', '상장', '상폐', '공모', '특징주', '테마', '테마주', '관련', '관련주', '수혜', '수혜주', '장세', '개장', '출발', '마감', '초반', '후반', '오전', '오후', '장중', '증권', '증권사', '운용', '자사', '괴리', '프리미어', '가치', '밸류', '공시', '병합', '분할', '상승', '하락', '급등', '급락', '강세', '약세', '폭락', '반등', '조정', '랠리', '위축', '냉각', '훈풍', '안도', '불안', '쇼크', '서프라이즈', '돌파', '경신', '연속', '최고', '최저', '신고가', '신저가', '최고치', '최저치', '최고가', '최저가', '급증', '급감', '확산', '진정', '완화', '악화', '개선', '회복', '최대', '사상', '역대', '최초', '최신', '규모', '수준', '가격', '목표가', '상향', '하향', '박살', '킬러', '대규모', '변동', '오픈', '호재', '연계', '대비', '경제', '금융', '기업', '정부', '자산', '머니', '한국', '미국', '국내', '글로벌', '뉴욕', '회장', '대표', '임원', '주주', '총회', '이유', '때문', '달러', '금리', '인상', '인하', '동결', '연준', '파월', '물가', '지표', '고용', '기름값', '주유소', '석유', '신용', '수익', '매출', '적자', '흑자', '배당', '지분', '인수', '합병', '사업', '추진', '공급', '계약', '체결', '실적', '발표', '이익', '반사이익', '현금', '자회사', '계열사', '지주사', '관계사', '기내식', '서비스', '오늘', '내일', '이번', '주간', '월간', '분기', '시간', '하루', '하루만', '올해', '내년', '지난해', '전일', '전주', '전월', '동기', '내달', '연말', '연초', '이날', '당일', '최근', '현재', '이후', '이전', '상반기', '하반기', '당분간', '예상', '전망', '기대', '우려', '경고', '목표', '분석', '평가', '결정', '검토', '참여', '진출', '포기', '중단', '재개', '완료', '시작', '종료', '영향', '타격', '피해', '직격탄', '부양', '지원', '규제', '단속', '강화', '철폐', '폐지', '유지', '보류', '달성', '기준', '행사', '이사', '의결', '개정', '취지', '적극', '개최', '진행', '예정', '상황', '필요', '대응', '마련', '운영', '관리', '적용', '이용', '사용', '활용', '확보', '제공', '구축', '기반', '중심', '노력', '계획', '정도', '경우', '이상', '이하', '가운데', '가장', '포함', '제외', '기대감', '우려감', '불확실성', '가능성', '움직임', '분위기', '흐름', '국면', '대목', '차원', '입장', '배경', '결과', '모습', '모멘텀', '현상', '차이', '비중', '비율', '단계', '목적', '대상', '조원', '억원', '만원', '천원', '전문', '현지', '사회', '생산자', '제도', '재고', '면제', '속보', '단독', '기자', '특파원', '앵커', '저작권', '무단', '전재', '재배포', '금지', '뉴스', '보도', '자료', '사진', '관계자', '주장', '설명', '강조', '위원회', '법안', '회의', '통과', '정책', '의원', '장관', '페이지', '주소', '입력', '방문', '삭제', '요청', '정확', '확인', '문의', '사항', '고객', '센터', '안내', '감사', '반대', '선임', '공개', '자본', '공개', '이란', '국민연금', '종전', '전쟁', '트럼프', '제안', '찬성', '대통령', '사내', '협상', '출시', '계좌', '중동', '상품', '체제', '변경', '투자증권', '성장', '시그널', '신규', '정치', '외교', '합의', '수출', '수입', '도입', '본격', '소식', '임박', '부각', '주도']
 AD_FILTER = ['펀드', '투어', '캠페인', '서비스', '최초', '강화', '고객', '연금', '마스터', '코리아', '정책', '개최', '박람회', '전시회', '프로모션', '할인', '기획전', '페스티벌', '출시', '협약', 'MOU', '체결', '선정', '어워드', '스마트픽', '팔자', '사자', '증가', '감소', '목표', '꺾인', '주석', '전망', '우려', '기대', '연내', '내달', '오늘', '내일', '돌파', '연속', '급락', '투자', '매수', '매도', '수익']
@@ -627,65 +647,14 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️고가(단기)"
 
         # =================================================================
-        # 💡 [신규 엔진 연동] 10분 스캐너에서도 시간외 데이터 최우선 시도
+        # 💡 [V6.5 딥다이브 엔진 연동] 10분 스캐너에서도 네이버 딥다이브 엔진 시도
         # =================================================================
         nxt_text = "➖ 0.00% (보합)"
         
-        # 1. 다음(Daum) 시간외 단일가 시도
-        daum_after_price = get_daum_after_hours_price(code)
+        target_price, best_rate, trade_type = get_naver_deep_dive_after_price(code, current_price)
         
-        # 2. NXT 공식 홈페이지 시도
-        nxt_official_price, nxt_official_rate = get_nxt_official_price(code)
-
-        if nxt_official_price > 0 and nxt_official_price != current_price:
-            trade_type = "NXT"
-            best_rate = nxt_official_rate if nxt_official_rate != 0.0 else round(((nxt_official_price - current_price) / current_price) * 100, 2)
-            if best_rate > 0: nxt_text = f"🔴 +{best_rate}% ({trade_type})"
-            elif best_rate < 0: nxt_text = f"🔵 {best_rate}% ({trade_type})"
-        elif daum_after_price > 0 and daum_after_price != current_price:
-            trade_type = "시외"
-            best_rate = round(((daum_after_price - current_price) / current_price) * 100, 2)
-            if best_rate > 0: nxt_text = f"🔴 +{best_rate}% ({trade_type})"
-            elif best_rate < 0: nxt_text = f"🔵 {best_rate}% ({trade_type})"
-        else:
-            # 3. KIS/네이버 등 기존 폴백 로직 (생략 방지)
-            try:
-                reg_close = float(current_price) 
-                best_rate = 0.0
-                trade_type = ""
-                basic_res = session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", verify=False, timeout=3).json()
-                nxt_price = float(str(basic_res.get('nxtClosePrice') or '0').replace(',', ''))
-                nxt_rate = float(str(basic_res.get('nxtFluctuationsRatio') or '0').replace(',', ''))
-                ext_price = float(str(basic_res.get('timeExtraClosePrice') or '0').replace(',', ''))
-                ext_rate = float(str(basic_res.get('timeExtraFluctuationsRatio') or '0').replace(',', ''))
-                
-                if nxt_price > 0 and nxt_price != reg_close:
-                    best_rate = nxt_rate if nxt_rate != 0.0 else round(((nxt_price - reg_close) / reg_close) * 100, 2)
-                    trade_type = "NXT"
-                elif ext_price > 0 and ext_price != reg_close:
-                    best_rate = ext_rate if ext_rate != 0.0 else round(((ext_price - reg_close) / reg_close) * 100, 2)
-                    trade_type = "시외"
-                
-                if best_rate == 0.0:
-                    time_url = f"https://finance.naver.com/item/sise_time_over.naver?code={code}"
-                    time_res = session.get(time_url, verify=False, timeout=3)
-                    time_soup = BeautifulSoup(time_res.content, 'html.parser', from_encoding='euc-kr')
-                    for tr in time_soup.find_all('tr'):
-                        tds = tr.find_all('td')
-                        if len(tds) >= 4 and ":" in tds[0].text:
-                            change_td = tds[2].text.strip()
-                            sign_img = tds[1].find('img')
-                            if sign_img:
-                                alt_text = sign_img.get('alt', '')
-                                try:
-                                    pc_rate = float(change_td.replace('%', '').strip())
-                                    if "상승" in alt_text: best_rate = pc_rate; trade_type = "시외"; break
-                                    elif "하락" in alt_text: best_rate = -pc_rate; trade_type = "시외"; break
-                                except: pass
-                
-                if best_rate > 0: nxt_text = f"🔴 +{best_rate}% ({trade_type})"
-                elif best_rate < 0: nxt_text = f"🔵 {best_rate}% ({trade_type})"
-            except Exception: pass
+        if best_rate > 0: nxt_text = f"🔴 +{best_rate}% ({trade_type})"
+        elif best_rate < 0: nxt_text = f"🔵 {best_rate}% ({trade_type})"
 
         return [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", 
