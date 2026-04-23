@@ -15,7 +15,7 @@ GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxyuSEjPmg8rZPjLlG-YK
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
 # ==========================================
-# 💡 [신규] KIS API 환경 변수
+# 💡 KIS API 환경 변수
 # ==========================================
 KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
@@ -43,10 +43,11 @@ def get_target_stock_news(code):
         return "개별 뉴스 수집 실패"
 
 # =================================================================
-# 💎 [100% KIS API 직결] VIP 심층 데이터 수집 엔진 (신용비율 영구 삭제)
+# 💎 [100% KIS API 직결] VIP 심층 데이터 수집 엔진
 # =================================================================
 def get_vip_deep_dive_data(code, kis_token):
-    vip = {"체결강도": "야간초기화(0%)", "수급트렌드": "뚜렷한 연속 매수 없음", "펀더멘털": "N/A"}
+    # 💡 [수정] 체결강도 삭제
+    vip = {"펀더멘털": "N/A"}
     
     if not (kis_token and KIS_APP_KEY and KIS_APP_SECRET):
         return "⚠️ KIS API 토큰 없음"
@@ -59,39 +60,18 @@ def get_vip_deep_dive_data(code, kis_token):
         "custtype": "P"
     }
     
-    # 1. KIS API: 10호가 체결강도 및 펀더멘털(PER/PBR)
+    # 1. KIS API: 펀더멘털(PER/PBR)
     try:
         headers["tr_id"] = "FHKST01010100"
         res_price = req.get("https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price", headers=headers, params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}, verify=False, timeout=3).json()
         if res_price.get("rt_cd") == "0":
             output = res_price.get("output", {})
-            vlsr = output.get("vlsr", "0")
-            vip["체결강도"] = f"{vlsr}%" if vlsr != "0" and vlsr != "" else "야간초기화(0%)"
             per = output.get("per", "N/A")
             pbr = output.get("pbr", "N/A")
             vip["펀더멘털"] = f"PER: {per} / PBR: {pbr}"
     except: pass
-
-    # 2. KIS API: 메이저 연속 순매수 일수
-    try:
-        headers["tr_id"] = "FHKST01010900"
-        res_inv = req.get("https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-investor", headers=headers, params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}, verify=False, timeout=3).json()
-        if res_inv.get("rt_cd") == "0":
-            inv_list = res_inv.get("output", [])
-            f_con, i_con = 0, 0
-            for day in inv_list:
-                if int(day.get("frgn_ntby_qty", "0")) > 0: f_con += 1
-                else: break
-            for day in inv_list:
-                if int(day.get("orgn_ntby_qty", "0")) > 0: i_con += 1
-                else: break
-            trends = []
-            if f_con > 1: trends.append(f"외국인 {f_con}거래일 연속 매수")
-            if i_con > 1: trends.append(f"기관 {i_con}거래일 연속 매수")
-            if trends: vip["수급트렌드"] = " / ".join(trends)
-    except: pass
     
-    return f"⚡체결강도:{vip['체결강도']} | 📈수급:{vip['수급트렌드']} | 📊{vip['펀더멘털']}"
+    return f"📊 {vip['펀더멘털']}"
 # =================================================================
 
 def safe_generate_content(contents):
@@ -105,8 +85,7 @@ def safe_generate_content(contents):
                 wait_time = 30 * (i + 1)
                 print(f"🚨 서버 혼잡. {wait_time}초 대기 후 재시도...")
                 time.sleep(wait_time)
-            else: 
-                raise e 
+            else: raise e 
     raise Exception("❌ 구글 서버 응답 불가")
 
 def get_global_liquidity_data():
@@ -141,7 +120,6 @@ try:
     gc = gspread.authorize(creds)
     doc = gc.open_by_url(SHEET_URL)
 
-    # 💡 구글 시트에서 KIS 토큰 불러오기 (API 호출용)
     KIS_TOKEN = ""
     try:
         setting_sheet = doc.worksheet("⚙️설정")
@@ -164,23 +142,23 @@ try:
         name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
         current_price, change_rate, score_str, tajeom = str(r[2]), str(r[3]), str(r[8]), str(r[9])
         shadow_status = str(r[14]) if len(r)>14 else ""
-        program_rate = str(r[21]) if len(r)>21 else "확인불가"
+        
+        # 💡 [수정] 분석에 필요한 데이터 추가 전달
+        vol_status = str(r[18]) if len(r)>18 else "🟡 [V.평년수준]"
+        program_rate = str(r[21]) if len(r)>21 else "⚪ [P.관망중]"
         
         if "주의장세" in tajeom: is_korean_market_down = True
         if "상한가" in tajeom or "29." in change_rate or "30." in change_rate: continue 
-        if "윗꼬리 위험" in shadow_status or "윗꼬리" in tajeom: continue 
-        if re.search(r'매수금지|자본잠식|딱지|관망|데이터 부족', tajeom): continue 
+        if "저항 출회" in shadow_status or "윗꼬리" in tajeom: continue 
+        if re.search(r'매매제한|매수금지|자본잠식|딱지|관망|데이터 부족', tajeom): continue 
             
-        cand_info = f"종목:{name}({code}), 현재가:{current_price}원 ({change_rate}), 타점:{tajeom}, 퀀트점수:{score_str}, 테마:{r[19] if len(r)>19 else ''}, 프로그램:{program_rate}"
+        cand_info = f"종목:{name}({code}), 현재가:{current_price}원 ({change_rate}), 타점:{tajeom}, 퀀트점수:{score_str}, 테마:{r[19] if len(r)>19 else ''}, 프로그램:{program_rate}, 거래량판독:{vol_status}"
         cand_data = {'name': name, 'code': code, 'tajeom': tajeom, 'info': cand_info}
         
-        if "상한가" in tajeom or "주도주" in tajeom or "신고가" in tajeom or "나홀로" in tajeom:
-            valid_short_candidates.append(cand_data)
-        elif "관망" in tajeom or "대기" in tajeom or "후발주" in tajeom or "눌림" in tajeom or "수급 유입" in tajeom:
+        if "플랫폼" in tajeom or "눌림" in tajeom or "수급 유입" in tajeom or "관심" in tajeom or "방어" in tajeom:
             valid_mid_candidates.append(cand_data)
         else:
-            if "돌파" in score_str: valid_short_candidates.append(cand_data)
-            else: valid_mid_candidates.append(cand_data)
+            valid_short_candidates.append(cand_data)
 
     if not valid_mid_candidates and valid_short_candidates:
         print("⚠️ 전 종목 단기 급등 상태! 하위 종목을 스윙으로 차출합니다.")
@@ -188,7 +166,7 @@ try:
         valid_short_candidates = valid_short_candidates[:-3]
         
     if not valid_short_candidates and valid_mid_candidates:
-        print("⚠️ 전 종목 눌림목 상태! 상위 종목을 단기로 차출합니다.")
+        print("⚠️ 전 종목 눌림목/플랫폼 상태! 상위 종목을 단기로 차출합니다.")
         valid_short_candidates = valid_mid_candidates[:3]
         valid_mid_candidates = valid_mid_candidates[3:]
 
@@ -202,7 +180,7 @@ try:
         else:
             if not valid_mid_candidates: raise Exception("스윙 조건 부합 종목 없음.")
             c_str = "\n".join([c['info'] for c in valid_mid_candidates])
-            s_msg = "매크로 불안 속에서도 악성 매도가 씨마른 완벽한 눌림목 스윙 1종목"
+            s_msg = "에너지 응축(씨마름)을 끝내고 프로그램 대량유입과 함께 플랫폼을 탈출하는 완벽한 스윙 1종목"
 
         pick_prompt = f"너는 실전 트레이더의 직감을 가진 수석 퀀트 애널리스트야. 매크로(나스닥:{nasdaq}, 환율:{exchange_rate}, 한국증시:{market_status_text})와 [유동성]\n{liquidity_data}\n를 분석해. 유동성이 축소 중이면 보수적 방어종목을, 공급 중이면 폭발적 주도주를 골라. [후보군] {c_str} [지시] 후보 중 '{s_msg}'을 딱 1개만 골라서 '6자리 종목코드 숫자'만 출력해."
         
@@ -214,7 +192,7 @@ try:
         target_name = best_pick['name']
         print(f"🎯 [{st_type.upper()}] 최종 픽: {target_name} ({target_code})")
 
-        print(f"🔍 {target_name} VIP 심층 데이터(체결강도/연속수급) 추출 중...")
+        print(f"🔍 {target_name} VIP 심층 데이터 추출 중...")
         vip_info = get_vip_deep_dive_data(target_code, KIS_TOKEN)
         target_specific_news = get_target_stock_news(target_code)
 
@@ -230,14 +208,15 @@ try:
             img = PIL.Image.new('RGB', (800, 800), color=(255, 255, 255))
             img.save(img_path)
 
-        warn = "\n[필수 경고] 고공권 판정. 비중을 절반으로 줄이고 칼손절 요망." if "고공권" in best_pick['tajeom'] else ("\n[필수 경고] 주의 장세. 오버나잇 비중 축소 요망." if is_korean_market_down else "")
+        warn = "\n[필수 경고] 고공권 판정. 비중을 절반으로 줄이고 칼손절 요망." if "고가(단기)" in best_pick['tajeom'] else ("\n[필수 경고] 주의 장세. 매매 비중 축소 요망." if is_korean_market_down else "")
 
+        # 💡 [수정] 프롬프트 내 체결강도 삭제 및 거래량/프로그램 중심 분석 지시
         base_prompt = f"""너는 대한민국 최상위 1% 실전 트레이더들의 감각을 가진 퀀트 애널리스트야.
 제공된 일봉 차트(Vision)와 데이터를 바탕으로 심층 리포트를 작성해라. 
 
 [입력 데이터]
-종목: {best_pick['info']}
-💎 [VIP 심층 데이터]
+종목 및 스캐너 판독: {best_pick['info']}
+💎 [VIP 펀더멘털]
 {vip_info}
 🔥 당일 타겟 종목 최신 뉴스:
 {target_specific_news}
@@ -252,24 +231,24 @@ try:
 3. 전략의 일관성: {st_type} 전략에 맞게 서술하되 두 전략을 섞지 마라.
 4. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:O 형식 출력.
 5. 프로그램 수급 연계: 제공된 [프로그램] 현황을 분석하여 주가 상승을 어떻게 뒷받침하는지 서술할 것.
-6. 💎 VIP 심층 해부: 제공된 [VIP 심층 데이터]의 체결강도(100% 이상시 매수우위), 연속 수급트렌드, 펀더멘털을 종합하여 이 종목의 폭발력과 숨겨진 리스크를 전문가처럼 날카롭게 리포트에 녹여내라.
+6. 💎 차트 및 수급 딥리딩: 제공된 차트 이미지와 스캐너의 [거래량판독], [프로그램] 비율을 융합하여 세력의 매집 의도를 날카롭게 분석해라.
 
 [출력 양식 (마크다운 유지)]
 <div class="broker-name">HYEOKS SECURITIES | {'SHORT-TERM' if st_type=='short' else 'MID-TERM'} STRATEGY</div>
 <div class="header">
 <p class="stock-title">{target_name} ({target_code})</p>
-<p class="subtitle">{'매물대 진공 구간 돌파 및 5분봉 리테스트 공략' if st_type=='short' else '선형 매집 및 플랫폼 형성 기반 종가베팅'}: (소제목 작성)</p>
+<p class="subtitle">{'매물대 진공 구간 돌파 및 단기 슈팅 공략' if st_type=='short' else '에너지 응축 후 플랫폼 탈출 스윙 전략'}: (소제목 작성)</p>
 </div>
 
 <div class="summary-box">
-<strong>💡 Company Brief & VIP Data | HYEOKS 퀀트 데스크</strong><br><br>
-(기업 펀더멘털 요약 및 체결강도/연속수급 핵심 수치 코멘트)
+<strong>💡 Company Brief & 펀더멘털 요약 | HYEOKS 퀀트 데스크</strong><br><br>
+(기업 개요 및 PER/PBR, 최신 뉴스 요약)
 </div>
 
-## 1. 펀더멘털 및 매크로 유동성 심층 고찰
+## 1. 매크로 유동성 및 내러티브 고찰
 
 ## 2. 시각적 차트 판독 및 스마트머니(VIP) 딥리딩
-(기존 거래량 분석에 체결강도와 연속 순매수 트렌드를 덧붙여 세력의 진짜 의도 파악)
+(기존 거래량 분석에 프로그램 매수 비중을 덧붙여 세력의 진짜 의도 파악)
 
 ## 3. 실전 타점 시나리오 및 리스크 관리 전략
 (리스크 요인을 반영한 상세한 액션 플랜 작성)
