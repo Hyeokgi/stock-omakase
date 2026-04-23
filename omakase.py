@@ -23,7 +23,7 @@ TARGET_PERCENT = 3.0
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
 now_kst_check = datetime.datetime.now(KST)
-# 💡 수석님의 원활한 테스트를 위해 새벽 2시~7시만 휴식하도록 유지
+# 💡 [테스트용] 새벽 2시~7시만 휴식
 if 2 <= now_kst_check.hour < 7:
     print(f"🌙 현재 시간({now_kst_check.strftime('%H:%M')}): 시스템을 휴식 모드로 전환합니다. (02시~07시)")
     sys.exit(0)
@@ -36,49 +36,36 @@ KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
 KIS_URL_BASE = "https://openapi.koreainvestment.com:9443"
 
 def get_kis_access_token():
-    if not KIS_APP_KEY or not KIS_APP_SECRET:
-        return None
-        
+    if not KIS_APP_KEY or not KIS_APP_SECRET: return None
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         gc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope))
         doc = gc.open_by_url(SHEET_URL)
         setting_sheet = doc.worksheet("⚙️설정")
-        
         records = setting_sheet.get_all_values()
         token_row_idx, date_row_idx = -1, -1
         saved_token, saved_date = "", ""
-        
         for i, row in enumerate(records):
             if len(row) >= 2:
-                if row[0] == "KIS_TOKEN":
-                    token_row_idx, saved_token = i + 1, row[1]
-                elif row[0] == "KIS_TOKEN_DATE":
-                    date_row_idx, saved_date = i + 1, row[1]
-        
+                if row[0] == "KIS_TOKEN": token_row_idx, saved_token = i + 1, row[1]
+                elif row[0] == "KIS_TOKEN_DATE": date_row_idx, saved_date = i + 1, row[1]
         now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d')
-        
         if saved_date == now_str and saved_token:
             print("♻️ 구글 시트에서 기존 KIS 토큰을 불러옵니다. (안전)")
             return saved_token
-            
         print("🆕 KIS 토큰을 새로 발급합니다...")
         headers = {"content-type": "application/json"}
         body = {"grant_type": "client_credentials", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET}
         res = requests.post(f"{KIS_URL_BASE}/oauth2/tokenP", headers=headers, json=body, timeout=5)
-        
         if res.status_code == 200:
             new_token = res.json().get("access_token")
             if token_row_idx != -1: setting_sheet.update_cell(token_row_idx, 2, new_token)
             else: setting_sheet.append_row(["KIS_TOKEN", new_token])
-                
             if date_row_idx != -1: setting_sheet.update_cell(date_row_idx, 2, now_str)
             else: setting_sheet.append_row(["KIS_TOKEN_DATE", now_str])
             return new_token
-        else:
-            print(f"❌ KIS API 토큰 발급 에러: {res.text}")
-    except Exception as e:
-        print(f"❌ KIS 토큰 관리 에러: {e}")
+        else: print(f"❌ KIS API 토큰 발급 에러: {res.text}")
+    except Exception as e: print(f"❌ KIS 토큰 관리 에러: {e}")
     return None
 
 print("🔑 한국투자증권 API 접근 토큰을 준비합니다...")
@@ -87,77 +74,64 @@ if KIS_TOKEN: print("✅ KIS 토큰 준비 완료!")
 else: print("⚠️ KIS 토큰 준비 실패")
 
 session = requests.Session()
-session.headers.update({'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15'}) # 모바일 봇 우회 세팅
+session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
 
 # ==========================================
-# 💡 [V6.5 딥다이브 엔진] 네이버 시간외/NXT 융단 폭격 수집기
+# 💡 [V6.5 딥다이브 엔진] 시간외/NXT 융단 폭격
 # ==========================================
 def get_naver_deep_dive_after_price(code, current_price):
     best_rate = 0.0
     trade_type = ""
     target_price = 0.0
     
-    # 1타겟: integrationInfo (야간 유지력 가장 좋음)
+    # 1타겟: integrationInfo
     try:
         res = session.get(f"https://m.stock.naver.com/api/stock/{code}/integrationInfo", verify=False, timeout=3).json()
-        
-        # NXT 우선 탐색
         nxt = res.get('nxtPrice') or res.get('nxtClosePrice')
         if nxt and float(str(nxt).replace(',', '')) > 0 and float(str(nxt).replace(',', '')) != current_price:
             target_price = float(str(nxt).replace(',', ''))
             trade_type = "NXT"
         else:
-            # 시간외 탐색
             after = res.get('afterClosePrice') or res.get('timeExtraClosePrice') or res.get('timeExtraPrice')
             if after and float(str(after).replace(',', '')) > 0 and float(str(after).replace(',', '')) != current_price:
                 target_price = float(str(after).replace(',', ''))
                 trade_type = "시외"
-                
         if target_price > 0:
             best_rate = round(((target_price - current_price) / current_price) * 100, 2)
-            if best_rate != 0.0:
-                return target_price, best_rate, trade_type
+            if best_rate != 0.0: return target_price, best_rate, trade_type
     except: pass
 
-    # 2타겟: basic (전통적인 방식)
+    # 2타겟: basic
     try:
         res = session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", verify=False, timeout=3).json()
         nxt_price = float(str(res.get('nxtClosePrice') or '0').replace(',', ''))
         ext_price = float(str(res.get('timeExtraClosePrice') or '0').replace(',', ''))
-        
         if nxt_price > 0 and nxt_price != current_price:
-            target_price = nxt_price
-            trade_type = "NXT"
+            target_price, trade_type = nxt_price, "NXT"
         elif ext_price > 0 and ext_price != current_price:
-            target_price = ext_price
-            trade_type = "시외"
-            
+            target_price, trade_type = ext_price, "시외"
         if target_price > 0:
             best_rate = round(((target_price - current_price) / current_price) * 100, 2)
-            if best_rate != 0.0:
-                return target_price, best_rate, trade_type
+            if best_rate != 0.0: return target_price, best_rate, trade_type
     except: pass
     
-    # 3타겟: PC 시간외 단일가 페이지 강제 크롤링 (가장 무식하지만 확실한 방법)
+    # 3타겟: PC 시간외 단일가 페이지 강제 크롤링
     try:
         time_url = f"https://finance.naver.com/item/sise_time_over.naver?code={code}"
         time_soup = BeautifulSoup(session.get(time_url, verify=False, timeout=3).content, 'html.parser', from_encoding='euc-kr')
         for tr in time_soup.find_all('tr'):
             tds = tr.find_all('td')
-            if len(tds) >= 4 and ":" in tds[0].text: # 체결 시간이 있는 유효 행
+            if len(tds) >= 4 and ":" in tds[0].text:
                 change_td = tds[2].text.strip()
                 sign_img = tds[1].find('img')
                 if sign_img:
                     alt_text = sign_img.get('alt', '')
                     try:
                         pc_rate = float(change_td.replace('%', '').strip())
-                        if "상승" in alt_text: 
-                            return 0.0, pc_rate, "시외"
-                        elif "하락" in alt_text: 
-                            return 0.0, -pc_rate, "시외"
+                        if "상승" in alt_text: return 0.0, pc_rate, "시외"
+                        elif "하락" in alt_text: return 0.0, -pc_rate, "시외"
                     except: pass
     except: pass
-
     return 0.0, 0.0, ""
 
 STOPWORDS = ['코스피', '코스닥', '증시', '주식', '투자', '종목', '시장', '지수', '대형주', '중소형주', '외인', '기관', '개인', '외국인', '매수', '매도', '순매수', '순매도', '거래', '대금', '주가', '펀드', '사모', '상장', '상폐', '공모', '특징주', '테마', '테마주', '관련', '관련주', '수혜', '수혜주', '장세', '개장', '출발', '마감', '초반', '후반', '오전', '오후', '장중', '증권', '증권사', '운용', '자사', '괴리', '프리미어', '가치', '밸류', '공시', '병합', '분할', '상승', '하락', '급등', '급락', '강세', '약세', '폭락', '반등', '조정', '랠리', '위축', '냉각', '훈풍', '안도', '불안', '쇼크', '서프라이즈', '돌파', '경신', '연속', '최고', '최저', '신고가', '신저가', '최고치', '최저치', '최고가', '최저가', '급증', '급감', '확산', '진정', '완화', '악화', '개선', '회복', '최대', '사상', '역대', '최초', '최신', '규모', '수준', '가격', '목표가', '상향', '하향', '박살', '킬러', '대규모', '변동', '오픈', '호재', '연계', '대비', '경제', '금융', '기업', '정부', '자산', '머니', '한국', '미국', '국내', '글로벌', '뉴욕', '회장', '대표', '임원', '주주', '총회', '이유', '때문', '달러', '금리', '인상', '인하', '동결', '연준', '파월', '물가', '지표', '고용', '기름값', '주유소', '석유', '신용', '수익', '매출', '적자', '흑자', '배당', '지분', '인수', '합병', '사업', '추진', '공급', '계약', '체결', '실적', '발표', '이익', '반사이익', '현금', '자회사', '계열사', '지주사', '관계사', '기내식', '서비스', '오늘', '내일', '이번', '주간', '월간', '분기', '시간', '하루', '하루만', '올해', '내년', '지난해', '전일', '전주', '전월', '동기', '내달', '연말', '연초', '이날', '당일', '최근', '현재', '이후', '이전', '상반기', '하반기', '당분간', '예상', '전망', '기대', '우려', '경고', '목표', '분석', '평가', '결정', '검토', '참여', '진출', '포기', '중단', '재개', '완료', '시작', '종료', '영향', '타격', '피해', '직격탄', '부양', '지원', '규제', '단속', '강화', '철폐', '폐지', '유지', '보류', '달성', '기준', '행사', '이사', '의결', '개정', '취지', '적극', '개최', '진행', '예정', '상황', '필요', '대응', '마련', '운영', '관리', '적용', '이용', '사용', '활용', '확보', '제공', '구축', '기반', '중심', '노력', '계획', '정도', '경우', '이상', '이하', '가운데', '가장', '포함', '제외', '기대감', '우려감', '불확실성', '가능성', '움직임', '분위기', '흐름', '국면', '대목', '차원', '입장', '배경', '결과', '모습', '모멘텀', '현상', '차이', '비중', '비율', '단계', '목적', '대상', '조원', '억원', '만원', '천원', '전문', '현지', '사회', '생산자', '제도', '재고', '면제', '속보', '단독', '기자', '특파원', '앵커', '저작권', '무단', '전재', '재배포', '금지', '뉴스', '보도', '자료', '사진', '관계자', '주장', '설명', '강조', '위원회', '법안', '회의', '통과', '정책', '의원', '장관', '페이지', '주소', '입력', '방문', '삭제', '요청', '정확', '확인', '문의', '사항', '고객', '센터', '안내', '감사', '반대', '선임', '공개', '자본', '공개', '이란', '국민연금', '종전', '전쟁', '트럼프', '제안', '찬성', '대통령', '사내', '협상', '출시', '계좌', '중동', '상품', '체제', '변경', '투자증권', '성장', '시그널', '신규', '정치', '외교', '합의', '수출', '수입', '도입', '본격', '소식', '임박', '부각', '주도']
@@ -224,78 +198,96 @@ def get_market_cap(code):
         else: return int(market_sum_str)
     except: return 999999 
 
+# 💡 [V6.6 좀비 패치] 에러 시에도 빈 값 반환하여 생존
 def get_real_money_themes():
-    now = datetime.datetime.now(KST)
-    is_market_closed = now.hour < 9 or now.hour > 15 or (now.hour == 15 and now.minute >= 40)
-    time_str = now.strftime('%H:%M')
-    res = session.get("https://finance.naver.com/sise/theme.naver", verify=False)
-    soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
-    raw_themes = [{'name': a.text.strip(), 'url': "https://finance.naver.com" + a['href']} for tds in [tr.find_all('td') for tr in soup.find('table', {'class': 'type_1'}).find_all('tr')] if len(tds) > 1 for a in [tds[0].find('a')] if a]
-    themes = [t for t in raw_themes if not any(b in t['name'] for b in THEME_BLACKLIST)][:20] 
-                    
-    theme_data_list = []
-    print("▶️ 실시간 주도 테마 수집 시작 (군집성 필터 적용)...")
-    for theme in themes:
-        try:
-            soup = BeautifulSoup(session.get(theme['url'], verify=False).content, 'html.parser', from_encoding='cp949')
-            stocks = []
-            for tr in soup.find('table', {'class': 'type_5'}).find_all('tr'):
-                tds = tr.find_all('td')
-                if len(tds) >= 9:
-                    try:
-                        s_name = tds[0].find('a').text.strip()
-                        s_code = f"'{tds[0].find('a')['href'].split('code=')[-1]}"
-                        rate_str, val_str = tds[4].text.strip(), tds[8].text.strip()
-                        if '%' not in rate_str or '-' in rate_str or '0.00' in rate_str: continue
-                        rate_num = float(rate_str.replace('%', '').replace('+', '').replace(',', '').strip())
-                        val_num = int(val_str.replace(',', '').strip())
-                        if rate_num >= TARGET_PERCENT and val_num > 0 and get_market_cap(s_code.replace("'", "")) >= 1000:
-                            stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
-                    except: continue
-            
-            stocks_val = sorted(stocks, key=lambda x: x['value'], reverse=True)[:5]
-            if len(stocks_val) >= 2:
-                stocks_rate = sorted(stocks_val, key=lambda x: x['rate'], reverse=True)
-                theme_data_list.append({'theme_name': theme['name'], 'stocks': stocks_rate})
-        except: continue
+    try:
+        now = datetime.datetime.now(KST)
+        is_market_closed = now.hour < 9 or now.hour > 15 or (now.hour == 15 and now.minute >= 40)
+        time_str = now.strftime('%H:%M')
         
-    if not theme_data_list: return pd.DataFrame(), is_market_closed, {}
-    
-    grouped_themes = {}
-    for t_data in theme_data_list: grouped_themes.setdefault(t_data['stocks'][0]['code'], []).append(t_data)
+        res = session.get("https://finance.naver.com/sise/theme.naver", verify=False, timeout=5)
+        soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
         
-    merged_themes = []
-    for top_code, t_list in grouped_themes.items():
-        theme_names = list(dict.fromkeys(t['theme_name'] for t in t_list))
-        merged_name = " / ".join(theme_names) + f" (대장: {t_list[0]['stocks'][0]['name']})" if len(theme_names) > 1 else theme_names[0]
-        unique_stocks = {s['code']: s for t in t_list for s in t['stocks']}
-        merged_stocks_val = sorted(unique_stocks.values(), key=lambda x: x['value'], reverse=True)[:5]
-        merged_stocks_rate = sorted(merged_stocks_val, key=lambda x: x['rate'], reverse=True)
-        merged_themes.append({'theme_name': merged_name, 'theme_sum': sum(s['value'] for s in merged_stocks_val), 'stocks': merged_stocks_rate})
-        
-    merged_themes = sorted(merged_themes, key=lambda x: x['theme_sum'], reverse=True)
-    
-    all_theme_map = {}
-    for m_data in merged_themes:
-        for idx, s in enumerate(m_data['stocks']):
-            if s['name'] not in all_theme_map:
-                all_theme_map[s['name']] = {'theme_name': m_data['theme_name'], 'is_leader': (idx == 0)}
+        table = soup.find('table', {'class': 'type_1'})
+        if not table: # 네이버가 태그를 숨겼거나 차단한 경우
+            print("⚠️ 네이버 테마 페이지 구조 변경 또는 차단 감지됨. (빈 값 반환)")
+            return pd.DataFrame(), is_market_closed, {}
 
-    final_themes = []
-    for m_data in merged_themes:
-        if not any(len(set(s['code'] for s in m_data['stocks']).intersection(set(s['code'] for s in f_data['stocks']))) >= 2 for f_data in final_themes):
-            final_themes.append(m_data)
-        if len(final_themes) >= 10: break
+        raw_themes = [{'name': a.text.strip(), 'url': "https://finance.naver.com" + a['href']} for tds in [tr.find_all('td') for tr in table.find_all('tr')] if len(tds) > 1 for a in [tds[0].find('a')] if a]
+        themes = [t for t in raw_themes if not any(b in t['name'] for b in THEME_BLACKLIST)][:20] 
+                        
+        theme_data_list = []
+        print("▶️ 실시간 주도 테마 수집 시작 (군집성 필터 적용)...")
+        for theme in themes:
+            try:
+                soup = BeautifulSoup(session.get(theme['url'], verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
+                stocks = []
+                type_5_table = soup.find('table', {'class': 'type_5'})
+                if not type_5_table: continue
+                
+                for tr in type_5_table.find_all('tr'):
+                    tds = tr.find_all('td')
+                    if len(tds) >= 9:
+                        try:
+                            s_name = tds[0].find('a').text.strip()
+                            s_code = f"'{tds[0].find('a')['href'].split('code=')[-1]}"
+                            rate_str, val_str = tds[4].text.strip(), tds[8].text.strip()
+                            if '%' not in rate_str or '-' in rate_str or '0.00' in rate_str: continue
+                            rate_num = float(rate_str.replace('%', '').replace('+', '').replace(',', '').strip())
+                            val_num = int(val_str.replace(',', '').strip())
+                            if rate_num >= TARGET_PERCENT and val_num > 0 and get_market_cap(s_code.replace("'", "")) >= 1000:
+                                stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
+                        except: continue
+                
+                stocks_val = sorted(stocks, key=lambda x: x['value'], reverse=True)[:5]
+                if len(stocks_val) >= 2:
+                    stocks_rate = sorted(stocks_val, key=lambda x: x['rate'], reverse=True)
+                    theme_data_list.append({'theme_name': theme['name'], 'stocks': stocks_rate})
+            except: continue
             
-    final_rows = [{'날짜': now.strftime('%Y-%m-%d'), **({'시간': time_str} if not is_market_closed else {}), '순위': rank, '테마명': t_data['theme_name'], '종목명': s['name'], '종목코드': s['code'], '등락률(%)': s['rate'], '거래대금(억원)': int(s['value']/100)} for rank, t_data in enumerate(final_themes, 1) for s in t_data['stocks']]
-    return pd.DataFrame(final_rows), is_market_closed, all_theme_map
+        if not theme_data_list: return pd.DataFrame(), is_market_closed, {}
+        
+        grouped_themes = {}
+        for t_data in theme_data_list: grouped_themes.setdefault(t_data['stocks'][0]['code'], []).append(t_data)
+            
+        merged_themes = []
+        for top_code, t_list in grouped_themes.items():
+            theme_names = list(dict.fromkeys(t['theme_name'] for t in t_list))
+            merged_name = " / ".join(theme_names) + f" (대장: {t_list[0]['stocks'][0]['name']})" if len(theme_names) > 1 else theme_names[0]
+            unique_stocks = {s['code']: s for t in t_list for s in t['stocks']}
+            merged_stocks_val = sorted(unique_stocks.values(), key=lambda x: x['value'], reverse=True)[:5]
+            merged_stocks_rate = sorted(merged_stocks_val, key=lambda x: x['rate'], reverse=True)
+            merged_themes.append({'theme_name': merged_name, 'theme_sum': sum(s['value'] for s in merged_stocks_val), 'stocks': merged_stocks_rate})
+            
+        merged_themes = sorted(merged_themes, key=lambda x: x['theme_sum'], reverse=True)
+        
+        all_theme_map = {}
+        for m_data in merged_themes:
+            for idx, s in enumerate(m_data['stocks']):
+                if s['name'] not in all_theme_map:
+                    all_theme_map[s['name']] = {'theme_name': m_data['theme_name'], 'is_leader': (idx == 0)}
+
+        final_themes = []
+        for m_data in merged_themes:
+            if not any(len(set(s['code'] for s in m_data['stocks']).intersection(set(s['code'] for s in f_data['stocks']))) >= 2 for f_data in final_themes):
+                final_themes.append(m_data)
+            if len(final_themes) >= 10: break
+                
+        final_rows = [{'날짜': now.strftime('%Y-%m-%d'), **({'시간': time_str} if not is_market_closed else {}), '순위': rank, '테마명': t_data['theme_name'], '종목명': s['name'], '종목코드': s['code'], '등락률(%)': s['rate'], '거래대금(억원)': int(s['value']/100)} for rank, t_data in enumerate(final_themes, 1) for s in t_data['stocks']]
+        return pd.DataFrame(final_rows), is_market_closed, all_theme_map
+    except Exception as e:
+        print(f"🚨 테마 수집 중 치명적 에러 발생 (좀비 모드 가동): {e}")
+        # 에러가 나더라도 스크립트가 죽지 않도록 빈 객체 반환
+        return pd.DataFrame(), False, {}
 
 def get_naver_search_ranking():
     try:
         soup = BeautifulSoup(session.get("https://finance.naver.com/sise/lastsearch2.naver", verify=False).content, 'html.parser', from_encoding='euc-kr')
         data = []
         search_blacklist = ['삼성전자', 'SK하이닉스', '현대차', '기아', 'LG에너지솔루션', 'POSCO홀딩스', '셀트리온', 'NAVER', '카카오']
-        for row in soup.find('table', {'class': 'type_5'}).find_all('tr'):
+        table = soup.find('table', {'class': 'type_5'})
+        if not table: return pd.DataFrame()
+        for row in table.find_all('tr'):
             tds = row.find_all('td')
             if len(tds) >= 6 and tds[0].text.strip().isdigit(): 
                 name = tds[1].find('a').text.strip()
@@ -647,12 +639,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️고가(단기)"
 
         # =================================================================
-        # 💡 [V6.5 딥다이브 엔진 연동] 10분 스캐너에서도 네이버 딥다이브 엔진 시도
+        # 💡 [V6.5 딥다이브 엔진 연동]
         # =================================================================
         nxt_text = "➖ 0.00% (보합)"
-        
         target_price, best_rate, trade_type = get_naver_deep_dive_after_price(code, current_price)
-        
         if best_rate > 0: nxt_text = f"🔴 +{best_rate}% ({trade_type})"
         elif best_rate < 0: nxt_text = f"🔵 {best_rate}% ({trade_type})"
 
@@ -736,7 +726,7 @@ def update_technical_data(df_theme, all_theme_map):
             helper_sheet.clear()
             headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "HYEOKS점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)", "윗꼬리판독", "전고점위치", "20일이격도", "대장주이력", "거래량상태", "소속테마", "시간외(NXT)", "프로그램(당일)"]
             helper_sheet.update(range_name="A1", values=[headers] + final_results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(final_results)}개 종목 판독 완료! (프로그램 수급 데이터 수집 성공) 🚀")
+            print(f"✅ 총 {len(final_results)}개 종목 판독 완료! 🚀")
             
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
@@ -748,28 +738,21 @@ if __name__ == "__main__":
     update_technical_data(df_theme, all_theme_map)
     
     now_kst = datetime.datetime.now(KST)
-    
     if now_kst.hour == 15 and 0 <= now_kst.minute <= 50:
         try:
             scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
             creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
             gc = gspread.authorize(creds)
             doc = gc.open_by_url(SHEET_URL)
-            
             posted_data = doc.worksheet("리포트_게시").get_all_values()
             today_str = now_kst.strftime('%Y-%m-%d')
             already_posted = any(today_str in str(row[0]) for row in posted_data[:5] if row)
             
             if not already_posted:
                 GOOGLE_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbxyuSEjPmg8rZPjLlG-YKck07QYxmZm0HtxvWAumvV2zp7RRpVaKDo6D-CiQ6pLqKFm/exec"
-                
                 print("⏳ 아직 오늘 리포트가 없습니다! 구글에 바통을 넘깁니다...")
                 response = requests.post(GOOGLE_WEBHOOK_URL, timeout=30)
-                if response.status_code == 200:
-                    print("✅ 바통 터치 성공! (가격수집기 -> ai_report 순차 실행 시작)")
-                else:
-                    print(f"❌ 바통 터치 실패 (Status: {response.status_code})")
-            else:
-                print("✅ 오늘 리포트가 이미 발행되었으므로 릴레이를 생략합니다.")
-        except Exception as e:
-            print(f"❌ 바통 터치 통신 에러: {e}")
+                if response.status_code == 200: print("✅ 바통 터치 성공!")
+                else: print(f"❌ 바통 터치 실패 (Status: {response.status_code})")
+            else: print("✅ 오늘 리포트가 이미 발행되었으므로 릴레이를 생략합니다.")
+        except Exception as e: print(f"❌ 바통 터치 통신 에러: {e}")
