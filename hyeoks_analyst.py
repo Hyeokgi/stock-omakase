@@ -14,20 +14,14 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxyuSEjPmg8rZPjLlG-YKck07QYxmZm0HtxvWAumvV2zp7RRpVaKDo6D-CiQ6pLqKFm/exec"
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
-# ==========================================
-# 💡 KIS API 환경 변수
-# ==========================================
 KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
 FRED_API_KEY = "eed13162f33f0ad6547783b9bb27190b"
 
 print("🤖 [HYEOKS 리서치 센터] 매크로 융합 2.5-Pro 무한 돌파(Zombie) 엔진 가동...")
 
-try:
-    client = genai.Client(api_key=GEMINI_API_KEY)
-except Exception as e:
-    print(f"❌ API 초기화 실패: {e}")
-    exit(1)
+try: client = genai.Client(api_key=GEMINI_API_KEY)
+except Exception as e: print(f"❌ API 초기화 실패: {e}"); exit(1)
 
 def get_target_stock_news(code):
     try:
@@ -36,48 +30,28 @@ def get_target_stock_news(code):
         res = requests.get(url, headers=headers, verify=False, timeout=3)
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
         news_list = []
-        for a_tag in soup.select('.title a')[:3]:  
-            news_list.append(f"- {a_tag.text.strip()}")
+        for a_tag in soup.select('.title a')[:3]: news_list.append(f"- {a_tag.text.strip()}")
         return "\n".join(news_list) if news_list else "당일 개별 특징주 뉴스 없음"
-    except Exception:
-        return "개별 뉴스 수집 실패"
+    except Exception: return "개별 뉴스 수집 실패"
 
-# =================================================================
-# 💎 [100% KIS API 직결] VIP 심층 데이터 수집 엔진
-# =================================================================
 def get_vip_deep_dive_data(code, kis_token):
-    # 💡 [수정] 체결강도 삭제
     vip = {"펀더멘털": "N/A"}
-    
-    if not (kis_token and KIS_APP_KEY and KIS_APP_SECRET):
-        return "⚠️ KIS API 토큰 없음"
-
+    if not (kis_token and KIS_APP_KEY and KIS_APP_SECRET): return "⚠️ KIS API 토큰 없음"
     req = requests.Session()
-    headers = {
-        "authorization": f"Bearer {kis_token}",
-        "appkey": KIS_APP_KEY,
-        "appsecret": KIS_APP_SECRET,
-        "custtype": "P"
-    }
-    
-    # 1. KIS API: 펀더멘털(PER/PBR)
+    headers = {"authorization": f"Bearer {kis_token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "custtype": "P"}
     try:
         headers["tr_id"] = "FHKST01010100"
         res_price = req.get("https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price", headers=headers, params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}, verify=False, timeout=3).json()
         if res_price.get("rt_cd") == "0":
             output = res_price.get("output", {})
-            per = output.get("per", "N/A")
-            pbr = output.get("pbr", "N/A")
+            per, pbr = output.get("per", "N/A"), output.get("pbr", "N/A")
             vip["펀더멘털"] = f"PER: {per} / PBR: {pbr}"
     except: pass
-    
     return f"📊 {vip['펀더멘털']}"
-# =================================================================
 
 def safe_generate_content(contents):
     for i in range(10): 
-        try:
-            return client.models.generate_content(model='gemini-2.5-pro', contents=contents)
+        try: return client.models.generate_content(model='gemini-2.5-pro', contents=contents)
         except Exception as e:
             err_str = str(e).lower()
             print(f"⚠️ [돌파 시도 {i+1}/10] 서버 응답: {e}")
@@ -90,13 +64,7 @@ def safe_generate_content(contents):
 
 def get_global_liquidity_data():
     print("🌐 글로벌 유동성(FRED) 데이터 수집 중...")
-    indicators = {
-        "WTREGEN": "TGA 잔고", 
-        "RRPONTSYD": "역레포 잔고", 
-        "BAMLH0A0HYM2": "하이일드 스프레드", 
-        "WALCL": "연준 총자산", 
-        "M2SL": "M2 통화량" 
-    }
+    indicators = {"WTREGEN": "TGA 잔고", "RRPONTSYD": "역레포 잔고", "BAMLH0A0HYM2": "하이일드 스프레드", "WALCL": "연준 총자산", "M2SL": "M2 통화량"}
     liquidity_report = []
     for series_id, name in indicators.items():
         try:
@@ -110,8 +78,7 @@ def get_global_liquidity_data():
                 trend = f"🔺 증가 (+{diff:,.2f})" if diff > 0 else (f"🔻 감소 ({diff:,.2f})" if diff < 0 else "➖ 변동없음")
                 formatted_val = f"{latest_val:,.2f}%" if series_id == "BAMLH0A0HYM2" else f"{latest_val:,.1f}"
                 liquidity_report.append(f"- {name}: {formatted_val} ({trend})")
-        except Exception:
-            pass
+        except Exception: pass
     return "\n".join(liquidity_report) if liquidity_report else "유동성 데이터 수집 불가"
 
 try:
@@ -124,9 +91,7 @@ try:
     try:
         setting_sheet = doc.worksheet("⚙️설정")
         for row in setting_sheet.get_all_values():
-            if len(row) >= 2 and row[0] == "KIS_TOKEN":
-                KIS_TOKEN = row[1]
-                break
+            if len(row) >= 2 and row[0] == "KIS_TOKEN": KIS_TOKEN = row[1]; break
     except: pass
 
     macro_sheet = doc.worksheet("시장요약").get_all_values()
@@ -143,9 +108,8 @@ try:
         current_price, change_rate, score_str, tajeom = str(r[2]), str(r[3]), str(r[8]), str(r[9])
         shadow_status = str(r[14]) if len(r)>14 else ""
         
-        # 💡 [수정] 분석에 필요한 데이터 추가 전달
         vol_status = str(r[18]) if len(r)>18 else "🟡 [V.평년수준]"
-        program_rate = str(r[21]) if len(r)>21 else "⚪ [P.관망중]"
+        program_rate = str(r[20]) if len(r)>20 else "⚪ [P.관망중]" # 💡 V6.8 U열 적용
         
         if "주의장세" in tajeom: is_korean_market_down = True
         if "상한가" in tajeom or "29." in change_rate or "30." in change_rate: continue 
@@ -157,16 +121,13 @@ try:
         
         if "플랫폼" in tajeom or "눌림" in tajeom or "수급 유입" in tajeom or "관심" in tajeom or "방어" in tajeom:
             valid_mid_candidates.append(cand_data)
-        else:
-            valid_short_candidates.append(cand_data)
+        else: valid_short_candidates.append(cand_data)
 
     if not valid_mid_candidates and valid_short_candidates:
-        print("⚠️ 전 종목 단기 급등 상태! 하위 종목을 스윙으로 차출합니다.")
         valid_mid_candidates = valid_short_candidates[-3:] 
         valid_short_candidates = valid_short_candidates[:-3]
         
     if not valid_short_candidates and valid_mid_candidates:
-        print("⚠️ 전 종목 눌림목/플랫폼 상태! 상위 종목을 단기로 차출합니다.")
         valid_short_candidates = valid_mid_candidates[:3]
         valid_mid_candidates = valid_mid_candidates[3:]
 
@@ -192,7 +153,7 @@ try:
         target_name = best_pick['name']
         print(f"🎯 [{st_type.upper()}] 최종 픽: {target_name} ({target_code})")
 
-        print(f"🔍 {target_name} VIP 심층 데이터 추출 중...")
+        print(f"🔍 {target_name} VIP 펀더멘털 데이터 추출 중...")
         vip_info = get_vip_deep_dive_data(target_code, KIS_TOKEN)
         target_specific_news = get_target_stock_news(target_code)
 
@@ -204,13 +165,11 @@ try:
             img = PIL.Image.open(img_path)
             img.thumbnail((800, 800))
         except Exception as e:
-            print(f"⚠️ 차트 이미지 로드 에러 발생: {e}")
             img = PIL.Image.new('RGB', (800, 800), color=(255, 255, 255))
             img.save(img_path)
 
         warn = "\n[필수 경고] 고공권 판정. 비중을 절반으로 줄이고 칼손절 요망." if "고가(단기)" in best_pick['tajeom'] else ("\n[필수 경고] 주의 장세. 매매 비중 축소 요망." if is_korean_market_down else "")
 
-        # 💡 [수정] 프롬프트 내 체결강도 삭제 및 거래량/프로그램 중심 분석 지시
         base_prompt = f"""너는 대한민국 최상위 1% 실전 트레이더들의 감각을 가진 퀀트 애널리스트야.
 제공된 일봉 차트(Vision)와 데이터를 바탕으로 심층 리포트를 작성해라. 
 
@@ -230,7 +189,7 @@ try:
 2. 가격 창조 금지 (매우 중요): 본문에서 특정 가격을 언급할 때는 반드시 [입력 데이터]에 제공된 '현재가'만을 사용해라.
 3. 전략의 일관성: {st_type} 전략에 맞게 서술하되 두 전략을 섞지 마라.
 4. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:O 형식 출력.
-5. 프로그램 수급 연계: 제공된 [프로그램] 현황을 분석하여 주가 상승을 어떻게 뒷받침하는지 서술할 것.
+5. 프로그램 수급 연계: 제공된 [프로그램] 현황을 분석하여 주가 상승을 어떻게 뒷받침하는지 서술할 것. 체결강도나 시간외 단일가 언급 절대 금지.
 6. 💎 차트 및 수급 딥리딩: 제공된 차트 이미지와 스캐너의 [거래량판독], [프로그램] 비율을 융합하여 세력의 매집 의도를 날카롭게 분석해라.
 
 [출력 양식 (마크다운 유지)]
@@ -247,11 +206,10 @@ try:
 
 ## 1. 매크로 유동성 및 내러티브 고찰
 
-## 2. 시각적 차트 판독 및 스마트머니(VIP) 딥리딩
-(기존 거래량 분석에 프로그램 매수 비중을 덧붙여 세력의 진짜 의도 파악)
+## 2. 시각적 차트 판독 및 스마트머니 딥리딩
+(거래량 분석에 프로그램 매수 비중을 덧붙여 세력의 진짜 의도 파악)
 
 ## 3. 실전 타점 시나리오 및 리스크 관리 전략
-(리스크 요인을 반영한 상세한 액션 플랜 작성)
 
 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'X' if st_type=='short' else 'O'}
 """
