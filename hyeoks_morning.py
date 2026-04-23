@@ -1,4 +1,4 @@
-import os, requests, datetime, time, json
+import os, requests, datetime, time, json, re
 from bs4 import BeautifulSoup
 from google import genai
 import gspread
@@ -56,7 +56,6 @@ def get_global_liquidity_data():
 # 2. 💎 VIP 데이터 추출 (KIS API 100% 직결) 및 종목코드 매칭
 # =====================================================================
 def search_code_from_naver(stock_name):
-    # 구글 시트에 코드가 없을 경우를 대비한 최후의 안전장치 (우회 헤더 완벽 적용)
     try:
         url = "https://m.stock.naver.com/api/search/all"
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'}
@@ -67,8 +66,8 @@ def search_code_from_naver(stock_name):
     return None
 
 def get_vip_deep_dive_data(code, kis_token):
-    # 💡 신용비율 삭제 완료. KIS API 데이터로만 구성
-    vip = {"체결강도": "야간초기화(0%)", "수급트렌드": "뚜렷한 연속 매수 없음", "펀더멘털": "N/A"}
+    # 💡 [수정] 체결강도 및 낡은 수급 변수 영구 삭제
+    vip = {"펀더멘털": "N/A"}
     
     if not (kis_token and KIS_APP_KEY and KIS_APP_SECRET):
         return "⚠️ KIS API 토큰 없음"
@@ -81,39 +80,19 @@ def get_vip_deep_dive_data(code, kis_token):
         "custtype": "P"
     }
 
-    # 1. KIS API 호출: 체결강도, PER, PBR
+    # 1. KIS API 호출: 펀더멘털 (PER, PBR)
     try:
         headers["tr_id"] = "FHKST01010100"
         res_price = req.get("https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price", headers=headers, params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}, timeout=3).json()
         if res_price.get("rt_cd") == "0":
             output = res_price.get("output", {})
-            vlsr = output.get("vlsr", "0")
-            vip["체결강도"] = f"{vlsr}%" if vlsr != "0" and vlsr != "" else "야간초기화(0%)"
             per = output.get("per", "N/A")
             pbr = output.get("pbr", "N/A")
             vip["펀더멘털"] = f"PER: {per} / PBR: {pbr}"
     except: pass
 
-    # 2. KIS API 호출: 수급트렌드 (외인/기관 연속 매수)
-    try:
-        headers["tr_id"] = "FHKST01010900"
-        res_inv = req.get("https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-investor", headers=headers, params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}, timeout=3).json()
-        if res_inv.get("rt_cd") == "0":
-            inv_list = res_inv.get("output", [])
-            f_con, i_con = 0, 0
-            for day in inv_list:
-                if int(day.get("frgn_ntby_qty", "0")) > 0: f_con += 1
-                else: break
-            for day in inv_list:
-                if int(day.get("orgn_ntby_qty", "0")) > 0: i_con += 1
-                else: break
-            trends = []
-            if f_con > 1: trends.append(f"외국인 {f_con}일 연속 매수")
-            if i_con > 1: trends.append(f"기관 {i_con}일 연속 매수")
-            if trends: vip["수급트렌드"] = " / ".join(trends)
-    except: pass
-
-    return f"⚡체결강도:{vip['체결강도']} | 📈수급:{vip['수급트렌드']} | 📊{vip['펀더멘털']}"
+    # 💡 [수정] 결과 포맷 단순화 (펀더멘털만 리턴, 나머지는 시트 데이터 활용)
+    return f"📊 {vip['펀더멘털']}"
 
 def get_us_market_summary():
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'}
@@ -154,29 +133,30 @@ def get_yesterday_korean_context():
                     break
         except: pass
 
-        # 💡 네이버에 의존하지 않고, 구글 시트 '기업정보'에서 종목코드 1차 매칭
         name_to_code = {}
         try:
             company_sheet = doc.worksheet("기업정보").get_all_values()
             name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in company_sheet[1:] if len(row) >= 3}
         except: pass
 
-        scanner_sheet = doc.worksheet("스캐너_마스터")
-        scanner_data = scanner_sheet.get_all_values()[1:5]
+        scanner_sheet = doc.worksheet("주가데이터_보조") # 💡 원본 시트에서 직행
+        scanner_data = scanner_sheet.get_all_values()[1:5] # 상위 4개 종목 추출
 
     except Exception as e:
         return f"🚨 권한 또는 JSON 파싱 오류: {e}"
 
-    if not scanner_data or len(scanner_data[0]) < 13:
+    if not scanner_data or len(scanner_data[0]) < 22:
         return "구글 시트 데이터가 비어있습니다."
 
     picks_info = []
     for r in scanner_data:
-        if len(r) > 4 and r[0]:
-            name, current_price, theme = r[0].strip(), r[1].strip(), r[4]
-            program = r[16] if len(r) > 16 else "확인불가"
+        if len(r) > 20 and r[0]:
+            # 💡 [수정] 주가데이터_보조 시트 인덱스에 맞게 매핑
+            name, current_price, theme = str(r[0]).strip(), str(r[2]).strip(), str(r[19]).strip()
+            program_text = str(r[21]).strip() if r[21] else "⚪ [P.관망중]"
+            nxt_text = str(r[20]).strip() if r[20] else "➖ 0.00%"
+            vol_status = str(r[18]).strip() if r[18] else "🟡 [V.평년수준]"
             
-            # 구글 시트에서 먼저 찾고, 없으면 네이버 API로 폴백
             code = name_to_code.get(name) or search_code_from_naver(name)
             
             vip_data = "VIP 데이터 확인불가"
@@ -186,7 +166,8 @@ def get_yesterday_korean_context():
             else:
                 print(f"❌ [{name}] 종목 코드를 찾을 수 없습니다.")
 
-            picks_info.append(f"▪️ [{name}] 종가: {current_price}원 | 테마: {theme}\n  [당일 프로그램] {program}\n  [VIP 딥리딩] {vip_data}")
+            # 💡 [수정] 프롬프트에 제공할 데이터 규격화
+            picks_info.append(f"▪️ [{name}] 종가: {current_price}원 | 테마: {theme}\n  [프로그램] {program_text}\n  [야간/시외] {nxt_text}\n  [거래량] {vol_status}\n  [펀더멘털] {vip_data}")
                 
     return "\n".join(picks_info)
 
@@ -197,6 +178,7 @@ def generate_morning_briefing(market_data, news_data, kor_context, liquidity_dat
     print("🤖 AI 매크로 분석 및 리포트 작성 중...")
     client = genai.Client(api_key=GEMINI_API_KEY)
     
+    # 💡 [수정] 체결강도 삭제 및 거래량 배지 추가 지시
     prompt = f"""너는 대한민국 최상위 1% 실전 트레이더를 위한 HYEOKS 리서치 센터의 수석 매크로/퀀트 애널리스트야.
 아래의 데이터를 융합하여 오늘 아침 장 개장 전 트레이더가 읽을 '유연하고 통찰력 있는 모닝 브리핑 리포트'를 작성해라.
 
@@ -223,20 +205,19 @@ def generate_morning_briefing(market_data, news_data, kor_context, liquidity_dat
    [파트 2: 종목별 심층 분석 (파란색 뱃지)]
    🟦 [종목명]
    🔹 핵심 모멘텀 & VIP 수급
-   ▫️ [🤖프로그램: 데이터] [🌙시외: 데이터] [⚡체결강도: 데이터] [📈수급: 데이터] [📊기본: 데이터]
+   ▫️ [🤖프로그램: 제공된 프로그램 데이터 그대로 사용] [🌙야간: 제공된 시외/NXT 데이터 그대로 사용] [📈거래량: 제공된 거래량 배지 그대로 사용] [📊펀더멘털: 제공된 PER/PBR 데이터 사용]
    ▫️ (데이터와 뉴스를 융합한 세력의 매집 의도 및 상승 논리 분석)
    🔹 실전 액션 플랜
    ▫️ 진입: (시가 갭 대응 전략 및 1차 진입 타점)
    ▫️ 대응: (주요 지지선 및 돌파 목표가)
 
 3. 🚨 데이터 뱃지(Badge) 작성 절대 규칙:
-   - [🌙시외: ~] 뱃지를 작성할 때 명심해라. 한국 증시 규정상 '시간외 단일가'와 'NXT 야간거래'는 상호 배타적이다. 따라서 제공된 데이터 중 실제 거래가 발생한(유의미한 등락이 있는) 1개의 데이터만 선택하여 "🔺+1.5% (NXT)" 또는 "🔵-0.5% (단일가)" 형태로 하나만 기재해라. 절대 두 개를 비교하는 멍청한 분석을 하지 마라.
-   - 뱃지는 반드시 한 줄로 요약해서 달아라.
+   - 내가 제공한 [프로그램], [야간/시외], [거래량] 텍스트를 한 글자도 바꾸지 말고 괄호 안에 그대로 넣어라. 
+   - 없는 데이터(체결강도 등)를 억지로 지어내지 마라.
 
 4. 압축 브리핑: 핵심 추천 종목 총 3~4개만 엄선하여 브리핑해라.
 5. 군더더기 배제: 인사말, 서론 등은 생략.
 """
-# ... (이하 동일) ...
     for i in range(10):
         try:
             response = client.models.generate_content(model='gemini-2.5-pro', contents=prompt)
@@ -261,29 +242,17 @@ if __name__ == "__main__":
         today_str = datetime.datetime.now(KST).strftime('%Y년 %m월 %d일')
         final_briefing = f"🌅 [HYEOKS 모닝 브리핑] - {today_str}\n\n{briefing_text}"
     
-    # === 💡 [초강력 가독성 패치] 파이썬 자체 클렌징 엔진 ===
     print("📲 텔레그램 발송 중...")
-    
-    import re
     clean_briefing = final_briefing.replace('**', '')       
     clean_briefing = clean_briefing.replace('### ', '▶️ ')  
     clean_briefing = clean_briefing.replace('## ', '▶️ ')   
-    
     clean_briefing = re.sub(r'<([^>]+)>', r'[\1]', clean_briefing)
     
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        'chat_id': TELEGRAM_CHAT_ID, 
-        'text': clean_briefing
-    }
+    payload = {'chat_id': TELEGRAM_CHAT_ID, 'text': clean_briefing}
     
     response = requests.post(url, data=payload)
-    
-    if response.status_code == 200:
-        print("✅ 텔레그램 발송 성공! 모든 프로세스 완료!")
+    if response.status_code == 200: print("✅ 텔레그램 발송 성공! 모든 프로세스 완료!")
     else:
         print(f"❌ 텔레그램 발송 실패! (상태 코드: {response.status_code})")
-        print("🔄 일반 텍스트 모드로 재전송을 시도합니다...")
-        fallback_res = requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID, 'text': final_briefing})
-        if fallback_res.status_code == 200: print("✅ 일반 텍스트 재전송 성공!")
-        else: print("❌ 재전송도 실패했습니다.")
+        requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID, 'text': final_briefing})
