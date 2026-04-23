@@ -20,9 +20,6 @@ KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
 FRED_API_KEY = "eed13162f33f0ad6547783b9bb27190b"
 
-# =====================================================================
-# 1. 🌐 글로벌 유동성(FRED) 수집기
-# =====================================================================
 def get_global_liquidity_data():
     print("🌐 글로벌 유동성(FRED) 데이터 수집 중...")
     indicators = {
@@ -52,9 +49,6 @@ def get_global_liquidity_data():
             liquidity_report.append(f"- {name}: API 호출 에러")
     return "\n".join(liquidity_report) if liquidity_report else "유동성 데이터 수집 실패"
 
-# =====================================================================
-# 2. 💎 VIP 데이터 추출 (KIS API 100% 직결) 및 종목코드 매칭
-# =====================================================================
 def search_code_from_naver(stock_name):
     try:
         url = "https://m.stock.naver.com/api/search/all"
@@ -66,32 +60,18 @@ def search_code_from_naver(stock_name):
     return None
 
 def get_vip_deep_dive_data(code, kis_token):
-    # 💡 [수정] 체결강도 및 낡은 수급 변수 영구 삭제
     vip = {"펀더멘털": "N/A"}
-    
-    if not (kis_token and KIS_APP_KEY and KIS_APP_SECRET):
-        return "⚠️ KIS API 토큰 없음"
-
+    if not (kis_token and KIS_APP_KEY and KIS_APP_SECRET): return "⚠️ KIS API 토큰 없음"
     req = requests.Session()
-    headers = {
-        "authorization": f"Bearer {kis_token}",
-        "appkey": KIS_APP_KEY,
-        "appsecret": KIS_APP_SECRET,
-        "custtype": "P"
-    }
-
-    # 1. KIS API 호출: 펀더멘털 (PER, PBR)
+    headers = {"authorization": f"Bearer {kis_token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "custtype": "P"}
     try:
         headers["tr_id"] = "FHKST01010100"
         res_price = req.get("https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price", headers=headers, params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}, timeout=3).json()
         if res_price.get("rt_cd") == "0":
             output = res_price.get("output", {})
-            per = output.get("per", "N/A")
-            pbr = output.get("pbr", "N/A")
+            per, pbr = output.get("per", "N/A"), output.get("pbr", "N/A")
             vip["펀더멘털"] = f"PER: {per} / PBR: {pbr}"
     except: pass
-
-    # 💡 [수정] 결과 포맷 단순화 (펀더멘털만 리턴, 나머지는 시트 데이터 활용)
     return f"📊 {vip['펀더멘털']}"
 
 def get_us_market_summary():
@@ -103,19 +83,16 @@ def get_us_market_summary():
         news_items = []
         for dl in soup.find_all('dl'):
             subject = dl.find(['dt', 'dd'], {'class': 'articleSubject'})
-            if subject and subject.find('a'):
-                news_items.append(f"- {subject.find('a').text.strip()}")
+            if subject and subject.find('a'): news_items.append(f"- {subject.find('a').text.strip()}")
             if len(news_items) >= 15: break
         return "글로벌 및 국내 주요 금융 뉴스 헤드라인", "\n".join(news_items)
-    except Exception as e:
-        return f"뉴스 수집 에러: {e}", ""
+    except Exception as e: return f"뉴스 수집 에러: {e}", ""
 
 def get_yesterday_korean_context():
-    print("🇰🇷 어제 한국장 퀀트 타겟 종목 및 VIP 심층 데이터 수집 중...")
+    print("🇰🇷 어제 한국장 퀀트 타겟 종목 및 심층 데이터 수집 중...")
     try:
         gcp_creds_str = os.environ.get("GCP_CREDENTIALS")
-        if not gcp_creds_str or len(gcp_creds_str.strip()) < 10:
-            return "🚨 깃허브 환경변수(GCP_CREDENTIALS) 에러"
+        if not gcp_creds_str or len(gcp_creds_str.strip()) < 10: return "🚨 깃허브 환경변수 에러"
         
         creds_dict = json.loads(gcp_creds_str)
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -123,62 +100,48 @@ def get_yesterday_korean_context():
         client = gspread.authorize(creds)
         doc = client.open_by_url(SHEET_URL)
         
-        # KIS 토큰 확보
         kis_token = ""
         try:
-            setting_sheet = doc.worksheet("⚙️설정")
-            for row in setting_sheet.get_all_values():
+            for row in doc.worksheet("⚙️설정").get_all_values():
                 if len(row) >= 2 and row[0] == "KIS_TOKEN":
-                    kis_token = row[1]
-                    break
+                    kis_token = row[1]; break
         except: pass
 
         name_to_code = {}
         try:
-            company_sheet = doc.worksheet("기업정보").get_all_values()
-            name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in company_sheet[1:] if len(row) >= 3}
+            for row in doc.worksheet("기업정보").get_all_values()[1:]:
+                if len(row) >= 3: name_to_code[str(row[0]).strip()] = str(row[2]).strip().zfill(6)
         except: pass
 
-        scanner_sheet = doc.worksheet("주가데이터_보조") # 💡 원본 시트에서 직행
-        scanner_data = scanner_sheet.get_all_values()[1:5] # 상위 4개 종목 추출
+        scanner_data = doc.worksheet("주가데이터_보조").get_all_values()[1:5]
 
-    except Exception as e:
-        return f"🚨 권한 또는 JSON 파싱 오류: {e}"
+    except Exception as e: return f"🚨 파싱 오류: {e}"
 
-    if not scanner_data or len(scanner_data[0]) < 22:
-        return "구글 시트 데이터가 비어있습니다."
+    if not scanner_data or len(scanner_data[0]) < 21: return "구글 시트 데이터가 비어있습니다."
 
     picks_info = []
     for r in scanner_data:
-        if len(r) > 20 and r[0]:
-            # 💡 [수정] 주가데이터_보조 시트 인덱스에 맞게 매핑
+        if len(r) > 19 and r[0]:
             name, current_price, theme = str(r[0]).strip(), str(r[2]).strip(), str(r[19]).strip()
-            program_text = str(r[21]).strip() if r[21] else "⚪ [P.관망중]"
-            nxt_text = str(r[20]).strip() if r[20] else "➖ 0.00%"
+            program_text = str(r[20]).strip() if r[20] else "⚪ [P.관망중]"
             vol_status = str(r[18]).strip() if r[18] else "🟡 [V.평년수준]"
             
             code = name_to_code.get(name) or search_code_from_naver(name)
-            
             vip_data = "VIP 데이터 확인불가"
             if code:
                 print(f"🔍 [{name} ({code})] VIP 데이터 수집 중...")
                 vip_data = get_vip_deep_dive_data(code, kis_token)
-            else:
-                print(f"❌ [{name}] 종목 코드를 찾을 수 없습니다.")
 
-            # 💡 [수정] 프롬프트에 제공할 데이터 규격화
-            picks_info.append(f"▪️ [{name}] 종가: {current_price}원 | 테마: {theme}\n  [프로그램] {program_text}\n  [야간/시외] {nxt_text}\n  [거래량] {vol_status}\n  [펀더멘털] {vip_data}")
+            # 💡 [V6.8 변경] 프롬프트 제공 데이터에서 시간외 삭제
+            picks_info.append(f"▪️ [{name}] 종가: {current_price}원 | 테마: {theme}\n  [프로그램] {program_text}\n  [거래량] {vol_status}\n  [펀더멘털] {vip_data}")
                 
     return "\n".join(picks_info)
 
-# =====================================================================
-# 3. 🧠 투 트랙(Quant + News) 전략 AI 프롬프트
-# =====================================================================
 def generate_morning_briefing(market_data, news_data, kor_context, liquidity_data):
     print("🤖 AI 매크로 분석 및 리포트 작성 중...")
     client = genai.Client(api_key=GEMINI_API_KEY)
     
-    # 💡 [수정] 체결강도 삭제 및 거래량 배지 추가 지시
+    # 💡 [V6.8 변경] 프롬프트 내 야간/시외 및 체결강도 언급 금지 규칙 강화
     prompt = f"""너는 대한민국 최상위 1% 실전 트레이더를 위한 HYEOKS 리서치 센터의 수석 매크로/퀀트 애널리스트야.
 아래의 데이터를 융합하여 오늘 아침 장 개장 전 트레이더가 읽을 '유연하고 통찰력 있는 모닝 브리핑 리포트'를 작성해라.
 
@@ -205,15 +168,15 @@ def generate_morning_briefing(market_data, news_data, kor_context, liquidity_dat
    [파트 2: 종목별 심층 분석 (파란색 뱃지)]
    🟦 [종목명]
    🔹 핵심 모멘텀 & VIP 수급
-   ▫️ [🤖프로그램: 제공된 프로그램 데이터 그대로 사용] [🌙야간: 제공된 시외/NXT 데이터 그대로 사용] [📈거래량: 제공된 거래량 배지 그대로 사용] [📊펀더멘털: 제공된 PER/PBR 데이터 사용]
-   ▫️ (데이터와 뉴스를 융합한 세력의 매집 의도 및 상승 논리 분석)
+   ▫️ [🤖프로그램: 제공된 프로그램 데이터] [📈거래량: 제공된 거래량 배지] [📊펀더멘털: 제공된 PER/PBR 데이터]
+   ▫️ (데이터와 뉴스를 융합한 세력의 매집 의도 및 상승 논리 분석. 체결강도나 시간외 단일가 언급 절대 금지)
    🔹 실전 액션 플랜
    ▫️ 진입: (시가 갭 대응 전략 및 1차 진입 타점)
    ▫️ 대응: (주요 지지선 및 돌파 목표가)
 
 3. 🚨 데이터 뱃지(Badge) 작성 절대 규칙:
-   - 내가 제공한 [프로그램], [야간/시외], [거래량] 텍스트를 한 글자도 바꾸지 말고 괄호 안에 그대로 넣어라. 
-   - 없는 데이터(체결강도 등)를 억지로 지어내지 마라.
+   - 내가 제공한 [프로그램], [거래량] 텍스트를 한 글자도 바꾸지 말고 괄호 안에 그대로 넣어라. 
+   - 없는 데이터(체결강도, 시간외 등)를 억지로 지어내지 마라.
 
 4. 압축 브리핑: 핵심 추천 종목 총 3~4개만 엄선하여 브리핑해라.
 5. 군더더기 배제: 인사말, 서론 등은 생략.
