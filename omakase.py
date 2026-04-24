@@ -76,7 +76,17 @@ else: print("⚠️ KIS 토큰 준비 실패")
 session = requests.Session()
 session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
 
-# 💡 V6.8: 시간외/NXT 관련 함수(get_naver_deep_dive_after_price 등) 모두 삭제됨
+# 💡 V6.8: 시간외/NXT 관련 함수 삭제됨
+
+# 💡 [V6.10 신규 엔진] 코스피 실시간 지수 등락률 수집
+def get_kospi_rate():
+    try:
+        url = "https://m.stock.naver.com/api/index/KOSPI/basic"
+        res = session.get(url, verify=False, timeout=3).json()
+        rate_str = res.get('fluctuationsRatio', '0')
+        return float(str(rate_str).replace(',', ''))
+    except:
+        return 0.0
 
 STOPWORDS = ['코스피', '코스닥', '증시', '주식', '투자', '종목', '시장', '지수', '대형주', '중소형주', '외인', '기관', '개인', '외국인', '매수', '매도', '순매수', '순매도', '거래', '대금', '주가', '펀드', '사모', '상장', '상폐', '공모', '특징주', '테마', '테마주', '관련', '관련주', '수혜', '수혜주', '장세', '개장', '출발', '마감', '초반', '후반', '오전', '오후', '장중', '증권', '증권사', '운용', '자사', '괴리', '프리미어', '가치', '밸류', '공시', '병합', '분할', '상승', '하락', '급등', '급락', '강세', '약세', '폭락', '반등', '조정', '랠리', '위축', '냉각', '훈풍', '안도', '불안', '쇼크', '서프라이즈', '돌파', '경신', '연속', '최고', '최저', '신고가', '신저가', '최고치', '최저치', '최고가', '최저가', '급증', '급감', '확산', '진정', '완화', '악화', '개선', '회복', '최대', '사상', '역대', '최초', '최신', '규모', '수준', '가격', '목표가', '상향', '하향', '박살', '킬러', '대규모', '변동', '오픈', '호재', '연계', '대비', '경제', '금융', '기업', '정부', '자산', '머니', '한국', '미국', '국내', '글로벌', '뉴욕', '회장', '대표', '임원', '주주', '총회', '이유', '때문', '달러', '금리', '인상', '인하', '동결', '연준', '파월', '물가', '지표', '고용', '기름값', '주유소', '석유', '신용', '수익', '매출', '적자', '흑자', '배당', '지분', '인수', '합병', '사업', '추진', '공급', '계약', '체결', '실적', '발표', '이익', '반사이익', '현금', '자회사', '계열사', '지주사', '관계사', '기내식', '서비스', '오늘', '내일', '이번', '주간', '월간', '분기', '시간', '하루', '하루만', '올해', '내년', '지난해', '전일', '전주', '전월', '동기', '내달', '연말', '연초', '이날', '당일', '최근', '현재', '이후', '이전', '상반기', '하반기', '당분간', '예상', '전망', '기대', '우려', '경고', '목표', '분석', '평가', '결정', '검토', '참여', '진출', '포기', '중단', '재개', '완료', '시작', '종료', '영향', '타격', '피해', '직격탄', '부양', '지원', '규제', '단속', '강화', '철폐', '폐지', '유지', '보류', '달성', '기준', '행사', '이사', '의결', '개정', '취지', '적극', '개최', '진행', '예정', '상황', '필요', '대응', '마련', '운영', '관리', '적용', '이용', '사용', '활용', '확보', '제공', '구축', '기반', '중심', '노력', '계획', '정도', '경우', '이상', '이하', '가운데', '가장', '포함', '제외', '기대감', '우려감', '불확실성', '가능성', '움직임', '분위기', '흐름', '국면', '대목', '차원', '입장', '배경', '결과', '모습', '모멘텀', '현상', '차이', '비중', '비율', '단계', '목적', '대상', '조원', '억원', '만원', '천원', '전문', '현지', '사회', '생산자', '제도', '재고', '면제', '속보', '단독', '기자', '특파원', '앵커', '저작권', '무단', '전재', '재배포', '금지', '뉴스', '보도', '자료', '사진', '관계자', '주장', '설명', '강조', '위원회', '법안', '회의', '통과', '정책', '의원', '장관', '페이지', '주소', '입력', '방문', '삭제', '요청', '정확', '확인', '문의', '사항', '고객', '센터', '안내', '감사', '반대', '선임', '공개', '자본', '공개', '이란', '국민연금', '종전', '전쟁', '트럼프', '제안', '찬성', '대통령', '사내', '협상', '출시', '계좌', '중동', '상품', '체제', '변경', '투자증권', '성장', '시그널', '신규', '정치', '외교', '합의', '수출', '수입', '도입', '본격', '소식', '임박', '부각', '주도']
 AD_FILTER = ['펀드', '투어', '캠페인', '서비스', '최초', '강화', '고객', '연금', '마스터', '코리아', '정책', '개최', '박람회', '전시회', '프로모션', '할인', '기획전', '페스티벌', '출시', '협약', 'MOU', '체결', '선정', '어워드', '스마트픽', '팔자', '사자', '증가', '감소', '목표', '꺾인', '주석', '전망', '우려', '기대', '연내', '내달', '오늘', '내일', '돌파', '연속', '급락', '투자', '매수', '매도', '수익']
@@ -291,7 +301,7 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
                 sheet.update(range_name="A1", values=[df.columns.values.tolist()] + df.values.tolist(), value_input_option="USER_ENTERED")
     except: pass
 
-def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map):
+def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate):
     try:
         url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=60&requestType=0"
         root = ET.fromstring(session.get(url, verify=False, timeout=3).text)
@@ -387,8 +397,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if f_buy > 0 and i_buy > 0: is_dual_buy = True
         except: pass
 
-        # 💡 [V6.8] 프로그램 수급 수집 (시간외/체결강도 삭제)
         program_text = "확인불가"
+        pg_amount_eok = 0
+        pg_ratio = 0.0
+
         try:
             frgn_url = f"https://finance.naver.com/item/frgn.naver?code={code}"
             frgn_res = session.get(frgn_url, verify=False, timeout=3)
@@ -404,14 +416,17 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         pg_amount_won = pg_vol * current_price 
                         pg_amount_eok = pg_amount_won / 100_000_000 
                         
-                        pg_ratio = 0.0
                         if trading_value > 0:
                             pg_ratio = (abs(pg_amount_won) / trading_value) * 100
                             
-                        if pg_amount_eok >= 30 and pg_ratio >= 10.0: program_text = f"🔴 [P.대량유입] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-                        elif pg_amount_eok >= 10 and pg_ratio >= 5.0: program_text = f"🔴 [P.매수우위] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-                        elif pg_amount_eok <= -30 and pg_ratio >= 10.0: program_text = f"🔵 [P.대량출회] {int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-                        elif pg_amount_eok <= -10 and pg_ratio >= 5.0: program_text = f"🔵 [P.매도우위] {int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+                        if pg_amount_eok >= 30 and pg_ratio >= 10.0:
+                            program_text = f"🔴 [P.대량유입] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+                        elif pg_amount_eok >= 10 and pg_ratio >= 5.0:
+                            program_text = f"🔴 [P.매수우위] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+                        elif pg_amount_eok <= -30 and pg_ratio >= 10.0:
+                            program_text = f"🔵 [P.대량출회] {int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+                        elif pg_amount_eok <= -10 and pg_ratio >= 5.0:
+                            program_text = f"🔵 [P.매도우위] {int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
                         else:
                             sign = "+" if pg_amount_eok > 0 else ""
                             program_text = f"⚪ [P.관망중] {sign}{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
@@ -569,13 +584,29 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             dynamic_supply = supply_text if supply_text != "" else " (대규모 거래대금)"
             master_tajeom = f"👀 [관심] 신규 기준봉 출현{dynamic_supply}" + (" ⚠️(주의장세)" if is_warning_market else "")
             
+        # =================================================================
+        # 💡 [V6.10] 코스피 연동 다이내믹 해지 프리미엄 엔진 
+        # =================================================================
+        hedge_premium = 0
+        if kospi_rate <= -0.5:
+            # -0.5%일 때 5점, 이후 -0.1%마다 1점씩 추가 스케일링
+            extra_steps = int(round((abs(kospi_rate) - 0.5) / 0.1, 1))
+            if extra_steps < 0: extra_steps = 0
+            hedge_premium = 5 + extra_steps
+
+        # 해지 성격을 띠는 테마 키워드 필터링
+        is_hedge_theme = any(kw in my_theme_name for kw in ['방산', '전쟁', '해운', '조선', '석유', '가스', '원자재', '식품', '금', '은', '비철금속', '품절'])
+
+        if is_hedge_theme and hedge_premium > 0:
+            quant_score += hedge_premium
+            master_tajeom += f" 🛡️(해지+{hedge_premium}점)"
+
         score_display = f"{quant_score}점 ({track_type})"
         if is_chronic_loss and "[" in master_tajeom:
             quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️(3년적자)"
         if is_high_altitude and "[" in master_tajeom:
             quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️고가(단기)"
 
-        # 💡 [V6.8 변경] 20번째 인덱스(U열)에 프로그램 배치, 시간외 데이터(21번) 완전 삭제
         return [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", 
             int(ma5), int(ma20), vol_ratio_text, signal, 
@@ -590,6 +621,11 @@ def update_technical_data(df_theme, all_theme_map):
     try:
         print("▶️ 기술적 지표 초고속 멀티스레딩 판독 시작...")
         is_warning_market = check_warning_market()
+        
+        # 💡 [V6.10] 코스피 실시간 등락률 파악
+        kospi_rate = get_kospi_rate()
+        print(f"📊 현재 코스피 등락률: {kospi_rate}%")
+        
         if is_warning_market: print("⚠️ 코스닥 20일선 이탈(하락장) 감지!")
         
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -642,7 +678,8 @@ def update_technical_data(df_theme, all_theme_map):
         results = []
         print(f"⚡ {len(target_dict)}개 종목을 30개의 스레드로 동시 타격합니다...")
         with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
-            future_to_name = {executor.submit(analyze_single_stock, name, code, is_warning_market, theme_rank_dict, all_theme_map): name for name, code in target_dict.items()}
+            # kospi_rate 추가 전달
+            future_to_name = {executor.submit(analyze_single_stock, name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate): name for name, code in target_dict.items()}
             for future in concurrent.futures.as_completed(future_to_name):
                 res = future.result()
                 if res: results.append(res)
@@ -653,10 +690,9 @@ def update_technical_data(df_theme, all_theme_map):
             try: helper_sheet = doc.worksheet("주가데이터_보조")
             except: helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="21")
             helper_sheet.clear()
-            # 💡 [V6.8] 헤더 축소 및 U열(프로그램) 재배치
             headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "HYEOKS점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)", "윗꼬리판독", "전고점위치", "20일이격도", "대장주이력", "거래량상태", "소속테마", "프로그램(당일)"]
             helper_sheet.update(range_name="A1", values=[headers] + results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(results)}개 종목 판독 완료! (수급 최적화) 🚀")
+            print(f"✅ 총 {len(results)}개 종목 판독 완료! (수급 및 해지프리미엄 최적화) 🚀")
             
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
