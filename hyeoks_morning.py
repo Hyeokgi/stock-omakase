@@ -117,7 +117,7 @@ def get_yesterday_korean_context():
         except: pass
 
         # 💡 [수정] 넉넉히 15개 정도 가져와서 '진짜' 조건에 맞는 종목만 엄선
-        scanner_data = doc.worksheet("주가데이터_보조").get_all_values()[1:15]
+        scanner_data = doc.worksheet("주가데이터_보조").get_all_values()[1:]
 
     except Exception as e: return f"🚨 파싱 오류: {e}"
 
