@@ -18,7 +18,7 @@ KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
 FRED_API_KEY = "eed13162f33f0ad6547783b9bb27190b"
 
-print("🤖 [HYEOKS 리서치 센터] 매크로 융합 2.5-Pro 무한 돌파(Zombie V7.0) 엔진 가동...")
+print("🤖 [HYEOKS 리서치 센터] 매크로 융합 2.5-Pro V7.1 (강제차출+신고가특권) 엔진 가동...")
 
 try: client = genai.Client(api_key=GEMINI_API_KEY)
 except Exception as e: print(f"❌ API 초기화 실패: {e}"); exit(1)
@@ -96,74 +96,81 @@ try:
 
     macro_sheet = doc.worksheet("시장요약").get_all_values()
     nasdaq, exchange_rate, wti_oil = macro_sheet[1][4], macro_sheet[1][6], macro_sheet[1][7]
-    tech_data = doc.worksheet("주가데이터_보조").get_all_values()[1:30]
+    tech_data = doc.worksheet("주가데이터_보조").get_all_values()[1:50] # 💡 더 많은 후보 탐색을 위해 50개 로드
     
     liquidity_data = get_global_liquidity_data()
     valid_short_candidates, valid_mid_candidates = [], []
-    all_candidates_fallback = [] # 💡 [V7.0 추가] 최악의 경우를 대비한 모든 캔디데이트 백업 풀
+    all_candidates_fallback = [] # 최후의 보루 (전체 리스트)
     is_korean_market_down = False 
 
     for r in tech_data:
-        if len(r) < 10: continue
+        if len(r) < 21: continue # V6.9 U열(21번째) 기준
         name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
         current_price, change_rate, score_str, tajeom = str(r[2]), str(r[3]), str(r[8]), str(r[9])
-        shadow_status = str(r[14]) if len(r)>14 else ""
-        vol_status = str(r[18]) if len(r)>18 else "🟡 [V.평년수준]"
-        program_rate = str(r[20]) if len(r)>20 else "⚪ [P.관망중]" 
+        shadow_status = str(r[14])
+        vol_status = str(r[18])
+        program_rate = str(r[20]) 
         
         if "주의장세" in tajeom: is_korean_market_down = True
         
-        # 💡 [V7.0 추가] 백업 풀에 모든 종목 (상한가/하한가 제외) 저장
-        cand_info = f"종목:{name}({code}), 현재가:{current_price}원 ({change_rate}), 타점:{tajeom}, 퀀트점수:{score_str}, 테마:{r[19] if len(r)>19 else ''}, 프로그램:{program_rate}, 거래량판독:{vol_status}"
-        cand_data = {'name': name, 'code': code, 'tajeom': tajeom, 'info': cand_info}
+        # 💡 [V7.1] 순수 숫자 점수 추출 (정렬용)
+        try: num_score = int(score_str.split('점')[0])
+        except: num_score = 0
+            
+        cand_info = f"종목:{name}({code}), 현재가:{current_price}원 ({change_rate}), 타점:{tajeom}, 퀀트점수:{score_str}, 테마:{r[19]}, 프로그램:{program_rate}, 거래량판독:{vol_status}"
+        cand_data = {'name': name, 'code': code, 'tajeom': tajeom, 'info': cand_info, 'score': num_score}
         
-        if "상한가" not in tajeom and "하한가" not in tajeom:
-             all_candidates_fallback.append(cand_data)
+        # 상/하한가, 매매제한 종목은 영원히 제외
+        if "상한가" in tajeom or "하한가" in tajeom or "29." in change_rate or "30." in change_rate or "-29." in change_rate or "-30." in change_rate: continue 
+        if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족', tajeom): continue 
+        
+        # 정상적인 종목은 백업 풀에 점수와 함께 보관
+        all_candidates_fallback.append(cand_data)
 
-        # 기존 필터링 룰
-        if "상한가" in tajeom or "29." in change_rate or "30." in change_rate: continue 
+        # 윗꼬리 심한 종목, 완전 관망 종목 필터링 (정식 후보용)
         if "저항 출회" in shadow_status or "윗꼬리" in tajeom: continue 
-        if re.search(r'매매제한|매수금지|자본잠식|딱지|관망|데이터 부족', tajeom): continue 
+        if "관망" in tajeom and "관심" not in tajeom: continue
             
         if "플랫폼" in tajeom or "눌림" in tajeom or "수급 유입" in tajeom or "관심" in tajeom or "방어" in tajeom:
             valid_mid_candidates.append(cand_data)
         else: valid_short_candidates.append(cand_data)
 
-    # 💡 [V7.0 무적 로직] 빈 배열 방어 처리 (극단적 스왑 및 강제 차출)
+    # 백업 풀을 퀀트 점수(score) 내림차순으로 강력하게 정렬
+    all_candidates_fallback.sort(key=lambda x: x['score'], reverse=True)
+
+    # 💡 [V7.1 무적 로직] 최상위 강제 차출
     is_short_alternative = False
     is_mid_alternative = False
 
-    # Short 풀이 비었을 때
+    # Short 풀 처리
     if not valid_short_candidates:
         if len(valid_mid_candidates) > 1:
-            valid_short_candidates = [valid_mid_candidates[0]] # Mid에서 제일 좋은 놈 뺏어오기
+            valid_short_candidates = [valid_mid_candidates[0]] 
             valid_mid_candidates = valid_mid_candidates[1:]
             is_short_alternative = True
-            print("🔄 [시스템 알림] 단기 후보가 없어 스윙 후보에서 1종목을 차출했습니다.")
+            print("🔄 [알림] 스윙 후보에서 단기로 1종목 차출.")
         else:
-            # Mid도 1개 이하면 백업 풀(전체 리스트)에서 강제로 가져옴
             if all_candidates_fallback:
-                valid_short_candidates = [all_candidates_fallback[0]]
+                valid_short_candidates = [all_candidates_fallback[0]] # 점수 1등 강제 배정
+                all_candidates_fallback = all_candidates_fallback[1:] # 1등 뺐으니 리스트에서 제거
                 is_short_alternative = True
-                print("🚨 [긴급 알림] 단기/스윙 후보가 모두 고갈되어, 상위 종목을 강제 배정합니다.")
+                print("🚨 [대안] 단기 후보 고갈 -> 퀀트 점수 1위 강제 배정")
             else:
-                 # 정말정말 최악의 경우를 대비한 가짜 데이터 (시스템 폭파 방지용)
-                 valid_short_candidates = [{'name': '시장관망', 'code': '000000', 'tajeom': '관망', 'info': '현재 시장 상황이 극도로 불안정하여 매수 후보를 산출할 수 없습니다.'}]
-                 is_short_alternative = True
+                valid_short_candidates = [{'name': '시장관망', 'code': '000000', 'tajeom': '관망', 'info': '현재 시장 상황이 극도로 불안정하여 매수 후보를 산출할 수 없습니다.'}]
+                is_short_alternative = True
 
-    # Mid 풀이 비었을 때
+    # Mid 풀 처리
     if not valid_mid_candidates:
         if len(valid_short_candidates) > 1:
-            valid_mid_candidates = [valid_short_candidates[-1]] # Short 풀의 꼴찌를 Mid로 보냄
+            valid_mid_candidates = [valid_short_candidates[-1]] 
             valid_short_candidates = valid_short_candidates[:-1]
             is_mid_alternative = True
-            print("🔄 [시스템 알림] 스윙 후보가 없어 단기 후보에서 1종목을 차출했습니다.")
+            print("🔄 [알림] 단기 후보에서 스윙으로 1종목 차출.")
         else:
-            # Short 풀이 1개 이하면 백업 풀에서 강제로 가져옴
-            if len(all_candidates_fallback) > 1:
-                valid_mid_candidates = [all_candidates_fallback[1]]
+            if all_candidates_fallback:
+                valid_mid_candidates = [all_candidates_fallback[0]] # 남은 백업 풀에서 점수 제일 높은 놈 배정
                 is_mid_alternative = True
-                print("🚨 [긴급 알림] 스윙 후보가 고갈되어, 상위 종목을 강제 배정합니다.")
+                print("🚨 [대안] 스윙 후보 고갈 -> 퀀트 점수 차순위 강제 배정")
             else:
                  valid_mid_candidates = [{'name': '시장관망', 'code': '000000', 'tajeom': '관망', 'info': '현재 시장 상황이 극도로 불안정하여 매수 후보를 산출할 수 없습니다.'}]
                  is_mid_alternative = True
@@ -174,11 +181,11 @@ try:
         if st_type == "short":
             c_str = "\n".join([c['info'] for c in valid_short_candidates])
             s_msg = "주도 테마의 심장부에서 전고점 매물대를 완벽히 소화해 낸 최고의 단기 돌파 1종목"
-            sub_title_prefix = "[🚨시장 대안] 단기 모멘텀 공략" if is_alternative else "매물대 진공 구간 돌파 및 단기 슈팅 공략"
+            sub_title_prefix = "🚨[시장 대안] 단기 모멘텀 공략" if is_alternative else "매물대 진공 구간 돌파 및 단기 슈팅 공략"
         else:
             c_str = "\n".join([c['info'] for c in valid_mid_candidates])
             s_msg = "에너지 응축(씨마름)을 끝내고 프로그램 대량유입과 함께 플랫폼을 탈출하는 완벽한 스윙 1종목"
-            sub_title_prefix = "[🚨시장 대안] 눌림목 변형 공략" if is_alternative else "에너지 응축 후 플랫폼 탈출 스윙 전략"
+            sub_title_prefix = "🚨[시장 대안] 눌림목 변형 공략" if is_alternative else "에너지 응축 후 플랫폼 탈출 스윙 전략"
 
         pick_prompt = f"너는 실전 트레이더의 직감을 가진 수석 퀀트 애널리스트야. 매크로(나스닥:{nasdaq}, 환율:{exchange_rate}, 한국증시:{market_status_text})와 [유동성]\n{liquidity_data}\n를 분석해. 유동성이 축소 중이면 보수적 방어종목을, 공급 중이면 폭발적 주도주를 골라. [후보군] {c_str} [지시] 후보 중 '{s_msg}'을 딱 1개만 골라서 '6자리 종목코드 숫자'만 출력해."
         
@@ -190,7 +197,7 @@ try:
         target_name = best_pick['name']
         print(f"🎯 [{st_type.upper()}] 최종 픽: {target_name} ({target_code}) {'(대안)' if is_alternative else ''}")
 
-        if target_code == "000000": # 강제 관망 종목 처리
+        if target_code == "000000": 
             return f"<h2>시장 상황이 극도로 악화되어 {st_type} 전략 추천을 유보합니다.</h2>", target_code, None
 
         print(f"🔍 {target_name} VIP 펀더멘털 데이터 추출 중...")
@@ -229,7 +236,7 @@ try:
 2. 가격 창조 금지 (매우 중요): 본문에서 특정 가격을 언급할 때는 반드시 [입력 데이터]에 제공된 '현재가'만을 사용해라.
 3. 전략의 일관성: {st_type} 전략에 맞게 서술하되 두 전략을 섞지 마라.
 4. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:O 형식 출력.
-5. 프로그램 수급 연계: 제공된 [프로그램] 현황을 분석하여 주가 상승을 어떻게 뒷받침하는지 서술할 것. 체결강도나 시간외 단일가 언급 절대 금지.
+5. 프로그램 수급 연계: 제공된 [프로그램] 현황을 분석하여 주가 상승을 어떻게 뒷받침하는지 서술할 것. 
 6. 💎 차트 및 수급 딥리딩: 제공된 차트 이미지와 스캐너의 [거래량판독], [프로그램] 비율을 융합하여 세력의 매집 의도를 날카롭게 분석해라.
 
 [출력 양식 (마크다운 유지)]
@@ -301,7 +308,7 @@ try:
 
         for p in picks:
             if not p: continue
-            if p['code'] == "000000": continue # 강제 관망 종목은 계좌에 넣지 않음
+            if p['code'] == "000000": continue 
             try: curr_p = int(req.get(f"https://m.stock.naver.com/api/stock/{p['code']}/basic", verify=False, timeout=3).json()['closePrice'].replace(',',''))
             except: continue
             idx = next((i for i, v in enumerate(new_hold) if v[0] == p['name']), -1)
