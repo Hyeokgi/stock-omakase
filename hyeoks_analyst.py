@@ -109,7 +109,7 @@ try:
         shadow_status = str(r[14]) if len(r)>14 else ""
         
         vol_status = str(r[18]) if len(r)>18 else "🟡 [V.평년수준]"
-        program_rate = str(r[20]) if len(r)>20 else "⚪ [P.관망중]" # 💡 V6.8 U열 적용
+        program_rate = str(r[20]) if len(r)>20 else "⚪ [P.관망중]"
         
         if "주의장세" in tajeom: is_korean_market_down = True
         if "상한가" in tajeom or "29." in change_rate or "30." in change_rate: continue 
@@ -123,25 +123,35 @@ try:
             valid_mid_candidates.append(cand_data)
         else: valid_short_candidates.append(cand_data)
 
-    if not valid_mid_candidates and valid_short_candidates:
-        valid_mid_candidates = valid_short_candidates[-3:] 
-        valid_short_candidates = valid_short_candidates[:-3]
+    # 💡 [V6.9] 차선책 풀링 로직 보강 및 마커 변수 추가
+    is_short_alternative = False
+    is_mid_alternative = False
+
+    if not valid_mid_candidates and len(valid_short_candidates) > 1:
+        valid_mid_candidates = [valid_short_candidates[-1]] # short 풀에서 가장 우선순위가 낮은 것을 mid로 차출
+        valid_short_candidates = valid_short_candidates[:-1]
+        is_mid_alternative = True
+        print("🔄 [시스템 알림] 스윙 후보가 없어 단기 후보에서 1종목을 차출했습니다.")
         
-    if not valid_short_candidates and valid_mid_candidates:
-        valid_short_candidates = valid_mid_candidates[:3]
-        valid_mid_candidates = valid_mid_candidates[3:]
+    if not valid_short_candidates and len(valid_mid_candidates) > 1:
+        valid_short_candidates = [valid_mid_candidates[0]] # mid 풀에서 가장 우선순위가 높은 것을 short로 차출
+        valid_mid_candidates = valid_mid_candidates[1:]
+        is_short_alternative = True
+        print("🔄 [시스템 알림] 단기 후보가 없어 스윙 후보에서 1종목을 차출했습니다.")
 
     market_status_text = "코스피/코스닥 20일선 이탈 (하락 변동성 장세)" if is_korean_market_down else "코스피/코스닥 안정화 (추세 추종 베팅 가능)"
 
-    def generate_hyeoks_report(st_type):
+    def generate_hyeoks_report(st_type, is_alternative):
         if st_type == "short":
             if not valid_short_candidates: raise Exception("단기 조건 부합 종목 없음.")
             c_str = "\n".join([c['info'] for c in valid_short_candidates])
             s_msg = "주도 테마의 심장부에서 전고점 매물대를 완벽히 소화해 낸 최고의 단기 돌파 1종목"
+            sub_title_prefix = "[차선책] 단기 모멘텀 공략" if is_alternative else "매물대 진공 구간 돌파 및 단기 슈팅 공략"
         else:
             if not valid_mid_candidates: raise Exception("스윙 조건 부합 종목 없음.")
             c_str = "\n".join([c['info'] for c in valid_mid_candidates])
             s_msg = "에너지 응축(씨마름)을 끝내고 프로그램 대량유입과 함께 플랫폼을 탈출하는 완벽한 스윙 1종목"
+            sub_title_prefix = "[차선책] 눌림목 변형 공략" if is_alternative else "에너지 응축 후 플랫폼 탈출 스윙 전략"
 
         pick_prompt = f"너는 실전 트레이더의 직감을 가진 수석 퀀트 애널리스트야. 매크로(나스닥:{nasdaq}, 환율:{exchange_rate}, 한국증시:{market_status_text})와 [유동성]\n{liquidity_data}\n를 분석해. 유동성이 축소 중이면 보수적 방어종목을, 공급 중이면 폭발적 주도주를 골라. [후보군] {c_str} [지시] 후보 중 '{s_msg}'을 딱 1개만 골라서 '6자리 종목코드 숫자'만 출력해."
         
@@ -151,7 +161,7 @@ try:
 
         best_pick = next((item for item in (valid_short_candidates if st_type=="short" else valid_mid_candidates) if item["code"] == target_code), (valid_short_candidates[0] if st_type=="short" else valid_mid_candidates[0]))
         target_name = best_pick['name']
-        print(f"🎯 [{st_type.upper()}] 최종 픽: {target_name} ({target_code})")
+        print(f"🎯 [{st_type.upper()}] 최종 픽: {target_name} ({target_code}) {'(차선책)' if is_alternative else ''}")
 
         print(f"🔍 {target_name} VIP 펀더멘털 데이터 추출 중...")
         vip_info = get_vip_deep_dive_data(target_code, KIS_TOKEN)
@@ -196,7 +206,7 @@ try:
 <div class="broker-name">HYEOKS SECURITIES | {'SHORT-TERM' if st_type=='short' else 'MID-TERM'} STRATEGY</div>
 <div class="header">
 <p class="stock-title">{target_name} ({target_code})</p>
-<p class="subtitle">{'매물대 진공 구간 돌파 및 단기 슈팅 공략' if st_type=='short' else '에너지 응축 후 플랫폼 탈출 스윙 전략'}: (소제목 작성)</p>
+<p class="subtitle">{sub_title_prefix}: (소제목 작성)</p>
 </div>
 
 <div class="summary-box">
@@ -226,10 +236,11 @@ try:
         
         return raw_report, target_code, pick_data
 
-    report_short, code_short, pick_short = generate_hyeoks_report("short")
+    # 💡 차선책 여부 변수를 함수로 넘김
+    report_short, code_short, pick_short = generate_hyeoks_report("short", is_short_alternative)
     print("⏳ 단기 리포트 완료! 20초 대기...")
     time.sleep(20)
-    report_mid, code_mid, pick_mid = generate_hyeoks_report("mid")
+    report_mid, code_mid, pick_mid = generate_hyeoks_report("mid", is_mid_alternative)
 
     def update_portfolio(picks):
         hold_sheet = doc.worksheet("가상계좌_보유")
