@@ -21,14 +21,13 @@ KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
 FRED_API_KEY = "eed13162f33f0ad6547783b9bb27190b"
 
-print("🤖 [HYEOKS 리서치 센터] 오리지널 폼 + 1페이지 시황 연동형(V7.7) 가동...")
+print("🤖 [HYEOKS 리서치 센터] V7.8 (엄격한 키워드 분리 & 최소 점수 하한선) 가동...")
 
 try: 
     client = genai.Client(api_key=GEMINI_API_KEY)
 except Exception as e: 
     print(f"❌ API 초기화 실패: {e}"); exit(1)
 
-# 💡 [버그 픽스] PDF 빈칸 구멍의 원인인 이모지를 원천 제거
 def clean_emojis(text):
     emojis = ['🚨','💡','💎','🔥','📊','📈','📉','🎯','🛡️','⏰','⏸️','🐎','🌟','🔒','🔴','🔵','⚪','🟢','🟡','👑','⚡','🚀','👀','⏳','🔻','🔺','➖', '🛢️', '💵', '🇺🇸']
     for e in emojis: text = text.replace(e, '')
@@ -63,11 +62,16 @@ def get_vip_deep_dive_data(code, kis_token):
     return "PER: N/A / PBR: N/A"
 
 def safe_generate_content(contents):
-    for i in range(5): 
+    # 💡 [V7.8 수정] 안정적인 10회 점진적 재시도 (Exponential Backoff) 복구
+    for i in range(10): 
         try: return client.models.generate_content(model='gemini-2.5-pro', contents=contents)
         except Exception as e:
-            time.sleep(10 * (i + 1))
-    raise Exception("❌ 구글 서버 응답 실패")
+            if "503" in str(e) or "429" in str(e) or "quota" in str(e).lower():
+                wait_time = 30 * (i + 1)
+                print(f"⚠️ 구글 API 지연. {wait_time}초 대기 후 재시도...")
+                time.sleep(wait_time)
+            else: raise e 
+    raise Exception("❌ 구글 서버 응답 최종 실패")
 
 def get_global_liquidity_data():
     indicators = {"WTREGEN": "TGA 잔고", "RRPONTSYD": "역레포 잔고", "BAMLH0A0HYM2": "하이일드 스프레드", "WALCL": "연준 총자산", "M2SL": "M2 통화량"}
@@ -110,47 +114,58 @@ try:
     valid_short, valid_mid = [], []
     is_down = False 
 
+    # 💡 [V7.8 수정] 정확한 키워드 타겟팅 리스트 (돌파 혼동 방지)
+    SHORT_KEYWORDS = ["[테마대장]", "[핵심]", "신고가 돌파", "종가베팅", "[개별주] 상한가", "[후발주] 상한가", "당일 주도주", "독자 모멘텀", "테마 추종"]
+    MID_KEYWORDS = ["플랫폼", "눌림", "수급 유입", "분할매수", "이평수렴", "[관심]", "방어", "[우량]"]
+
     for r in tech_data:
         if len(r) < 21: continue
         name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
-        curr_p, chg, score, tajeom = str(r[2]).strip(), str(r[3]).strip(), str(r[8]).strip(), str(r[9]).strip()
+        curr_p, chg, score_str, tajeom = str(r[2]).strip(), str(r[3]).strip(), str(r[8]).strip(), str(r[9]).strip()
         shadow, vol, prog = str(r[14]).strip(), str(r[18]).strip(), str(r[20]).strip()
         
         if "주의장세" in tajeom: is_down = True
+        
+        # 💡 [V7.8 수정] 퀀트 점수 정밀 추출 (음수 포함)
+        try:
+            match = re.search(r'(-?\d+)점', score_str)
+            num_score = int(match.group(1)) if match else 0
+        except: num_score = 0
+
+        # [입구 차단] 상하한가, 각종 매매 제한, 3년 적자 종목 원천 배제
         if re.search(r'상한가|하한가|29\.|30\.', chg): continue
-        if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족', tajeom): continue 
-
-        info = clean_emojis(f"종목:{name}({code}), 현재가:{curr_p}원 ({chg}), 타점:{tajeom}, 퀀트점수:{score}, 테마:{r[19].strip()}, 프로그램:{prog}, 거래량:{vol}")
-        cand = {'name': name, 'code': code, 'tajeom': tajeom, 'info': info, 'curr_p': int(curr_p.replace(',',''))}
-
-        # 💡 [V7.7] 오직 진짜 조건에 맞는 놈들만 리스트에 넣음 (억지 차선책 폐기)
+        if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|적자', tajeom): continue 
         if "저항 출회" in shadow or "윗꼬리" in tajeom: continue 
         if "관망" in tajeom and "관심" not in tajeom: continue
 
-        if "플랫폼" in tajeom or "눌림" in tajeom or "수급 유입" in tajeom or "관심" in tajeom or "방어" in tajeom:
-            valid_mid.append(cand)
-        elif "핵심" in tajeom or "주도주" in tajeom or "돌파" in tajeom:
+        info = clean_emojis(f"종목:{name}({code}), 현재가:{curr_p}원 ({chg}), 타점:{tajeom}, 퀀트점수:{score_str}, 테마:{r[19].strip()}, 프로그램:{prog}, 거래량:{vol}")
+        cand = {'name': name, 'code': code, 'tajeom': tajeom, 'info': info, 'curr_p': int(curr_p.replace(',','')), 'score': num_score}
+
+        # 💡 [V7.8 수정] 키워드 매칭 및 최소 점수 하한선 (Floor) 적용
+        is_short = any(kw in tajeom for kw in SHORT_KEYWORDS)
+        is_mid = any(kw in tajeom for kw in MID_KEYWORDS)
+
+        if is_short and num_score >= 40: # 단기 최소 40점 컷
             valid_short.append(cand)
+        elif is_mid and num_score >= 35: # 중기 최소 35점 컷
+            valid_mid.append(cand)
 
     status_txt = "코스피/코스닥 20일선 이탈 (보수적 접근)" if is_down else "코스피/코스닥 지지 (공격적 운영 가능)"
 
     # ==========================================
     # 4. 리포트 본문 생성 엔진
     # ==========================================
+    today_korean = datetime.datetime.now(KST).strftime('%Y년 %m월 %d일')
     
-    # 💡 1페이지: 시황 및 부재 알림 생성
     missing_status = ""
     if not valid_short and not valid_mid:
-        missing_status = "금일은 단기 돌파 및 중기 스윙 매수 기준에 부합하는 종목이 전멸한 상태입니다. 투자자들에게 철저한 관망과 현금 보존을 강력히 권고하십시오."
+        missing_status = "금일은 단기 돌파 및 중기 스윙 매수 기준(최소 퀀트 점수)에 부합하는 종목이 전멸한 상태입니다. 철저한 관망과 현금 보존을 강력히 권고하십시오."
     elif not valid_short:
         missing_status = "금일 단기 돌파 기준에 부합하는 종목이 부재합니다. 단기 매매는 쉬어가고 시황에 집중하도록 안내하십시오."
     elif not valid_mid:
         missing_status = "금일 중기 스윙 기준에 부합하는 종목이 부재합니다. 스윙 매매는 쉬어가고 시황에 집중하도록 안내하십시오."
     else:
         missing_status = "금일 단기 및 중기 모두 조건에 부합하는 주도주가 포착되었습니다. 시장의 전반적인 흐름을 먼저 요약하십시오."
-
-    # 💡 오늘 날짜를 한국어 형식으로 생성
-    today_korean = datetime.datetime.now(KST).strftime('%Y년 %m월 %d일')
 
     macro_prompt = f"""귀하는 HYEOKS 리서치 센터의 수석 퀀트 애널리스트입니다.
 아래 데이터를 바탕으로 '오늘의 시황 및 매크로 브리핑'을 1페이지 분량으로 상세히 작성하십시오. 모든 문장은 정중한 존댓말(하십시오체)로 통일하십시오.
@@ -173,9 +188,8 @@ try:
 """
     market_summary = safe_generate_content(macro_prompt).text
 
-    # 💡 2페이지 이후: 종목 리포트 생성 함수 (오리지널 디자인 유지)
     def generate_hyeoks_report(st_type, cands):
-        if not cands: return "", "000000", None # 종목 없으면 빈칸 리턴
+        if not cands: return "", "000000", None 
         
         pick_prompt = f"아래 종목 리스트 중 {st_type} 전략에 가장 적합한 대장주 1개의 '6자리 종목코드'만 출력하십시오.\n" + "\n".join([c['info'] for c in cands])
         target_code = re.search(r'\d{6}', safe_generate_content(pick_prompt).text).group()
@@ -223,13 +237,17 @@ try:
 
 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'X' if st_type=='short' else 'O'}
 """
-        img_path = f"temp_{best['code']}.png"
-        try:
-            res = requests.get(f"https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{best['code']}.png", headers={'User-Agent': 'Mozilla/5.0'}, verify=False)
-            with open(img_path, 'wb') as f: f.write(res.content)
-            report_txt = safe_generate_content([detail_prompt, PIL.Image.open(img_path)]).text
-            os.remove(img_path)
-        except:
+        # 💡 [V7.8 수정] 000000 일 경우 불필요한 이미지 통신 방지
+        if best['code'] != "000000":
+            img_path = f"temp_{best['code']}.png"
+            try:
+                res = requests.get(f"https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{best['code']}.png", headers={'User-Agent': 'Mozilla/5.0'}, verify=False)
+                with open(img_path, 'wb') as f: f.write(res.content)
+                report_txt = safe_generate_content([detail_prompt, PIL.Image.open(img_path)]).text
+                os.remove(img_path)
+            except:
+                report_txt = safe_generate_content(detail_prompt).text
+        else:
             report_txt = safe_generate_content(detail_prompt).text
 
         pick_data = None
@@ -294,13 +312,12 @@ try:
     update_portfolio([pick_short, pick_mid])
 
     # ==========================================
-    # 6. HTML 조립 및 PDF 생성 (수석님의 완벽한 이전 디자인 100% 복원)
+    # 6. HTML 조립 및 PDF 생성
     # ==========================================
     css = "<style>body{font-family:'NanumGothic',sans-serif;line-height:1.8;padding:30px;color:#222;font-size:110%;}.broker-name{color:#1a365d;font-weight:bold;font-size:22px;margin-bottom:15px;border-bottom:3px solid #1a365d;padding-bottom:10px;}.stock-title{font-size:32px;font-weight:900;margin:0;}.subtitle{font-size:18px;color:#2b6cb0;font-weight:bold;}.summary-box{background:#f8fafc;padding:20px;border-left:5px solid #1a365d;margin:20px 0;border-radius:5px;}h2{color:#1a365d;border-bottom:2px solid #edf2f7;margin-top:30px;padding-bottom:8px;}p{margin-bottom:15px;word-break:keep-all;}img{max-width:90%;border:1px solid #cbd5e0;border-radius:8px;}.chart-container{text-align:center;margin-top:40px;page-break-inside:avoid;}.page-break{page-break-before:always;}.alert-box{background:#fff5f5;padding:15px;border-left:5px solid #e53e3e;margin-bottom:20px;color:#c53030;font-weight:bold;}</style>"
     
     html = f"<!DOCTYPE html><html><head><meta charset='utf-8'>{css}</head><body>"
     
-    # [1페이지] 브로커 네임 및 시황 + 부재 알림
     html += "<div class='broker-name'>HYEOKS SECURITIES | DAILY MARKET REPORT</div>"
     
     if not valid_short and not valid_mid:
@@ -312,7 +329,6 @@ try:
         
     html += f"<h2>글로벌 매크로 및 시황 요약</h2>{markdown.markdown(market_summary)}"
 
-    # [2페이지 이후] 존재하는 리포트만 기존 폼 그대로 추가
     if valid_short:
         html += f"<div class='page-break'></div>{markdown.markdown(report_short)}"
         html += f"<div class='chart-container'><h3>차트 판독</h3><img src='https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{code_short}.png'></div>"
@@ -326,7 +342,6 @@ try:
     pdf_file = f"HYEOKS_Daily_{datetime.datetime.now(KST).strftime('%Y%m%d')}.pdf"
     pdfkit.from_string(html, pdf_file, options={'encoding': "UTF-8", 'enable-local-file-access': None})
 
-    # 가스 웹앱 업로드
     if GAS_WEB_APP_URL:
         with open(pdf_file, "rb") as f: 
             b64 = base64.b64encode(f.read()).decode('utf-8')
@@ -335,7 +350,6 @@ try:
             doc.worksheet("리포트_게시").insert_row([datetime.datetime.now(KST).strftime('%Y-%m-%d'), f"https://drive.google.com/uc?id={res.get('id')}"], index=2)
         except: pass
 
-    # 텔레그램 발송
     if TELEGRAM_BOT_TOKEN:
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument", 
                       files={'document': open(pdf_file, 'rb')}, data={'chat_id': TELEGRAM_CHAT_ID, 'caption': "[HYEOKS] AI 심층 리서치 보고서"})
