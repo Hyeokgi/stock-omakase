@@ -584,9 +584,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             quant_score += hedge_premium
             master_tajeom += f" 🛡️(해지프리미엄 +{hedge_premium}점)"
 
-        # 💡 [V6.9] 타임 페널티 (10시 30분 이후 돌파 추격 감점)
+       # 💡 [V6.9 수정] 타임 페널티 (단, '핵심'이 들어간 타점(신고가 돌파)은 예외)
         if is_breakout_track and (now_kst_tajeom.hour > 10 or (now_kst_tajeom.hour == 10 and now_kst_tajeom.minute >= 30)):
-            if "돌파" in master_tajeom or "안착" in master_tajeom or "주도주" in master_tajeom:
+            if ("돌파" in master_tajeom or "안착" in master_tajeom or "주도주" in master_tajeom) and "핵심" not in master_tajeom:
                 quant_score -= 15
                 master_tajeom += " ⏰(오후돌파 감점)"
 
