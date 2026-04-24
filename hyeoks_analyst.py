@@ -18,7 +18,7 @@ KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
 FRED_API_KEY = "eed13162f33f0ad6547783b9bb27190b"
 
-print("🤖 [HYEOKS 리서치 센터] 매크로 융합 2.5-Pro V7.4 (프롬프트 체계화) 엔진 가동...")
+print("🤖 [HYEOKS 리서치 센터] 매크로 융합 2.5-Pro V7.5 (중복 차단) 엔진 가동...")
 
 try: client = genai.Client(api_key=GEMINI_API_KEY)
 except Exception as e: print(f"❌ API 초기화 실패: {e}"); exit(1)
@@ -109,7 +109,6 @@ try:
         current_price, change_rate, score_str, tajeom = str(r[2]).strip(), str(r[3]).strip(), str(r[8]).strip(), str(r[9]).strip()
         shadow_status = str(r[14]).strip()
         
-        # 💡 [V7.4 공백 제거 완벽 처리]
         vol_status = str(r[18]).strip() if len(r)>18 and r[18] else "🟡 [V.평년수준]"
         program_rate = str(r[20]).strip() if len(r)>20 and r[20] else "⚪ [P.관망중]"
         
@@ -138,6 +137,7 @@ try:
     is_short_alternative = False
     is_mid_alternative = False
 
+    # 💡 [V7.5] 풀 비어있을 시 중복을 차단하는 개선된 로직
     if not valid_short_candidates:
         if len(valid_mid_candidates) > 1:
             valid_short_candidates = [valid_mid_candidates[0]] 
@@ -145,9 +145,10 @@ try:
             is_short_alternative = True
             print("🔄 [알림] 스윙 후보에서 단기로 1종목 차출.")
         else:
-            if all_candidates_fallback:
-                valid_short_candidates = [all_candidates_fallback[0]] 
-                all_candidates_fallback = all_candidates_fallback[1:] 
+            used_codes = set(c['code'] for c in valid_mid_candidates)
+            fallback_pool = [c for c in all_candidates_fallback if c['code'] not in used_codes]
+            if fallback_pool:
+                valid_short_candidates = [fallback_pool[0]] 
                 is_short_alternative = True
                 print("🚨 [대안] 단기 후보 고갈 -> 퀀트 점수 1위 강제 배정")
             else:
@@ -161,8 +162,10 @@ try:
             is_mid_alternative = True
             print("🔄 [알림] 단기 후보에서 스윙으로 1종목 차출.")
         else:
-            if all_candidates_fallback:
-                valid_mid_candidates = [all_candidates_fallback[0]] 
+            used_codes = set(c['code'] for c in valid_short_candidates)
+            fallback_pool = [c for c in all_candidates_fallback if c['code'] not in used_codes]
+            if fallback_pool:
+                valid_mid_candidates = [fallback_pool[0]] 
                 is_mid_alternative = True
                 print("🚨 [대안] 스윙 후보 고갈 -> 퀀트 점수 차순위 강제 배정")
             else:
@@ -175,7 +178,6 @@ try:
         target_list = valid_short_candidates if st_type == "short" else valid_mid_candidates
         c_str = "\n".join([c['info'] for c in target_list])
         
-        # 💡 [V7.4 🚨 마커 로직 유지]
         sub_title_prefix = "🚨[시장 대안] 단기 모멘텀 공략" if is_alternative and st_type == "short" else ("🚨[시장 대안] 눌림목 변형 공략" if is_alternative else ("매물대 진공 구간 돌파 및 단기 슈팅 공략" if st_type == "short" else "에너지 응축 후 플랫폼 탈출 스윙 전략"))
         s_msg = "주도 테마의 심장부에서 전고점 매물대를 완벽히 소화해 낸 최고의 단기 돌파 1종목" if st_type == "short" else "에너지 응축(씨마름)을 끝내고 프로그램 대량유입과 함께 플랫폼을 탈출하는 완벽한 스윙 1종목"
 
@@ -209,7 +211,6 @@ try:
 
         warn = "\n[필수 경고] 고공권 판정. 비중을 절반으로 줄이고 칼손절 요망." if "고가(단기)" in best_pick['tajeom'] else ("\n[필수 경고] 주의 장세. 매매 비중 축소 요망." if is_korean_market_down else "")
 
-        # 💡 [V7.4 프롬프트 체계화] 7번, 8번이 기존 절대지침과 동일한 레벨로 붙도록 줄바꿈 설정
         alt_warning = ""
         if is_alternative:
             alt_warning = """
