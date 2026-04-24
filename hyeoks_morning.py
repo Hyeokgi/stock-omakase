@@ -52,7 +52,7 @@ def get_global_liquidity_data():
 def search_code_from_naver(stock_name):
     try:
         url = "https://m.stock.naver.com/api/search/all"
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'}
+        headers = {'User-Agent': 'Mozilla/5.0'}
         res = requests.get(url, headers=headers, params={'keyword': stock_name}, verify=False, timeout=3).json()
         if res.get('result') and res['result'].get('stocks'):
             return res['result']['stocks'][0]['itemCode']
@@ -75,7 +75,7 @@ def get_vip_deep_dive_data(code, kis_token):
     return f"📊 {vip['펀더멘털']}"
 
 def get_us_market_summary():
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'}
+    headers = {'User-Agent': 'Mozilla/5.0'}
     try:
         print("📰 네이버 주요 뉴스 수집 중...")
         res = requests.get("https://finance.naver.com/news/mainnews.naver", headers=headers, verify=False, timeout=5)
@@ -92,11 +92,14 @@ def get_yesterday_korean_context():
     print("🇰🇷 어제 한국장 퀀트 타겟 종목 및 심층 데이터 수집 중...")
     try:
         gcp_creds_str = os.environ.get("GCP_CREDENTIALS")
-        if not gcp_creds_str or len(gcp_creds_str.strip()) < 10: return "🚨 깃허브 환경변수 에러"
-        
-        creds_dict = json.loads(gcp_creds_str)
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        
+        # GitHub Actions 환경과 로컬 환경 호환
+        if gcp_creds_str and len(gcp_creds_str.strip()) > 10:
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(gcp_creds_str), scope)
+        else:
+            creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
+            
         client = gspread.authorize(creds)
         doc = client.open_by_url(SHEET_URL)
         
@@ -113,7 +116,8 @@ def get_yesterday_korean_context():
                 if len(row) >= 3: name_to_code[str(row[0]).strip()] = str(row[2]).strip().zfill(6)
         except: pass
 
-        scanner_data = doc.worksheet("주가데이터_보조").get_all_values()[1:5]
+        # 💡 [수정] 넉넉히 15개 정도 가져와서 '진짜' 조건에 맞는 종목만 엄선
+        scanner_data = doc.worksheet("주가데이터_보조").get_all_values()[1:15]
 
     except Exception as e: return f"🚨 파싱 오류: {e}"
 
@@ -121,27 +125,67 @@ def get_yesterday_korean_context():
 
     picks_info = []
     for r in scanner_data:
-        if len(r) > 19 and r[0]:
-            name, current_price, theme = str(r[0]).strip(), str(r[2]).strip(), str(r[19]).strip()
-            program_text = str(r[20]).strip() if r[20] else "⚪ [P.관망중]"
-            vol_status = str(r[18]).strip() if r[18] else "🟡 [V.평년수준]"
+        if len(r) > 20 and r[0]:
+            name, code_str = str(r[0]).strip(), str(r[1]).replace("'", "").strip()
+            current_price, score_str, tajeom = str(r[2]).strip(), str(r[8]).strip(), str(r[9]).strip()
+            theme, vol_status, program_text = str(r[19]).strip(), str(r[18]).strip(), str(r[20]).strip()
             
+            # 💡 [V8.0 필터링 동기화] 더미코드 및 악성 타점, 적자 기업 완벽 차단
+            if name == "시장관망" or "000000" in code_str: continue
+            if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|적자', tajeom): continue
+            if "저항 출회" in str(r[14]) or "윗꼬리" in tajeom: continue
+            if "관망" in tajeom and "관심" not in tajeom: continue
+
+            # 💡 [V8.0 점수 하한선 동기화]
+            try: num_score = int(re.search(r'(-?\d+)점', score_str).group(1)) if re.search(r'(-?\d+)점', score_str) else 0
+            except: num_score = 0
+            
+            # 단기/중기 최소 점수(35점)를 넘지 못하면 모닝 브리핑에서 제외
+            if num_score < 35: continue
+
             code = name_to_code.get(name) or search_code_from_naver(name)
             vip_data = "VIP 데이터 확인불가"
             if code:
                 print(f"🔍 [{name} ({code})] VIP 데이터 수집 중...")
                 vip_data = get_vip_deep_dive_data(code, kis_token)
 
-            # 💡 [V6.8 변경] 프롬프트 제공 데이터에서 시간외 삭제
-            picks_info.append(f"▪️ [{name}] 종가: {current_price}원 | 테마: {theme}\n  [프로그램] {program_text}\n  [거래량] {vol_status}\n  [펀더멘털] {vip_data}")
+            # 💡 [핵심] 타점과 점수 데이터를 AI에게 명확히 전달
+            picks_info.append(f"▪️ [{name}] 종가: {current_price}원 | 테마: {theme}\n  [마스터타점] {tajeom} ({score_str})\n  [프로그램] {program_text}\n  [거래량] {vol_status}\n  [펀더멘털] {vip_data}")
+            
+            if len(picks_info) >= 3: break # 최상위 3개만 브리핑
+
+    # 💡 [관망 모드 연동] 조건에 맞는 종목이 하나도 없을 경우
+    if not picks_info:
+        return "🚨 [전일 기준 부합 종목 부재]\n시스템의 엄격한 퀀트 필터 및 수급(최소 35점 이상, 적자 제외)을 통과한 주도주가 없습니다. 무리한 매매를 지양하고 시장 관망을 유지하십시오."
                 
-    return "\n".join(picks_info)
+    return "\n\n".join(picks_info)
 
 def generate_morning_briefing(market_data, news_data, kor_context, liquidity_data):
     print("🤖 AI 매크로 분석 및 리포트 작성 중...")
     client = genai.Client(api_key=GEMINI_API_KEY)
     
-    # 💡 [V6.8 변경] 프롬프트 내 야간/시외 및 체결강도 언급 금지 규칙 강화
+    # 관망 모드일 경우 프롬프트 동적 조정
+    is_empty_market = "기준 부합 종목 부재" in kor_context
+    
+    if is_empty_market:
+        stock_prompt_instruction = """
+   [파트 2: 종목별 심층 분석 (파란색 뱃지)]
+   🚨 [관망 권고 및 리스크 관리]
+   ▫️ (전일 시장에서 강력한 주도주나 수급 유입 종목이 부재했음을 알리고, 현금 보존의 중요성과 다음 타점을 기다려야 하는 이유를 트레이더 관점에서 정중하게 서술하십시오.)
+   ▫️ (억지로 특정 종목을 추천하거나 지어내지 마십시오.)
+"""
+    else:
+        stock_prompt_instruction = """
+   [파트 2: 종목별 심층 분석 (파란색 뱃지)]
+   🟦 [종목명]
+   🔹 핵심 모멘텀 & 타점 딥리딩
+   ▫️ [🤖프로그램: 제공된 프로그램 데이터] [📈거래량: 제공된 거래량 배지] [🎯타점: 제공된 마스터타점 및 점수]
+   ▫️ (제공된 마스터타점, 프로그램, 거래량을 융합하여 이 종목이 왜 퀀트 상위권에 포착되었는지, 세력의 의도가 무엇인지 분석하라.)
+   🔹 실전 액션 플랜
+   ▫️ 진입: (마스터타점의 전략(돌파/눌림/종가베팅)에 맞는 시가 갭 및 장중 대응 전략)
+   ▫️ 대응: (리스크 관리 및 비중 조절 팁)
+"""
+
     prompt = f"""너는 대한민국 최상위 1% 실전 트레이더를 위한 HYEOKS 리서치 센터의 수석 매크로/퀀트 애널리스트야.
 아래의 데이터를 융합하여 오늘 아침 장 개장 전 트레이더가 읽을 '유연하고 통찰력 있는 모닝 브리핑 리포트'를 작성해라.
 
@@ -163,30 +207,21 @@ def generate_morning_briefing(market_data, news_data, kor_context, liquidity_dat
    🟢 유동성 환경 분석
    ▫️ (FRED 지표가 증시 자금에 미치는 영향 짧게 해석)
    🟢 핵심 뉴스 & 시장 내러티브 진단
-   ▫️ (제공된 뉴스들을 깊이 있게 분석하여 오늘 시장의 쏠림 방향성, 주도 테마 탄생 배경을 2~3문단으로 썰을 풀어라.)
-   
-   [파트 2: 종목별 심층 분석 (파란색 뱃지)]
-   🟦 [종목명]
-   🔹 핵심 모멘텀 & VIP 수급
-   ▫️ [🤖프로그램: 제공된 프로그램 데이터] [📈거래량: 제공된 거래량 배지] [📊펀더멘털: 제공된 PER/PBR 데이터]
-   ▫️ (데이터와 뉴스를 융합한 세력의 매집 의도 및 상승 논리 분석. 체결강도나 시간외 단일가 언급 절대 금지)
-   🔹 실전 액션 플랜
-   ▫️ 진입: (시가 갭 대응 전략 및 1차 진입 타점)
-   ▫️ 대응: (주요 지지선 및 돌파 목표가)
+   ▫️ (제공된 뉴스들을 깊이 있게 분석하여 오늘 시장의 쏠림 방향성을 분석해라.)
+   {stock_prompt_instruction}
 
 3. 🚨 데이터 뱃지(Badge) 작성 절대 규칙:
-   - 내가 제공한 [프로그램], [거래량] 텍스트를 한 글자도 바꾸지 말고 괄호 안에 그대로 넣어라. 
-   - 없는 데이터(체결강도, 시간외 등)를 억지로 지어내지 마라.
+   - 내가 제공한 [프로그램], [거래량], [마스터타점] 텍스트를 한 글자도 바꾸지 말고 괄호 안에 그대로 넣어라. 
+   - 없는 데이터를 억지로 지어내지 마라.
 
-4. 압축 브리핑: 핵심 추천 종목 총 3~4개만 엄선하여 브리핑해라.
-5. 군더더기 배제: 인사말, 서론 등은 생략.
+4. 압축 브리핑: 핵심 추천 종목 총 3개 이내로 엄선하며, 군더더기 인사말은 생략.
 """
     for i in range(10):
         try:
             response = client.models.generate_content(model='gemini-2.5-pro', contents=prompt)
             return response.text
         except Exception as e:
-            if "503" in str(e) or "429" in str(e): 
+            if "503" in str(e) or "429" in str(e) or "quota" in str(e).lower(): 
                 print(f"⚠️ 구글 서버 혼잡. {30 * (i + 1)}초 대기 후 재시도...")
                 time.sleep(30 * (i + 1))
             else: raise e
