@@ -18,7 +18,7 @@ KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
 FRED_API_KEY = "eed13162f33f0ad6547783b9bb27190b"
 
-print("🤖 [HYEOKS 리서치 센터] 매크로 융합 2.5-Pro 무한 돌파(Zombie) 엔진 가동...")
+print("🤖 [HYEOKS 리서치 센터] 매크로 융합 2.5-Pro 무한 돌파(Zombie V7.0) 엔진 가동...")
 
 try: client = genai.Client(api_key=GEMINI_API_KEY)
 except Exception as e: print(f"❌ API 초기화 실패: {e}"); exit(1)
@@ -100,6 +100,7 @@ try:
     
     liquidity_data = get_global_liquidity_data()
     valid_short_candidates, valid_mid_candidates = [], []
+    all_candidates_fallback = [] # 💡 [V7.0 추가] 최악의 경우를 대비한 모든 캔디데이트 백업 풀
     is_korean_market_down = False 
 
     for r in tech_data:
@@ -107,51 +108,77 @@ try:
         name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
         current_price, change_rate, score_str, tajeom = str(r[2]), str(r[3]), str(r[8]), str(r[9])
         shadow_status = str(r[14]) if len(r)>14 else ""
-        
         vol_status = str(r[18]) if len(r)>18 else "🟡 [V.평년수준]"
-        program_rate = str(r[20]) if len(r)>20 else "⚪ [P.관망중]"
+        program_rate = str(r[20]) if len(r)>20 else "⚪ [P.관망중]" 
         
         if "주의장세" in tajeom: is_korean_market_down = True
+        
+        # 💡 [V7.0 추가] 백업 풀에 모든 종목 (상한가/하한가 제외) 저장
+        cand_info = f"종목:{name}({code}), 현재가:{current_price}원 ({change_rate}), 타점:{tajeom}, 퀀트점수:{score_str}, 테마:{r[19] if len(r)>19 else ''}, 프로그램:{program_rate}, 거래량판독:{vol_status}"
+        cand_data = {'name': name, 'code': code, 'tajeom': tajeom, 'info': cand_info}
+        
+        if "상한가" not in tajeom and "하한가" not in tajeom:
+             all_candidates_fallback.append(cand_data)
+
+        # 기존 필터링 룰
         if "상한가" in tajeom or "29." in change_rate or "30." in change_rate: continue 
         if "저항 출회" in shadow_status or "윗꼬리" in tajeom: continue 
         if re.search(r'매매제한|매수금지|자본잠식|딱지|관망|데이터 부족', tajeom): continue 
             
-        cand_info = f"종목:{name}({code}), 현재가:{current_price}원 ({change_rate}), 타점:{tajeom}, 퀀트점수:{score_str}, 테마:{r[19] if len(r)>19 else ''}, 프로그램:{program_rate}, 거래량판독:{vol_status}"
-        cand_data = {'name': name, 'code': code, 'tajeom': tajeom, 'info': cand_info}
-        
         if "플랫폼" in tajeom or "눌림" in tajeom or "수급 유입" in tajeom or "관심" in tajeom or "방어" in tajeom:
             valid_mid_candidates.append(cand_data)
         else: valid_short_candidates.append(cand_data)
 
-    # 💡 [V6.9] 차선책 풀링 로직 보강 및 마커 변수 추가
+    # 💡 [V7.0 무적 로직] 빈 배열 방어 처리 (극단적 스왑 및 강제 차출)
     is_short_alternative = False
     is_mid_alternative = False
 
-    if not valid_mid_candidates and len(valid_short_candidates) > 1:
-        valid_mid_candidates = [valid_short_candidates[-1]] # short 풀에서 가장 우선순위가 낮은 것을 mid로 차출
-        valid_short_candidates = valid_short_candidates[:-1]
-        is_mid_alternative = True
-        print("🔄 [시스템 알림] 스윙 후보가 없어 단기 후보에서 1종목을 차출했습니다.")
-        
-    if not valid_short_candidates and len(valid_mid_candidates) > 1:
-        valid_short_candidates = [valid_mid_candidates[0]] # mid 풀에서 가장 우선순위가 높은 것을 short로 차출
-        valid_mid_candidates = valid_mid_candidates[1:]
-        is_short_alternative = True
-        print("🔄 [시스템 알림] 단기 후보가 없어 스윙 후보에서 1종목을 차출했습니다.")
+    # Short 풀이 비었을 때
+    if not valid_short_candidates:
+        if len(valid_mid_candidates) > 1:
+            valid_short_candidates = [valid_mid_candidates[0]] # Mid에서 제일 좋은 놈 뺏어오기
+            valid_mid_candidates = valid_mid_candidates[1:]
+            is_short_alternative = True
+            print("🔄 [시스템 알림] 단기 후보가 없어 스윙 후보에서 1종목을 차출했습니다.")
+        else:
+            # Mid도 1개 이하면 백업 풀(전체 리스트)에서 강제로 가져옴
+            if all_candidates_fallback:
+                valid_short_candidates = [all_candidates_fallback[0]]
+                is_short_alternative = True
+                print("🚨 [긴급 알림] 단기/스윙 후보가 모두 고갈되어, 상위 종목을 강제 배정합니다.")
+            else:
+                 # 정말정말 최악의 경우를 대비한 가짜 데이터 (시스템 폭파 방지용)
+                 valid_short_candidates = [{'name': '시장관망', 'code': '000000', 'tajeom': '관망', 'info': '현재 시장 상황이 극도로 불안정하여 매수 후보를 산출할 수 없습니다.'}]
+                 is_short_alternative = True
+
+    # Mid 풀이 비었을 때
+    if not valid_mid_candidates:
+        if len(valid_short_candidates) > 1:
+            valid_mid_candidates = [valid_short_candidates[-1]] # Short 풀의 꼴찌를 Mid로 보냄
+            valid_short_candidates = valid_short_candidates[:-1]
+            is_mid_alternative = True
+            print("🔄 [시스템 알림] 스윙 후보가 없어 단기 후보에서 1종목을 차출했습니다.")
+        else:
+            # Short 풀이 1개 이하면 백업 풀에서 강제로 가져옴
+            if len(all_candidates_fallback) > 1:
+                valid_mid_candidates = [all_candidates_fallback[1]]
+                is_mid_alternative = True
+                print("🚨 [긴급 알림] 스윙 후보가 고갈되어, 상위 종목을 강제 배정합니다.")
+            else:
+                 valid_mid_candidates = [{'name': '시장관망', 'code': '000000', 'tajeom': '관망', 'info': '현재 시장 상황이 극도로 불안정하여 매수 후보를 산출할 수 없습니다.'}]
+                 is_mid_alternative = True
 
     market_status_text = "코스피/코스닥 20일선 이탈 (하락 변동성 장세)" if is_korean_market_down else "코스피/코스닥 안정화 (추세 추종 베팅 가능)"
 
     def generate_hyeoks_report(st_type, is_alternative):
         if st_type == "short":
-            if not valid_short_candidates: raise Exception("단기 조건 부합 종목 없음.")
             c_str = "\n".join([c['info'] for c in valid_short_candidates])
             s_msg = "주도 테마의 심장부에서 전고점 매물대를 완벽히 소화해 낸 최고의 단기 돌파 1종목"
-            sub_title_prefix = "[차선책] 단기 모멘텀 공략" if is_alternative else "매물대 진공 구간 돌파 및 단기 슈팅 공략"
+            sub_title_prefix = "[🚨시장 대안] 단기 모멘텀 공략" if is_alternative else "매물대 진공 구간 돌파 및 단기 슈팅 공략"
         else:
-            if not valid_mid_candidates: raise Exception("스윙 조건 부합 종목 없음.")
             c_str = "\n".join([c['info'] for c in valid_mid_candidates])
             s_msg = "에너지 응축(씨마름)을 끝내고 프로그램 대량유입과 함께 플랫폼을 탈출하는 완벽한 스윙 1종목"
-            sub_title_prefix = "[차선책] 눌림목 변형 공략" if is_alternative else "에너지 응축 후 플랫폼 탈출 스윙 전략"
+            sub_title_prefix = "[🚨시장 대안] 눌림목 변형 공략" if is_alternative else "에너지 응축 후 플랫폼 탈출 스윙 전략"
 
         pick_prompt = f"너는 실전 트레이더의 직감을 가진 수석 퀀트 애널리스트야. 매크로(나스닥:{nasdaq}, 환율:{exchange_rate}, 한국증시:{market_status_text})와 [유동성]\n{liquidity_data}\n를 분석해. 유동성이 축소 중이면 보수적 방어종목을, 공급 중이면 폭발적 주도주를 골라. [후보군] {c_str} [지시] 후보 중 '{s_msg}'을 딱 1개만 골라서 '6자리 종목코드 숫자'만 출력해."
         
@@ -161,7 +188,10 @@ try:
 
         best_pick = next((item for item in (valid_short_candidates if st_type=="short" else valid_mid_candidates) if item["code"] == target_code), (valid_short_candidates[0] if st_type=="short" else valid_mid_candidates[0]))
         target_name = best_pick['name']
-        print(f"🎯 [{st_type.upper()}] 최종 픽: {target_name} ({target_code}) {'(차선책)' if is_alternative else ''}")
+        print(f"🎯 [{st_type.upper()}] 최종 픽: {target_name} ({target_code}) {'(대안)' if is_alternative else ''}")
+
+        if target_code == "000000": # 강제 관망 종목 처리
+            return f"<h2>시장 상황이 극도로 악화되어 {st_type} 전략 추천을 유보합니다.</h2>", target_code, None
 
         print(f"🔍 {target_name} VIP 펀더멘털 데이터 추출 중...")
         vip_info = get_vip_deep_dive_data(target_code, KIS_TOKEN)
@@ -236,7 +266,6 @@ try:
         
         return raw_report, target_code, pick_data
 
-    # 💡 차선책 여부 변수를 함수로 넘김
     report_short, code_short, pick_short = generate_hyeoks_report("short", is_short_alternative)
     print("⏳ 단기 리포트 완료! 20초 대기...")
     time.sleep(20)
@@ -272,6 +301,7 @@ try:
 
         for p in picks:
             if not p: continue
+            if p['code'] == "000000": continue # 강제 관망 종목은 계좌에 넣지 않음
             try: curr_p = int(req.get(f"https://m.stock.naver.com/api/stock/{p['code']}/basic", verify=False, timeout=3).json()['closePrice'].replace(',',''))
             except: continue
             idx = next((i for i, v in enumerate(new_hold) if v[0] == p['name']), -1)
@@ -291,7 +321,11 @@ try:
 
     css = "<style>body{font-family:'NanumGothic',sans-serif;line-height:1.8;padding:30px;color:#222;font-size:110%;}.broker-name{color:#1a365d;font-weight:bold;font-size:22px;margin-bottom:15px;border-bottom:3px solid #1a365d;padding-bottom:10px;}.stock-title{font-size:32px;font-weight:900;margin:0;}.subtitle{font-size:18px;color:#2b6cb0;font-weight:bold;}.summary-box{background:#f8fafc;padding:20px;border-left:5px solid #1a365d;margin:20px 0;border-radius:5px;}h2{color:#1a365d;border-bottom:2px solid #edf2f7;margin-top:30px;padding-bottom:8px;}p{margin-bottom:15px;word-break:keep-all;}img{max-width:90%;border:1px solid #cbd5e0;border-radius:8px;}.chart-container{text-align:center;margin-top:40px;page-break-inside:avoid;}.page-break{page-break-before:always;}</style>"
     
-    html = f"<!DOCTYPE html><html><head><meta charset='utf-8'>{css}</head><body>{markdown.markdown(report_short)}<div class='chart-container'><h3>📊 차트 판독</h3><img src='https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{code_short}.png'></div><div class='page-break'></div>{markdown.markdown(report_mid)}<div class='chart-container'><h3>📊 차트 판독</h3><img src='https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{code_mid}.png'></div></body></html>"
+    html = f"<!DOCTYPE html><html><head><meta charset='utf-8'>{css}</head><body>{markdown.markdown(report_short)}"
+    if code_short != "000000": html += f"<div class='chart-container'><h3>📊 차트 판독</h3><img src='https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{code_short}.png'></div>"
+    html += f"<div class='page-break'></div>{markdown.markdown(report_mid)}"
+    if code_mid != "000000": html += f"<div class='chart-container'><h3>📊 차트 판독</h3><img src='https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{code_mid}.png'></div>"
+    html += "</body></html>"
 
     pdf_file = f"HYEOKS_Report_{datetime.datetime.now(KST).strftime('%Y%m%d')}.pdf"
     pdfkit.from_string(html, pdf_file, options={'encoding': "UTF-8", 'enable-local-file-access': None})
