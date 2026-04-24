@@ -116,55 +116,67 @@ def get_yesterday_korean_context():
                 if len(row) >= 3: name_to_code[str(row[0]).strip()] = str(row[2]).strip().zfill(6)
         except: pass
 
-        # 💡 [수정] 넉넉히 15개 정도 가져와서 '진짜' 조건에 맞는 종목만 엄선
+        # 💡 [V8.1] 시트의 전체 종목을 스캔
         scanner_data = doc.worksheet("주가데이터_보조").get_all_values()[1:]
 
     except Exception as e: return f"🚨 파싱 오류: {e}"
 
     if not scanner_data or len(scanner_data[0]) < 21: return "구글 시트 데이터가 비어있습니다."
 
-    picks_info = []
+    valid_candidates = []
     for r in scanner_data:
         if len(r) > 20 and r[0]:
             name, code_str = str(r[0]).strip(), str(r[1]).replace("'", "").strip()
             current_price, score_str, tajeom = str(r[2]).strip(), str(r[8]).strip(), str(r[9]).strip()
             theme, vol_status, program_text = str(r[19]).strip(), str(r[18]).strip(), str(r[20]).strip()
             
-            # 💡 [V8.0 필터링 동기화] 더미코드 및 악성 타점, 적자 기업 완벽 차단
+            # 필터 1: 쓰레기 데이터 및 악성 타점 원천 차단
             if name == "시장관망" or "000000" in code_str: continue
             if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|적자', tajeom): continue
             if "저항 출회" in str(r[14]) or "윗꼬리" in tajeom: continue
             if "관망" in tajeom and "관심" not in tajeom: continue
 
-            # 💡 [V8.0 점수 하한선 동기화]
+            # 필터 2: 퀀트 점수 추출 및 하한선 적용
             try: num_score = int(re.search(r'(-?\d+)점', score_str).group(1)) if re.search(r'(-?\d+)점', score_str) else 0
             except: num_score = 0
             
-            # 단기/중기 최소 점수(35점)를 넘지 못하면 모닝 브리핑에서 제외
             if num_score < 35: continue
 
-            code = name_to_code.get(name) or search_code_from_naver(name)
-            vip_data = "VIP 데이터 확인불가"
-            if code:
-                print(f"🔍 [{name} ({code})] VIP 데이터 수집 중...")
-                vip_data = get_vip_deep_dive_data(code, kis_token)
+            valid_candidates.append({
+                'name': name,
+                'code': code_str,
+                'price': current_price,
+                'theme': theme,
+                'tajeom': tajeom,
+                'score_str': score_str,
+                'num_score': num_score,
+                'vol_status': vol_status,
+                'program_text': program_text
+            })
 
-            # 💡 [핵심] 타점과 점수 데이터를 AI에게 명확히 전달
-            picks_info.append(f"▪️ [{name}] 종가: {current_price}원 | 테마: {theme}\n  [마스터타점] {tajeom} ({score_str})\n  [프로그램] {program_text}\n  [거래량] {vol_status}\n  [펀더멘털] {vip_data}")
-            
-            if len(picks_info) >= 3: break # 최상위 3개만 브리핑
+    if not valid_candidates:
+        return "🚨 [전일 기준 부합 종목 부재]\n시스템의 엄격한 'HYEOKS 퀀트 총합 스코어(최소 35점 이상)' 및 '적자 기업 제외' 필터를 통과한 주도주가 없습니다. 무리한 매매를 지양하고 시장 관망을 유지하십시오."
 
-    # 💡 [관망 모드 연동] 조건에 맞는 종목이 하나도 없을 경우
-    if not picks_info:
-        return "🚨 [전일 기준 부합 종목 부재]\n시스템의 엄격한 퀀트 필터 및 수급(최소 35점 이상, 적자 제외)을 통과한 주도주가 없습니다. 무리한 매매를 지양하고 시장 관망을 유지하십시오."
-                
+    # 💡 [V8.1 핵심] 점수 기준으로 내림차순 정렬하여 AI에게 'Top 10 마스터 풀'을 제공
+    valid_candidates.sort(key=lambda x: x['num_score'], reverse=True)
+
+    picks_info = []
+    # 최대 10개까지만 리스트업하여 AI가 능동적으로 '선택'하게 함
+    for cand in valid_candidates[:10]:
+        code = name_to_code.get(cand['name']) or search_code_from_naver(cand['name'])
+        vip_data = "VIP 데이터 확인불가"
+        if code:
+            print(f"🔍 [{cand['name']} ({code})] VIP 데이터 수집 중...")
+            vip_data = get_vip_deep_dive_data(code, kis_token)
+
+        picks_info.append(f"▪️ [{cand['name']}] 종가: {cand['price']}원 | 테마: {cand['theme']}\n  [마스터타점] {cand['tajeom']} ({cand['score_str']})\n  [프로그램] {cand['program_text']}\n  [거래량] {cand['vol_status']}\n  [펀더멘털] {vip_data}")
+
     return "\n\n".join(picks_info)
 
 def generate_morning_briefing(market_data, news_data, kor_context, liquidity_data):
-    print("🤖 AI 매크로 분석 및 리포트 작성 중...")
+    print("🤖 AI 매크로 분석 및 능동형 리포트 작성 중...")
     client = genai.Client(api_key=GEMINI_API_KEY)
     
-    # 관망 모드일 경우 프롬프트 동적 조정
     is_empty_market = "기준 부합 종목 부재" in kor_context
     
     if is_empty_market:
@@ -175,18 +187,23 @@ def generate_morning_briefing(market_data, news_data, kor_context, liquidity_dat
    ▫️ (억지로 특정 종목을 추천하거나 지어내지 마십시오.)
 """
     else:
+        # 💡 [V8.1 핵심] AI에게 단순 정리역할이 아닌 '최적 종목 능동 선정(Active Selection)' 권한 부여
         stock_prompt_instruction = """
-   [파트 2: 종목별 심층 분석 (파란색 뱃지)]
-   🟦 [종목명]
+   [파트 2: 당일 주도주 능동 선정 및 심층 분석 (파란색 뱃지)]
+   🚨 (핵심 지시: 귀하에게 제공된 '[어제 포착된 퀀트 필터 통과 후보 풀]'을 면밀히 분석하십시오. 단순 나열이 절대 아닙니다! 
+   오늘 분석한 매크로 및 뉴스 내러티브와 완벽히 일치하며, 당장 오늘 아침 투자하기에 '가장 완벽한 승률'을 보여줄 것으로 판단되는 종목을 단기/스윙 상관없이 1개~3개만 귀하가 직접 '엄선'하십시오. 
+   선택받지 못한 종목은 과감히 버리십시오.)
+   
+   🟦 [귀하가 엄선한 종목명]
    🔹 핵심 모멘텀 & 타점 딥리딩
    ▫️ [🤖프로그램: 제공된 프로그램 데이터] [📈거래량: 제공된 거래량 배지] [🎯타점: 제공된 마스터타점 및 점수]
-   ▫️ (제공된 마스터타점, 프로그램, 거래량을 융합하여 이 종목이 왜 퀀트 상위권에 포착되었는지, 세력의 의도가 무엇인지 분석하라.)
+   ▫️ (왜 이 종목을 오늘 아침 최우선 픽으로 '선정'했는지, 제공된 데이터와 뉴스를 융합하여 세력의 의도와 주도주 논리를 날카롭게 분석하십시오.)
    🔹 실전 액션 플랜
-   ▫️ 진입: (마스터타점의 전략(돌파/눌림/종가베팅)에 맞는 시가 갭 및 장중 대응 전략)
+   ▫️ 진입: (마스터타점의 전략(돌파/눌림/종가베팅 등)에 맞는 시가 갭 및 장중 대응 전략)
    ▫️ 대응: (리스크 관리 및 비중 조절 팁)
 """
 
-    prompt = f"""너는 대한민국 최상위 1% 실전 트레이더를 위한 HYEOKS 리서치 센터의 수석 매크로/퀀트 애널리스트야.
+    prompt = f"""너는 대한민국 최상위 1% 실전 트레이더를 위한 HYEOKS 리서치 센터의 헤드 퀀트 매니저(Head Quant Manager)야.
 아래의 데이터를 융합하여 오늘 아침 장 개장 전 트레이더가 읽을 '유연하고 통찰력 있는 모닝 브리핑 리포트'를 작성해라.
 
 [글로벌 매크로 유동성 지표 (FRED)]
@@ -195,7 +212,7 @@ def generate_morning_briefing(market_data, news_data, kor_context, liquidity_dat
 [밤사이 글로벌/국내 주요 뉴스]
 {news_data}
 
-[어제 포착된 핵심 종목 및 심층 데이터]
+[어제 포착된 퀀트 필터 통과 후보 풀 (최대 10종목)]
 {kor_context}
 
 [HYEOKS 리서치 작성 지침 - 가독성 및 보고서 통일성 절대 규칙]
@@ -214,7 +231,7 @@ def generate_morning_briefing(market_data, news_data, kor_context, liquidity_dat
    - 내가 제공한 [프로그램], [거래량], [마스터타점] 텍스트를 한 글자도 바꾸지 말고 괄호 안에 그대로 넣어라. 
    - 없는 데이터를 억지로 지어내지 마라.
 
-4. 압축 브리핑: 핵심 추천 종목 총 3개 이내로 엄선하며, 군더더기 인사말은 생략.
+4. 군더더기 인사말은 생략.
 """
     for i in range(10):
         try:
@@ -228,7 +245,7 @@ def generate_morning_briefing(market_data, news_data, kor_context, liquidity_dat
     raise Exception("서버 응답 불가")
 
 if __name__ == "__main__":
-    print("🚀 HYEOKS 모닝 브리핑 시스템 가동 시작...")
+    print("🚀 HYEOKS 능동형 모닝 브리핑 시스템 가동 시작...")
     liquidity_data = get_global_liquidity_data()
     market_data, news_data = get_us_market_summary()
     kor_context = get_yesterday_korean_context()
