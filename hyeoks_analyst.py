@@ -18,7 +18,7 @@ KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
 FRED_API_KEY = "eed13162f33f0ad6547783b9bb27190b"
 
-print("🤖 [HYEOKS 리서치 센터] 매크로 융합 2.5-Pro V7.1 (강제차출+신고가특권) 엔진 가동...")
+print("🤖 [HYEOKS 리서치 센터] 매크로 융합 2.5-Pro V7.4 (프롬프트 체계화) 엔진 가동...")
 
 try: client = genai.Client(api_key=GEMINI_API_KEY)
 except Exception as e: print(f"❌ API 초기화 실패: {e}"); exit(1)
@@ -31,12 +31,12 @@ def get_target_stock_news(code):
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
         news_list = []
         for a_tag in soup.select('.title a')[:3]: news_list.append(f"- {a_tag.text.strip()}")
-        return "\n".join(news_list) if news_list else "당일 개별 특징주 뉴스 없음"
-    except Exception: return "개별 뉴스 수집 실패"
+        return "\n".join(news_list) if news_list else "당일 개별 특징주 뉴스 없습니다."
+    except Exception: return "개별 뉴스 수집 실패했습니다."
 
 def get_vip_deep_dive_data(code, kis_token):
     vip = {"펀더멘털": "N/A"}
-    if not (kis_token and KIS_APP_KEY and KIS_APP_SECRET): return "⚠️ KIS API 토큰 없음"
+    if not (kis_token and KIS_APP_KEY and KIS_APP_SECRET): return "⚠️ KIS API 토큰 없습니다."
     req = requests.Session()
     headers = {"authorization": f"Bearer {kis_token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "custtype": "P"}
     try:
@@ -79,7 +79,7 @@ def get_global_liquidity_data():
                 formatted_val = f"{latest_val:,.2f}%" if series_id == "BAMLH0A0HYM2" else f"{latest_val:,.1f}"
                 liquidity_report.append(f"- {name}: {formatted_val} ({trend})")
         except Exception: pass
-    return "\n".join(liquidity_report) if liquidity_report else "유동성 데이터 수집 불가"
+    return "\n".join(liquidity_report) if liquidity_report else "유동성 데이터 수집 불가합니다."
 
 try:
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -96,38 +96,36 @@ try:
 
     macro_sheet = doc.worksheet("시장요약").get_all_values()
     nasdaq, exchange_rate, wti_oil = macro_sheet[1][4], macro_sheet[1][6], macro_sheet[1][7]
-    tech_data = doc.worksheet("주가데이터_보조").get_all_values()[1:50] # 💡 더 많은 후보 탐색을 위해 50개 로드
+    tech_data = doc.worksheet("주가데이터_보조").get_all_values()[1:50] 
     
     liquidity_data = get_global_liquidity_data()
     valid_short_candidates, valid_mid_candidates = [], []
-    all_candidates_fallback = [] # 최후의 보루 (전체 리스트)
+    all_candidates_fallback = []
     is_korean_market_down = False 
 
     for r in tech_data:
-        if len(r) < 21: continue # V6.9 U열(21번째) 기준
+        if len(r) < 21: continue 
         name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
-        current_price, change_rate, score_str, tajeom = str(r[2]), str(r[3]), str(r[8]), str(r[9])
-        shadow_status = str(r[14])
-        vol_status = str(r[18])
-        program_rate = str(r[20]) 
+        current_price, change_rate, score_str, tajeom = str(r[2]).strip(), str(r[3]).strip(), str(r[8]).strip(), str(r[9]).strip()
+        shadow_status = str(r[14]).strip()
+        
+        # 💡 [V7.4 공백 제거 완벽 처리]
+        vol_status = str(r[18]).strip() if len(r)>18 and r[18] else "🟡 [V.평년수준]"
+        program_rate = str(r[20]).strip() if len(r)>20 and r[20] else "⚪ [P.관망중]"
         
         if "주의장세" in tajeom: is_korean_market_down = True
         
-        # 💡 [V7.1] 순수 숫자 점수 추출 (정렬용)
         try: num_score = int(score_str.split('점')[0])
         except: num_score = 0
             
         cand_info = f"종목:{name}({code}), 현재가:{current_price}원 ({change_rate}), 타점:{tajeom}, 퀀트점수:{score_str}, 테마:{r[19]}, 프로그램:{program_rate}, 거래량판독:{vol_status}"
         cand_data = {'name': name, 'code': code, 'tajeom': tajeom, 'info': cand_info, 'score': num_score}
         
-        # 상/하한가, 매매제한 종목은 영원히 제외
         if "상한가" in tajeom or "하한가" in tajeom or "29." in change_rate or "30." in change_rate or "-29." in change_rate or "-30." in change_rate: continue 
         if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족', tajeom): continue 
         
-        # 정상적인 종목은 백업 풀에 점수와 함께 보관
         all_candidates_fallback.append(cand_data)
 
-        # 윗꼬리 심한 종목, 완전 관망 종목 필터링 (정식 후보용)
         if "저항 출회" in shadow_status or "윗꼬리" in tajeom: continue 
         if "관망" in tajeom and "관심" not in tajeom: continue
             
@@ -135,14 +133,11 @@ try:
             valid_mid_candidates.append(cand_data)
         else: valid_short_candidates.append(cand_data)
 
-    # 백업 풀을 퀀트 점수(score) 내림차순으로 강력하게 정렬
     all_candidates_fallback.sort(key=lambda x: x['score'], reverse=True)
 
-    # 💡 [V7.1 무적 로직] 최상위 강제 차출
     is_short_alternative = False
     is_mid_alternative = False
 
-    # Short 풀 처리
     if not valid_short_candidates:
         if len(valid_mid_candidates) > 1:
             valid_short_candidates = [valid_mid_candidates[0]] 
@@ -151,15 +146,14 @@ try:
             print("🔄 [알림] 스윙 후보에서 단기로 1종목 차출.")
         else:
             if all_candidates_fallback:
-                valid_short_candidates = [all_candidates_fallback[0]] # 점수 1등 강제 배정
-                all_candidates_fallback = all_candidates_fallback[1:] # 1등 뺐으니 리스트에서 제거
+                valid_short_candidates = [all_candidates_fallback[0]] 
+                all_candidates_fallback = all_candidates_fallback[1:] 
                 is_short_alternative = True
                 print("🚨 [대안] 단기 후보 고갈 -> 퀀트 점수 1위 강제 배정")
             else:
                 valid_short_candidates = [{'name': '시장관망', 'code': '000000', 'tajeom': '관망', 'info': '현재 시장 상황이 극도로 불안정하여 매수 후보를 산출할 수 없습니다.'}]
                 is_short_alternative = True
 
-    # Mid 풀 처리
     if not valid_mid_candidates:
         if len(valid_short_candidates) > 1:
             valid_mid_candidates = [valid_short_candidates[-1]] 
@@ -168,7 +162,7 @@ try:
             print("🔄 [알림] 단기 후보에서 스윙으로 1종목 차출.")
         else:
             if all_candidates_fallback:
-                valid_mid_candidates = [all_candidates_fallback[0]] # 남은 백업 풀에서 점수 제일 높은 놈 배정
+                valid_mid_candidates = [all_candidates_fallback[0]] 
                 is_mid_alternative = True
                 print("🚨 [대안] 스윙 후보 고갈 -> 퀀트 점수 차순위 강제 배정")
             else:
@@ -178,22 +172,20 @@ try:
     market_status_text = "코스피/코스닥 20일선 이탈 (하락 변동성 장세)" if is_korean_market_down else "코스피/코스닥 안정화 (추세 추종 베팅 가능)"
 
     def generate_hyeoks_report(st_type, is_alternative):
-        if st_type == "short":
-            c_str = "\n".join([c['info'] for c in valid_short_candidates])
-            s_msg = "주도 테마의 심장부에서 전고점 매물대를 완벽히 소화해 낸 최고의 단기 돌파 1종목"
-            sub_title_prefix = "🚨[시장 대안] 단기 모멘텀 공략" if is_alternative else "매물대 진공 구간 돌파 및 단기 슈팅 공략"
-        else:
-            c_str = "\n".join([c['info'] for c in valid_mid_candidates])
-            s_msg = "에너지 응축(씨마름)을 끝내고 프로그램 대량유입과 함께 플랫폼을 탈출하는 완벽한 스윙 1종목"
-            sub_title_prefix = "🚨[시장 대안] 눌림목 변형 공략" if is_alternative else "에너지 응축 후 플랫폼 탈출 스윙 전략"
+        target_list = valid_short_candidates if st_type == "short" else valid_mid_candidates
+        c_str = "\n".join([c['info'] for c in target_list])
+        
+        # 💡 [V7.4 🚨 마커 로직 유지]
+        sub_title_prefix = "🚨[시장 대안] 단기 모멘텀 공략" if is_alternative and st_type == "short" else ("🚨[시장 대안] 눌림목 변형 공략" if is_alternative else ("매물대 진공 구간 돌파 및 단기 슈팅 공략" if st_type == "short" else "에너지 응축 후 플랫폼 탈출 스윙 전략"))
+        s_msg = "주도 테마의 심장부에서 전고점 매물대를 완벽히 소화해 낸 최고의 단기 돌파 1종목" if st_type == "short" else "에너지 응축(씨마름)을 끝내고 프로그램 대량유입과 함께 플랫폼을 탈출하는 완벽한 스윙 1종목"
 
         pick_prompt = f"너는 실전 트레이더의 직감을 가진 수석 퀀트 애널리스트야. 매크로(나스닥:{nasdaq}, 환율:{exchange_rate}, 한국증시:{market_status_text})와 [유동성]\n{liquidity_data}\n를 분석해. 유동성이 축소 중이면 보수적 방어종목을, 공급 중이면 폭발적 주도주를 골라. [후보군] {c_str} [지시] 후보 중 '{s_msg}'을 딱 1개만 골라서 '6자리 종목코드 숫자'만 출력해."
         
         raw_code = safe_generate_content(pick_prompt).text
         code_match = re.search(r'\d{6}', raw_code)
-        target_code = code_match.group() if code_match else (valid_short_candidates[0]['code'] if st_type == "short" else valid_mid_candidates[0]['code'])
+        target_code = code_match.group() if code_match else target_list[0]['code']
 
-        best_pick = next((item for item in (valid_short_candidates if st_type=="short" else valid_mid_candidates) if item["code"] == target_code), (valid_short_candidates[0] if st_type=="short" else valid_mid_candidates[0]))
+        best_pick = next((item for item in target_list if item["code"] == target_code), target_list[0])
         target_name = best_pick['name']
         print(f"🎯 [{st_type.upper()}] 최종 픽: {target_name} ({target_code}) {'(대안)' if is_alternative else ''}")
 
@@ -217,15 +209,15 @@ try:
 
         warn = "\n[필수 경고] 고공권 판정. 비중을 절반으로 줄이고 칼손절 요망." if "고가(단기)" in best_pick['tajeom'] else ("\n[필수 경고] 주의 장세. 매매 비중 축소 요망." if is_korean_market_down else "")
 
-        # 💡 [V7.2] 대안 종목일 경우, 딥리딩 절대 지침(1~6번) 아래에 7, 8번을 동적으로 추가
+        # 💡 [V7.4 프롬프트 체계화] 7번, 8번이 기존 절대지침과 동일한 레벨로 붙도록 줄바꿈 설정
         alt_warning = ""
         if is_alternative:
             alt_warning = """
-7. 🚨 비판적 분석 강제: 이 종목은 주도주가 전멸하여 '시장 대안(차선책)'으로 차출된 종목이다. 거래량 감소나 프로그램 관망세를 무조건 '스마트머니의 매집'이나 '에너지 응축'으로 억지 포장하지 마라.
-8. 🚨 팩트 폭격: 확고한 박스권 돌파나 대량 수급이 터지지 않았다면, "시장 소외로 인한 가짜 반등 가능성", "비중 축소 및 철저한 보수적 접근 요망" 등 리스크와 한계점을 본문에 매섭고 냉철하게 지적해라."""
+7. 🚨 비판적 분석 강제: 이 종목은 주도주가 전멸하여 '시장 대안(차선책)'으로 차출된 종목입니다. 거래량 감소나 프로그램 관망세를 무조건 '매집'이나 '에너지 응축'으로 억지 포장하지 마십시오.
+8. 🚨 팩트 폭격: 수급이 터지지 않았다면 "시장 소외로 인한 가짜 반등 가능성", "방어적 접근 요망" 등 리스크와 한계점을 매섭고 냉철하게 지적하십시오."""
 
-        base_prompt = f"""너는 대한민국 최상위 1% 실전 트레이더들의 감각을 가진 퀀트 애널리스트야.
-제공된 일봉 차트(Vision)와 데이터를 바탕으로 심층 리포트를 작성해라. 
+        base_prompt = f"""귀하는 대한민국 최상위 1% 실전 트레이더들을 위한 HYEOKS 리서치 센터의 수석 퀀트 애널리스트입니다.
+제공된 일봉 차트(Vision)와 데이터를 바탕으로 심층 리포트를 작성하십시오. 한 리포트 내에서 말투가 바뀌지 않도록 모든 문장을 정중하고 격조 있는 존댓말(하십시오체)로 완전히 통일하십시오.
 
 [입력 데이터]
 종목 및 스캐너 판독: {best_pick['info']}
@@ -238,13 +230,13 @@ try:
 {liquidity_data}
 {warn}
 
-[HYEOKS 딥리딩 절대 지침 - 명심해라]
-1. 분량 자유도: 1번, 2번 항목은 너의 전문적인 통찰력을 발휘하여 충분히 길고 논리적으로 서술해라. 
-2. 가격 창조 금지 (매우 중요): 본문에서 특정 가격을 언급할 때는 반드시 [입력 데이터]에 제공된 '현재가'만을 사용해라.
-3. 전략의 일관성: {st_type} 전략에 맞게 서술하되 두 전략을 섞지 마라.
-4. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:O 형식 출력.
-5. 프로그램 수급 연계: 제공된 [프로그램] 현황을 분석하여 주가 상승을 어떻게 뒷받침하는지 서술할 것. 
-6. 💎 차트 및 수급 딥리딩: 제공된 차트 이미지와 스캐너의 [거래량판독], [프로그램] 비율을 융합하여 세력의 매집 의도를 날카롭게 분석해라.{alt_warning}
+[HYEOKS 딥리딩 절대 지침 - 명심하십시오]
+1. 분량 자유도: 1번, 2번 항목은 귀하의 전문적인 통찰력을 발휘하여 충분히 길고 논리적으로 서술하십시오. 
+2. 가격 창조 금지 (매우 중요): 본문에서 특정 가격을 언급할 때는 반드시 [입력 데이터]에 제공된 '현재가'만을 사용하십시오.
+3. 전략의 일관성: {st_type} 전략에 맞게 서술하되 두 전략을 섞지 마십시오.
+4. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'X' if st_type=='short' else 'O'} 형식으로 출력하십시오.
+5. 프로그램 수급 연계: 제공된 [프로그램] 현황을 분석하여 주가 상승을 어떻게 뒷받침하는지 서술하십시오. 
+6. 💎 차트 및 수급 딥리딩: 제공된 차트 이미지와 스캐너의 [거래량판독], [프로그램] 비율을 융합하여 세력의 매집 의도를 날카롭게 분석하십시오.{alt_warning}
 
 [출력 양식 (마크다운 유지)]
 <div class="broker-name">HYEOKS SECURITIES | {'SHORT-TERM' if st_type=='short' else 'MID-TERM'} STRATEGY</div>
