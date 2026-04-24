@@ -387,6 +387,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if len(op_profits) == 3 and all(p < 0 for p in op_profits): is_chronic_loss = True
 
         is_dual_buy, f_buy, i_buy, supply_text = False, 0, 0, ""
+        pg_amount_eok = 0.0 # 💡 안정성을 위한 초기화 추가
+        
         try:
             today_trend = session.get(f"https://m.stock.naver.com/api/stock/{code}/investor/trend", verify=False, timeout=3).json().get('investorTrendList', [{}])[0]
             f_buy = int(str(today_trend.get('foreignerStraightPurchasePrice', '0')).replace(',', ''))
@@ -579,16 +581,25 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_hedge_theme = any(kw in my_theme_name for kw in ['방산', '방위산업', '해운', '조선', '석유', '가스', '전쟁', '사료', '원자재', '품절주', '식품'])
         hedge_premium = 0
         if is_hedge_theme and kospi_rate <= -0.5:
-            # -0.5%일 때 5점, 이후 -0.1%마다 1점 추가
             hedge_premium = 5 + int((abs(kospi_rate) - 0.5) / 0.1) * 1 
             quant_score += hedge_premium
             master_tajeom += f" 🛡️(해지프리미엄 +{hedge_premium}점)"
 
-       # 💡 [V6.9 수정] 타임 페널티 (단, '핵심'이 들어간 타점(신고가 돌파)은 예외)
-        if is_breakout_track and (now_kst_tajeom.hour > 10 or (now_kst_tajeom.hour == 10 and now_kst_tajeom.minute >= 30)):
+        # 💡 [V7.9 수정] 전략별 시간 감점 및 종가베팅 가점 로직 분리
+        is_after_1030 = (now_kst_tajeom.hour > 10 or (now_kst_tajeom.hour == 10 and now_kst_tajeom.minute >= 30))
+        is_after_1400 = (now_kst_tajeom.hour >= 14)
+
+        if is_breakout_track and is_after_1030:
+            # 단기/테마성 돌파인지 판단 (핵심 돌파는 예외)
             if ("돌파" in master_tajeom or "안착" in master_tajeom or "주도주" in master_tajeom) and "핵심" not in master_tajeom:
-                quant_score -= 15
-                master_tajeom += " ⏰(오후돌파 감점)"
+                # 오후 2시 이후, 윗꼬리가 없고 프로그램 매수가 10억 이상(또는 외인/기관 쌍끌이)일 경우 -> 종가베팅 우량 타점
+                if is_after_1400 and not is_long_shadow and (pg_amount_eok >= 10 or is_dual_buy):
+                    quant_score += 10
+                    master_tajeom += " 🌙(종가베팅 수급프리미엄 +10점)"
+                else:
+                    # 조건에 부합하지 않는 애매한 10시 30분 이후 돌파는 휩쏘 방지를 위해 감점 처리
+                    quant_score -= 15
+                    master_tajeom += " ⏰(오후돌파 감점)"
 
         score_display = f"{quant_score}점 ({track_type})"
         if is_chronic_loss and "[" in master_tajeom:
@@ -612,7 +623,6 @@ def update_technical_data(df_theme, all_theme_map):
         is_warning_market = check_warning_market()
         if is_warning_market: print("⚠️ 코스닥 20일선 이탈(하락장) 감지!")
         
-        # 💡 [V6.9] 코스피 등락률 1회만 조회하여 파라미터로 넘김
         kospi_rate = get_kospi_fluctuation_rate()
         if kospi_rate <= -0.5:
             print(f"📊 코스피 실시간 등락률: {kospi_rate:.2f}% (해지 프리미엄 발동 대기)")
@@ -667,7 +677,6 @@ def update_technical_data(df_theme, all_theme_map):
         results = []
         print(f"⚡ {len(target_dict)}개 종목을 30개의 스레드로 동시 타격합니다...")
         with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
-            # 💡 [V6.9] kospi_rate 추가 전달
             future_to_name = {executor.submit(analyze_single_stock, name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate): name for name, code in target_dict.items()}
             for future in concurrent.futures.as_completed(future_to_name):
                 res = future.result()
