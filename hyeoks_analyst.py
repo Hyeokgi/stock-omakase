@@ -21,7 +21,7 @@ KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
 FRED_API_KEY = "eed13162f33f0ad6547783b9bb27190b"
 
-print("🤖 [HYEOKS 리서치 센터] V7.8 (엄격한 키워드 분리 & 최소 점수 하한선) 가동...")
+print("🤖 [HYEOKS 리서치 센터] 애널리스트 V7.9 (리미트 해제 & 무결점 필터) 가동...")
 
 try: 
     client = genai.Client(api_key=GEMINI_API_KEY)
@@ -62,7 +62,6 @@ def get_vip_deep_dive_data(code, kis_token):
     return "PER: N/A / PBR: N/A"
 
 def safe_generate_content(contents):
-    # 💡 [V7.8 수정] 안정적인 10회 점진적 재시도 (Exponential Backoff) 복구
     for i in range(10): 
         try: return client.models.generate_content(model='gemini-2.5-pro', contents=contents)
         except Exception as e:
@@ -108,46 +107,46 @@ try:
     nasdaq, exchange, oil = clean_emojis(macro_data[1][4]), clean_emojis(macro_data[1][6]), clean_emojis(macro_data[1][7])
     news_keywords = clean_emojis("\n".join([f"{r[2]}({r[3]}회)" for r in doc.worksheet("뉴스_키워드").get_all_values()[1:6]]))
     
-    tech_data = doc.worksheet("주가데이터_보조").get_all_values()[1:40]
+    # 💡 [V7.9 수정] 40행 제한 해제 (전체 종목 스캔)
+    tech_data = doc.worksheet("주가데이터_보조").get_all_values()[1:]
     liquidity = get_global_liquidity_data()
     
     valid_short, valid_mid = [], []
     is_down = False 
 
-    # 💡 [V7.8 수정] 정확한 키워드 타겟팅 리스트 (돌파 혼동 방지)
     SHORT_KEYWORDS = ["[테마대장]", "[핵심]", "신고가 돌파", "종가베팅", "[개별주] 상한가", "[후발주] 상한가", "당일 주도주", "독자 모멘텀", "테마 추종"]
     MID_KEYWORDS = ["플랫폼", "눌림", "수급 유입", "분할매수", "이평수렴", "[관심]", "방어", "[우량]"]
 
     for r in tech_data:
+        # 인덱스 20번(프로그램)까지 있으므로 최소 21개의 컬럼 데이터가 있어야 함
         if len(r) < 21: continue
+        
         name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
         curr_p, chg, score_str, tajeom = str(r[2]).strip(), str(r[3]).strip(), str(r[8]).strip(), str(r[9]).strip()
         shadow, vol, prog = str(r[14]).strip(), str(r[18]).strip(), str(r[20]).strip()
         
         if "주의장세" in tajeom: is_down = True
         
-        # 💡 [V7.8 수정] 퀀트 점수 정밀 추출 (음수 포함)
         try:
             match = re.search(r'(-?\d+)점', score_str)
             num_score = int(match.group(1)) if match else 0
         except: num_score = 0
 
-        # [입구 차단] 상하한가, 각종 매매 제한, 3년 적자 종목 원천 배제
+        # 💡 [V7.9 수정] 오탐지 방지를 위해 '3년적자'로 명확히 필터링
         if re.search(r'상한가|하한가|29\.|30\.', chg): continue
-        if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|적자', tajeom): continue 
+        if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|3년적자', tajeom): continue 
         if "저항 출회" in shadow or "윗꼬리" in tajeom: continue 
         if "관망" in tajeom and "관심" not in tajeom: continue
 
         info = clean_emojis(f"종목:{name}({code}), 현재가:{curr_p}원 ({chg}), 타점:{tajeom}, 퀀트점수:{score_str}, 테마:{r[19].strip()}, 프로그램:{prog}, 거래량:{vol}")
         cand = {'name': name, 'code': code, 'tajeom': tajeom, 'info': info, 'curr_p': int(curr_p.replace(',','')), 'score': num_score}
 
-        # 💡 [V7.8 수정] 키워드 매칭 및 최소 점수 하한선 (Floor) 적용
         is_short = any(kw in tajeom for kw in SHORT_KEYWORDS)
         is_mid = any(kw in tajeom for kw in MID_KEYWORDS)
 
-        if is_short and num_score >= 40: # 단기 최소 40점 컷
+        if is_short and num_score >= 40: 
             valid_short.append(cand)
-        elif is_mid and num_score >= 35: # 중기 최소 35점 컷
+        elif is_mid and num_score >= 35: 
             valid_mid.append(cand)
 
     status_txt = "코스피/코스닥 20일선 이탈 (보수적 접근)" if is_down else "코스피/코스닥 지지 (공격적 운영 가능)"
@@ -192,7 +191,12 @@ try:
         if not cands: return "", "000000", None 
         
         pick_prompt = f"아래 종목 리스트 중 {st_type} 전략에 가장 적합한 대장주 1개의 '6자리 종목코드'만 출력하십시오.\n" + "\n".join([c['info'] for c in cands])
-        target_code = re.search(r'\d{6}', safe_generate_content(pick_prompt).text).group()
+        
+        # 💡 [V7.9 수정] AI 정규식 예외 처리 방어 로직 추가
+        result_text = safe_generate_content(pick_prompt).text
+        match = re.search(r'\d{6}', result_text)
+        target_code = match.group() if match else cands[0]['code']
+        
         best = next((c for c in cands if c['code'] == target_code), cands[0])
         
         vip = get_vip_deep_dive_data(best['code'], KIS_TOKEN)
@@ -200,7 +204,7 @@ try:
         sub_title_prefix = "매물대 진공 구간 돌파 및 단기 슈팅 공략" if st_type == "short" else "에너지 응축 후 플랫폼 탈출 스윙 전략"
 
         detail_prompt = f"""귀하는 대한민국 최상위 1% 실전 트레이더들을 위한 HYEOKS 리서치 센터의 수석 퀀트 애널리스트입니다.
-제공된 일봉 차트(Vision)와 데이터를 바탕으로 심층 리포트를 작성하십시오. 한 리포트 내에서 말투가 바뀌지 않도록 모든 문장을 정중하고 격조 있는 존댓말(하십시오체)로 완전히 통일하십시오.
+제공된 데이터를 바탕으로 심층 리포트를 작성하십시오. 한 리포트 내에서 말투가 바뀌지 않도록 모든 문장을 정중하고 격조 있는 존댓말(하십시오체)로 완전히 통일하십시오.
 
 [입력 데이터]
 종목 및 스캐너 판독: {best['info']}
@@ -209,12 +213,10 @@ try:
 매크로 환경: 나스닥 {nasdaq}, 환율 {exchange}, 유가 {oil}, 국내증시 {status_txt}
 
 [HYEOKS 딥리딩 절대 지침 - 명심하십시오]
-1. 분량 자유도: 귀하의 전문적인 통찰력을 발휘하여 충분히 길고 논리적으로 2페이지 분량이 나오도록 상세히 서술하십시오. 
-2. 가격 창조 금지 (매우 중요): 본문에서 특정 가격을 언급할 때는 반드시 [입력 데이터]에 제공된 '현재가'만을 사용하십시오.
-3. 전략의 일관성: {st_type} 전략에 맞게 서술하되 두 전략을 섞지 마십시오.
-4. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'X' if st_type=='short' else 'O'} 형식으로 출력하십시오.
-5. 프로그램 수급 연계: 제공된 [프로그램] 현황을 분석하여 주가 상승을 어떻게 뒷받침하는지 서술하십시오. 
-6. 차트 및 수급 딥리딩: 제공된 차트 이미지와 스캐너의 데이터를 융합하여 세력의 매집 의도를 날카롭게 분석하십시오.
+1. 가격 창조 금지: 본문에서 특정 가격을 언급할 때는 반드시 [입력 데이터]에 제공된 '현재가'만을 사용하십시오.
+2. 실전 액션 플랜 강화: 모호한 비중 조절이 아닌, 현재 차트 상의 저항대나 의미 있는 라운드 피겨 등 명확한 가격을 기준으로 한 '손절가'를 반드시 제시하십시오.
+3. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'X' if st_type=='short' else 'O'} 형식으로 출력하십시오.
+4. 프로그램 수급 연계: 제공된 [프로그램] 현황을 분석하여 주가 상승을 어떻게 뒷받침하는지 서술하십시오. 
 
 [출력 양식 (마크다운 유지)]
 <div class="broker-name">HYEOKS SECURITIES | {'SHORT-TERM' if st_type=='short' else 'MID-TERM'} STRATEGY</div>
@@ -231,13 +233,13 @@ try:
 ## 1. 매크로 유동성 및 내러티브 고찰
 
 ## 2. 시각적 차트 판독 및 스마트머니 딥리딩
-(거래량 분석에 프로그램 매수 비중을 덧붙여 세력의 진짜 의도 파악)
+(거래량 분석에 프로그램 수급 비중을 덧붙여 세력의 매집 의도 파악)
 
 ## 3. 실전 타점 시나리오 및 리스크 관리 전략
+(명확한 진입 팁과, 구체적인 가격대를 기반으로 한 손절 기준점 제시)
 
 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'X' if st_type=='short' else 'O'}
 """
-        # 💡 [V7.8 수정] 000000 일 경우 불필요한 이미지 통신 방지
         if best['code'] != "000000":
             img_path = f"temp_{best['code']}.png"
             try:
