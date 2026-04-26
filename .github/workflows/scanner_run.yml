@@ -1,42 +1,35 @@
-name: 🎯 오후 3시 정각 종가베팅 스캐너
+name: 🎯 HYEOKS 스나이퍼 종베 봇
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # 구글 GAS에서 원격으로만 실행
+
+# 💡 [필수 안전장치] 다른 리포트/스캐너와 겹치지 않게 대기열에 세웁니다.
+concurrency:
+  group: hyeoks-sheet-lock
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    
     steps:
-    - name: Checkout code
+    - name: 📥 코드 가져오기
       uses: actions/checkout@v4
-      
-    - name: Set up Python
+
+    - name: 🐍 파이썬 세팅
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
-        # 에러의 원인이었던 cache 옵션 삭제 완료!
-        
-    - name: Install dependencies
+
+    - name: 📦 필수 라이브러리 설치
       run: |
         python -m pip install --upgrade pip
-        pip install requests beautifulsoup4 pandas gspread oauth2client kiwipiepy
-        
-    - name: Create secret.json
+        pip install requests beautifulsoup4 google-genai>=0.1.2 gspread oauth2client
+
+    - name: 🎯 스나이퍼 종베 픽 생성 및 기록
       env:
-        GCP_CREDENTIALS: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }} 
-      run: echo "$GCP_CREDENTIALS" > secret.json
-        
-    - name: Run Main Engine
-      run: python omakase.py
-
-    # 💡 [신규 추가] 구글 시트가 넉넉히 저장될 때까지 5분 대기
-    - name: ⏳ 데이터 동기화 대기 (5분)
-      run: sleep 300
-
-    # 💡 [신규 추가] 깃허브 내부에서 곧바로 ai_report.yml을 강제 호출!
-    - name: 🎯 AI 리포트 발송 트리거 (ai_report.yml 호출)
-      uses: peter-evans/repository-dispatch@v2
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        event-type: trigger-ai-report
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+      run: |
+        python scanner_bot.py
