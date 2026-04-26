@@ -1,10 +1,10 @@
 name: Stock Omakase Auto Scraper
 
 on:
-  workflow_dispatch: # 💡 구글(GAS) 원격 신호 수신 및 수동 실행 버튼
+  workflow_dispatch: # 구글 GAS가 쏘는 신호만 받음 (시간 없음)
   
 concurrency:
-  group: hyeoks-omakase-scanner
+  group: hyeoks-sheet-lock # 💡 퍼블리셔와 똑같은 이름으로 맞춥니다!
   cancel-in-progress: false
 
 jobs:
