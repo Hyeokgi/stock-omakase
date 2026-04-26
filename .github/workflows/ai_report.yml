@@ -1,11 +1,10 @@
 name: 🤖 HYEOKS AI 리서치 퍼블리셔
 
 on: 
-  workflow_dispatch:
+  workflow_dispatch: # 구글 GAS가 쏘는 신호만 받음 (시간 없음)
 
-# 💡 [핵심 방패 장착] main.yml과 완벽하게 동일한 대기열 그룹 지정!
 concurrency:
-  group: hyeoks-google-sheet
+  group: hyeoks-sheet-lock # 💡 이름을 하나로 묶습니다!
   cancel-in-progress: false
 
 jobs:
