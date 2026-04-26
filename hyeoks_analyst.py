@@ -61,9 +61,15 @@ def get_vip_deep_dive_data(code, kis_token):
     except: pass
     return "PER: N/A / PBR: N/A"
 
-def safe_generate_content(contents):
+def safe_generate_content(prompt, img_path=None):
     for i in range(10): 
-        try: return client.models.generate_content(model='gemini-2.5-pro', contents=contents)
+        try: 
+            if img_path:
+                # 💡 핵심: 재시도할 때마다 이미지를 새로 열어서 던져줍니다.
+                with PIL.Image.open(img_path) as img:
+                    return client.models.generate_content(model='gemini-2.5-pro', contents=[prompt, img])
+            else:
+                return client.models.generate_content(model='gemini-2.5-pro', contents=prompt)
         except Exception as e:
             if "503" in str(e) or "429" in str(e) or "quota" in str(e).lower():
                 wait_time = 30 * (i + 1)
@@ -246,7 +252,8 @@ try:
             try:
                 res = requests.get(f"https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{best['code']}.png", headers={'User-Agent': 'Mozilla/5.0'}, verify=False)
                 with open(img_path, 'wb') as f: f.write(res.content)
-                report_txt = safe_generate_content([detail_prompt, PIL.Image.open(img_path)]).text
+                # 💡 수정됨: 이미지 경로만 넘겨주고 함수 안에서 열도록 위임합니다.
+                report_txt = safe_generate_content(detail_prompt, img_path=img_path).text 
                 os.remove(img_path)
             except:
                 report_txt = safe_generate_content(detail_prompt).text
