@@ -192,9 +192,21 @@ try:
     def generate_hyeoks_report(st_type, cands):
         if not cands: return "", "000000", None 
         
-        pick_prompt = f"아래 종목 리스트 중 {st_type} 전략에 가장 적합한 대장주 1개의 '6자리 종목코드'만 출력하십시오.\n" + "\n".join([c['info'] for c in cands])
+        # 💡 [V8.2 패치] HYEOKS 전략 원칙(Premise)을 AI의 뇌에 직접 주입
+        pick_prompt = f"""귀하는 HYEOKS 리서치 센터의 종목 선정 위원회입니다.
+현재 귀하에게 하달된 임무는 '{st_type.upper()}' 전략에 맞는 대장주를 찾는 것입니다.
+다음의 [HYEOKS 전략 원칙]을 엄격히 적용하여, 현재 전략에 가장 완벽하게 부합하는 최상위 1종목의 '6자리 종목코드'만 출력하십시오.
+
+[HYEOKS 전략 원칙]
+1. 단기(SHORT): 거래량이 평소보다 폭발하면서, 상단 매물대가 비어있는 '진공 구간'에 진입한 종목을 최우선한다.
+2. 중기(MID): 20일선 부근에서 에너지를 응축(V.에너지응축)하고, 외인/기관의 프로그램 매집이 시작된 '급등 초입'을 선정한다.
+3. 공통: 퀀트 점수가 높더라도 윗꼬리가 길거나(저항) 이격이 과도한 종목은 절대 배제한다.
+
+[후보 리스트]
+{chr(10).join([c['info'] for c in cands])}
+"""
         
-        # 💡 [V7.9 수정] AI 정규식 예외 처리 방어 로직 추가
+        # 💡 [V7.9 수정] AI 정규식 예외 처리 방어 로직 (기존 코드 유지)
         result_text = safe_generate_content(pick_prompt).text
         match = re.search(r'\d{6}', result_text)
         target_code = match.group() if match else cands[0]['code']
