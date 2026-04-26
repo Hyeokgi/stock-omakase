@@ -3,9 +3,9 @@ name: 🌅 HYEOKS 모닝 브리핑
 on:
   workflow_dispatch:
 
-
+# 💡 [방패 통합] 모든 워크플로우를 하나의 그룹으로 묶어 구글 시트 접근 충돌을 원천 차단합니다.
 concurrency:
-  group: hyeoks-google-sheet
+  group: hyeoks-sheet-lock
   cancel-in-progress: false
 
 jobs:
@@ -30,7 +30,6 @@ jobs:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        # 💡 [핵심] 파일(secret.json)을 만들지 않고 환경변수로 직접 주입!
         GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
         KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
         KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
