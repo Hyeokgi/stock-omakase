@@ -61,22 +61,18 @@ def get_vip_deep_dive_data(code, kis_token):
     except: pass
     return "PER: N/A / PBR: N/A"
 
-def safe_generate_content(prompt, img_path=None):
-    for i in range(10): 
+def safe_generate_content(contents):
+    # 💡 깔끔하게 5번만 재시도하고, 안 되면 쿨하게 포기하는 원상 복구 로직
+    for i in range(5): 
         try: 
-            if img_path:
-                # 💡 핵심: 재시도할 때마다 이미지를 새로 열어서 던져줍니다.
-                with PIL.Image.open(img_path) as img:
-                    return client.models.generate_content(model='gemini-2.5-pro', contents=[prompt, img])
-            else:
-                return client.models.generate_content(model='gemini-2.5-pro', contents=prompt)
+            return client.models.generate_content(model='gemini-2.5-pro', contents=contents)
         except Exception as e:
             if "503" in str(e) or "429" in str(e) or "quota" in str(e).lower():
                 wait_time = 30 * (i + 1)
-                print(f"⚠️ 구글 API 지연. {wait_time}초 대기 후 재시도...")
+                print(f"⚠️ 구글 API 지연/할당량초과. {wait_time}초 대기 후 재시도...")
                 time.sleep(wait_time)
             else: raise e 
-    raise Exception("❌ 구글 서버 응답 최종 실패")
+    raise Exception("❌ 구글 서버 할당량 초과 또는 무응답으로 최종 실패")
 
 def get_global_liquidity_data():
     indicators = {"WTREGEN": "TGA 잔고", "RRPONTSYD": "역레포 잔고", "BAMLH0A0HYM2": "하이일드 스프레드", "WALCL": "연준 총자산", "M2SL": "M2 통화량"}
@@ -247,19 +243,18 @@ try:
 
 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'X' if st_type=='short' else 'O'}
 """
+        # 💡 이미지와 프롬프트를 깔끔하게 묶어서 한 번에 전송 (롤백)
         if best['code'] != "000000":
             img_path = f"temp_{best['code']}.png"
             try:
                 res = requests.get(f"https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{best['code']}.png", headers={'User-Agent': 'Mozilla/5.0'}, verify=False)
                 with open(img_path, 'wb') as f: f.write(res.content)
-                # 💡 수정됨: 이미지 경로만 넘겨주고 함수 안에서 열도록 위임합니다.
-                report_txt = safe_generate_content(detail_prompt, img_path=img_path).text 
+                report_txt = safe_generate_content([detail_prompt, PIL.Image.open(img_path)]).text
                 os.remove(img_path)
             except:
                 report_txt = safe_generate_content(detail_prompt).text
         else:
             report_txt = safe_generate_content(detail_prompt).text
-
         pick_data = None
         match = re.search(r'\[DATA\]\s*목표가\s*:\s*([0-9,]+).*?손절가\s*:\s*([0-9,]+).*?분할매수\s*:\s*([OX])', report_txt)
         if match:
