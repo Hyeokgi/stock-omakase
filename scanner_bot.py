@@ -1,111 +1,73 @@
-import requests
+import os, datetime, requests, json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-from bs4 import BeautifulSoup
-import time
+from google import genai
 
-# ==========================================
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit" 
-# ==========================================
+# 환경변수 로드
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit"
+KST = datetime.timezone(datetime.timedelta(hours=9))
 
-print("🤖 [신정재 종가베팅 스캐너] 오리지널 다이렉트 봇 가동 시작...")
+client = genai.Client(api_key=GEMINI_API_KEY)
 
-# 1. 구글 시트 연결
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
-client = gspread.authorize(creds)
-doc = client.open_by_url(SHEET_URL)
-
-info_sheet = doc.worksheet("기업정보")
-scanner_sheet = doc.worksheet("스캐너_마스터")
-
-# 2. 종목코드 매핑
-info_data = info_sheet.get_all_values()
-name_to_code = {}
-for row in info_data[1:]:
-    if len(row) >= 3:
-        name_to_code[row[0].strip()] = str(row[2]).strip().zfill(6)
-
-# 🚀 [속도 6배 향상 패치] 매번 문을 열지 않고 고속도로(Session)를 유지합니다.
-session = requests.Session()
-session.headers.update({'User-Agent': 'Mozilla/5.0'})
-
-def search_code_from_naver(stock_name):
-    try:
-        url = f"https://m.stock.naver.com/api/search/all?keyword={stock_name}"
-        data = session.get(url).json()
-        if data.get('result') and data['result'].get('stocks'):
-            return data['result']['stocks'][0]['itemCode']
-    except Exception:
-        pass
-    return None
-
-# 3. 스캐너 탭에 적힌 종목만 타겟팅 (불필요한 조회 차단)
-scanner_data = scanner_sheet.get_all_values()
-target_stocks = [row[0].strip() for row in scanner_data[1:] if len(row) > 0 and row[0].strip() and row[0].strip() != "#REF!"]
-
-print(f"▶️ 총 {len(target_stocks)}개 종목 데이터 수집 시작 (초고속 모드)...")
-stock_market_data = {}
-
-# 4. 실시간 데이터 초고속 크롤링
-for stock_name in target_stocks:
-    code = name_to_code.get(stock_name)
-    if not code:
-        code = search_code_from_naver(stock_name)
-        if code: name_to_code[stock_name] = code
-        else: continue
-
-    try:
-        url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=60&requestType=0"
-        res = session.get(url, timeout=3)
-        soup = BeautifulSoup(res.content, 'html.parser')
-        items = soup.find_all('item')
-        
-        if items:
-            today_data = items[-1]['data'].split('|') 
-            high_prices = [int(item['data'].split('|')[2]) for item in items]
-            
-            stock_market_data[stock_name] = {
-                "price": int(today_data[4]),
-                "high": int(today_data[2]),
-                "low": int(today_data[3]),
-                "high_60d": max(high_prices)
-            }
-            print(f"✅ {stock_name}: {stock_market_data[stock_name]['price']}원 수집 완료")
-        time.sleep(0.1) 
-    except Exception as e:
-        print(f"❌ {stock_name} 에러: {e}")
-
-# 5. 스캐너_마스터 시트에 다이렉트로 숫자 쏘기 (오리지널 방식)
-latest_scanner_data = scanner_sheet.get_all_values()
-
-col_B_updates = []   
-col_G_H_updates = [] 
-col_J_updates = []   
-
-for row in latest_scanner_data[1:]:
-    stock_name = row[0].strip() if len(row) > 0 else ""
+def run_sniper_bot():
+    print("🎯 [HYEOKS 스나이퍼 종가베팅 봇] 가동...")
     
-    if stock_name in stock_market_data:
-        data = stock_market_data[stock_name]
-        col_B_updates.append([data["price"]])               # B열: 현재가
-        col_G_H_updates.append([data["high"], data["low"]]) # G, H열: 고가/저가
-        col_J_updates.append([data["high_60d"]])            # J열: 60일 최고가
+    # 구글 시트 연결
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    with open("secret.json", "w") as f: f.write(os.environ.get("GCP_CREDENTIALS"))
+    creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
+    gc = gspread.authorize(creds)
+    doc = gc.open_by_url(SHEET_URL)
+    
+    # 데이터 로드 및 필터링
+    tech_data = doc.worksheet("주가데이터_보조").get_all_values()[1:]
+    candidates = []
+    
+    for r in tech_data:
+        if len(r) < 21: continue
+        name, code, curr_p, chg, tajeom, vol, prog = r[0], r[1].replace("'", "").zfill(6), r[2], r[3], r[9], r[18], r[20]
+        
+        # 💡 [필터링] 적자 기업, 윗꼬리 저항 배제 / 눌림 및 에너지응축 관련 타점만 수집
+        if "3년적자" in tajeom or "저항 출회" in r[14]: continue
+        if "눌림" in tajeom or "이평수렴" in tajeom or "플랫폼" in tajeom:
+            candidates.append(f"종목:{name}({code}), 현재가:{curr_p}원({chg}), 타점:{tajeom}, 거래량:{vol}, 프로그램:{prog}")
+
+    if not candidates:
+        msg = "🎯 [HYEOKS 스나이퍼 종가베팅]\n\n오늘 장은 [M-1] 눌림목 종배 조건에 부합하는 종목이 없습니다. 관망하십시오 🐆"
     else:
-        col_B_updates.append([""])
-        col_G_H_updates.append(["", ""])
-        col_J_updates.append([""])
+        # AI 프롬프트 (빠른 판단)
+        prompt = f"""귀하는 HYEOKS 리서치 센터의 종가베팅(스나이퍼) 전담 AI입니다.
+아래 후보 중 신정재 트레이더의 [M-1] 에너지응축 눌림목 전략(거래량 급감, 이평선 수렴, 윗꼬리 없음)에 가장 완벽한 1종목을 골라 아래 양식으로만 출력하십시오.
 
-# 150행까지 빈칸 채우기 (과거 찌꺼기 삭제 로직)
-while len(col_B_updates) < 150:
-    col_B_updates.append([""])
-    col_G_H_updates.append(["", ""])
-    col_J_updates.append([""])
+[출력양식]
+🎯 [HYEOKS 스나이퍼 종가베팅 픽]
+▪️ 종목명: 
+▪️ 현재가: 
+▪️ 핵심근거: (2줄 이내로 간결하게)
 
-print("▶️ 구글 시트(스캐너_마스터)에 숫자 다이렉트 전송 중...")
+[후보 리스트]
+{chr(10).join(candidates)}
+"""
+        try:
+            res = client.models.generate_content(model='gemini-2.5-pro', contents=prompt)
+            msg = res.text.strip()
+        except Exception as e:
+            msg = f"🎯 스나이퍼 봇 에러: {str(e)}"
 
-scanner_sheet.update(range_name="B2:B151", values=col_B_updates, value_input_option="USER_ENTERED")
-scanner_sheet.update(range_name="G2:H151", values=col_G_H_updates, value_input_option="USER_ENTERED")
-scanner_sheet.update(range_name="J2:J151", values=col_J_updates, value_input_option="USER_ENTERED")
+    print(msg)
 
-print("🎯 모든 작업 완료! 6분 걸리던 속도를 1분대로 단축시켰습니다!")
+    # 1. 텔레그램 실시간 발송 (오후 3시 15분에 알람)
+    if TELEGRAM_BOT_TOKEN:
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
+                      data={'chat_id': TELEGRAM_CHAT_ID, 'text': msg})
+
+    # 2. 브리핑_기록 탭에 로그 저장
+    now_str = datetime.datetime.now(KST).strftime('%Y. %m. %d %p %I:%M:%S')
+    doc.worksheet("브리핑_기록").insert_row([now_str, msg], index=2)
+    print("✅ 스나이퍼 브리핑 기록 완료")
+
+if __name__ == "__main__":
+    run_sniper_bot()
