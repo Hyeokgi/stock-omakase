@@ -9,7 +9,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # 환경 변수 세팅
 # ==========================================
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID")
+TELEGRAM_CHAT_ID = "-1003778485916"
 KIS_APP_KEY        = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET     = os.environ.get("KIS_APP_SECRET")
 SHEET_URL          = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit"
