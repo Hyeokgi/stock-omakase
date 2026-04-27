@@ -59,7 +59,7 @@ def run_sniper_bot():
 
     print(msg)
 
-    # 1. 텔레그램 실시간 발송 (오후 3시 15분에 알람)
+    # 1. 텔레그램 실시간 발송
     if TELEGRAM_BOT_TOKEN:
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", 
                       data={'chat_id': TELEGRAM_CHAT_ID, 'text': msg})
