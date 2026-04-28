@@ -1,4 +1,4 @@
-import os, re, time, base64, warnings, datetime, requests, markdown, pdfkit, gspread, PIL.Image
+import os, re, time, datetime, requests, gspread
 from bs4 import BeautifulSoup
 from oauth2client.service_account import ServiceAccountCredentials
 from google import genai
