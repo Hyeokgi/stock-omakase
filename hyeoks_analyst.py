@@ -26,8 +26,9 @@ print("🤖 [HYEOKS 리서치 센터] 수석 애널리스트 봇 가동 (전체 
 
 try: 
     genai.configure(api_key=GEMINI_API_KEY)
-    # 💡 404 에러 방지: 가장 안정적이고 똑똑한 1.5-pro 모델로 통일합니다.
-    model = genai.GenerativeModel('gemini-1.5-pro')
+    # 💡 404 에러 원인 해결: 구형 패키지 호환성을 위해 '-latest' 태그를 명시합니다.
+    model = genai.GenerativeModel('gemini-1.5-pro-latest')
+    fast_model = genai.GenerativeModel('gemini-1.5-flash-latest')
 except Exception as e: 
     print(f"❌ API 초기화 실패: {e}"); exit(1)
 
@@ -64,10 +65,11 @@ def get_vip_deep_dive_data(code, kis_token):
     except: pass
     return "PER: N/A / PBR: N/A"
 
-def safe_generate_content(contents):
+def safe_generate_content(contents, is_fast=False):
+    target_model = fast_model if is_fast else model
     for i in range(5): 
         try: 
-            return model.generate_content(contents)
+            return target_model.generate_content(contents)
         except Exception as e:
             if "503" in str(e) or "429" in str(e) or "quota" in str(e).lower():
                 wait_time = 30 * (i + 1)
@@ -111,10 +113,10 @@ try:
     db_sheet = doc.worksheet("DB_스캐너")
     db_data = db_sheet.get_all_values()
     
-    # 💡 프롬프트 재강조: 철저한 실전 타점 브리핑 유도
-    sys_instruction = "기업 개요(무엇을 하는 회사인지)는 절대 쓰지 마라. 차트 타점과 수급만을 분석하여 주가 상승 모멘텀을 60~70자 내외의 1문장으로 직관적으로 요약하라."
+    sys_instruction = "기업의 일반적인 소개(무엇을 하는 회사인지 등)는 일절 금지. 차트 지표, 마스터 타점, 수급 데이터를 바탕으로 '현재 기술적 위치'와 '앞으로의 대응 전략'만을 60~70자 내외로 매우 짧고 날카롭게 작성할 것."
     
     for i, row in enumerate(db_data[1:], start=2):
+        # DB_스캐너 J열(index 9)에 '대기중' 텍스트 확인
         if len(row) > 9 and "대기중" in str(row[9]):
             stock_name = row[0] if len(row) > 0 else "알수없음"
             print(f" - [{stock_name}] 간단 브리핑 작성 중...")
@@ -124,11 +126,13 @@ try:
             ■ 종목명: {stock_name}
             ■ 타점 위치: {row[8] if len(row) > 8 else ''}
             ■ 당일 수급: {row[11] if len(row) > 11 else ''}
+            위 데이터를 바탕으로 실전 대응 전략을 1~2문장(70자 내외)으로 요약하라.
             """
             try:
-                briefing_text = safe_generate_content(prompt).text.strip()
+                # 간단 브리핑은 1.5-flash-latest 모델 사용
+                briefing_text = safe_generate_content(prompt, is_fast=True).text.strip()
                 db_sheet.update_cell(i, 10, f"✅ [간단 브리핑] {briefing_text}")
-                time.sleep(2)
+                time.sleep(2) # 구글 API Limit 회피
             except Exception as e:
                 print(f"[{stock_name}] 브리핑 에러: {e}")
 
@@ -158,6 +162,7 @@ try:
         info = f"종목:{name}({code}) | 현재가:{curr_p}원({chg}) | 퀀트점수:{num_score}점 | 타점:{tajeom} | 수급:{prog}"
         cands_list.append({'name': name, 'code': code, 'score': num_score, 'info': info, 'curr_p': int(curr_p.replace(',',''))})
 
+    # HYEOKS 퀀트 점수 30점 이상 종목만 먼저 추림
     high_score_cands = [c for c in cands_list if c['score'] >= 30]
     
     if len(high_score_cands) < 10:
@@ -173,7 +178,7 @@ try:
     당신은 대한민국 최고의 주식 트레이더이자 HYEOKS 퀀트 분석가입니다.
     아래는 HYEOKS 퀀트 점수가 검증된 최상위 150개 종목 리스트입니다.
     
-    이 중에서 제미나이 1.5 PRO의 직관과 종합적인 판단(숨겨진 모멘텀, 테마 강도, 수급)을 활용해 
+    이 중에서 제미나이 AI의 직관과 종합적인 판단(숨겨진 모멘텀, 테마 강도, 수급)을 활용해 
     최고의 단기 1종목, 스윙 1종목을 과감히 발굴해 내십시오.
 
     1. 단기 슈팅 공략주: 오늘 수급이 몰리며 전고점 돌파를 목전에 둔 파괴력 있는 종목 1개.
@@ -226,7 +231,6 @@ try:
         news = get_target_stock_news(best_cand['code'])
         sub_title_prefix = "매물대 진공 구간 돌파 및 단기 슈팅 공략" if st_type == "short" else "에너지 응축 후 플랫폼 탈출 스윙 전략"
 
-        # 💡 [핵심 보완] summary-box 의 지시어를 완전히 변경하여 기업개요를 막음
         detail_prompt = f"""귀하는 대한민국 최상위 1% 실전 트레이더들을 위한 HYEOKS 리서치 센터의 수석 퀀트 애널리스트입니다.
 제공된 일봉 차트(Vision)와 데이터를 바탕으로 심층 리포트를 작성하십시오. 한 리포트 내에서 말투가 바뀌지 않도록 정중한 존댓말(하십시오체)로 통일하십시오.
 
@@ -347,7 +351,6 @@ try:
     # ==========================================
     # 7. HTML 조립 및 PDF 생성 -> 구글 드라이브 -> 텔레그램
     # ==========================================
-    # 💡 [핵심 보완] img 태그 폭을 문서 꽉 차게(width: 100%) 수정했습니다.
     css = "<style>body{font-family:'NanumGothic',sans-serif;line-height:1.8;padding:30px;color:#222;font-size:110%;}.broker-name{color:#1a365d;font-weight:bold;font-size:22px;margin-bottom:15px;border-bottom:3px solid #1a365d;padding-bottom:10px;}.stock-title{font-size:32px;font-weight:900;margin:0;}.subtitle{font-size:18px;color:#2b6cb0;font-weight:bold;}.summary-box{background:#f8fafc;padding:20px;border-left:5px solid #1a365d;margin:20px 0;border-radius:5px;}h2{color:#1a365d;border-bottom:2px solid #edf2f7;margin-top:30px;padding-bottom:8px;}p{margin-bottom:15px;word-break:keep-all;}img{width:100%;height:auto;border:1px solid #cbd5e0;border-radius:8px;}.chart-container{text-align:center;margin-top:40px;page-break-inside:avoid;}.page-break{page-break-before:always;}.alert-box{background:#fff5f5;padding:15px;border-left:5px solid #e53e3e;margin-bottom:20px;color:#c53030;font-weight:bold;}</style>"
     
     html = f"<!DOCTYPE html><html><head><meta charset='utf-8'>{css}</head><body>"
