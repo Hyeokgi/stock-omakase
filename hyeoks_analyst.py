@@ -21,7 +21,7 @@ KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
 FRED_API_KEY = "eed13162f33f0ad6547783b9bb27190b"
 
-print("🤖 [HYEOKS 리서치 센터] 애널리스트 V7.9 (리미트 해제 & 무결점 필터) 가동...")
+print("🤖 [HYEOKS 리서치 센터] 수석 애널리스트 봇 가동 (전체 종목 딥스캔 모드)...")
 
 try: 
     client = genai.Client(api_key=GEMINI_API_KEY)
@@ -62,7 +62,6 @@ def get_vip_deep_dive_data(code, kis_token):
     return "PER: N/A / PBR: N/A"
 
 def safe_generate_content(contents):
-    # 💡 깔끔하게 5번만 재시도하고, 안 되면 쿨하게 포기하는 원상 복구 로직
     for i in range(5): 
         try: 
             return client.models.generate_content(model='gemini-2.5-pro', contents=contents)
@@ -91,7 +90,7 @@ def get_global_liquidity_data():
     return "\n".join(report) if report else "유동성 데이터 수집 불가합니다."
 
 # ==========================================
-# 3. 데이터 로드 및 종목 필터링
+# 3. 데이터 로드 및 종목 필터링 (확장 풀)
 # ==========================================
 try:
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -109,18 +108,18 @@ try:
     nasdaq, exchange, oil = clean_emojis(macro_data[1][4]), clean_emojis(macro_data[1][6]), clean_emojis(macro_data[1][7])
     news_keywords = clean_emojis("\n".join([f"{r[2]}({r[3]}회)" for r in doc.worksheet("뉴스_키워드").get_all_values()[1:6]]))
     
-    # 💡 [V7.9 수정] 40행 제한 해제 (전체 종목 스캔)
+    # 💡 [핵심] 상위 30개가 아닌, 시트에 있는 전체 종목 데이터를 긁어옵니다.
     tech_data = doc.worksheet("주가데이터_보조").get_all_values()[1:]
     liquidity = get_global_liquidity_data()
     
     valid_short, valid_mid = [], []
     is_down = False 
 
+    # 💡 필터링 로직 강화: AI 부하를 줄이기 위해 파이썬 레벨에서 1차로 강하게 컷팅합니다.
     SHORT_KEYWORDS = ["[테마대장]", "[핵심]", "신고가 돌파", "종가베팅", "[개별주] 상한가", "[후발주] 상한가", "당일 주도주", "독자 모멘텀", "테마 추종"]
     MID_KEYWORDS = ["플랫폼", "눌림", "수급 유입", "분할매수", "이평수렴", "[관심]", "방어", "[우량]"]
 
     for r in tech_data:
-        # 인덱스 20번(프로그램)까지 있으므로 최소 21개의 컬럼 데이터가 있어야 함
         if len(r) < 21: continue
         
         name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
@@ -134,7 +133,7 @@ try:
             num_score = int(match.group(1)) if match else 0
         except: num_score = 0
 
-        # 💡 [V7.9 수정] 오탐지 방지를 위해 '3년적자'로 명확히 필터링
+        # 💡 강제 필터링 (가비지 데이터 제거)
         if re.search(r'상한가|하한가|29\.|30\.', chg): continue
         if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|3년적자', tajeom): continue 
         if "저항 출회" in shadow or "윗꼬리" in tajeom: continue 
@@ -146,11 +145,13 @@ try:
         is_short = any(kw in tajeom for kw in SHORT_KEYWORDS)
         is_mid = any(kw in tajeom for kw in MID_KEYWORDS)
 
-        if is_short and num_score >= 40: 
+        # 💡 점수 기준치를 약간 낮춰서 더 많은 종목이 AI의 분석망에 들어가도록 허용
+        if is_short and num_score >= 30: 
             valid_short.append(cand)
-        elif is_mid and num_score >= 35: 
+        elif is_mid and num_score >= 25: 
             valid_mid.append(cand)
 
+    print(f"📡 1차 필터링 완료: 단기 스윙 후보 {len(valid_short)}개, 중장기 눌림 후보 {len(valid_mid)}개 포착")
     status_txt = "코스피/코스닥 20일선 이탈 (보수적 접근)" if is_down else "코스피/코스닥 지지 (공격적 운영 가능)"
 
     # ==========================================
@@ -192,10 +193,9 @@ try:
     def generate_hyeoks_report(st_type, cands):
         if not cands: return "", "000000", None 
         
-        # 💡 [V8.4 패치] 직관적이고 보편적인 3대 핵심 기법 네이밍 적용
         pick_prompt = f"""귀하는 HYEOKS 리서치 센터의 종목 선정 위원회입니다.
 현재 귀하에게 하달된 임무는 '{st_type.upper()}' 전략에 맞는 대장주를 찾는 것입니다.
-아래 명시된 [HYEOKS 3대 핵심 기법]을 후보 리스트의 데이터(info)와 대조하여, 현재 전략에 가장 완벽하게 부합하는 최상위 1종목의 '6자리 종목코드'만 출력하십시오.
+아래 명시된 [HYEOKS 3대 핵심 기법]을 수십 개의 후보 리스트 데이터(info)와 대조하여, 현재 전략에 가장 완벽하게 부합하는 최상위 1종목의 '6자리 종목코드'만 출력하십시오.
 
 [HYEOKS 3대 핵심 기법]
 1. [S-1] 진공 매물대 주도주 돌파 전략 (단기 극대화): 
@@ -211,7 +211,7 @@ try:
 - 만약 '{st_type}'가 'short'라면, [S-1] 돌파 기법과 [M-1] 단기 눌림 기법에 가장 잘 맞는 종목을 최우선으로 찾으십시오.
 - 만약 '{st_type}'가 'mid'라면, [M-2] 순환매 기법과 [M-1] 깊은 눌림 기법에 부합하는 종목을 찾으십시오.
 
-[후보 리스트]
+[후보 리스트 (최대 100여 개)]
 {chr(10).join([c['info'] for c in cands])}
 """
         
@@ -337,7 +337,39 @@ try:
     update_portfolio([pick_short, pick_mid])
 
     # ==========================================
-    # 6. HTML 조립 및 PDF 생성
+    # 6. DB_스캐너 'AI 브리핑 대기중' 덮어쓰기 로직 💡 (신규 추가)
+    # ==========================================
+    def update_db_scanner_briefing(code, pick_data, report_text):
+        if not pick_data: return
+        try:
+            db_sheet = doc.worksheet("DB_스캐너")
+            all_records = db_sheet.get_all_values()
+            
+            # 리포트에서 첫 번째 문단(요약) 추출
+            briefing_summary = "✅ [리포트 발송 완료] "
+            summary_match = re.search(r'<div class="summary-box">(.*?)</div>', report_text, re.DOTALL)
+            if summary_match:
+                # 불필요한 태그 제거 및 핵심만 요약
+                clean_text = re.sub(r'<[^>]+>', '', summary_match.group(1)).replace("Company Brief & 펀더멘털 요약 | HYEOKS 퀀트 데스크", "").strip()
+                briefing_summary += clean_text[:80] + "..." if len(clean_text) > 80 else clean_text
+            else:
+                briefing_summary += "텔레그램에서 상세 분석 리포트를 확인하십시오."
+
+            for i, row in enumerate(all_records):
+                if len(row) > 2 and code in str(row[2]): # 종목 코드가 일치하면
+                    # J열(10번째 열)이 '🤖 AI 종합 브리핑' 열
+                    db_sheet.update_cell(i + 1, 10, briefing_summary)
+                    print(f"🎯 DB_스캐너 시트에 {pick_data['name']} 브리핑 요약본 덮어쓰기 완료!")
+                    break
+        except Exception as e:
+            print(f"⚠️ DB_스캐너 브리핑 덮어쓰기 실패: {e}")
+
+    if valid_short: update_db_scanner_briefing(code_short, pick_short, report_short)
+    if valid_mid: update_db_scanner_briefing(code_mid, pick_mid, report_mid)
+
+
+    # ==========================================
+    # 7. HTML 조립 및 PDF 생성
     # ==========================================
     css = "<style>body{font-family:'NanumGothic',sans-serif;line-height:1.8;padding:30px;color:#222;font-size:110%;}.broker-name{color:#1a365d;font-weight:bold;font-size:22px;margin-bottom:15px;border-bottom:3px solid #1a365d;padding-bottom:10px;}.stock-title{font-size:32px;font-weight:900;margin:0;}.subtitle{font-size:18px;color:#2b6cb0;font-weight:bold;}.summary-box{background:#f8fafc;padding:20px;border-left:5px solid #1a365d;margin:20px 0;border-radius:5px;}h2{color:#1a365d;border-bottom:2px solid #edf2f7;margin-top:30px;padding-bottom:8px;}p{margin-bottom:15px;word-break:keep-all;}img{max-width:90%;border:1px solid #cbd5e0;border-radius:8px;}.chart-container{text-align:center;margin-top:40px;page-break-inside:avoid;}.page-break{page-break-before:always;}.alert-box{background:#fff5f5;padding:15px;border-left:5px solid #e53e3e;margin-bottom:20px;color:#c53030;font-weight:bold;}</style>"
     
