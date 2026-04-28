@@ -1,7 +1,6 @@
 import os, re, time, datetime, requests, gspread
 from bs4 import BeautifulSoup
 from oauth2client.service_account import ServiceAccountCredentials
-from google import genai
 import sys
 import xml.etree.ElementTree as ET
 from collections import Counter
