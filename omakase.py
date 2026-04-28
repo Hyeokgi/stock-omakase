@@ -1,17 +1,13 @@
-import requests
+import os, re, time, base64, warnings, datetime, requests, markdown, pdfkit, gspread, PIL.Image
 from bs4 import BeautifulSoup
-import pandas as pd
-import time
-import urllib3
-import datetime
-import gspread
-import re
+from oauth2client.service_account import ServiceAccountCredentials
+from google import genai
 import sys
 import xml.etree.ElementTree as ET
 from collections import Counter
-from oauth2client.service_account import ServiceAccountCredentials
 import concurrent.futures 
-import os
+import urllib3
+import pandas as pd
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -285,18 +281,21 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
                 combined_data = df_theme.values.tolist() + [row for row in all_data[1:] if len(row) > 0 and row[0] != today_str]
                 combined_data.sort(key=lambda x: int(x[1]) if str(x[1]).isdigit() else 999)
                 combined_data.sort(key=lambda x: x[0], reverse=True)
-                sheet.clear()
-                sheet.update(range_name="A1", values=[all_data[0] if all_data else df_theme.columns.values.tolist()] + combined_data, value_input_option="USER_ENTERED")
+                # 💡 [V8.7] 1번 줄(헤더)은 보존하고 A2부터 깨끗하게 지우기 (앱시트 충돌 방지)
+                sheet.batch_clear(['A2:Z'])
+                sheet.update(range_name="A2", values=combined_data, value_input_option="USER_ENTERED")
             else:
-                sheet.clear() 
-                sheet.update(range_name="A1", values=[df_theme.columns.values.tolist()] + df_theme.values.tolist(), value_input_option="USER_ENTERED")
+                sheet.batch_clear(['A2:Z']) 
+                sheet.update(range_name="A2", values=df_theme.values.tolist(), value_input_option="USER_ENTERED")
                 
         for df, sheet_name in [(df_news, "뉴스_키워드"), (df_naver, "네이버_검색상위"), (df_main_news, "네이버_주요뉴스")]:
             if not df.empty:
                 sheet = doc.worksheet(sheet_name)
-                sheet.clear()
-                sheet.update(range_name="A1", values=[df.columns.values.tolist()] + df.values.tolist(), value_input_option="USER_ENTERED")
-    except: pass
+                # 💡 [V8.7] 1번 줄(헤더) 보존
+                sheet.batch_clear(['A2:Z'])
+                sheet.update(range_name="A2", values=df.values.tolist(), value_input_option="USER_ENTERED")
+    except Exception as e: 
+        print(f"❌ 데이터 업데이트 에러: {e}")
 
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate):
     try:
@@ -687,9 +686,12 @@ def update_technical_data(df_theme, all_theme_map):
         if results:
             try: helper_sheet = doc.worksheet("주가데이터_보조")
             except: helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="21")
-            helper_sheet.clear()
-            headers = ["종목명", "종목코드", "현재가", "등락률", "5일선", "20일선", "거래량비율", "AI신호", "HYEOKS점수", "마스터타점", "오늘 고가", "오늘 저가", "60일 최고가", "시가총액(억)", "윗꼬리판독", "전고점위치", "20일이격도", "대장주이력", "거래량상태", "소속테마", "프로그램(당일)"]
-            helper_sheet.update(range_name="A1", values=[headers] + results, value_input_option="USER_ENTERED")
+            
+            # 💡 [V8.7] 1번 줄(헤더)은 건드리지 않고, A2부터 끝까지만 깨끗하게 지웁니다.
+            helper_sheet.batch_clear(['A2:Z'])
+            
+            # 헤더 없이 순수 결과(results)만 A2부터 밀어 넣습니다.
+            helper_sheet.update(range_name="A2", values=results, value_input_option="USER_ENTERED")
             print(f"✅ 총 {len(results)}개 종목 판독 완료! (다이내믹 해지 프리미엄 엔진 가동) 🚀")
             
     except Exception as e:
