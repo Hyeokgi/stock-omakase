@@ -84,7 +84,6 @@ def check_warning_market():
     except: pass
     return False
 
-# 💡 [V6.9] 코스피 실시간 등락률 조회 함수 (해지 프리미엄 판단용)
 def get_kospi_fluctuation_rate():
     try:
         res = session.get("https://m.stock.naver.com/api/index/KOSPI/basic", verify=False, timeout=3).json()
@@ -155,7 +154,6 @@ def get_real_money_themes():
         
         table = soup.find('table', {'class': 'type_1'})
         if not table:
-            print("⚠️ 네이버 테마 페이지 구조 변경 감지 (빈 값 반환)")
             return pd.DataFrame(), is_market_closed, {}
 
         raw_themes = [{'name': a.text.strip(), 'url': "https://finance.naver.com" + a['href']} for tds in [tr.find_all('td') for tr in table.find_all('tr')] if len(tds) > 1 for a in [tds[0].find('a')] if a]
@@ -221,7 +219,6 @@ def get_real_money_themes():
         final_rows = [{'날짜': now.strftime('%Y-%m-%d'), **({'시간': time_str} if not is_market_closed else {}), '순위': rank, '테마명': t_data['theme_name'], '종목명': s['name'], '종목코드': s['code'], '등락률(%)': s['rate'], '거래대금(억원)': int(s['value']/100)} for rank, t_data in enumerate(final_themes, 1) for s in t_data['stocks']]
         return pd.DataFrame(final_rows), is_market_closed, all_theme_map
     except Exception as e:
-        print(f"🚨 테마 수집 중 에러 발생 (좀비 모드): {e}")
         return pd.DataFrame(), False, {}
 
 def get_naver_search_ranking():
@@ -280,7 +277,6 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
                 combined_data = df_theme.values.tolist() + [row for row in all_data[1:] if len(row) > 0 and row[0] != today_str]
                 combined_data.sort(key=lambda x: int(x[1]) if str(x[1]).isdigit() else 999)
                 combined_data.sort(key=lambda x: x[0], reverse=True)
-                # 💡 [V8.7] 1번 줄(헤더)은 보존하고 A2부터 깨끗하게 지우기 (앱시트 충돌 방지)
                 sheet.batch_clear(['A2:Z'])
                 sheet.update(range_name="A2", values=combined_data, value_input_option="USER_ENTERED")
             else:
@@ -290,7 +286,6 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
         for df, sheet_name in [(df_news, "뉴스_키워드"), (df_naver, "네이버_검색상위"), (df_main_news, "네이버_주요뉴스")]:
             if not df.empty:
                 sheet = doc.worksheet(sheet_name)
-                # 💡 [V8.7] 1번 줄(헤더) 보존
                 sheet.batch_clear(['A2:Z'])
                 sheet.update(range_name="A2", values=df.values.tolist(), value_input_option="USER_ENTERED")
     except Exception as e: 
@@ -385,7 +380,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if len(op_profits) == 3 and all(p < 0 for p in op_profits): is_chronic_loss = True
 
         is_dual_buy, f_buy, i_buy, supply_text = False, 0, 0, ""
-        pg_amount_eok = 0.0 # 💡 안정성을 위한 초기화 추가
+        pg_amount_eok = 0.0 
         
         try:
             today_trend = session.get(f"https://m.stock.naver.com/api/stock/{code}/investor/trend", verify=False, timeout=3).json().get('investorTrendList', [{}])[0]
@@ -686,13 +681,42 @@ def update_technical_data(df_theme, all_theme_map):
             try: helper_sheet = doc.worksheet("주가데이터_보조")
             except: helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="21")
             
-            # 💡 [V8.7] 1번 줄(헤더)은 건드리지 않고, A2부터 끝까지만 깨끗하게 지웁니다.
             helper_sheet.batch_clear(['A2:Z'])
-            
-            # 헤더 없이 순수 결과(results)만 A2부터 밀어 넣습니다.
             helper_sheet.update(range_name="A2", values=results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(results)}개 종목 판독 완료! (다이내믹 해지 프리미엄 엔진 가동) 🚀")
+            print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 업데이트 완료)")
             
+            # 💡 [핵심 추가] 앱시트의 무거운 ARRAYFORMULA를 대체하는 파이썬 자체 필터링 로직
+            # DB_스캐너용 데이터 추출: 마스터타점(row[9])에 특정 키워드가 있는 종목만 선별
+            scanner_keywords = ["[테마대장]", "[후발주]", "[개별주]", "[핵심]", "[타점]", "[관심]", "[분할매수]", "[우량]", "[주력]", "[기회]", "[단기]"]
+            
+            scanner_results = []
+            for r in results:
+                tajeom = r[9]
+                if any(kw in tajeom for kw in scanner_keywords):
+                    # 필요한 데이터만 조합 (기존 DB_스캐너 형식과 유사하게)
+                    # 하이퍼링크 함수는 앱시트에서 지원하는 HYPERLINK() 구문으로 문자열화하여 전달
+                    종목명 = r[0]
+                    종목코드 = r[1].replace("'", "")
+                    하이퍼링크 = f'=HYPERLINK("https://m.stock.naver.com/domestic/stock/{종목코드}/total", "{종목명}")'
+                    시장구분 = "확인불가" # (필요시 기업정보 시트에서 가져올 수 있음)
+                    현재가 = r[2]
+                    등락률 = r[3]
+                    테마명 = r[19]
+                    AI신호 = r[7]
+                    거래량비율 = r[6]
+                    스코어 = r[8]
+                    프로그램 = r[20]
+                    
+                    scanner_results.append([하이퍼링크, 시장구분, f"'{종목코드}", 현재가, 등락률, 테마명, AI신호, 거래량비율, tajeom, "AI 브리핑 대기중", 스코어, 프로그램])
+            
+            if scanner_results:
+                try: db_scanner_sheet = doc.worksheet("DB_스캐너")
+                except: db_scanner_sheet = doc.add_worksheet(title="DB_스캐너", rows="50", cols="15")
+                
+                db_scanner_sheet.batch_clear(['A2:Z'])
+                db_scanner_sheet.update(range_name="A2", values=scanner_results, value_input_option="USER_ENTERED")
+                print(f"🎯 DB_스캐너에 {len(scanner_results)}개 필터링 종목 다이렉트 전송 완료!")
+
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
 
