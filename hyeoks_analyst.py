@@ -113,14 +113,11 @@ try:
     db_sheet = doc.worksheet("DB_스캐너")
     db_data = db_sheet.get_all_values()
     
-    headers = db_data[0]
-    try: brief_idx = headers.index("🤖 AI 종합 브리핑")
-    except: brief_idx = 9
-
     sys_instruction = "기업의 일반적인 소개(무엇을 하는 회사인지 등)는 일절 금지. 차트 지표, 마스터 타점, 수급 데이터를 바탕으로 '현재 기술적 위치'와 '앞으로의 대응 전략'만을 60~70자 내외로 매우 짧고 날카롭게 작성할 것."
     
     for i, row in enumerate(db_data[1:], start=2):
-        if len(row) > brief_idx and "대기중" in str(row[brief_idx]):
+        # 💡 [핵심 보완] J열(index 9)에 텍스트가 존재하는지 안전하게 체크
+        if len(row) > 9 and "대기중" in str(row[9]):
             stock_name = row[0] if len(row) > 0 else "알수없음"
             print(f" - [{stock_name}] 간단 브리핑 작성 중...")
             
@@ -132,10 +129,9 @@ try:
             위 데이터를 바탕으로 실전 대응 전략을 1~2문장(70자 내외)으로 요약하라.
             """
             try:
-                # 간단 브리핑은 빠른 모델 사용
                 briefing_text = safe_generate_content(prompt, is_fast=True).text.strip()
-                # 💡 구글 시트에 다이렉트로 꽂아넣기 (대기중 영구 삭제)
-                db_sheet.update_cell(i, brief_idx + 1, f"✅ [간단 브리핑] {briefing_text}")
+                # 💡 J열(10번째 열)에 다이렉트로 업데이트
+                db_sheet.update_cell(i, 10, f"✅ [간단 브리핑] {briefing_text}")
                 time.sleep(1)
             except Exception as e:
                 print(f"[{stock_name}] 브리핑 에러: {e}")
@@ -158,20 +154,16 @@ try:
         curr_p, chg, score_str, tajeom = str(r[2]).strip(), str(r[3]).strip(), str(r[8]).strip(), str(r[9]).strip()
         prog = str(r[20]).strip()
         
-        # 💡 HYEOKS 점수에서 숫자만 추출
         try: num_score = int(re.findall(r'-?\d+', score_str)[0])
         except: num_score = 0
         
-        # 기본 쓰레기 데이터 필터링
         if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|3년적자', tajeom): continue 
         
         info = f"종목:{name}({code}) | 현재가:{curr_p}원({chg}) | 퀀트점수:{num_score}점 | 타점:{tajeom} | 수급:{prog}"
         cands_list.append({'name': name, 'code': code, 'score': num_score, 'info': info, 'curr_p': int(curr_p.replace(',',''))})
 
-    # HYEOKS 퀀트 점수 30점 이상 종목만 먼저 추림
     high_score_cands = [c for c in cands_list if c['score'] >= 30]
     
-    # 30점 이상이 너무 없으면 전체에서 점수순으로 정렬
     if len(high_score_cands) < 10:
         cands_list.sort(key=lambda x: x['score'], reverse=True)
         pool_150 = cands_list[:150]
@@ -219,7 +211,7 @@ try:
     # ==========================================
     print("▶ [3단계] 딥리딩 분석 및 PDF 리포트/텔레그램 발송을 시작합니다...")
     today_korean = datetime.datetime.now(KST).strftime('%Y년 %m월 %d일')
-    status_txt = "코스피/코스닥 지지 (공격적 운영 가능)" # 스캐너 데이터를 기반으로 유연하게 설정됨
+    status_txt = "코스피/코스닥 지지 (공격적 운영 가능)" 
 
     macro_prompt = f"""귀하는 HYEOKS 리서치 센터의 수석 퀀트 애널리스트입니다.
 아래 데이터를 바탕으로 '오늘의 시황 및 매크로 브리핑'을 1페이지 분량으로 상세히 작성하십시오. 정중한 존댓말(하십시오체)을 사용하십시오.
@@ -284,6 +276,23 @@ try:
             pick_data = {'name': best_cand['name'], 'code': best_cand['code'], 'target': int(match.group(1).replace(',', '')), 'stop': int(match.group(2).replace(',', '')), 'split': match.group(3) == 'O', 'curr': best_cand['curr_p']}
             report_txt = re.sub(r'\[DATA\].*', '', report_txt, flags=re.DOTALL).strip()
             
+        # 💡 [핵심 보완] 최종 2종목도 DB_스캐너에 요약본 업데이트
+        try:
+            briefing_summary = "✅ [리포트 발송 완료] "
+            summary_match = re.search(r'<div class="summary-box">(.*?)</div>', report_txt, re.DOTALL)
+            if summary_match:
+                clean_text = re.sub(r'<[^>]+>', '', summary_match.group(1)).replace("Company Brief & 펀더멘털 요약 | HYEOKS 퀀트 데스크", "").strip()
+                briefing_summary += clean_text[:80] + "..." if len(clean_text) > 80 else clean_text
+            else:
+                briefing_summary += "텔레그램에서 상세 분석 리포트를 확인하십시오."
+
+            for i, r in enumerate(db_data[1:], start=2):
+                if len(r) > 2 and best_cand['code'] in str(r[2]):
+                    db_sheet.update_cell(i, 10, briefing_summary)
+                    break
+        except Exception as e:
+            print(f"⚠️ {best_cand['name']} 브리핑 덮어쓰기 실패: {e}")
+
         return report_txt, pick_data
 
     report_short, pick_short = generate_deep_report("short", best_short)
@@ -341,7 +350,8 @@ try:
     # ==========================================
     # 7. HTML 조립 및 PDF 생성 -> 구글 드라이브 -> 텔레그램
     # ==========================================
-    css = "<style>body{font-family:'NanumGothic',sans-serif;line-height:1.8;padding:30px;color:#222;font-size:110%;}.broker-name{color:#1a365d;font-weight:bold;font-size:22px;margin-bottom:15px;border-bottom:3px solid #1a365d;padding-bottom:10px;}.stock-title{font-size:32px;font-weight:900;margin:0;}.subtitle{font-size:18px;color:#2b6cb0;font-weight:bold;}.summary-box{background:#f8fafc;padding:20px;border-left:5px solid #1a365d;margin:20px 0;border-radius:5px;}h2{color:#1a365d;border-bottom:2px solid #edf2f7;margin-top:30px;padding-bottom:8px;}p{margin-bottom:15px;word-break:keep-all;}img{max-width:90%;border:1px solid #cbd5e0;border-radius:8px;}.chart-container{text-align:center;margin-top:40px;page-break-inside:avoid;}.page-break{page-break-before:always;}.alert-box{background:#fff5f5;padding:15px;border-left:5px solid #e53e3e;margin-bottom:20px;color:#c53030;font-weight:bold;}</style>"
+    # 💡 [핵심 보완] img 태그 폭을 문서 꽉 차게(width: 100%) 수정했습니다.
+    css = "<style>body{font-family:'NanumGothic',sans-serif;line-height:1.8;padding:30px;color:#222;font-size:110%;}.broker-name{color:#1a365d;font-weight:bold;font-size:22px;margin-bottom:15px;border-bottom:3px solid #1a365d;padding-bottom:10px;}.stock-title{font-size:32px;font-weight:900;margin:0;}.subtitle{font-size:18px;color:#2b6cb0;font-weight:bold;}.summary-box{background:#f8fafc;padding:20px;border-left:5px solid #1a365d;margin:20px 0;border-radius:5px;}h2{color:#1a365d;border-bottom:2px solid #edf2f7;margin-top:30px;padding-bottom:8px;}p{margin-bottom:15px;word-break:keep-all;}img{width:100%;height:auto;border:1px solid #cbd5e0;border-radius:8px;}.chart-container{text-align:center;margin-top:40px;page-break-inside:avoid;}.page-break{page-break-before:always;}.alert-box{background:#fff5f5;padding:15px;border-left:5px solid #e53e3e;margin-bottom:20px;color:#c53030;font-weight:bold;}</style>"
     
     html = f"<!DOCTYPE html><html><head><meta charset='utf-8'>{css}</head><body>"
     html += "<div class='broker-name'>HYEOKS SECURITIES | DAILY MARKET REPORT</div>"
