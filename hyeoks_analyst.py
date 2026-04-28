@@ -26,9 +26,8 @@ print("🤖 [HYEOKS 리서치 센터] 수석 애널리스트 봇 가동 (전체 
 
 try: 
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-2.5-pro')
-    # 간단 브리핑용 빠르고 가벼운 모델
-    fast_model = genai.GenerativeModel('gemini-1.5-flash')
+    # 💡 404 에러 방지: 가장 안정적이고 똑똑한 1.5-pro 모델로 통일합니다.
+    model = genai.GenerativeModel('gemini-1.5-pro')
 except Exception as e: 
     print(f"❌ API 초기화 실패: {e}"); exit(1)
 
@@ -65,11 +64,10 @@ def get_vip_deep_dive_data(code, kis_token):
     except: pass
     return "PER: N/A / PBR: N/A"
 
-def safe_generate_content(contents, is_fast=False):
-    target_model = fast_model if is_fast else model
+def safe_generate_content(contents):
     for i in range(5): 
         try: 
-            return target_model.generate_content(contents)
+            return model.generate_content(contents)
         except Exception as e:
             if "503" in str(e) or "429" in str(e) or "quota" in str(e).lower():
                 wait_time = 30 * (i + 1)
@@ -113,10 +111,10 @@ try:
     db_sheet = doc.worksheet("DB_스캐너")
     db_data = db_sheet.get_all_values()
     
-    sys_instruction = "기업의 일반적인 소개(무엇을 하는 회사인지 등)는 일절 금지. 차트 지표, 마스터 타점, 수급 데이터를 바탕으로 '현재 기술적 위치'와 '앞으로의 대응 전략'만을 60~70자 내외로 매우 짧고 날카롭게 작성할 것."
+    # 💡 프롬프트 재강조: 철저한 실전 타점 브리핑 유도
+    sys_instruction = "기업 개요(무엇을 하는 회사인지)는 절대 쓰지 마라. 차트 타점과 수급만을 분석하여 주가 상승 모멘텀을 60~70자 내외의 1문장으로 직관적으로 요약하라."
     
     for i, row in enumerate(db_data[1:], start=2):
-        # 💡 [핵심 보완] J열(index 9)에 텍스트가 존재하는지 안전하게 체크
         if len(row) > 9 and "대기중" in str(row[9]):
             stock_name = row[0] if len(row) > 0 else "알수없음"
             print(f" - [{stock_name}] 간단 브리핑 작성 중...")
@@ -126,13 +124,11 @@ try:
             ■ 종목명: {stock_name}
             ■ 타점 위치: {row[8] if len(row) > 8 else ''}
             ■ 당일 수급: {row[11] if len(row) > 11 else ''}
-            위 데이터를 바탕으로 실전 대응 전략을 1~2문장(70자 내외)으로 요약하라.
             """
             try:
-                briefing_text = safe_generate_content(prompt, is_fast=True).text.strip()
-                # 💡 J열(10번째 열)에 다이렉트로 업데이트
+                briefing_text = safe_generate_content(prompt).text.strip()
                 db_sheet.update_cell(i, 10, f"✅ [간단 브리핑] {briefing_text}")
-                time.sleep(1)
+                time.sleep(2)
             except Exception as e:
                 print(f"[{stock_name}] 브리핑 에러: {e}")
 
@@ -177,7 +173,7 @@ try:
     당신은 대한민국 최고의 주식 트레이더이자 HYEOKS 퀀트 분석가입니다.
     아래는 HYEOKS 퀀트 점수가 검증된 최상위 150개 종목 리스트입니다.
     
-    이 중에서 제미나이 2.5의 직관과 종합적인 판단(숨겨진 모멘텀, 테마 강도, 수급)을 활용해 
+    이 중에서 제미나이 1.5 PRO의 직관과 종합적인 판단(숨겨진 모멘텀, 테마 강도, 수급)을 활용해 
     최고의 단기 1종목, 스윙 1종목을 과감히 발굴해 내십시오.
 
     1. 단기 슈팅 공략주: 오늘 수급이 몰리며 전고점 돌파를 목전에 둔 파괴력 있는 종목 1개.
@@ -230,6 +226,7 @@ try:
         news = get_target_stock_news(best_cand['code'])
         sub_title_prefix = "매물대 진공 구간 돌파 및 단기 슈팅 공략" if st_type == "short" else "에너지 응축 후 플랫폼 탈출 스윙 전략"
 
+        # 💡 [핵심 보완] summary-box 의 지시어를 완전히 변경하여 기업개요를 막음
         detail_prompt = f"""귀하는 대한민국 최상위 1% 실전 트레이더들을 위한 HYEOKS 리서치 센터의 수석 퀀트 애널리스트입니다.
 제공된 일봉 차트(Vision)와 데이터를 바탕으로 심층 리포트를 작성하십시오. 한 리포트 내에서 말투가 바뀌지 않도록 정중한 존댓말(하십시오체)로 통일하십시오.
 
@@ -252,8 +249,8 @@ try:
 </div>
 
 <div class="summary-box">
-<strong>Company Brief & 펀더멘털 요약 | HYEOKS 퀀트 데스크</strong><br><br>
-(기업 개요 및 펀더멘털, 뉴스 요약)
+<strong>💡 HYEOKS 핵심 모멘텀 요약</strong><br><br>
+(기업이 무엇을 하는 회사인지 등 일반적인 개요는 절대 쓰지 마십시오. 오직 차트 타점, 수급, 지지/저항 라인에 근거한 상승 모멘텀만 60~70자 내외의 1문장으로 작성하십시오.)
 </div>
 
 ## 1. 매크로 유동성 및 내러티브 고찰
@@ -276,18 +273,18 @@ try:
             pick_data = {'name': best_cand['name'], 'code': best_cand['code'], 'target': int(match.group(1).replace(',', '')), 'stop': int(match.group(2).replace(',', '')), 'split': match.group(3) == 'O', 'curr': best_cand['curr_p']}
             report_txt = re.sub(r'\[DATA\].*', '', report_txt, flags=re.DOTALL).strip()
             
-        # 💡 [핵심 보완] 최종 2종목도 DB_스캐너에 요약본 업데이트
+        # 💡 최종 2종목도 DB_스캐너에 요약본 업데이트
         try:
             briefing_summary = "✅ [리포트 발송 완료] "
             summary_match = re.search(r'<div class="summary-box">(.*?)</div>', report_txt, re.DOTALL)
             if summary_match:
-                clean_text = re.sub(r'<[^>]+>', '', summary_match.group(1)).replace("Company Brief & 펀더멘털 요약 | HYEOKS 퀀트 데스크", "").strip()
+                clean_text = re.sub(r'<[^>]+>', '', summary_match.group(1)).replace("💡 HYEOKS 핵심 모멘텀 요약", "").strip()
                 briefing_summary += clean_text[:80] + "..." if len(clean_text) > 80 else clean_text
             else:
                 briefing_summary += "텔레그램에서 상세 분석 리포트를 확인하십시오."
 
             for i, r in enumerate(db_data[1:], start=2):
-                if len(r) > 2 and best_cand['code'] in str(r[2]):
+                if len(r) > 9 and best_cand['code'] in str(r[2]):
                     db_sheet.update_cell(i, 10, briefing_summary)
                     break
         except Exception as e:
