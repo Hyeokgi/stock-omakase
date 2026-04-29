@@ -439,11 +439,35 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         lower_band = ma20 - (std20 * 2) 
         band_width = (upper_band - lower_band) / ma20 if ma20 > 0 else 0 
         
+        # ========================================================
+        # 💡 [핵심 보완] 하이브리드 수급 엔진 (단기+스윙 동시 포착)
+        # ========================================================
+        # 1. 10일 평균 거래량 비율 (스윙, 매집, 턴어라운드 포착용)
         avg_vol_10 = df_hist['volume'].tail(11).head(10).mean() if len(df_hist) >= 2 else today_vol
-        vol_ratio = (today_vol / avg_vol_10) * 100 if avg_vol_10 > 0 else 0
+        vol_ratio_10d = (today_vol / avg_vol_10) * 100 if avg_vol_10 > 0 else 0
+        
+        # 2. 전일 거래량 비율 (단기, 당일 돌파, HTS 직관성 포착용)
+        yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) >= 2 else today_vol
+        vol_ratio_yest = (today_vol / yest_vol) * 100 if yest_vol > 0 else 0
+
+        # 3. 상한가(점상) 예외 처리: 매물 잠김으로 인한 거래량 급감을 수급 폭발로 강제 인식
+        is_upper_limit = change_rate >= 0.295
+        if is_upper_limit and today_vol > 0:
+            vol_ratio_10d = max(vol_ratio_10d, 500)
+            vol_ratio_yest = max(vol_ratio_yest, 500)
+
+        # 4. 상태 텍스트 (화면에는 전일비율을 보여주되, 엔진은 10일 평균도 함께 스캔)
         is_converging = (band_width <= 0.20) or (ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035)
-        vol_status_text = "🟢 [V.에너지응축]" if vol_ratio <= 35 else ("🟢 [V.거래감소]" if vol_ratio <= 60 else ("🔴 [V.거래과열]" if vol_ratio >= 200 else "🟡 [V.평년수준]"))
-        vol_ratio_text = f"{int(vol_ratio):,}% (급증)" if vol_ratio >= 150 else f"{int(vol_ratio):,}%"
+        
+        if vol_ratio_10d <= 40: vol_status_text = "🟢 [V.에너지응축]"
+        elif vol_ratio_10d <= 70: vol_status_text = "🟢 [V.거래감소]"
+        elif vol_ratio_10d >= 200 and vol_ratio_yest >= 150: vol_status_text = "🔴 [V.쌍끌이폭발]" 
+        elif vol_ratio_10d >= 200: vol_status_text = "🔴 [V.거래과열]"
+        else: vol_status_text = "🟡 [V.평년수준]"
+        
+        # 대시보드 출력용 (직관적인 전일비)
+        vol_ratio_text = f"전일비 {int(vol_ratio_yest):,}%"
+        # ========================================================
         
         box_ratio = 999
         if len(df_hist) >= 20:
@@ -452,7 +476,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if min_20d_box > 0:
                 box_ratio = (max_20d_box - min_20d_box) / min_20d_box
         
-        is_platform_breakout = (box_ratio <= 0.15) and (vol_ratio >= 500) and (current_price > ma20) and is_today_yangbong
+        is_platform_breakout = (box_ratio <= 0.15) and (vol_ratio_10d >= 300) and (current_price > ma20) and is_today_yangbong
 
         if is_junk: signal = "🚨 매매제한 (관리/주의)"
         elif is_financial_risk: signal = "🚨 매매제한 (재무위험)"
@@ -465,7 +489,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_near_high = current_price >= (high_60d * 0.90) or yest_close >= (high_60d * 0.90)
         dist_text = "🎯 전고점 턱밑" if is_near_high else ("🟢 매물대 소화중" if current_price >= high_60d * 0.80 else "📉 이격 과다")
 
-        is_upper_limit = change_rate >= 0.295
         is_danta_range = 0.17 <= change_rate < 0.295
         
         if name in theme_rank_dict:
@@ -497,13 +520,18 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if is_breakout_track:
                 if current_price >= (high_60d * 0.90): quant_score += 15
                 elif current_price >= (high_60d * 0.85): quant_score += 5
-                if vol_ratio >= 300: quant_score += 10
-                elif vol_ratio >= 150: quant_score += 5
+                
+                # 💡 [스코어링 하이브리드 반영] 단기는 전일비 폭발이 핵심
+                if vol_ratio_yest >= 300 and vol_ratio_10d >= 200: quant_score += 10
+                elif vol_ratio_yest >= 150: quant_score += 5
+                
                 if band_width <= 0.20: quant_score += 10
                 if ma5 > ma20 and current_price >= ma5: quant_score += 10
             else:
-                if vol_ratio <= 35: quant_score += 15
-                elif vol_ratio <= 50: quant_score += 5
+                # 💡 [스코어링 하이브리드 반영] 스윙은 10일 평균 대비 거래량 씨가 마르는 것이 핵심
+                if vol_ratio_10d <= 35: quant_score += 15
+                elif vol_ratio_10d <= 50: quant_score += 5
+                
                 if is_today_yangbong or today_body_ratio <= 0.015: quant_score += 10
                 if ma20 * 0.95 <= current_price <= ma20 * 1.02: quant_score += 10
                 if band_width <= 0.15: quant_score += 10
@@ -539,7 +567,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         is_ss_breakout = (trading_value >= 100_000_000_000) and (change_rate >= 0.04) and not is_long_shadow and is_near_high
         is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 50) and (trading_value >= 50_000_000_000) and (change_rate >= 0.02) and not is_long_shadow
-        is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 45) and (vol_ratio <= 50) and (is_today_yangbong or today_body_ratio <= 0.02)
+        is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 45) and (vol_ratio_10d <= 50) and (is_today_yangbong or today_body_ratio <= 0.02)
 
         now_kst_tajeom = datetime.datetime.now(KST)
         is_overnight_time = (now_kst_tajeom.hour == 15 and now_kst_tajeom.minute <= 30)
@@ -570,7 +598,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             dynamic_supply = supply_text if supply_text != "" else " (대규모 거래대금)"
             master_tajeom = f"👀 [관심] 신규 기준봉 출현{dynamic_supply}" + (" ⚠️(주의장세)" if is_warning_market else "")
         
-        # 💡 [V6.9] 코스피 스케일링 해지 프리미엄 엔진
         is_hedge_theme = any(kw in my_theme_name for kw in ['방산', '방위산업', '해운', '조선', '석유', '가스', '전쟁', '사료', '원자재', '품절주', '식품'])
         hedge_premium = 0
         if is_hedge_theme and kospi_rate <= -0.5:
@@ -578,19 +605,15 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             quant_score += hedge_premium
             master_tajeom += f" 🛡️(해지프리미엄 +{hedge_premium}점)"
 
-        # 💡 [V7.9 수정] 전략별 시간 감점 및 종가베팅 가점 로직 분리
         is_after_1030 = (now_kst_tajeom.hour > 10 or (now_kst_tajeom.hour == 10 and now_kst_tajeom.minute >= 30))
         is_after_1400 = (now_kst_tajeom.hour >= 14)
 
         if is_breakout_track and is_after_1030:
-            # 단기/테마성 돌파인지 판단 (핵심 돌파는 예외)
             if ("돌파" in master_tajeom or "안착" in master_tajeom or "주도주" in master_tajeom) and "핵심" not in master_tajeom:
-                # 오후 2시 이후, 윗꼬리가 없고 프로그램 매수가 10억 이상(또는 외인/기관 쌍끌이)일 경우 -> 종가베팅 우량 타점
                 if is_after_1400 and not is_long_shadow and (pg_amount_eok >= 10 or is_dual_buy):
                     quant_score += 10
                     master_tajeom += " 🌙(종가베팅 수급프리미엄 +10점)"
                 else:
-                    # 조건에 부합하지 않는 애매한 10시 30분 이후 돌파는 휩쏘 방지를 위해 감점 처리
                     quant_score -= 15
                     master_tajeom += " ⏰(오후돌파 감점)"
 
@@ -685,20 +708,16 @@ def update_technical_data(df_theme, all_theme_map):
             helper_sheet.update(range_name="A2", values=results, value_input_option="USER_ENTERED")
             print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 업데이트 완료)")
             
-            # 💡 [핵심 추가] 앱시트의 무거운 ARRAYFORMULA를 대체하는 파이썬 자체 필터링 로직
-            # DB_스캐너용 데이터 추출: 마스터타점(row[9])에 특정 키워드가 있는 종목만 선별
             scanner_keywords = ["[테마대장]", "[후발주]", "[개별주]", "[핵심]", "[타점]", "[관심]", "[분할매수]", "[우량]", "[주력]", "[기회]", "[단기]"]
             
             scanner_results = []
             for r in results:
                 tajeom = r[9]
                 if any(kw in tajeom for kw in scanner_keywords):
-                    # 필요한 데이터만 조합 (기존 DB_스캐너 형식과 유사하게)
-                    # 하이퍼링크 함수는 앱시트에서 지원하는 HYPERLINK() 구문으로 문자열화하여 전달
                     종목명 = r[0]
                     종목코드 = r[1].replace("'", "")
                     하이퍼링크 = f'=HYPERLINK("https://m.stock.naver.com/domestic/stock/{종목코드}/total", "{종목명}")'
-                    시장구분 = "확인불가" # (필요시 기업정보 시트에서 가져올 수 있음)
+                    시장구분 = "확인불가" 
                     현재가 = r[2]
                     등락률 = r[3]
                     테마명 = r[19]
