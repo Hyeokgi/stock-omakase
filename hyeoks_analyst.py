@@ -16,13 +16,17 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = "-1003778485916"
 GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxyuSEjPmg8rZPjLlG-YKck07QYxmZm0HtxvWAumvV2zp7RRpVaKDo6D-CiQ6pLqKFm/exec"
+
+# 💡 [핵심 보완] 한국 시간(KST)을 완벽하게 고정합니다.
 KST = datetime.timezone(datetime.timedelta(hours=9))
+now_kst = datetime.datetime.now(KST)
+current_hour = now_kst.hour
 
 KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
 FRED_API_KEY = "eed13162f33f0ad6547783b9bb27190b"
 
-print("🤖 [HYEOKS 리서치 센터] 수석 애널리스트 봇 가동 (최신 GenAI 2.5 엔진 적용)...")
+print(f"🤖 [HYEOKS 리서치 센터] 봇 가동 (현재 KST {now_kst.strftime('%H:%M:%S')})")
 
 try: 
     client = genai.Client(api_key=GEMINI_API_KEY)
@@ -34,34 +38,6 @@ def clean_emojis(text):
     for e in emojis: text = text.replace(e, '')
     return text.replace('  ', ' ').strip()
 
-# ==========================================
-# 2. 보조 데이터 수집 함수
-# ==========================================
-def get_target_stock_news(code):
-    try:
-        url = f"https://finance.naver.com/item/news_news.naver?code={code}&page=1"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        res = requests.get(url, headers=headers, verify=False, timeout=3)
-        soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
-        news_list = []
-        for a_tag in soup.select('.title a')[:3]: news_list.append(f"- {a_tag.text.strip()}")
-        return clean_emojis("\n".join(news_list)) if news_list else "당일 해당 종목의 개별 특징주 뉴스는 없습니다."
-    except Exception: return "개별 뉴스 데이터를 수집하지 못했습니다."
-
-def get_vip_deep_dive_data(code, kis_token):
-    if not (kis_token and KIS_APP_KEY and KIS_APP_SECRET): return "PER: N/A / PBR: N/A"
-    req = requests.Session()
-    headers = {"authorization": f"Bearer {kis_token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "custtype": "P"}
-    try:
-        headers["tr_id"] = "FHKST01010100"
-        res = req.get("https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price", 
-                      headers=headers, params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}, verify=False, timeout=3).json()
-        if res.get("rt_cd") == "0":
-            out = res.get("output", {})
-            return f"PER: {out.get('per', 'N/A')} / PBR: {out.get('pbr', 'N/A')}"
-    except: pass
-    return "PER: N/A / PBR: N/A"
-
 def safe_generate_content(contents, is_fast=False):
     model_name = 'gemini-2.5-flash' if is_fast else 'gemini-2.5-pro'
     for i in range(5): 
@@ -69,63 +45,65 @@ def safe_generate_content(contents, is_fast=False):
             return client.models.generate_content(model=model_name, contents=contents)
         except Exception as e:
             if "503" in str(e) or "429" in str(e) or "quota" in str(e).lower():
-                wait_time = 30 * (i + 1)
-                print(f"⚠️ 구글 API 지연. {wait_time}초 대기 후 재시도...")
-                time.sleep(wait_time)
+                time.sleep(10 * (i + 1))
             else: raise e 
-    raise Exception("❌ 구글 서버 할당량 초과 또는 무응답으로 최종 실패")
+    raise Exception("❌ API 응답 실패")
+
+def get_target_stock_news(code):
+    try:
+        url = f"https://finance.naver.com/item/news_news.naver?code={code}&page=1"
+        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, verify=False, timeout=3)
+        soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
+        news_list = [f"- {a.text.strip()}" for a in soup.select('.title a')[:3]]
+        return clean_emojis("\n".join(news_list)) if news_list else "개별 뉴스 없음"
+    except: return "뉴스 수집 실패"
+
+def get_vip_deep_dive_data(code, kis_token):
+    if not (kis_token and KIS_APP_KEY and KIS_APP_SECRET): return "PER: N/A / PBR: N/A"
+    try:
+        headers = {"authorization": f"Bearer {kis_token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "custtype": "P", "tr_id": "FHKST01010100"}
+        res = requests.get("https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price", 
+                          headers=headers, params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}, verify=False, timeout=3).json()
+        out = res.get("output", {})
+        return f"PER: {out.get('per', 'N/A')} / PBR: {out.get('pbr', 'N/A')}"
+    except: return "데이터 수집 실패"
 
 def get_global_liquidity_data():
-    indicators = {"WTREGEN": "TGA 잔고", "RRPONTSYD": "역레포 잔고", "BAMLH0A0HYM2": "하이일드 스프레드", "WALCL": "연준 총자산", "M2SL": "M2 통화량"}
-    report = []
-    for sid, name in indicators.items():
-        try:
-            url = f"https://api.stlouisfed.org/fred/series/observations?series_id={sid}&api_key={FRED_API_KEY}&file_type=json&sort_order=desc&limit=2"
-            res = requests.get(url, timeout=5).json()
-            if 'observations' in res and len(res['observations']) >= 2:
-                latest, prev = res['observations'][0], res['observations'][1]
-                l_val, p_val = float(latest['value']), float(prev['value'])
-                diff = l_val - p_val
-                trend = f"증가 (+{diff:,.2f})" if diff > 0 else (f"감소 ({diff:,.2f})" if diff < 0 else "변동없음")
-                report.append(f"- {name}: {l_val:,.2f} ({trend})")
-        except: pass
-    return "\n".join(report) if report else "유동성 데이터 수집 불가합니다."
+    return "유동성 데이터 수집 생략 (속도 최적화)" 
 
 # ==========================================
-# 3. 구글 시트 연결 및 시간대별 라우팅 (8시/10,18,20시/15시)
+# 2. 구글 시트 연결 및 모드별 작동
 # ==========================================
 try:
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
     gc = gspread.authorize(creds)
     doc = gc.open_by_url(SHEET_URL)
-
+    db_sheet = doc.worksheet("DB_스캐너")
+    db_rows = db_sheet.get_all_values()
+    
     KIS_TOKEN = ""
     try:
         for row in doc.worksheet("⚙️설정").get_all_values():
             if len(row) >= 2 and row[0] == "KIS_TOKEN": KIS_TOKEN = row[1]; break
     except: pass
 
-    db_sheet = doc.worksheet("DB_스캐너")
     sys_instruction = "기업의 일반적인 소개(무엇을 하는 회사인지 등)는 일절 금지. 차트 지표, 마스터 타점, 수급 데이터를 바탕으로 '현재 기술적 위치'와 '앞으로의 대응 전략'만을 60~70자 내외로 매우 짧고 날카롭게 작성할 것."
 
-    current_hour = datetime.datetime.now(KST).hour
-
-    # 🟢 [8시 모드] 전일 브리핑 내역 초기화
+    # 🟢 [모드 1] 아침 8시: 브리핑 초기화
     if current_hour == 8:
         print("▶ [오전 8시 모드] DB_스캐너 전일 브리핑을 'AI 브리핑 대기중'으로 초기화합니다.")
-        db_data = db_sheet.get_all_values()
-        for i, row in enumerate(db_data[1:], start=2):
-            if len(row) > 9:
+        for i in range(2, len(db_rows) + 1):
+            if len(db_rows[i-1]) > 9:
                 db_sheet.update_cell(i, 10, "AI 브리핑 대기중")
-        print("✅ 8시 초기화 완료! 프로그램 종료.")
+        print("✅ 초기화 완료. 프로그램 종료.")
         exit(0)
 
-    # 🟡 [10시, 18시, 20시 모드] 대기중 종목 간단 브리핑 신속 업데이트
-    elif current_hour in [10, 18, 20] or (current_hour < 12 and current_hour != 8):
-        print(f"▶ [{current_hour}시 모드] DB_스캐너 간단 브리핑 신속 업데이트...")
-        db_data = db_sheet.get_all_values()
-        for i, row in enumerate(db_data[1:], start=2):
+    # 🟡 [모드 2] 오전장, 저녁장: 간단 브리핑만 신속 업데이트 후 종료
+    # (15시가 아닐 때는 무조건 여기서 멈춤)
+    if current_hour != 15:
+        print(f"▶ [{current_hour}시 모드] 메인 리포트 시간(15시)이 아니므로, 간단 브리핑만 신속 업데이트합니다.")
+        for i, row in enumerate(db_rows[1:], start=2):
             if len(row) > 9 and "대기중" in str(row[9]):
                 stock_name = row[0] if len(row) > 0 else "알수없음"
                 print(f" - [{stock_name}] 간단 브리핑 작성 중...")
@@ -142,18 +120,12 @@ try:
                     time.sleep(2)
                 except Exception as e:
                     print(f"[{stock_name}] 브리핑 에러: {e}")
-        print(f"🌅 {current_hour}시 브리핑 완료! 프로그램 종료.")
+        print(f"🌅 {current_hour}시 간단 브리핑 완료! 프로그램 종료.")
         exit(0)
 
-    # 🔴 [15시 모드] 이하 메인 리포트 생성 및 풀 코스는 15시에만 그대로 실행됨
-    elif current_hour == 15:
-        pass
-
-
-    # ==========================================
-    # 4. [오후 3시 5분 모드] 150개 풀 스캔 및 알파 종목 발굴
-    # ==========================================
-    print("\n▶ [1단계] 주가데이터_보조 상위 150개 풀에서 HYEOKS 알파 종목(단기/스윙) 발굴 시작...")
+    # 🔴 [모드 3] 오직 15시일 때만 이 아래 코드가 실행됨 (메인 리포트 생성 및 풀 코스)
+    print("\n▶ [15시 메인 리포트 모드] 주가데이터_보조 상위 150개 풀에서 HYEOKS 알파 종목 발굴 시작...")
+    
     macro_data = doc.worksheet("시장요약").get_all_values()
     nasdaq, exchange, oil = clean_emojis(macro_data[1][4]), clean_emojis(macro_data[1][6]), clean_emojis(macro_data[1][7])
     news_keywords = clean_emojis("\n".join([f"{r[2]}({r[3]}회)" for r in doc.worksheet("뉴스_키워드").get_all_values()[1:6]]))
@@ -300,8 +272,7 @@ try:
     # ==========================================
     # 6. [핵심 수정 파트] 3시 10분 오마카세 동기화 후 시트 일괄 업데이트!
     # ==========================================
-    print("\n▶ [3단계] 3시 10분 마감 최신 DB_스캐너 동기화 및 브리핑 일괄 덮어쓰기...")
-    # 💡 3시 10분에 10분 스캐너가 지우고 새로 올린 '가장 최신 데이터'를 가져옵니다.
+    print("\n▶ [3단계] 3시 5분 마감 최신 DB_스캐너 동기화 및 브리핑 일괄 덮어쓰기...")
     latest_db_data = db_sheet.get_all_values()
 
     def extract_summary(report_text):
@@ -335,7 +306,7 @@ try:
                 time.sleep(2)
                 continue
             
-            # 2) 나머지 '대기중' 종목들 간단 브리핑 생성 (새로 편입된 3시 10분 종목 포함!)
+            # 2) 나머지 '대기중' 종목들 간단 브리핑 생성
             if "대기중" in str(r[9]):
                 print(f" - [{stock_name}] 간단 브리핑 작성 중...")
                 prompt = f"""
@@ -351,7 +322,6 @@ try:
                     time.sleep(2)
                 except Exception as e:
                     print(f"[{stock_name}] 브리핑 에러: {e}")
-
 
     # ==========================================
     # 7. 가상계좌 업데이트
