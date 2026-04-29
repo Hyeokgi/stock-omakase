@@ -92,7 +92,7 @@ def get_global_liquidity_data():
     return "\n".join(report) if report else "유동성 데이터 수집 불가합니다."
 
 # ==========================================
-# 3. 구글 시트 연결 
+# 3. 구글 시트 연결 및 시간대별 라우팅 (8시/10,18,20시/15시)
 # ==========================================
 try:
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -109,10 +109,21 @@ try:
     db_sheet = doc.worksheet("DB_스캐너")
     sys_instruction = "기업의 일반적인 소개(무엇을 하는 회사인지 등)는 일절 금지. 차트 지표, 마스터 타점, 수급 데이터를 바탕으로 '현재 기술적 위치'와 '앞으로의 대응 전략'만을 60~70자 내외로 매우 짧고 날카롭게 작성할 것."
 
-    # 💡 [오전장 모드] 시간이 12시 이전이면 간단 브리핑만 하고 즉시 종료!
-    now_kst_check = datetime.datetime.now(KST)
-    if now_kst_check.hour < 12:
-        print("▶ [오전 10시 30분 모드] DB_스캐너 간단 브리핑 신속 업데이트...")
+    current_hour = datetime.datetime.now(KST).hour
+
+    # 🟢 [8시 모드] 전일 브리핑 내역 초기화
+    if current_hour == 8:
+        print("▶ [오전 8시 모드] DB_스캐너 전일 브리핑을 'AI 브리핑 대기중'으로 초기화합니다.")
+        db_data = db_sheet.get_all_values()
+        for i, row in enumerate(db_data[1:], start=2):
+            if len(row) > 9:
+                db_sheet.update_cell(i, 10, "AI 브리핑 대기중")
+        print("✅ 8시 초기화 완료! 프로그램 종료.")
+        exit(0)
+
+    # 🟡 [10시, 18시, 20시 모드] 대기중 종목 간단 브리핑 신속 업데이트
+    elif current_hour in [10, 18, 20] or (current_hour < 12 and current_hour != 8):
+        print(f"▶ [{current_hour}시 모드] DB_스캐너 간단 브리핑 신속 업데이트...")
         db_data = db_sheet.get_all_values()
         for i, row in enumerate(db_data[1:], start=2):
             if len(row) > 9 and "대기중" in str(row[9]):
@@ -131,8 +142,12 @@ try:
                     time.sleep(2)
                 except Exception as e:
                     print(f"[{stock_name}] 브리핑 에러: {e}")
-        print(f"🌅 오전장({now_kst_check.strftime('%H:%M')}) 브리핑 완료! 심층 리포트는 오후 3시 5분에 발행됩니다.")
+        print(f"🌅 {current_hour}시 브리핑 완료! 프로그램 종료.")
         exit(0)
+
+    # 🔴 [15시 모드] 이하 메인 리포트 생성 및 풀 코스는 15시에만 그대로 실행됨
+    elif current_hour == 15:
+        pass
 
 
     # ==========================================
