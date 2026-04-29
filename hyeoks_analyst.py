@@ -133,6 +133,12 @@ try:
             except Exception as e:
                 print(f"[{stock_name}] 브리핑 에러: {e}")
 
+    # 💡 [오전 10시 30분 모드] 시간이 12시 이전이면 무거운 리포트 작업을 생략하고 여기서 가볍게 종료!
+    now_kst_check = datetime.datetime.now(KST)
+    if now_kst_check.hour < 12:
+        print(f"🌅 오전장({now_kst_check.strftime('%H:%M')}) 브리핑 완료! 심층 리포트는 오후 3시 10분에 발행됩니다.")
+        exit(0)
+
     # ==========================================
     # 4. 주가데이터_보조에서 150개 풀 스캔 및 알파 종목 발굴
     # ==========================================
