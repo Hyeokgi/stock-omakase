@@ -729,12 +729,31 @@ def update_technical_data(df_theme, all_theme_map):
                     scanner_results.append([하이퍼링크, 시장구분, f"'{종목코드}", 현재가, 등락률, 테마명, AI신호, 거래량비율, tajeom, "AI 브리핑 대기중", 스코어, 프로그램])
             
             if scanner_results:
-                try: db_scanner_sheet = doc.worksheet("DB_스캐너")
-                except: db_scanner_sheet = doc.add_worksheet(title="DB_스캐너", rows="50", cols="15")
+                try: 
+                    db_scanner_sheet = doc.worksheet("DB_스캐너")
+                    # 💡 [핵심 추가] 기존에 작성된 AI 브리핑을 기억해둡니다!
+                    existing_briefings = {}
+                    old_data = db_scanner_sheet.get_all_values()
+                    for row in old_data[1:]:
+                        if len(row) > 9 and "대기중" not in str(row[9]):
+                            saved_code = str(row[2]).replace("'", "").strip()
+                            existing_briefings[saved_code] = row[9]
+                except: 
+                    db_scanner_sheet = doc.add_worksheet(title="DB_스캐너", rows="50", cols="15")
+                    existing_briefings = {}
+                
+                # 💡 [핵심 수정] 새 리스트를 만들 때, 기억해둔 브리핑이 있으면 복원합니다.
+                final_scanner_results = []
+                for res in scanner_results:
+                    # res[2]가 종목코드 (예: '005930)
+                    check_code = res[2].replace("'", "").strip()
+                    if check_code in existing_briefings:
+                        res[9] = existing_briefings[check_code] # 기존 브리핑 덮어쓰기
+                    final_scanner_results.append(res)
                 
                 db_scanner_sheet.batch_clear(['A2:Z'])
-                db_scanner_sheet.update(range_name="A2", values=scanner_results, value_input_option="USER_ENTERED")
-                print(f"🎯 DB_스캐너에 {len(scanner_results)}개 필터링 종목 다이렉트 전송 완료!")
+                db_scanner_sheet.update(range_name="A2", values=final_scanner_results, value_input_option="USER_ENTERED")
+                print(f"🎯 DB_스캐너에 {len(final_scanner_results)}개 종목 전송 완료 (기존 브리핑 유지)")
 
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
