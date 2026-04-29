@@ -25,7 +25,6 @@ FRED_API_KEY = "eed13162f33f0ad6547783b9bb27190b"
 print("🤖 [HYEOKS 리서치 센터] 수석 애널리스트 봇 가동 (최신 GenAI 2.5 엔진 적용)...")
 
 try: 
-    # 💡 [핵심 수정] 구글 최신 공식 SDK 문법 적용
     client = genai.Client(api_key=GEMINI_API_KEY)
 except Exception as e: 
     print(f"❌ API 초기화 실패: {e}"); exit(1)
@@ -64,7 +63,6 @@ def get_vip_deep_dive_data(code, kis_token):
     return "PER: N/A / PBR: N/A"
 
 def safe_generate_content(contents, is_fast=False):
-    # 💡 [핵심 수정] 최신 모델명으로 고정
     model_name = 'gemini-2.5-flash' if is_fast else 'gemini-2.5-pro'
     for i in range(5): 
         try: 
@@ -94,7 +92,7 @@ def get_global_liquidity_data():
     return "\n".join(report) if report else "유동성 데이터 수집 불가합니다."
 
 # ==========================================
-# 3. 구글 시트 연결 및 DB_스캐너 간단 브리핑 업데이트
+# 3. 구글 시트 연결 
 # ==========================================
 try:
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -108,41 +106,39 @@ try:
             if len(row) >= 2 and row[0] == "KIS_TOKEN": KIS_TOKEN = row[1]; break
     except: pass
 
-    print("▶ [1단계] DB_스캐너 '대기중' 종목 실전 매매 브리핑 업데이트 (구글 시트 연동)...")
     db_sheet = doc.worksheet("DB_스캐너")
-    db_data = db_sheet.get_all_values()
-    
     sys_instruction = "기업의 일반적인 소개(무엇을 하는 회사인지 등)는 일절 금지. 차트 지표, 마스터 타점, 수급 데이터를 바탕으로 '현재 기술적 위치'와 '앞으로의 대응 전략'만을 60~70자 내외로 매우 짧고 날카롭게 작성할 것."
-    
-    for i, row in enumerate(db_data[1:], start=2):
-        if len(row) > 9 and "대기중" in str(row[9]):
-            stock_name = row[0] if len(row) > 0 else "알수없음"
-            print(f" - [{stock_name}] 간단 브리핑 작성 중...")
-            
-            prompt = f"""
-            [{sys_instruction}]
-            ■ 종목명: {stock_name}
-            ■ 타점 위치: {row[8] if len(row) > 8 else ''}
-            ■ 당일 수급: {row[11] if len(row) > 11 else ''}
-            위 데이터를 바탕으로 실전 대응 전략을 1~2문장(70자 내외)으로 요약하라.
-            """
-            try:
-                briefing_text = safe_generate_content(prompt, is_fast=True).text.strip()
-                db_sheet.update_cell(i, 10, f"✅ [간단 브리핑] {briefing_text}")
-                time.sleep(2)
-            except Exception as e:
-                print(f"[{stock_name}] 브리핑 에러: {e}")
 
-    # 💡 [오전 10시 30분 모드] 시간이 12시 이전이면 무거운 리포트 작업을 생략하고 여기서 가볍게 종료!
+    # 💡 [오전장 모드] 시간이 12시 이전이면 간단 브리핑만 하고 즉시 종료!
     now_kst_check = datetime.datetime.now(KST)
     if now_kst_check.hour < 12:
-        print(f"🌅 오전장({now_kst_check.strftime('%H:%M')}) 브리핑 완료! 심층 리포트는 오후 3시 10분에 발행됩니다.")
+        print("▶ [오전 10시 30분 모드] DB_스캐너 간단 브리핑 신속 업데이트...")
+        db_data = db_sheet.get_all_values()
+        for i, row in enumerate(db_data[1:], start=2):
+            if len(row) > 9 and "대기중" in str(row[9]):
+                stock_name = row[0] if len(row) > 0 else "알수없음"
+                print(f" - [{stock_name}] 간단 브리핑 작성 중...")
+                prompt = f"""
+                [{sys_instruction}]
+                ■ 종목명: {stock_name}
+                ■ 타점 위치: {row[8] if len(row) > 8 else ''}
+                ■ 당일 수급: {row[11] if len(row) > 11 else ''}
+                위 데이터를 바탕으로 실전 대응 전략을 1~2문장(70자 내외)으로 요약하라.
+                """
+                try:
+                    briefing_text = safe_generate_content(prompt, is_fast=True).text.strip()
+                    db_sheet.update_cell(i, 10, f"✅ [간단 브리핑] {briefing_text}")
+                    time.sleep(2)
+                except Exception as e:
+                    print(f"[{stock_name}] 브리핑 에러: {e}")
+        print(f"🌅 오전장({now_kst_check.strftime('%H:%M')}) 브리핑 완료! 심층 리포트는 오후 3시 5분에 발행됩니다.")
         exit(0)
 
+
     # ==========================================
-    # 4. 주가데이터_보조에서 150개 풀 스캔 및 알파 종목 발굴
+    # 4. [오후 3시 5분 모드] 150개 풀 스캔 및 알파 종목 발굴
     # ==========================================
-    print("\n▶ [2단계] 주가데이터_보조 상위 150개 풀에서 HYEOKS 알파 종목(단기/스윙) 발굴 시작...")
+    print("\n▶ [1단계] 주가데이터_보조 상위 150개 풀에서 HYEOKS 알파 종목(단기/스윙) 발굴 시작...")
     macro_data = doc.worksheet("시장요약").get_all_values()
     nasdaq, exchange, oil = clean_emojis(macro_data[1][4]), clean_emojis(macro_data[1][6]), clean_emojis(macro_data[1][7])
     news_keywords = clean_emojis("\n".join([f"{r[2]}({r[3]}회)" for r in doc.worksheet("뉴스_키워드").get_all_values()[1:6]]))
@@ -212,7 +208,7 @@ try:
     # ==========================================
     # 5. 시황 및 딥리딩 PDF 리포트 본문 생성
     # ==========================================
-    print("▶ [3단계] 딥리딩 분석 및 PDF 리포트/텔레그램 발송을 시작합니다...")
+    print("▶ [2단계] 딥리딩 분석 및 PDF 리포트 본문 생성 (약 3~5분 소요)...")
     today_korean = datetime.datetime.now(KST).strftime('%Y년 %m월 %d일')
     status_txt = "코스피/코스닥 지지 (공격적 운영 가능)" 
 
@@ -268,7 +264,6 @@ try:
         try:
             res = requests.get(f"https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{best_cand['code']}.png", headers={'User-Agent': 'Mozilla/5.0'}, verify=False)
             with open(img_path, 'wb') as f: f.write(res.content)
-            # 💡 [핵심 수정] 신규 SDK 문법 적용
             report_txt = safe_generate_content([detail_prompt, PIL.Image.open(img_path)]).text
             os.remove(img_path)
         except:
@@ -280,31 +275,73 @@ try:
             pick_data = {'name': best_cand['name'], 'code': best_cand['code'], 'target': int(match.group(1).replace(',', '')), 'stop': int(match.group(2).replace(',', '')), 'split': match.group(3) == 'O', 'curr': best_cand['curr_p']}
             report_txt = re.sub(r'\[DATA\].*', '', report_txt, flags=re.DOTALL).strip()
             
-        try:
-            briefing_summary = "✅ [리포트 발송 완료] "
-            summary_match = re.search(r'<div class="summary-box">(.*?)</div>', report_txt, re.DOTALL)
-            if summary_match:
-                clean_text = re.sub(r'<[^>]+>', '', summary_match.group(1)).replace("💡 HYEOKS 핵심 모멘텀 요약", "").strip()
-                briefing_summary += clean_text[:80] + "..." if len(clean_text) > 80 else clean_text
-            else:
-                briefing_summary += "텔레그램에서 상세 분석 리포트를 확인하십시오."
-
-            for i, r in enumerate(db_data[1:], start=2):
-                if len(r) > 9 and best_cand['code'] in str(r[2]):
-                    db_sheet.update_cell(i, 10, briefing_summary)
-                    break
-        except Exception as e:
-            print(f"⚠️ {best_cand['name']} 브리핑 덮어쓰기 실패: {e}")
-
         return report_txt, pick_data
 
     report_short, pick_short = generate_deep_report("short", best_short)
     if best_short: time.sleep(15)
     report_mid, pick_mid = generate_deep_report("mid", best_mid)
 
+
     # ==========================================
-    # 6. 가상계좌 업데이트
+    # 6. [핵심 수정 파트] 3시 10분 오마카세 동기화 후 시트 일괄 업데이트!
     # ==========================================
+    print("\n▶ [3단계] 3시 10분 마감 최신 DB_스캐너 동기화 및 브리핑 일괄 덮어쓰기...")
+    # 💡 3시 10분에 10분 스캐너가 지우고 새로 올린 '가장 최신 데이터'를 가져옵니다.
+    latest_db_data = db_sheet.get_all_values()
+
+    def extract_summary(report_text):
+        if not report_text: return ""
+        briefing_summary = "✅ [리포트 발송 완료] "
+        summary_match = re.search(r'<div class="summary-box">(.*?)</div>', report_text, re.DOTALL)
+        if summary_match:
+            clean_text = re.sub(r'<[^>]+>', '', summary_match.group(1)).replace("💡 HYEOKS 핵심 모멘텀 요약", "").strip()
+            briefing_summary += clean_text[:80] + "..." if len(clean_text) > 80 else clean_text
+        else:
+            briefing_summary += "텔레그램에서 상세 분석 리포트를 확인하십시오."
+        return briefing_summary
+
+    short_summary = extract_summary(report_short) if best_short else ""
+    mid_summary = extract_summary(report_mid) if best_mid else ""
+
+    for i, r in enumerate(latest_db_data[1:], start=2):
+        if len(r) > 9:
+            code = str(r[2]).replace("'", "").strip()
+            stock_name = r[0] if len(r) > 0 else "알수없음"
+
+            # 1) 리포트 타겟 종목 덮어쓰기
+            if best_short and code == best_short['code']:
+                print(f" - [{stock_name}] 리포트 발송 요약 업데이트 중...")
+                db_sheet.update_cell(i, 10, short_summary)
+                time.sleep(2)
+                continue
+            if best_mid and code == best_mid['code']:
+                print(f" - [{stock_name}] 리포트 발송 요약 업데이트 중...")
+                db_sheet.update_cell(i, 10, mid_summary)
+                time.sleep(2)
+                continue
+            
+            # 2) 나머지 '대기중' 종목들 간단 브리핑 생성 (새로 편입된 3시 10분 종목 포함!)
+            if "대기중" in str(r[9]):
+                print(f" - [{stock_name}] 간단 브리핑 작성 중...")
+                prompt = f"""
+                [{sys_instruction}]
+                ■ 종목명: {stock_name}
+                ■ 타점 위치: {r[8] if len(r) > 8 else ''}
+                ■ 당일 수급: {r[11] if len(r) > 11 else ''}
+                위 데이터를 바탕으로 실전 대응 전략을 1~2문장(70자 내외)으로 요약하라.
+                """
+                try:
+                    briefing_text = safe_generate_content(prompt, is_fast=True).text.strip()
+                    db_sheet.update_cell(i, 10, f"✅ [간단 브리핑] {briefing_text}")
+                    time.sleep(2)
+                except Exception as e:
+                    print(f"[{stock_name}] 브리핑 에러: {e}")
+
+
+    # ==========================================
+    # 7. 가상계좌 업데이트
+    # ==========================================
+    print("\n▶ [4단계] 가상계좌 업데이트 및 PDF/텔레그램 발송...")
     def update_portfolio(picks):
         hold_sheet = doc.worksheet("가상계좌_보유")
         closed_sheet = doc.worksheet("가상계좌_종료")
@@ -351,7 +388,7 @@ try:
     update_portfolio([pick_short, pick_mid])
 
     # ==========================================
-    # 7. HTML 조립 및 PDF 생성 -> 구글 드라이브 -> 텔레그램
+    # 8. HTML 조립 및 PDF 생성 -> 구글 드라이브 -> 텔레그램
     # ==========================================
     css = "<style>body{font-family:'NanumGothic',sans-serif;line-height:1.8;padding:30px;color:#222;font-size:110%;}.broker-name{color:#1a365d;font-weight:bold;font-size:22px;margin-bottom:15px;border-bottom:3px solid #1a365d;padding-bottom:10px;}.stock-title{font-size:32px;font-weight:900;margin:0;}.subtitle{font-size:18px;color:#2b6cb0;font-weight:bold;}.summary-box{background:#f8fafc;padding:20px;border-left:5px solid #1a365d;margin:20px 0;border-radius:5px;}h2{color:#1a365d;border-bottom:2px solid #edf2f7;margin-top:30px;padding-bottom:8px;}p{margin-bottom:15px;word-break:keep-all;}img{width:100%;height:auto;border:1px solid #cbd5e0;border-radius:8px;}.chart-container{text-align:center;margin-top:40px;page-break-inside:avoid;}.page-break{page-break-before:always;}.alert-box{background:#fff5f5;padding:15px;border-left:5px solid #e53e3e;margin-bottom:20px;color:#c53030;font-weight:bold;}</style>"
     
