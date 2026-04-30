@@ -736,8 +736,9 @@ def update_technical_data(df_theme, all_theme_map):
                     old_data = db_scanner_sheet.get_all_values()
                     for row in old_data[1:]:
                         if len(row) > 9 and "대기중" not in str(row[9]):
-                            saved_code = str(row[2]).replace("'", "").strip()
-                            existing_briefings[saved_code] = row[9]
+                            # zfill(6)으로 구글 시트의 앞자리 0 증발 현상 완벽 방어
+                            saved_code = str(row[2]).replace("'", "").strip().zfill(6)
+                            existing_briefings[saved_code] = str(row[9]).strip()
                 except: 
                     db_scanner_sheet = doc.add_worksheet(title="DB_스캐너", rows="50", cols="15")
                     existing_briefings = {}
@@ -746,14 +747,14 @@ def update_technical_data(df_theme, all_theme_map):
                 final_scanner_results = []
                 for res in scanner_results:
                     # res[2]가 종목코드 (예: '005930)
-                    check_code = res[2].replace("'", "").strip()
+                    check_code = str(res[2]).replace("'", "").strip().zfill(6)
                     if check_code in existing_briefings:
                         res[9] = existing_briefings[check_code] # 기존 브리핑 덮어쓰기
                     final_scanner_results.append(res)
                 
                 db_scanner_sheet.batch_clear(['A2:Z'])
                 db_scanner_sheet.update(range_name="A2", values=final_scanner_results, value_input_option="USER_ENTERED")
-                print(f"🎯 DB_스캐너에 {len(final_scanner_results)}개 종목 전송 완료 (기존 브리핑 유지)")
+                print(f"🎯 DB_스캐너에 {len(final_scanner_results)}개 종목 전송 완료 (기존 브리핑 {len(existing_briefings)}개 유지)")
 
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
