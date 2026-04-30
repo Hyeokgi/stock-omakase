@@ -16,15 +16,14 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = "-1003778485916"
 GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxyuSEjPmg8rZPjLlG-YKck07QYxmZm0HtxvWAumvV2zp7RRpVaKDo6D-CiQ6pLqKFm/exec"
-
-# 💡 [핵심 보완] 한국 시간(KST)을 완벽하게 고정합니다.
 KST = datetime.timezone(datetime.timedelta(hours=9))
-now_kst = datetime.datetime.now(KST)
-current_hour = now_kst.hour
 
 KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
 FRED_API_KEY = "eed13162f33f0ad6547783b9bb27190b"
+
+now_kst = datetime.datetime.now(KST)
+current_hour = now_kst.hour
 
 print(f"🤖 [HYEOKS 리서치 센터] 봇 가동 (현재 KST {now_kst.strftime('%H:%M:%S')})")
 
@@ -45,9 +44,11 @@ def safe_generate_content(contents, is_fast=False):
             return client.models.generate_content(model=model_name, contents=contents)
         except Exception as e:
             if "503" in str(e) or "429" in str(e) or "quota" in str(e).lower():
-                time.sleep(10 * (i + 1))
+                wait_time = 10 * (i + 1)
+                print(f"⚠️ 구글 API 지연. {wait_time}초 대기 후 재시도...")
+                time.sleep(wait_time)
             else: raise e 
-    raise Exception("❌ API 응답 실패")
+    raise Exception("❌ 구글 서버 할당량 초과 또는 무응답으로 최종 실패")
 
 def get_target_stock_news(code):
     try:
@@ -100,7 +101,6 @@ try:
         exit(0)
 
     # 🟡 [모드 2] 오전장, 저녁장: 간단 브리핑만 신속 업데이트 후 종료
-    # (15시가 아닐 때는 무조건 여기서 멈춤)
     if current_hour != 15:
         print(f"▶ [{current_hour}시 모드] 메인 리포트 시간(15시)이 아니므로, 간단 브리핑만 신속 업데이트합니다.")
         for i, row in enumerate(db_rows[1:], start=2):
@@ -117,13 +117,13 @@ try:
                 try:
                     briefing_text = safe_generate_content(prompt, is_fast=True).text.strip()
                     db_sheet.update_cell(i, 10, f"✅ [간단 브리핑] {briefing_text}")
-                    time.sleep(2)
+                    time.sleep(3.5)
                 except Exception as e:
-                    print(f"[{stock_name}] 브리핑 에러: {e}")
+                    print(f"[{stock_name}] 브리핑 에러 발생 (건너뜀): {e}")
         print(f"🌅 {current_hour}시 간단 브리핑 완료! 프로그램 종료.")
         exit(0)
 
-    # 🔴 [모드 3] 오직 15시일 때만 이 아래 코드가 실행됨 (메인 리포트 생성 및 풀 코스)
+    # 🔴 [모드 3] 15시 모드 (메인 리포트 생성 및 풀 코스)
     print("\n▶ [15시 메인 리포트 모드] 주가데이터_보조 상위 150개 풀에서 HYEOKS 알파 종목 발굴 시작...")
     
     macro_data = doc.worksheet("시장요약").get_all_values()
@@ -131,7 +131,6 @@ try:
     news_keywords = clean_emojis("\n".join([f"{r[2]}({r[3]}회)" for r in doc.worksheet("뉴스_키워드").get_all_values()[1:6]]))
     
     tech_data = doc.worksheet("주가데이터_보조").get_all_values()[1:]
-    liquidity = get_global_liquidity_data()
     
     cands_list = []
     for r in tech_data:
@@ -202,8 +201,7 @@ try:
     macro_prompt = f"""귀하는 HYEOKS 리서치 센터의 수석 퀀트 애널리스트입니다.
 아래 데이터를 바탕으로 '오늘의 시황 및 매크로 브리핑'을 1페이지 분량으로 상세히 작성하십시오. 정중한 존댓말(하십시오체)을 사용하십시오.
 작성일: {today_korean}
-매크로: 나스닥 {nasdaq}, 환율 {exchange}, 유가 {oil}, 국내증시 {status_txt}
-유동성: {liquidity}
+매크로: 나스닥 {nasdaq}, 환율 {exchange}, 국내증시 {status_txt}
 뉴스 키워드: {news_keywords}
 (종목 추천 없이 시황과 트레이더의 스탠스만 서술하십시오.)"""
     
@@ -221,12 +219,13 @@ try:
 
 [입력 데이터]
 종목 및 스캐너 판독: {best_cand['info']}
+★확정 현재가: {best_cand['curr_p']}원
 펀더멘털: {vip}
 최신 뉴스: {news}
 
 [HYEOKS 딥리딩 절대 지침 - 명심하십시오]
-1. 분량 및 깊이 (매우 중요): 귀하의 전문적인 통찰력을 발휘하여 충분히 길고 논리적으로 1.5~2페이지 분량이 나오도록 상세히 서술하십시오. 
-2. 시각적 차트 딥리딩 허용: 첨부된 차트 이미지를 면밀히 판독하여, 의미 있는 지지선/저항선, 매물대 등을 구체적인 '가격(원)'으로 과감하게 제시하십시오.
+1. 분량 및 깊이: 귀하의 전문적인 통찰력을 발휘하여 충분히 길고 논리적으로 1.5~2페이지 분량이 나오도록 상세히 서술하십시오. 
+2. 🚨 [할루시네이션(거짓 정보) 엄격 금지]: 차트를 판독하여 지지/저항선을 제시할 때, 반드시 위 [입력 데이터]에 제공된 ★확정 현재가({best_cand['curr_p']}원)를 기준으로 상/하단 가격을 계산하십시오. 이전 대화의 다른 종목 가격을 섞거나 터무니없는 가격을 적는 오류를 절대 범하지 마십시오. 1차 진입가는 현재가 부근으로 설정하십시오.
 3. 실전 액션 플랜 강화: 구체적인 '진입 타점'과 명확한 '손절가'를 반드시 명시하십시오.
 4. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'X' if st_type=='short' else 'O'} 형식으로 출력하십시오.
 
@@ -270,9 +269,9 @@ try:
 
 
     # ==========================================
-    # 6. [핵심 수정 파트] 3시 10분 오마카세 동기화 후 시트 일괄 업데이트!
+    # 6. 3시 15분 마감 최신 DB_스캐너 동기화 및 브리핑 일괄 덮어쓰기
     # ==========================================
-    print("\n▶ [3단계] 3시 5분 마감 최신 DB_스캐너 동기화 및 브리핑 일괄 덮어쓰기...")
+    print("\n▶ [3단계] 최신 DB_스캐너 동기화 및 브리핑 일괄 덮어쓰기...")
     latest_db_data = db_sheet.get_all_values()
 
     def extract_summary(report_text):
@@ -291,19 +290,20 @@ try:
 
     for i, r in enumerate(latest_db_data[1:], start=2):
         if len(r) > 9:
-            code = str(r[2]).replace("'", "").strip()
+            # 💡 [버그 수정] 종목코드의 앞자리 '0'이 날아가는 현상 복구
+            code = str(r[2]).replace("'", "").strip().zfill(6)
             stock_name = r[0] if len(r) > 0 else "알수없음"
 
             # 1) 리포트 타겟 종목 덮어쓰기
             if best_short and code == best_short['code']:
                 print(f" - [{stock_name}] 리포트 발송 요약 업데이트 중...")
                 db_sheet.update_cell(i, 10, short_summary)
-                time.sleep(2)
+                time.sleep(3.5)
                 continue
             if best_mid and code == best_mid['code']:
                 print(f" - [{stock_name}] 리포트 발송 요약 업데이트 중...")
                 db_sheet.update_cell(i, 10, mid_summary)
-                time.sleep(2)
+                time.sleep(3.5)
                 continue
             
             # 2) 나머지 '대기중' 종목들 간단 브리핑 생성
@@ -319,9 +319,9 @@ try:
                 try:
                     briefing_text = safe_generate_content(prompt, is_fast=True).text.strip()
                     db_sheet.update_cell(i, 10, f"✅ [간단 브리핑] {briefing_text}")
-                    time.sleep(2)
+                    time.sleep(3.5)
                 except Exception as e:
-                    print(f"[{stock_name}] 브리핑 에러: {e}")
+                    print(f"[{stock_name}] 브리핑 에러 발생 (건너뜀): {e}")
 
     # ==========================================
     # 7. 가상계좌 업데이트
