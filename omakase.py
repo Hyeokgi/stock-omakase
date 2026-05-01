@@ -585,15 +585,16 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         if int(df_hist['volume'].iloc[j]) > anchor_vol * 0.45: is_holding = False; break
                     if is_holding: flag_days = d; break
 
+        # 💡 [핵심 보완] 수학적 모순을 해결한 '에너지응축 숨고르기 음봉' 실전 최적화 로직
         is_stealth_nulim = (
-            is_breakout_track and                                            
-            (ma5 > ma20) and                                                 
-            (current_price >= high_60d_calc * 0.90) and                           
-            (vol_ratio_yest <= 25) and                                       
-            (vol_ratio_10d <= 30) and                                        
-            (yest_tv >= 100_000_000_000 or flag_days > 0) and                
-            (not is_today_yangbong or today_body_ratio <= 0.015) and         
-            (not is_long_shadow)                                             
+            is_breakout_track and                                            # 1. 상승 추세 (20일선 위)
+            (ma5 > ma20) and                                                 # 2. 5일선이 20일선 위에 살아있는 상태
+            (current_price >= high_60d_calc * 0.85) and                      # 3. [조정] 전고점의 85% 이상 유지 (건전한 눌림 허용)
+            (vol_ratio_yest <= 35) and                                       # 4. [조정] 전일 대비 거래량 35% 이하 (1/3 토막, 완벽한 숨고르기)
+            (vol_ratio_10d <= 80) and                                        # 5. [조정] 어제 거래량 폭발로 높아진 10일 평균치 감안 (80% 이하 허용)
+            (yest_tv >= 50_000_000_000 or flag_days > 0) and                 # 6. [조정] 어제 최소 500억 이상 터진 코스닥 주도주 이력
+            (not is_today_yangbong or today_body_ratio <= 0.015) and         # 7. 확실한 음봉이거나, 몸통이 얇은 도지(십자) 캔들
+            (not is_long_shadow)                                             # 8. 위험한 윗꼬리 캔들 아닐 것
         )
         
         quant_score = 0
