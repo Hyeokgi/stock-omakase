@@ -322,8 +322,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         change_rate = (current_price - prev_price) / prev_price if prev_price > 0 else 0.0
         
         yest_close = prev_price
-        
-        # 💡 [보완 2] 거자름을 위한 어제 거래대금 계산
         yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) >= 2 else today_vol
         yest_tv = yest_close * yest_vol 
 
@@ -387,40 +385,61 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if capital_stock and total_equity and total_equity < capital_stock: is_financial_risk = True
             if len(op_profits) == 3 and all(p < 0 for p in op_profits): is_chronic_loss = True
 
-        # 💡 [보완 1] API 경로 수정 (trendList 반환하는 trend 엔드포인트 사용)
+        # 💡 [해결책] 기관 수급 및 양매수 데이터 추출 (PC 네이버 금융 frgn.naver 직접 파싱)
         is_dual_buy, f_buy, i_buy, supply_text = False, 0, 0, ""
-        acc_i_buy = 0
-        pg_amount_eok = 0.0 
+        acc_i_buy_won = 0
         
-        try:
-            trend_url = f"https://m.stock.naver.com/api/stock/{code}/investor/trend"
-            trend_res = session.get(trend_url, verify=False, timeout=3).json()
-            trend_list = trend_res.get('investorTrendList', [])
-            
-            if trend_list:
-                today_trend = trend_list[0]
-                f_buy = int(str(today_trend.get('foreignerStraightPurchasePrice', '0')).replace(',', ''))
-                i_buy = int(str(today_trend.get('institutionStraightPurchasePrice', '0')).replace(',', ''))
-                if f_buy > 0 and i_buy > 0: is_dual_buy = True
-                
-                # 올바르게 최근 5일치 합산
-                for d in trend_list[:5]:
-                    acc_i_buy += int(str(d.get('institutionStraightPurchasePrice', '0')).replace(',', ''))
-        except Exception: pass
-
-        program_text = "확인불가"
         try:
             frgn_url = f"https://finance.naver.com/item/frgn.naver?code={code}"
             frgn_res = session.get(frgn_url, verify=False, timeout=3)
             frgn_soup = BeautifulSoup(frgn_res.content, 'html.parser', from_encoding='euc-kr')
             rows = frgn_soup.select("table.type2 > tr")
+            
+            valid_days = 0
             for r_tag in rows:
                 cols = r_tag.select("td")
+                # 컬럼구조: 0:날짜, 1:종가, 2:전일비, 3:등락률, 4:거래량, 5:기관순매매량, 6:외국인순매매량 ...
                 if len(cols) >= 9 and cols[0].text.strip().replace('.', '').isdigit():
-                    pg_val_str = cols[6].text.strip().replace(',', '') 
+                    close_price_day = int(cols[1].text.strip().replace(',', ''))
                     
-                    if pg_val_str and pg_val_str != '0':
-                        pg_vol = int(pg_val_str) 
+                    # 기관 순매매량 (주)
+                    i_vol_str = cols[5].text.strip().replace(',', '')
+                    i_vol = int(i_vol_str) if i_vol_str else 0
+                    
+                    # 외국인 순매매량 (주)
+                    f_vol_str = cols[6].text.strip().replace(',', '')
+                    f_vol = int(f_vol_str) if f_vol_str else 0
+                    
+                    # 당일(가장 최근일) 양매수 확인
+                    if valid_days == 0:
+                        i_buy = i_vol * close_price_day
+                        f_buy = f_vol * close_price_day
+                        if i_buy > 0 and f_buy > 0: is_dual_buy = True
+                        
+                    # 5일 누적 합산 (순매매량 * 종가 = 순매매대금)
+                    acc_i_buy_won += (i_vol * close_price_day)
+                    valid_days += 1
+                    
+                    if valid_days >= 5:
+                        break
+        except Exception: pass
+
+        acc_i_buy_eok = acc_i_buy_won / 100_000_000 # 억원 단위로 변환
+
+        # 💡 [해결책] 프로그램 매매 데이터 추출 (sise_program.naver 직접 파싱)
+        program_text = "확인불가"
+        pg_amount_eok = 0.0
+        try:
+            pg_url = f"https://finance.naver.com/item/sise_program.naver?code={code}"
+            pg_res = session.get(pg_url, verify=False, timeout=3)
+            pg_soup = BeautifulSoup(pg_res.content, 'html.parser', from_encoding='euc-kr')
+            pg_rows = pg_soup.select("table.type2 > tr")
+            for r_tag in pg_rows:
+                cols = r_tag.select("td")
+                if len(cols) >= 8 and cols[0].text.strip().replace('.', '').isdigit():
+                    pg_vol_str = cols[7].text.strip().replace(',', '') # 순매수 (주)
+                    if pg_vol_str and pg_vol_str != '0':
+                        pg_vol = int(pg_vol_str) 
                         pg_amount_won = pg_vol * current_price 
                         pg_amount_eok = pg_amount_won / 100_000_000 
                         
@@ -441,7 +460,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         except Exception: pass
 
         if is_dual_buy: supply_text = " (외인+기관 양매수)"
-        if acc_i_buy > 0 and i_buy > 0: supply_text += " (기관 연속매집)" 
+        if acc_i_buy_eok > 0 and i_buy > 0: supply_text += " (기관 연속매집)" 
 
         ma5 = int(df_hist['close'].tail(5).mean()) if len(df_hist) >= 5 else current_price
         ma20 = int(df_hist['close'].tail(20).mean()) if len(df_hist) >= 20 else current_price
@@ -552,15 +571,14 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         if int(df_hist['volume'].iloc[j]) > anchor_vol * 0.45: is_holding = False; break
                     if is_holding: flag_days = d; break
 
-        # 💡 [보완 2] 철저하게 강화된 '거자름' 판독 로직 (93개 -> 극소수 정밀 타격)
         is_geojareum = (
-            is_breakout_track and                                            # 1. 상승 추세 (20일선 위)
-            (current_price >= high_60d * 0.85) and                           # 2. 전고점 부근에 위치
-            (vol_ratio_yest <= 35) and                                       # 3. 거래량이 전일비 35% 이하로 극단적 감소
-            (vol_ratio_10d <= 40) and                                        # 4. 거래량이 10일 평균비 40% 이하로 감소
-            (yest_tv >= 50_000_000_000 or flag_days > 0) and                 # 5. 어제 최소 500억 터졌거나, 최근 3일 내 강력한 주도주 이력
-            (not is_today_yangbong or today_body_ratio <= 0.015) and         # 6. 확실한 음봉이거나, 몸통이 얇은 도지(십자) 캔들
-            (not is_long_shadow)                                             # 7. 위험한 윗꼬리 캔들 아닐 것
+            is_breakout_track and                                            
+            (current_price >= high_60d * 0.85) and                           
+            (vol_ratio_yest <= 35) and                                       
+            (vol_ratio_10d <= 40) and                                        
+            (yest_tv >= 50_000_000_000 or flag_days > 0) and                 
+            (not is_today_yangbong or today_body_ratio <= 0.015) and         
+            (not is_long_shadow)                                             
         )
         
         quant_score = 0
@@ -590,8 +608,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             
             if is_dual_buy: quant_score += 15
             
-            if acc_i_buy >= 500: quant_score += 15 
-            elif acc_i_buy >= 100: quant_score += 5
+            # 기관 누적매수 점수 가점 (억원 단위 평가)
+            if acc_i_buy_eok >= 50: quant_score += 15 
+            elif acc_i_buy_eok >= 10: quant_score += 5
 
         is_ss_breakout = (trading_value >= 100_000_000_000) and (change_rate >= 0.04) and not is_long_shadow and is_near_high
         is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 50) and (trading_value >= 50_000_000_000) and (change_rate >= 0.02) and not is_long_shadow
@@ -658,7 +677,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             score_display, master_tajeom, today_high, today_low, high_60d, 
             market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, my_theme_name,
             program_text,
-            int(high_250d), f"{acc_i_buy:,}"
+            int(high_250d), f"{int(acc_i_buy_eok)}억"
         ]
     except Exception as e:
         return None
