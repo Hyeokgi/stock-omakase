@@ -302,23 +302,30 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         
         for item in items:
             data = item.get("data").split("|")
-            history.append({
-                "open": int(data[1]),
-                "high": int(data[2]),
-                "low": int(data[3]),
-                "close": int(data[4]), 
-                "volume": int(data[5])
-            })
-            high_prices.append(int(data[2]))
+            open_p, high_p, low_p, close_p, vol = int(data[1]), int(data[2]), int(data[3]), int(data[4]), int(data[5])
             
-        if len(history) < 1: return None
+            # 💡 [핵심 버그 픽스] 네이버 차트 API의 휴장일 더미 데이터 및 시가 0원 쓰레기 데이터 완벽 필터링
+            if vol == 0: continue
+            if open_p == 0 and close_p > 0: continue
+            if high_p == low_p == open_p == close_p and vol < 10000: continue
+            
+            history.append({
+                "open": open_p,
+                "high": high_p,
+                "low": low_p,
+                "close": close_p, 
+                "volume": vol
+            })
+            high_prices.append(high_p)
+            
+        if len(history) < 2: return None
         
-        today_data = items[-1].get("data").split("|")
-        open_price, today_high, today_low, current_price, today_vol = int(today_data[1]), int(today_data[2]), int(today_data[3]), int(today_data[4]), int(today_data[5])
-        if today_vol == 0: return None
+        # 필터링된 깨끗한 데이터의 가장 마지막이 진짜 '오늘(최종 거래일)'
+        last_day = history[-1]
+        open_price, today_high, today_low, current_price, today_vol = last_day['open'], last_day['high'], last_day['low'], last_day['close'], last_day['volume']
         
         df_hist = pd.DataFrame(history)
-        prev_price = int(df_hist['close'].iloc[-2]) if len(df_hist) > 1 else current_price
+        prev_price = int(df_hist['close'].iloc[-2]) if len(df_hist) >= 2 else current_price
         change_rate = (current_price - prev_price) / prev_price if prev_price > 0 else 0.0
         
         yest_close = prev_price
@@ -385,7 +392,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if capital_stock and total_equity and total_equity < capital_stock: is_financial_risk = True
             if len(op_profits) == 3 and all(p < 0 for p in op_profits): is_chronic_loss = True
 
-        # 💡 [해결책] 기관 5일 누적 수급 & 프로그램 대리 지표 통합 파싱 (frgn.naver 활용)
         is_dual_buy, f_buy, i_buy, supply_text = False, 0, 0, ""
         acc_i_buy_won = 0
         program_text = "확인불가"
@@ -400,25 +406,20 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             valid_days = 0
             for r_tag in rows:
                 cols = r_tag.select("td")
-                # 컬럼구조: 0:날짜, 1:종가, 2:전일비, 3:등락률, 4:거래량, 5:기관순매매량, 6:외국인순매매량 ...
                 if len(cols) >= 9 and cols[0].text.strip().replace('.', '').isdigit():
                     close_price_day = int(cols[1].text.strip().replace(',', ''))
                     
-                    # 기관 순매매량 파싱
                     i_vol_str = cols[5].text.strip().replace(',', '')
                     i_vol = int(i_vol_str) if i_vol_str.lstrip('-').isdigit() else 0
                     
-                    # 외국인 순매매량 파싱
                     f_vol_str = cols[6].text.strip().replace(',', '')
                     f_vol = int(f_vol_str) if f_vol_str.lstrip('-').isdigit() else 0
                     
-                    # 최근 영업일 1일차 데이터로 양매수 및 프로그램(외국인 대리) 계산
                     if valid_days == 0:
                         i_buy = i_vol * close_price_day
                         f_buy = f_vol * close_price_day
                         if i_buy > 0 and f_buy > 0: is_dual_buy = True
                         
-                        # [오류수정] 기존 코드가 사용하던 '외국인 수급'을 '프로그램 수급'으로 복원 표기
                         if f_vol_str and f_vol != 0:
                             pg_amount_won = f_vol * current_price 
                             pg_amount_eok = pg_amount_won / 100_000_000 
@@ -437,7 +438,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         else:
                             program_text = "⚪ [P.관망중] 0원 (0.0%)"
                             
-                    # 기관 5일 누적 합산 (순매매량 * 종가 = 순매매대금)
                     acc_i_buy_won += (i_vol * close_price_day)
                     valid_days += 1
                     
@@ -445,7 +445,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         break
         except Exception: pass
 
-        acc_i_buy_eok = acc_i_buy_won / 100_000_000 # 억원 단위로 변환
+        acc_i_buy_eok = acc_i_buy_won / 100_000_000 
 
         if is_dual_buy: supply_text = " (외인+기관 양매수)"
         if acc_i_buy_eok > 0 and i_buy > 0: supply_text += " (기관 연속매집)" 
@@ -559,16 +559,15 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         if int(df_hist['volume'].iloc[j]) > anchor_vol * 0.45: is_holding = False; break
                     if is_holding: flag_days = d; break
 
-        # 💡 [핵심 보완] 철저하게 강화된 '스텔스 눌림목' 판독 로직 (12개 -> 2~3개 정밀 타격)
         is_stealth_nulim = (
-            is_breakout_track and                                            # 1. 상승 추세 (20일선 위)
-            (ma5 > ma20) and                                                 # 2. [강화] 5일선이 20일선 위에 살아있는 상태
-            (current_price >= high_60d * 0.90) and                           # 3. [강화] 전고점의 90% 이상 (기존 85%에서 상향)
-            (vol_ratio_yest <= 25) and                                       # 4. [강화] 전일 대비 거래량 25% 이하로 극단적 증발
-            (vol_ratio_10d <= 30) and                                        # 5. [강화] 10일 평균 대비 30% 이하
-            (yest_tv >= 100_000_000_000 or flag_days > 0) and                # 6. [강화] 어제 최소 1000억 터졌거나 최근 강력한 주도주 이력
-            (not is_today_yangbong or today_body_ratio <= 0.015) and         # 7. 확실한 음봉이거나, 몸통이 얇은 도지(십자) 캔들
-            (not is_long_shadow)                                             # 8. 위험한 윗꼬리 캔들 아닐 것
+            is_breakout_track and                                            
+            (ma5 > ma20) and                                                 
+            (current_price >= high_60d * 0.90) and                           
+            (vol_ratio_yest <= 25) and                                       
+            (vol_ratio_10d <= 30) and                                        
+            (yest_tv >= 100_000_000_000 or flag_days > 0) and                
+            (not is_today_yangbong or today_body_ratio <= 0.015) and         
+            (not is_long_shadow)                                             
         )
         
         quant_score = 0
@@ -615,10 +614,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         elif is_financial_risk: master_tajeom = "🚨 매매제한 (재무위험)"
         elif is_theme_daejang_sang: master_tajeom = "👑 [테마대장] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 50
         elif is_theme_daejang: master_tajeom = "🚀 [테마대장] 당일 주도주" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 45
-        
-        # 💡 명칭 변경 적용
         elif is_stealth_nulim: master_tajeom = "🎯 [V.스텔스] 거래실종 눌림타점 (비중 40%)" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 45
-        
         elif is_platform_breakout: master_tajeom = "📦 [스윙] 플랫폼 돌파 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 40
         elif is_theme_hubal_sang: master_tajeom = "🔒 [후발주] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 40
         elif is_theme_hubal: master_tajeom = "🏃 [후발주] 테마 추종" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 35
@@ -749,8 +745,6 @@ def update_technical_data(df_theme, all_theme_map):
             helper_sheet.update(range_name="A2", values=results, value_input_option="USER_ENTERED")
             print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 업데이트 완료)")
             
-            # (아래쪽 DB_스캐너 전송 부근)
-            # 💡 [거자름] 키워드를 [V.스텔스]로 변경
             scanner_keywords = ["[테마대장]", "[후발주]", "[개별주]", "[핵심]", "[타점]", "[V.스텔스]", "[관심]", "[분할매수]", "[우량]", "[주력]", "[기회]", "[단기]"]
             
             scanner_results = []
