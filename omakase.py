@@ -398,6 +398,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         # 💡 [핵심 버그 수정] 양수 기호(+) 완벽 처리 파싱
         is_dual_buy, f_buy, i_buy, supply_text = False, 0, 0, ""
         acc_i_buy_won = 0
+        dual_buy_days = 0
         program_text = "확인불가"
         pg_amount_eok = 0.0 
 
@@ -424,8 +425,13 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     if valid_days == 0:
                         i_buy = i_vol * close_price_day
                         f_buy = f_vol * close_price_day
-                        if i_buy > 0 and f_buy > 0: is_dual_buy = True
-                        
+                        if i_vol > 0 and f_vol > 0:
+                           dual_buy_days += 1
+                        # 💡 강화된 쌍끌이 조건
+                        today_dual_buy_ratio = ((i_buy + f_buy) / trading_value) * 100 if trading_value > 0 else 0
+
+                        if dual_buy_days >= 3 and today_dual_buy_ratio >= 3 and (acc_i_buy_won / 100_000_000) >= 10:
+                           is_dual_buy = True
                         if f_vol != 0:
                             pg_amount_won = f_vol * current_price 
                             pg_amount_eok = pg_amount_won / 100_000_000 
