@@ -385,10 +385,12 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if capital_stock and total_equity and total_equity < capital_stock: is_financial_risk = True
             if len(op_profits) == 3 and all(p < 0 for p in op_profits): is_chronic_loss = True
 
-        # 💡 [해결책] 기관 수급 및 양매수 데이터 추출 (PC 네이버 금융 frgn.naver 직접 파싱)
+        # 💡 [해결책] 기관 5일 누적 수급 & 프로그램 대리 지표 통합 파싱 (frgn.naver 활용)
         is_dual_buy, f_buy, i_buy, supply_text = False, 0, 0, ""
         acc_i_buy_won = 0
-        
+        program_text = "확인불가"
+        pg_amount_eok = 0.0 
+
         try:
             frgn_url = f"https://finance.naver.com/item/frgn.naver?code={code}"
             frgn_res = session.get(frgn_url, verify=False, timeout=3)
@@ -402,21 +404,40 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 if len(cols) >= 9 and cols[0].text.strip().replace('.', '').isdigit():
                     close_price_day = int(cols[1].text.strip().replace(',', ''))
                     
-                    # 기관 순매매량 (주)
+                    # 기관 순매매량 파싱
                     i_vol_str = cols[5].text.strip().replace(',', '')
-                    i_vol = int(i_vol_str) if i_vol_str else 0
+                    i_vol = int(i_vol_str) if i_vol_str.lstrip('-').isdigit() else 0
                     
-                    # 외국인 순매매량 (주)
+                    # 외국인 순매매량 파싱
                     f_vol_str = cols[6].text.strip().replace(',', '')
-                    f_vol = int(f_vol_str) if f_vol_str else 0
+                    f_vol = int(f_vol_str) if f_vol_str.lstrip('-').isdigit() else 0
                     
-                    # 당일(가장 최근일) 양매수 확인
+                    # 최근 영업일 1일차 데이터로 양매수 및 프로그램(외국인 대리) 계산
                     if valid_days == 0:
                         i_buy = i_vol * close_price_day
                         f_buy = f_vol * close_price_day
                         if i_buy > 0 and f_buy > 0: is_dual_buy = True
                         
-                    # 5일 누적 합산 (순매매량 * 종가 = 순매매대금)
+                        # [오류수정] 기존 코드가 사용하던 '외국인 수급'을 '프로그램 수급'으로 복원 표기
+                        if f_vol_str and f_vol != 0:
+                            pg_amount_won = f_vol * current_price 
+                            pg_amount_eok = pg_amount_won / 100_000_000 
+                            
+                            pg_ratio = 0.0
+                            if trading_value > 0:
+                                pg_ratio = (abs(pg_amount_won) / trading_value) * 100
+                                
+                            if pg_amount_eok >= 30 and pg_ratio >= 10.0: program_text = f"🔴 [P.대량유입] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+                            elif pg_amount_eok >= 10 and pg_ratio >= 5.0: program_text = f"🔴 [P.매수우위] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+                            elif pg_amount_eok <= -30 and pg_ratio >= 10.0: program_text = f"🔵 [P.대량출회] {int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+                            elif pg_amount_eok <= -10 and pg_ratio >= 5.0: program_text = f"🔵 [P.매도우위] {int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+                            else:
+                                sign = "+" if pg_amount_eok > 0 else ""
+                                program_text = f"⚪ [P.관망중] {sign}{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+                        else:
+                            program_text = "⚪ [P.관망중] 0원 (0.0%)"
+                            
+                    # 기관 5일 누적 합산 (순매매량 * 종가 = 순매매대금)
                     acc_i_buy_won += (i_vol * close_price_day)
                     valid_days += 1
                     
@@ -425,39 +446,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         except Exception: pass
 
         acc_i_buy_eok = acc_i_buy_won / 100_000_000 # 억원 단위로 변환
-
-        # 💡 [해결책] 프로그램 매매 데이터 추출 (sise_program.naver 직접 파싱)
-        program_text = "확인불가"
-        pg_amount_eok = 0.0
-        try:
-            pg_url = f"https://finance.naver.com/item/sise_program.naver?code={code}"
-            pg_res = session.get(pg_url, verify=False, timeout=3)
-            pg_soup = BeautifulSoup(pg_res.content, 'html.parser', from_encoding='euc-kr')
-            pg_rows = pg_soup.select("table.type2 > tr")
-            for r_tag in pg_rows:
-                cols = r_tag.select("td")
-                if len(cols) >= 8 and cols[0].text.strip().replace('.', '').isdigit():
-                    pg_vol_str = cols[7].text.strip().replace(',', '') # 순매수 (주)
-                    if pg_vol_str and pg_vol_str != '0':
-                        pg_vol = int(pg_vol_str) 
-                        pg_amount_won = pg_vol * current_price 
-                        pg_amount_eok = pg_amount_won / 100_000_000 
-                        
-                        pg_ratio = 0.0
-                        if trading_value > 0:
-                            pg_ratio = (abs(pg_amount_won) / trading_value) * 100
-                            
-                        if pg_amount_eok >= 30 and pg_ratio >= 10.0: program_text = f"🔴 [P.대량유입] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-                        elif pg_amount_eok >= 10 and pg_ratio >= 5.0: program_text = f"🔴 [P.매수우위] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-                        elif pg_amount_eok <= -30 and pg_ratio >= 10.0: program_text = f"🔵 [P.대량출회] {int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-                        elif pg_amount_eok <= -10 and pg_ratio >= 5.0: program_text = f"🔵 [P.매도우위] {int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-                        else:
-                            sign = "+" if pg_amount_eok > 0 else ""
-                            program_text = f"⚪ [P.관망중] {sign}{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-                    else:
-                        program_text = "⚪ [P.관망중] 0원 (0.0%)"
-                    break
-        except Exception: pass
 
         if is_dual_buy: supply_text = " (외인+기관 양매수)"
         if acc_i_buy_eok > 0 and i_buy > 0: supply_text += " (기관 연속매집)" 
@@ -608,7 +596,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             
             if is_dual_buy: quant_score += 15
             
-            # 기관 누적매수 점수 가점 (억원 단위 평가)
             if acc_i_buy_eok >= 50: quant_score += 15 
             elif acc_i_buy_eok >= 10: quant_score += 5
 
