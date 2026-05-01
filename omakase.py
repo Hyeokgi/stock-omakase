@@ -394,13 +394,13 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if capital_stock and total_equity and total_equity < capital_stock: is_financial_risk = True
             if len(op_profits) == 3 and all(p < 0 for p in op_profits): is_chronic_loss = True
 
-        # 💡 [핵심 보완] 수급 퀄리티 판독 엔진 (단순 양매수 노이즈 완벽 제거)
+        # 💡 [핵심 보완] 수급 퀄리티 판독 엔진 (알고리즘 노이즈 완벽 제거)
         is_strong_dual_buy = False  # 진성 쌍끌이 모아가기
         is_weak_dual_buy = False    # 가벼운 탐색 양매수
         supply_text = ""
         
         acc_i_buy_won = 0
-        dual_buy_days = 0           # 5일 중 양매수 발생 일수
+        dual_buy_days = 0           # 5일 중 '진성' 양매수 발생 일수
         i_buy_today = 0
         f_buy_today = 0
         today_dual_buy_ratio = 0.0
@@ -430,8 +430,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     i_buy_won = i_vol * close_price_day
                     f_buy_won = f_vol * close_price_day
 
-                    # 1. 5일 내 양매수 발생 '일수' 카운트
-                    if i_buy_won > 0 and f_buy_won > 0:
+                    # 1. 5일 내 양매수 발생 '일수' 카운트 (🚨 노이즈 제거: 양쪽 모두 최소 5천만원 이상 살 것)
+                    if i_buy_won >= 50_000_000 and f_buy_won >= 50_000_000:
                         dual_buy_days += 1
                     
                     # 2. 당일(가장 최근일) 데이터 저장 및 프로그램 파싱
@@ -466,7 +466,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         acc_i_buy_eok = acc_i_buy_won / 100_000_000 
 
         # 💡 [루프 종료 후 최종 판독] 엄격한 수급 조건 적용
-        if dual_buy_days >= 3 and today_dual_buy_ratio >= 3.0 and acc_i_buy_eok >= 10:
+        # 조건: 3일 이상 진성 양매수 + 당일 비중 3% 이상 + 당일 양쪽 모두 최소 1억 이상 매수 + 기관 누적 10억 이상
+        if dual_buy_days >= 3 and today_dual_buy_ratio >= 3.0 and i_buy_today >= 100_000_000 and f_buy_today >= 100_000_000 and acc_i_buy_eok >= 10:
             is_strong_dual_buy = True
             supply_text = " (🌟쌍끌이 모아가기)"
         elif i_buy_today >= 100_000_000 and f_buy_today >= 100_000_000:
