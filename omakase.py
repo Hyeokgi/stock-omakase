@@ -565,15 +565,16 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         if int(df_hist['volume'].iloc[j]) > anchor_vol * 0.45: is_holding = False; break
                     if is_holding: flag_days = d; break
 
+        # 💡 [핵심 보완] 철저하게 강화된 '에너지응축 숨고르기 음봉' 판독 로직
         is_stealth_nulim = (
-            is_breakout_track and                                            
-            (ma5 > ma20) and                                                 
-            (current_price >= high_60d * 0.90) and                           
-            (vol_ratio_yest <= 25) and                                       
-            (vol_ratio_10d <= 30) and                                        
-            (yest_tv >= 100_000_000_000 or flag_days > 0) and                
-            (not is_today_yangbong or today_body_ratio <= 0.015) and         
-            (not is_long_shadow)                                             
+            is_breakout_track and                                            # 1. 상승 추세 (20일선 위)
+            (ma5 > ma20) and                                                 # 2. [강화] 5일선이 20일선 위에 살아있는 상태
+            (current_price >= high_60d * 0.90) and                           # 3. [강화] 전고점의 90% 이상 (기존 85%에서 상향)
+            (vol_ratio_yest <= 25) and                                       # 4. [강화] 전일 대비 거래량 25% 이하로 극단적 증발
+            (vol_ratio_10d <= 30) and                                        # 5. [강화] 10일 평균 대비 30% 이하
+            (yest_tv >= 100_000_000_000 or flag_days > 0) and                # 6. [강화] 어제 최소 1000억 터졌거나 최근 강력한 주도주 이력
+            (not is_today_yangbong or today_body_ratio <= 0.015) and         # 7. 확실한 음봉이거나, 몸통이 얇은 도지(십자) 캔들
+            (not is_long_shadow)                                             # 8. 위험한 윗꼬리 캔들 아닐 것
         )
         
         quant_score = 0
@@ -620,7 +621,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         elif is_financial_risk: master_tajeom = "🚨 매매제한 (재무위험)"
         elif is_theme_daejang_sang: master_tajeom = "👑 [테마대장] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 50
         elif is_theme_daejang: master_tajeom = "🚀 [테마대장] 당일 주도주" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 45
-        elif is_stealth_nulim: master_tajeom = "🎯 [V.스텔스] 거래실종 눌림타점 (비중 40%)" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 45
+        
+        # 💡 명칭 변경 적용 (수석님 제안)
+        elif is_stealth_nulim: master_tajeom = "🎯 [에너지응축] 숨고르기 음봉 (비중 40%)" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 45
+        
         elif is_platform_breakout: master_tajeom = "📦 [스윙] 플랫폼 돌파 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 40
         elif is_theme_hubal_sang: master_tajeom = "🔒 [후발주] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 40
         elif is_theme_hubal: master_tajeom = "🏃 [후발주] 테마 추종" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 35
@@ -752,7 +756,8 @@ def update_technical_data(df_theme, all_theme_map):
             helper_sheet.update(range_name="A2", values=results, value_input_option="USER_ENTERED")
             print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 업데이트 완료)")
             
-            scanner_keywords = ["[테마대장]", "[후발주]", "[개별주]", "[핵심]", "[타점]", "[V.스텔스]", "[관심]", "[분할매수]", "[우량]", "[주력]", "[기회]", "[단기]"]
+            # 💡 [V.스텔스] 키워드를 [에너지응축]으로 변경
+            scanner_keywords = ["[테마대장]", "[후발주]", "[개별주]", "[핵심]", "[타점]", "[에너지응축]", "[관심]", "[분할매수]", "[우량]", "[주력]", "[기회]", "[단기]"]
             
             scanner_results = []
             for r in results:
