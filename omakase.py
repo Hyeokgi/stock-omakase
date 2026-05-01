@@ -304,7 +304,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             data = item.get("data").split("|")
             open_p, high_p, low_p, close_p, vol = int(data[1]), int(data[2]), int(data[3]), int(data[4]), int(data[5])
             
-            # 💡 휴장일 더미 데이터 필터링
             if vol == 0: continue
             if open_p == 0 and close_p > 0: continue
             if high_p == low_p == open_p == close_p and vol < 10000: continue
@@ -395,10 +394,17 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if capital_stock and total_equity and total_equity < capital_stock: is_financial_risk = True
             if len(op_profits) == 3 and all(p < 0 for p in op_profits): is_chronic_loss = True
 
-        # 💡 [핵심 버그 수정] 양수 기호(+) 완벽 처리 파싱
-        is_dual_buy, f_buy, i_buy, supply_text = False, 0, 0, ""
+        # 💡 [핵심 보완] 수급 퀄리티 판독 엔진 (단순 양매수 노이즈 완벽 제거)
+        is_strong_dual_buy = False  # 진성 쌍끌이 모아가기
+        is_weak_dual_buy = False    # 가벼운 탐색 양매수
+        supply_text = ""
+        
         acc_i_buy_won = 0
-        dual_buy_days = 0
+        dual_buy_days = 0           # 5일 중 양매수 발생 일수
+        i_buy_today = 0
+        f_buy_today = 0
+        today_dual_buy_ratio = 0.0
+
         program_text = "확인불가"
         pg_amount_eok = 0.0 
 
@@ -411,27 +417,29 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             valid_days = 0
             for r_tag in rows:
                 cols = r_tag.select("td")
-                # 컬럼 개수가 7개 이상이면 정상 처리 (간혹 숨김 컬럼으로 9개가 안될 때 방어)
                 if len(cols) >= 7 and cols[0].text.strip().replace('.', '').isdigit():
                     close_price_day = int(cols[1].text.strip().replace(',', ''))
                     
-                    # 기관 및 외국인 수급 파싱 (+ 기호 완벽 제거)
+                    # 기관/외인 순매매량 파싱
                     try: i_vol = int(cols[5].text.strip().replace(',', '').replace('+', '').replace(' ', ''))
                     except: i_vol = 0
                     
                     try: f_vol = int(cols[6].text.strip().replace(',', '').replace('+', '').replace(' ', ''))
                     except: f_vol = 0
                     
-                    if valid_days == 0:
-                        i_buy = i_vol * close_price_day
-                        f_buy = f_vol * close_price_day
-                        if i_vol > 0 and f_vol > 0:
-                           dual_buy_days += 1
-                        # 💡 강화된 쌍끌이 조건
-                        today_dual_buy_ratio = ((i_buy + f_buy) / trading_value) * 100 if trading_value > 0 else 0
+                    i_buy_won = i_vol * close_price_day
+                    f_buy_won = f_vol * close_price_day
 
-                        if dual_buy_days >= 3 and today_dual_buy_ratio >= 3 and (acc_i_buy_won / 100_000_000) >= 10:
-                           is_dual_buy = True
+                    # 1. 5일 내 양매수 발생 '일수' 카운트
+                    if i_buy_won > 0 and f_buy_won > 0:
+                        dual_buy_days += 1
+                    
+                    # 2. 당일(가장 최근일) 데이터 저장 및 프로그램 파싱
+                    if valid_days == 0:
+                        i_buy_today = i_buy_won
+                        f_buy_today = f_buy_won
+                        today_dual_buy_ratio = ((i_buy_today + f_buy_today) / trading_value) * 100 if trading_value > 0 else 0
+                        
                         if f_vol != 0:
                             pg_amount_won = f_vol * current_price 
                             pg_amount_eok = pg_amount_won / 100_000_000 
@@ -447,7 +455,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         else:
                             program_text = "⚪ [P.관망중] 0원 (0.0%)"
                             
-                    acc_i_buy_won += (i_vol * close_price_day)
+                    # 3. 기관 5일 누적 매수금 합산
+                    acc_i_buy_won += i_buy_won
                     valid_days += 1
                     
                     if valid_days >= 5:
@@ -456,8 +465,15 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         acc_i_buy_eok = acc_i_buy_won / 100_000_000 
 
-        if is_dual_buy: supply_text = " (외인+기관 양매수)"
-        if acc_i_buy_eok > 0 and i_buy > 0: supply_text += " (기관 연속매집)" 
+        # 💡 [루프 종료 후 최종 판독] 엄격한 수급 조건 적용
+        if dual_buy_days >= 3 and today_dual_buy_ratio >= 3.0 and acc_i_buy_eok >= 10:
+            is_strong_dual_buy = True
+            supply_text = " (🌟쌍끌이 모아가기)"
+        elif i_buy_today >= 100_000_000 and f_buy_today >= 100_000_000:
+            is_weak_dual_buy = True
+            supply_text = " (🟢약한 양매수)"
+        elif acc_i_buy_eok >= 10:
+            supply_text = " (기관 누적매집)"
 
         ma5 = int(df_hist['close'].tail(5).mean()) if len(df_hist) >= 5 else current_price
         ma20 = int(df_hist['close'].tail(20).mean()) if len(df_hist) >= 20 else current_price
@@ -507,7 +523,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if is_junk: signal = "🚨 매매제한 (관리/주의)"
         elif is_financial_risk: signal = "🚨 매매제한 (재무위험)"
         elif is_platform_breakout: signal = "📦 플랫폼 탈출 (스윙)" + supply_text
-        elif is_dual_buy and is_converging: signal = "🌟 모아가기 (쌍끌이)"
+        elif is_strong_dual_buy and is_converging: signal = "🌟 모아가기 (쌍끌이)"
         elif band_width <= 0.20 and current_price >= ma20: signal = "🚀 N자파동 (밴드돌파)" + supply_text if current_price >= upper_band * 0.98 else "👀 N자파동 (에너지응축)" + supply_text
         elif ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035: signal = "📈 2차랠리 (이평수렴)" + supply_text if current_price > ma20 else "⏳ 이평선 저항" + supply_text
         else: signal = "🟢 낙폭과대 (과매도)" + supply_text if current_price < lower_band else "⚡ 관망 (이격발생)" + supply_text
@@ -604,7 +620,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             elif "대량출회" in program_text: quant_score -= 20
             elif "매도우위" in program_text: quant_score -= 10
             
-            if is_dual_buy: quant_score += 15
+            if is_strong_dual_buy: quant_score += 15
             
             if acc_i_buy_eok >= 50: quant_score += 15 
             elif acc_i_buy_eok >= 10: quant_score += 5
@@ -615,7 +631,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         now_kst_tajeom = datetime.datetime.now(KST)
         is_overnight_time = (now_kst_tajeom.hour == 15 and now_kst_tajeom.minute <= 30)
-        is_overnight_candidate = is_overnight_time and (quant_score >= 50) and (pg_amount_eok >= 10 or is_dual_buy) and (current_price >= today_high * 0.94) and is_breakout_track and not is_long_shadow
+        is_overnight_candidate = is_overnight_time and (quant_score >= 50) and (pg_amount_eok >= 10 or is_strong_dual_buy) and (current_price >= today_high * 0.94) and is_breakout_track and not is_long_shadow
 
         master_tajeom = "⏸️ 관망 및 대기"
         if len(history) < 20: master_tajeom = "⚠️ 신규상장 (데이터 부족)"
@@ -655,7 +671,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         if is_breakout_track and is_after_1030:
             if ("돌파" in master_tajeom or "안착" in master_tajeom or "주도주" in master_tajeom) and "핵심" not in master_tajeom:
-                if is_after_1400 and not is_long_shadow and (pg_amount_eok >= 10 or is_dual_buy):
+                if is_after_1400 and not is_long_shadow and (pg_amount_eok >= 10 or is_strong_dual_buy):
                     quant_score += 10
                     master_tajeom += " 🌙(종가베팅 수급프리미엄 +10점)"
                 else:
