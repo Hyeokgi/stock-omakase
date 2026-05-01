@@ -304,7 +304,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             data = item.get("data").split("|")
             open_p, high_p, low_p, close_p, vol = int(data[1]), int(data[2]), int(data[3]), int(data[4]), int(data[5])
             
-            # 💡 [핵심 버그 픽스] 네이버 차트 API의 휴장일 더미 데이터 및 시가 0원 쓰레기 데이터 완벽 필터링
+            # 💡 휴장일 더미 데이터 필터링
             if vol == 0: continue
             if open_p == 0 and close_p > 0: continue
             if high_p == low_p == open_p == close_p and vol < 10000: continue
@@ -320,7 +320,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             
         if len(history) < 2: return None
         
-        # 필터링된 깨끗한 데이터의 가장 마지막이 진짜 '오늘(최종 거래일)'
         last_day = history[-1]
         open_price, today_high, today_low, current_price, today_vol = last_day['open'], last_day['high'], last_day['low'], last_day['close'], last_day['volume']
         
@@ -336,7 +335,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         
         high_prices_60 = high_prices[-60:] if len(high_prices) >= 60 else high_prices
         
-        # 💡 [로직 분리] 내부 계산용(오늘 제외 전고점) vs 시트 출력용(오늘 포함 진짜 최고가)
         high_60d_calc = max(high_prices_60[:-1]) if len(high_prices_60) > 1 else today_high
         high_250d_calc = max(high_prices[:-1]) if len(high_prices) > 1 else today_high
         
@@ -397,6 +395,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if capital_stock and total_equity and total_equity < capital_stock: is_financial_risk = True
             if len(op_profits) == 3 and all(p < 0 for p in op_profits): is_chronic_loss = True
 
+        # 💡 [핵심 버그 수정] 양수 기호(+) 완벽 처리 파싱
         is_dual_buy, f_buy, i_buy, supply_text = False, 0, 0, ""
         acc_i_buy_won = 0
         program_text = "확인불가"
@@ -411,27 +410,26 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             valid_days = 0
             for r_tag in rows:
                 cols = r_tag.select("td")
-                if len(cols) >= 9 and cols[0].text.strip().replace('.', '').isdigit():
+                # 컬럼 개수가 7개 이상이면 정상 처리 (간혹 숨김 컬럼으로 9개가 안될 때 방어)
+                if len(cols) >= 7 and cols[0].text.strip().replace('.', '').isdigit():
                     close_price_day = int(cols[1].text.strip().replace(',', ''))
                     
-                    i_vol_str = cols[5].text.strip().replace(',', '')
-                    i_vol = int(i_vol_str) if i_vol_str.lstrip('-').isdigit() else 0
+                    # 기관 및 외국인 수급 파싱 (+ 기호 완벽 제거)
+                    try: i_vol = int(cols[5].text.strip().replace(',', '').replace('+', '').replace(' ', ''))
+                    except: i_vol = 0
                     
-                    f_vol_str = cols[6].text.strip().replace(',', '')
-                    f_vol = int(f_vol_str) if f_vol_str.lstrip('-').isdigit() else 0
+                    try: f_vol = int(cols[6].text.strip().replace(',', '').replace('+', '').replace(' ', ''))
+                    except: f_vol = 0
                     
                     if valid_days == 0:
                         i_buy = i_vol * close_price_day
                         f_buy = f_vol * close_price_day
                         if i_buy > 0 and f_buy > 0: is_dual_buy = True
                         
-                        if f_vol_str and f_vol != 0:
+                        if f_vol != 0:
                             pg_amount_won = f_vol * current_price 
                             pg_amount_eok = pg_amount_won / 100_000_000 
-                            
-                            pg_ratio = 0.0
-                            if trading_value > 0:
-                                pg_ratio = (abs(pg_amount_won) / trading_value) * 100
+                            pg_ratio = (abs(pg_amount_won) / trading_value) * 100 if trading_value > 0 else 0.0
                                 
                             if pg_amount_eok >= 30 and pg_ratio >= 10.0: program_text = f"🔴 [P.대량유입] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
                             elif pg_amount_eok >= 10 and pg_ratio >= 5.0: program_text = f"🔴 [P.매수우위] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
@@ -508,7 +506,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         elif ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035: signal = "📈 2차랠리 (이평수렴)" + supply_text if current_price > ma20 else "⏳ 이평선 저항" + supply_text
         else: signal = "🟢 낙폭과대 (과매도)" + supply_text if current_price < lower_band else "⚡ 관망 (이격발생)" + supply_text
         
-        # 이격도 판독 (calc 사용)
         is_near_high = current_price >= (high_60d_calc * 0.90) or yest_close >= (high_60d_calc * 0.90)
         is_near_52w_high = current_price >= (high_250d_calc * 0.90) or yest_close >= (high_250d_calc * 0.90)
         
@@ -565,16 +562,15 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         if int(df_hist['volume'].iloc[j]) > anchor_vol * 0.45: is_holding = False; break
                     if is_holding: flag_days = d; break
 
-        # 💡 [핵심 보완] 철저하게 강화된 '에너지응축 숨고르기 음봉' 판독 로직
         is_stealth_nulim = (
-            is_breakout_track and                                            # 1. 상승 추세 (20일선 위)
-            (ma5 > ma20) and                                                 # 2. [강화] 5일선이 20일선 위에 살아있는 상태
-            (current_price >= high_60d * 0.90) and                           # 3. [강화] 전고점의 90% 이상 (기존 85%에서 상향)
-            (vol_ratio_yest <= 25) and                                       # 4. [강화] 전일 대비 거래량 25% 이하로 극단적 증발
-            (vol_ratio_10d <= 30) and                                        # 5. [강화] 10일 평균 대비 30% 이하
-            (yest_tv >= 100_000_000_000 or flag_days > 0) and                # 6. [강화] 어제 최소 1000억 터졌거나 최근 강력한 주도주 이력
-            (not is_today_yangbong or today_body_ratio <= 0.015) and         # 7. 확실한 음봉이거나, 몸통이 얇은 도지(십자) 캔들
-            (not is_long_shadow)                                             # 8. 위험한 윗꼬리 캔들 아닐 것
+            is_breakout_track and                                            
+            (ma5 > ma20) and                                                 
+            (current_price >= high_60d_calc * 0.90) and                           
+            (vol_ratio_yest <= 25) and                                       
+            (vol_ratio_10d <= 30) and                                        
+            (yest_tv >= 100_000_000_000 or flag_days > 0) and                
+            (not is_today_yangbong or today_body_ratio <= 0.015) and         
+            (not is_long_shadow)                                             
         )
         
         quant_score = 0
@@ -621,10 +617,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         elif is_financial_risk: master_tajeom = "🚨 매매제한 (재무위험)"
         elif is_theme_daejang_sang: master_tajeom = "👑 [테마대장] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 50
         elif is_theme_daejang: master_tajeom = "🚀 [테마대장] 당일 주도주" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 45
-        
-        # 💡 명칭 변경 적용 (수석님 제안)
         elif is_stealth_nulim: master_tajeom = "🎯 [에너지응축] 숨고르기 음봉 (비중 40%)" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 45
-        
         elif is_platform_breakout: master_tajeom = "📦 [스윙] 플랫폼 돌파 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 40
         elif is_theme_hubal_sang: master_tajeom = "🔒 [후발주] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 40
         elif is_theme_hubal: master_tajeom = "🏃 [후발주] 테마 추종" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 35
@@ -669,7 +662,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if is_high_altitude and "[" in master_tajeom:
             quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️고가(단기)"
 
-        # 맨 마지막 return 배열 수정 (출력용 display 변수 사용)
         return [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", 
             int(ma5), int(ma20), vol_ratio_text, signal, 
@@ -696,15 +688,14 @@ def update_technical_data(df_theme, all_theme_map):
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
         target_names = set()
         
+        # 💡 [핵심 버그 픽스] 수급_Raw의 모든 종목 100% 검출되도록 필터링 완전 제거
         try:
             raw_data = doc.worksheet("수급_Raw").get_all_values()
             for row in raw_data[1:]:
                 if len(row) >= 7:
                     stock_name = str(row[-4]).strip()
-                    val_str = str(row[-1]).replace(',', '').replace('억원', '').replace('"', '').strip()
-                    if val_str.isdigit() and int(val_str) >= 1000:
-                        if stock_name and stock_name not in ["#REF!", "로딩중...", "데이터대기", "FALSE"]:
-                            target_names.add(stock_name)
+                    if stock_name and stock_name not in ["#REF!", "로딩중...", "데이터대기", "FALSE"]:
+                        target_names.add(stock_name)
         except: pass
 
         try:
@@ -756,7 +747,6 @@ def update_technical_data(df_theme, all_theme_map):
             helper_sheet.update(range_name="A2", values=results, value_input_option="USER_ENTERED")
             print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 업데이트 완료)")
             
-            # 💡 [V.스텔스] 키워드를 [에너지응축]으로 변경
             scanner_keywords = ["[테마대장]", "[후발주]", "[개별주]", "[핵심]", "[타점]", "[에너지응축]", "[관심]", "[분할매수]", "[우량]", "[주력]", "[기회]", "[단기]"]
             
             scanner_results = []
