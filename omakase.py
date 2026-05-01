@@ -335,8 +335,13 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         trading_value = current_price * today_vol
         
         high_prices_60 = high_prices[-60:] if len(high_prices) >= 60 else high_prices
-        high_60d = max(high_prices_60[:-1]) if len(high_prices_60) > 1 else today_high
-        high_250d = max(high_prices[:-1]) if len(high_prices) > 1 else today_high
+        
+        # 💡 [로직 분리] 내부 계산용(오늘 제외 전고점) vs 시트 출력용(오늘 포함 진짜 최고가)
+        high_60d_calc = max(high_prices_60[:-1]) if len(high_prices_60) > 1 else today_high
+        high_250d_calc = max(high_prices[:-1]) if len(high_prices) > 1 else today_high
+        
+        display_high_60d = max(high_prices_60) if len(high_prices_60) > 0 else today_high
+        display_high_250d = max(high_prices) if len(high_prices) > 0 else today_high
         
         min_20d = int(df_hist['close'].tail(20).min()) if len(df_hist) >= 20 else int(df_hist['close'].min())
         surge_rate_20d = (current_price - min_20d) / min_20d if min_20d > 0 else 0
@@ -503,12 +508,13 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         elif ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035: signal = "📈 2차랠리 (이평수렴)" + supply_text if current_price > ma20 else "⏳ 이평선 저항" + supply_text
         else: signal = "🟢 낙폭과대 (과매도)" + supply_text if current_price < lower_band else "⚡ 관망 (이격발생)" + supply_text
         
-        is_near_high = current_price >= (high_60d * 0.90) or yest_close >= (high_60d * 0.90)
-        is_near_52w_high = current_price >= (high_250d * 0.90) or yest_close >= (high_250d * 0.90)
+        # 이격도 판독 (calc 사용)
+        is_near_high = current_price >= (high_60d_calc * 0.90) or yest_close >= (high_60d_calc * 0.90)
+        is_near_52w_high = current_price >= (high_250d_calc * 0.90) or yest_close >= (high_250d_calc * 0.90)
         
         if is_near_52w_high: dist_text = "🎯 52주신고가 턱밑"
         elif is_near_high: dist_text = "🎯 60일전고 턱밑"
-        elif current_price >= high_60d * 0.80: dist_text = "🟢 매물대 소화중"
+        elif current_price >= high_60d_calc * 0.80: dist_text = "🟢 매물대 소화중"
         else: dist_text = "📉 이격 과다"
 
         is_danta_range = 0.17 <= change_rate < 0.295
@@ -574,8 +580,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if not (is_junk or is_financial_risk):
             if is_breakout_track:
                 if is_near_52w_high: quant_score += 20
-                elif current_price >= (high_60d * 0.90): quant_score += 15
-                elif current_price >= (high_60d * 0.85): quant_score += 5
+                elif current_price >= (high_60d_calc * 0.90): quant_score += 15
+                elif current_price >= (high_60d_calc * 0.85): quant_score += 5
                 
                 if vol_ratio_yest >= 300 and vol_ratio_10d >= 200: quant_score += 10
                 elif vol_ratio_yest >= 150: quant_score += 5
@@ -659,13 +665,14 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if is_high_altitude and "[" in master_tajeom:
             quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️고가(단기)"
 
+        # 맨 마지막 return 배열 수정 (출력용 display 변수 사용)
         return [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", 
             int(ma5), int(ma20), vol_ratio_text, signal, 
-            score_display, master_tajeom, today_high, today_low, high_60d, 
+            score_display, master_tajeom, today_high, today_low, int(display_high_60d), 
             market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, my_theme_name,
             program_text,
-            int(high_250d), f"{int(acc_i_buy_eok)}억"
+            int(display_high_250d), f"{int(acc_i_buy_eok)}억"
         ]
     except Exception as e:
         return None
