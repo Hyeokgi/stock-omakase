@@ -320,7 +320,7 @@ def get_market_schedule():
         print(f"❌ 일정 수집 에러: {e}")
         return []
 
-# 💡 [새로 추가] 주요일정 시트 자동 유지보수 함수 (과거 숨김 + 3개월 삭제)
+# 💡 [업데이트] 주요일정 시트 자동 유지보수 함수 (스마트 포맷팅 + 과거 숨김 + 3개월 삭제)
 def manage_schedule_sheet(schedules):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -335,15 +335,21 @@ def manage_schedule_sheet(schedules):
         today = datetime.datetime.now(KST).date()
         three_months_ago = today - datetime.timedelta(days=90)
 
-        # 1. 3개월 이전 데이터 자동 폐기
+        # 1. [핵심 수정] 어떤 형태의 날짜든 YYYY-MM-DD로 자동 변환 및 3개월 이전 데이터 폐기
         valid_rows = []
         for row in rows:
             if not row or not row[0]: continue
+            
+            # 기존 "2026. 3. 3" 같은 포맷을 "2026-3-3"으로 변환하여 파싱 시도
+            raw_date = str(row[0]).strip().replace('.', '-').replace(' ', '').strip('-')
             try:
-                row_date = datetime.datetime.strptime(row[0], '%Y-%m-%d').date()
+                row_date = datetime.datetime.strptime(raw_date, '%Y-%m-%d').date()
                 if row_date >= three_months_ago:
+                    # 완벽한 정렬을 위해 YYYY-MM-DD 포맷으로 강제 통일하여 덮어쓰기
+                    row[0] = row_date.strftime('%Y-%m-%d')
                     valid_rows.append(row)
             except ValueError:
+                # 날짜가 아닌 텍스트(제목 등)가 있다면 안전하게 유지
                 valid_rows.append(row)
 
         # 2. 오늘 자동 수집된 일정 중복 확인 후 병합
@@ -352,13 +358,13 @@ def manage_schedule_sheet(schedules):
             if sch[1] not in existing_titles:
                 valid_rows.append(sch)
 
-        # 3. 날짜 오름차순 정렬
+        # 3. 날짜 오름차순 정렬 (이제 에러 없이 완벽하게 정렬됨)
         def sort_key(x):
             try: return datetime.datetime.strptime(x[0], '%Y-%m-%d').date()
             except: return datetime.date(2099, 12, 31)
         valid_rows.sort(key=sort_key)
 
-        # 4. 시트 덮어쓰기 (3개월치 유효 데이터만)
+        # 4. 시트 덮어쓰기 (표준화된 포맷으로)
         sheet.batch_clear(['A2:C'])
         if valid_rows:
             sheet.update(range_name="A2", values=valid_rows, value_input_option="USER_ENTERED")
@@ -398,7 +404,7 @@ def manage_schedule_sheet(schedules):
 
         if requests_list:
             doc.batch_update({"requests": requests_list})
-            print(f"📅 HYEOKS 주요일정 관리 완료 (3개월 정리 및 과거일정 숨김 처리 완료)")
+            print(f"📅 HYEOKS 주요일정 관리 완료 (스마트 포맷팅 + 과거일정 숨김 처리 완료)")
 
     except Exception as e:
         print(f"❌ 주요일정 시트 관리 에러: {e}")
