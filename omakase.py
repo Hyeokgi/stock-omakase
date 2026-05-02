@@ -291,6 +291,118 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
     except Exception as e: 
         print(f"❌ 데이터 업데이트 에러: {e}")
 
+# 💡 [새로 추가] 네이버 캘린더 파싱 및 필터링 함수
+def get_market_schedule():
+    """네이버 금융 오늘의 증시 일정 수집 (주주총회, 공모, 청약 제외)"""
+    try:
+        today_str = datetime.datetime.now(KST).strftime('%Y-%m-%d')
+        url = "https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258"
+        res = session.get(url, verify=False, timeout=5)
+        soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
+        
+        schedules = []
+        for dl in soup.find_all('dl')[:15]:
+            title_tag = dl.find('dt', {'class': 'articleSubject'})
+            if not title_tag:
+                title_tag = dl.find('dd', {'class': 'articleSubject'})
+            
+            if title_tag and title_tag.find('a'):
+                title = title_tag.find('a').text.strip()
+                
+                include_kws = ['실적', '발표', '만기', '배당', '금통위', 'FOMC', '고용', '학회', '임상']
+                exclude_kws = ['주주총회', '주총', '공모', '청약']
+                
+                if any(kw in title for kw in include_kws) and not any(ex_kw in title for ex_kw in exclude_kws):
+                    schedules.append([today_str, title, "📅 자동수집(당일)"])
+        
+        return schedules
+    except Exception as e:
+        print(f"❌ 일정 수집 에러: {e}")
+        return []
+
+# 💡 [새로 추가] 주요일정 시트 자동 유지보수 함수 (과거 숨김 + 3개월 삭제)
+def manage_schedule_sheet(schedules):
+    try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        gc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope))
+        doc = gc.open_by_url(SHEET_URL)
+        sheet = doc.worksheet("주요일정")
+
+        all_data = sheet.get_all_values()
+        if not all_data: return
+
+        rows = all_data[1:]
+        today = datetime.datetime.now(KST).date()
+        three_months_ago = today - datetime.timedelta(days=90)
+
+        # 1. 3개월 이전 데이터 자동 폐기
+        valid_rows = []
+        for row in rows:
+            if not row or not row[0]: continue
+            try:
+                row_date = datetime.datetime.strptime(row[0], '%Y-%m-%d').date()
+                if row_date >= three_months_ago:
+                    valid_rows.append(row)
+            except ValueError:
+                valid_rows.append(row)
+
+        # 2. 오늘 자동 수집된 일정 중복 확인 후 병합
+        existing_titles = [r[1] for r in valid_rows if len(r) > 1 and r[0] == today.strftime('%Y-%m-%d')]
+        for sch in schedules:
+            if sch[1] not in existing_titles:
+                valid_rows.append(sch)
+
+        # 3. 날짜 오름차순 정렬
+        def sort_key(x):
+            try: return datetime.datetime.strptime(x[0], '%Y-%m-%d').date()
+            except: return datetime.date(2099, 12, 31)
+        valid_rows.sort(key=sort_key)
+
+        # 4. 시트 덮어쓰기 (3개월치 유효 데이터만)
+        sheet.batch_clear(['A2:C'])
+        if valid_rows:
+            sheet.update(range_name="A2", values=valid_rows, value_input_option="USER_ENTERED")
+
+        # 5. 과거 날짜 자동 숨김 처리 로직
+        requests_list = []
+        
+        # 전체 행 숨김 해제 (초기화)
+        requests_list.append({
+            "updateDimensionProperties": {
+                "range": {"sheetId": sheet.id, "dimension": "ROWS", "startIndex": 1, "endIndex": len(valid_rows) + 1},
+                "properties": {"hiddenByUser": False},
+                "fields": "hiddenByUser"
+            }
+        })
+
+        # 과거 날짜 숨김 인덱스 계산
+        hide_start = -1
+        hide_end = -1
+        for i, row in enumerate(valid_rows):
+            try:
+                row_date = datetime.datetime.strptime(row[0], '%Y-%m-%d').date()
+                if row_date < today:
+                    if hide_start == -1: hide_start = i + 1 
+                    hide_end = i + 2
+            except:
+                pass
+
+        if hide_start != -1:
+            requests_list.append({
+                "updateDimensionProperties": {
+                    "range": {"sheetId": sheet.id, "dimension": "ROWS", "startIndex": hide_start, "endIndex": hide_end},
+                    "properties": {"hiddenByUser": True},
+                    "fields": "hiddenByUser"
+                }
+            })
+
+        if requests_list:
+            doc.batch_update({"requests": requests_list})
+            print(f"📅 HYEOKS 주요일정 관리 완료 (3개월 정리 및 과거일정 숨김 처리 완료)")
+
+    except Exception as e:
+        print(f"❌ 주요일정 시트 관리 에러: {e}")
+
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate):
     try:
         url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=250&requestType=0"
@@ -394,13 +506,12 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if capital_stock and total_equity and total_equity < capital_stock: is_financial_risk = True
             if len(op_profits) == 3 and all(p < 0 for p in op_profits): is_chronic_loss = True
 
-        # 💡 [핵심 보완] 수급 퀄리티 판독 엔진 (알고리즘 노이즈 완벽 제거)
-        is_strong_dual_buy = False  # 진성 쌍끌이 모아가기
-        is_weak_dual_buy = False    # 가벼운 탐색 양매수
+        is_strong_dual_buy = False 
+        is_weak_dual_buy = False   
         supply_text = ""
         
         acc_i_buy_won = 0
-        dual_buy_days = 0           # 5일 중 '진성' 양매수 발생 일수
+        dual_buy_days = 0           
         i_buy_today = 0
         f_buy_today = 0
         today_dual_buy_ratio = 0.0
@@ -420,7 +531,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 if len(cols) >= 7 and cols[0].text.strip().replace('.', '').isdigit():
                     close_price_day = int(cols[1].text.strip().replace(',', ''))
                     
-                    # 기관/외인 순매매량 파싱
                     try: i_vol = int(cols[5].text.strip().replace(',', '').replace('+', '').replace(' ', ''))
                     except: i_vol = 0
                     
@@ -430,11 +540,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     i_buy_won = i_vol * close_price_day
                     f_buy_won = f_vol * close_price_day
 
-                    # 1. 5일 내 양매수 발생 '일수' 카운트 (🚨 노이즈 제거: 양쪽 모두 최소 5천만원 이상 살 것)
                     if i_buy_won >= 50_000_000 and f_buy_won >= 50_000_000:
                         dual_buy_days += 1
                     
-                    # 2. 당일(가장 최근일) 데이터 저장 및 프로그램 파싱
                     if valid_days == 0:
                         i_buy_today = i_buy_won
                         f_buy_today = f_buy_won
@@ -455,7 +563,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         else:
                             program_text = "⚪ [P.관망중] 0원 (0.0%)"
                             
-                    # 3. 기관 5일 누적 매수금 합산
                     acc_i_buy_won += i_buy_won
                     valid_days += 1
                     
@@ -465,8 +572,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         acc_i_buy_eok = acc_i_buy_won / 100_000_000 
 
-        # 💡 [루프 종료 후 최종 판독] 엄격한 수급 조건 적용
-        # 조건: 3일 이상 진성 양매수 + 당일 비중 3% 이상 + 당일 양쪽 모두 최소 1억 이상 매수 + 기관 누적 10억 이상
         if dual_buy_days >= 3 and today_dual_buy_ratio >= 3.0 and i_buy_today >= 100_000_000 and f_buy_today >= 100_000_000 and acc_i_buy_eok >= 10:
             is_strong_dual_buy = True
             supply_text = " (🌟쌍끌이 모아가기)"
@@ -585,16 +690,15 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         if int(df_hist['volume'].iloc[j]) > anchor_vol * 0.45: is_holding = False; break
                     if is_holding: flag_days = d; break
 
-        # 💡 [핵심 보완] 수학적 모순을 해결한 '에너지응축 숨고르기 음봉' 실전 최적화 로직
         is_stealth_nulim = (
-            is_breakout_track and                                            # 1. 상승 추세 (20일선 위)
-            (ma5 > ma20) and                                                 # 2. 5일선이 20일선 위에 살아있는 상태
-            (current_price >= high_60d_calc * 0.85) and                      # 3. [조정] 전고점의 85% 이상 유지 (건전한 눌림 허용)
-            (vol_ratio_yest <= 35) and                                       # 4. [조정] 전일 대비 거래량 35% 이하 (1/3 토막, 완벽한 숨고르기)
-            (vol_ratio_10d <= 80) and                                        # 5. [조정] 어제 거래량 폭발로 높아진 10일 평균치 감안 (80% 이하 허용)
-            (yest_tv >= 50_000_000_000 or flag_days > 0) and                 # 6. [조정] 어제 최소 500억 이상 터진 코스닥 주도주 이력
-            (not is_today_yangbong or today_body_ratio <= 0.015) and         # 7. 확실한 음봉이거나, 몸통이 얇은 도지(십자) 캔들
-            (not is_long_shadow)                                             # 8. 위험한 윗꼬리 캔들 아닐 것
+            is_breakout_track and                                            
+            (ma5 > ma20) and                                                 
+            (current_price >= high_60d_calc * 0.85) and                      
+            (vol_ratio_yest <= 35) and                                       
+            (vol_ratio_10d <= 80) and                                        
+            (yest_tv >= 50_000_000_000 or flag_days > 0) and                 
+            (not is_today_yangbong or today_body_ratio <= 0.015) and         
+            (not is_long_shadow)                                             
         )
         
         quant_score = 0
@@ -712,7 +816,6 @@ def update_technical_data(df_theme, all_theme_map):
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
         target_names = set()
         
-        # 💡 [핵심 버그 픽스] 수급_Raw의 모든 종목 100% 검출되도록 필터링 완전 제거
         try:
             raw_data = doc.worksheet("수급_Raw").get_all_values()
             for row in raw_data[1:]:
@@ -824,6 +927,12 @@ if __name__ == "__main__":
     df_theme, is_market_closed, all_theme_map = get_real_money_themes()
     df_news, df_naver, df_main_news = get_news_keywords(), get_naver_search_ranking(), get_naver_main_news()
     update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_closed)
+    
+    # 💡 [새로 추가된 주요일정 관리 시스템 가동]
+    today_schedules = get_market_schedule()
+    # 수집된 일정이 있든 없든 시트 정리(3개월 파기 및 과거 숨김)가 이루어지도록 함수 실행
+    manage_schedule_sheet(today_schedules)
+    
     update_technical_data(df_theme, all_theme_map)
     
     now_kst = datetime.datetime.now(KST)
