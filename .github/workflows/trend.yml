@@ -17,11 +17,11 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: '3.11'   # 💡 3.10에서 3.11로 변경 (버전 경고 메시지 해결)
 
       - name: Install dependencies
         run: |
-          pip install google-generativeai gspread oauth2client google-api-python-client
+          pip install google-genai gspread oauth2client google-api-python-client # 💡 google-genai 로 최신 패키지 이름 수정
 
       # 깃허브 시크릿에 저장된 서비스 계정 키를 secret.json 파일로 복원
       - name: Create secret.json
