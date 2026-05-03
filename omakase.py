@@ -954,26 +954,51 @@ def update_technical_data(df_theme, all_theme_map):
             if scanner_results:
                 try: 
                     db_scanner_sheet = doc.worksheet("DB_스캐너")
-                    existing_briefings = {}
+                    existing_data = {}
                     old_data = db_scanner_sheet.get_all_values()
-                    for row in old_data[1:]:
-                        if len(row) > 9 and "대기중" not in str(row[9]):
-                            saved_code = str(row[2]).replace("'", "").strip().zfill(6)
-                            existing_briefings[saved_code] = str(row[9]).strip()
+                    
+                    # 💡 [핵심] 아침 7시 ~ 8시 50분 사이에는 기존 데이터를 기억하지 않고 초기화
+                    now_time = datetime.datetime.now(KST)
+                    is_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50)
+
+                    if not is_reset_time:
+                        for row in old_data[1:]:
+                            if len(row) > 15: # 목표가/손절가 열(15, 16번째)까지 데이터가 있는지 확인
+                                saved_code = str(row[2]).replace("'", "").strip().zfill(6)
+                                # 브리핑(9), 목표가(14), 손절가(15) 인덱스 저장
+                                if "대기중" not in str(row[9]):
+                                    existing_data[saved_code] = {
+                                        "briefing": str(row[9]).strip(),
+                                        "target": str(row[14]).strip(),
+                                        "stop": str(row[15]).strip()
+                                    }
                 except: 
                     db_scanner_sheet = doc.add_worksheet(title="DB_스캐너", rows="50", cols="17")
-                    existing_briefings = {}
+                    existing_data = {}
                 
+                # ... (섹터 쏠림 강등 로직 등 중간 부분 그대로 유지) ...
+
+                # 최종 결과물 조립 시 기존 브리핑과 가격 복원
                 final_scanner_results = []
                 for res in scanner_results:
                     check_code = str(res[2]).replace("'", "").strip().zfill(6)
-                    if check_code in existing_briefings:
-                        res[9] = existing_briefings[check_code]
+                    # res의 길이를 16개로 맞춤 (기본값 설정)
+                    while len(res) < 16: res.append("")
+                    
+                    if check_code in existing_data:
+                        res[9] = existing_data[check_code]["briefing"]
+                        res[14] = existing_data[check_code]["target"]
+                        res[15] = existing_data[check_code]["stop"]
+                    else:
+                        res[9] = "AI 브리핑 대기중"
+                        res[14] = "계산 대기"
+                        res[15] = "계산 대기"
+                        
                     final_scanner_results.append(res)
                 
                 db_scanner_sheet.batch_clear(['A2:Z'])
                 db_scanner_sheet.update(range_name="A2", values=final_scanner_results, value_input_option="USER_ENTERED")
-                print(f"🎯 DB_스캐너에 {len(final_scanner_results)}개 종목 전송 완료 (기존 브리핑 {len(existing_briefings)}개 유지)")
+                print(f"🎯 DB_스캐너 {len(final_scanner_results)}개 전송 (초기화시간:{is_reset_time})")
 
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
