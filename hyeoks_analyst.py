@@ -20,7 +20,6 @@ KST = datetime.timezone(datetime.timedelta(hours=9))
 
 KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
-FRED_API_KEY = "eed13162f33f0ad6547783b9bb27190b"
 
 now_kst = datetime.datetime.now(KST)
 current_hour = now_kst.hour
@@ -50,6 +49,25 @@ def safe_generate_content(contents, is_fast=False):
             else: raise e 
     raise Exception("❌ 구글 서버 할당량 초과 또는 무응답으로 최종 실패")
 
+def parse_ai_json(text):
+    """제미나이가 반환한 JSON 문자열을 딕셔너리로 안전하게 파싱합니다."""
+    try:
+        clean_text = text.replace('```json', '').replace('```', '').strip()
+        return json.loads(clean_text)
+    except Exception as e:
+        print(f"JSON 파싱 에러 (정규식 대체 시도): {e}")
+        try:
+            t_match = re.search(r'"target_price"\s*:\s*(\d+)', text)
+            s_match = re.search(r'"stop_loss"\s*:\s*(\d+)', text)
+            b_match = re.search(r'"briefing"\s*:\s*"([^"]+)"', text)
+            return {
+                "briefing": b_match.group(1) if b_match else "분석 결과 텍스트 오류",
+                "target_price": int(t_match.group(1)) if t_match else 0,
+                "stop_loss": int(s_match.group(1)) if s_match else 0
+            }
+        except:
+            return {"briefing": "응답 오류", "target_price": 0, "stop_loss": 0}
+
 def get_target_stock_news(code):
     try:
         url = f"https://finance.naver.com/item/news_news.naver?code={code}&page=1"
@@ -69,9 +87,6 @@ def get_vip_deep_dive_data(code, kis_token):
         return f"PER: {out.get('per', 'N/A')} / PBR: {out.get('pbr', 'N/A')}"
     except: return "데이터 수집 실패"
 
-def get_global_liquidity_data():
-    return "유동성 데이터 수집 생략 (속도 최적화)" 
-
 # ==========================================
 # 2. 구글 시트 연결 및 모드별 작동
 # ==========================================
@@ -89,38 +104,64 @@ try:
             if len(row) >= 2 and row[0] == "KIS_TOKEN": KIS_TOKEN = row[1]; break
     except: pass
 
-    sys_instruction = "기업의 일반적인 소개(무엇을 하는 회사인지 등)는 일절 금지. 차트 지표, 마스터 타점, 수급 데이터를 바탕으로 '현재 기술적 위치'와 '앞으로의 대응 전략'만을 60~70자 내외로 매우 짧고 날카롭게 작성할 것."
+    sys_instruction = "기업의 일반적인 소개(무엇을 하는 회사인지 등)는 일절 금지. 차트 지표, 타점, 수급 데이터를 바탕으로 '현재 기술적 위치'와 '앞으로의 대응 전략'만을 60~70자 내외로 매우 짧고 날카롭게 작성할 것."
 
-    # 🟢 [모드 1] 아침 8시: 브리핑 초기화
-    if current_hour == 8:
-        print("▶ [오전 8시 모드] DB_스캐너 전일 브리핑을 'AI 브리핑 대기중'으로 초기화합니다.")
+    # 🟢 [모드 1] 아침 7시: 브리핑 및 목표가/손절가 완전 초기화
+    if current_hour == 7:
+        print("▶ [오전 7시 모드] DB_스캐너 데이터를 'AI 브리핑 대기중' 및 '계산 대기'로 초기화합니다.")
         for i in range(2, len(db_rows) + 1):
             if len(db_rows[i-1]) > 9:
                 db_sheet.update_cell(i, 10, "AI 브리핑 대기중")
+                db_sheet.update_cell(i, 15, "계산 대기")  # O열 (목표가)
+                db_sheet.update_cell(i, 16, "계산 대기")  # P열 (손절가)
         print("✅ 초기화 완료. 프로그램 종료.")
         exit(0)
 
-    # 🟡 [모드 2] 오전장, 저녁장: 간단 브리핑만 신속 업데이트 후 종료
+    # 🟡 [모드 2] 오전장, 저녁장: 간단 브리핑 + 목표가/손절가 산출 업데이트
     if current_hour != 15:
-        print(f"▶ [{current_hour}시 모드] 메인 리포트 시간(15시)이 아니므로, 간단 브리핑만 신속 업데이트합니다.")
+        print(f"▶ [{current_hour}시 모드] 메인 리포트 시간이 아니므로, 대기 중인 종목의 브리핑 및 가격 산출을 진행합니다.")
         for i, row in enumerate(db_rows[1:], start=2):
             if len(row) > 9 and "대기중" in str(row[9]):
                 stock_name = row[0] if len(row) > 0 else "알수없음"
-                print(f" - [{stock_name}] 간단 브리핑 작성 중...")
+                print(f" - [{stock_name}] AI 전략 및 가격 산출 중...")
                 prompt = f"""
+                당신은 천상계 트레이더의 수석 퀀트 애널리스트입니다.
                 [{sys_instruction}]
+                
                 ■ 종목명: {stock_name}
+                ■ 현재가: {row[3] if len(row) > 3 else ''}
                 ■ 타점 위치: {row[8] if len(row) > 8 else ''}
                 ■ 당일 수급: {row[11] if len(row) > 11 else ''}
-                위 데이터를 바탕으로 실전 대응 전략을 1~2문장(70자 내외)으로 요약하라.
+                ■ 52주 고가: {row[12] if len(row) > 12 else ''}
+                ■ 테마: {row[5] if len(row) > 5 else ''}
+                
+                위 데이터를 바탕으로 실전 대응 전략을 1~2문장(70자 내외)으로 작성하고, 전략적 목표가와 손절가를 산출하십시오.
+                (핵심/신고가 타점은 52주 고가를 돌파하는 공격적 목표가를, 에너지응축/눌림목 타점은 타이트한 손절가를 설정하십시오.)
+                
+                반드시 아래의 엄격한 JSON 형식으로만 대답하십시오. 마크다운이나 다른 설명은 절대 금지합니다.
+                {{
+                    "briefing": "여기에 전략 요약 작성",
+                    "target_price": 150000,
+                    "stop_loss": 135000
+                }}
                 """
                 try:
-                    briefing_text = safe_generate_content(prompt, is_fast=True).text.strip()
-                    db_sheet.update_cell(i, 10, f"✅ [간단 브리핑] {briefing_text}")
+                    res_text = safe_generate_content(prompt, is_fast=True).text
+                    parsed_data = parse_ai_json(res_text)
+                    
+                    briefing_text = parsed_data.get("briefing", "브리핑 생성 에러")
+                    if not briefing_text.startswith("✅"): briefing_text = f"✅ [간단 브리핑] {briefing_text}"
+                    
+                    target_val = f"{int(parsed_data.get('target_price', 0)):,}원"
+                    stop_val = f"{int(parsed_data.get('stop_loss', 0)):,}원"
+                    
+                    db_sheet.update_cell(i, 10, briefing_text)
+                    db_sheet.update_cell(i, 15, target_val)
+                    db_sheet.update_cell(i, 16, stop_val)
                     time.sleep(3.5)
                 except Exception as e:
-                    print(f"[{stock_name}] 브리핑 에러 발생 (건너뜀): {e}")
-        print(f"🌅 {current_hour}시 간단 브리핑 완료! 프로그램 종료.")
+                    print(f"[{stock_name}] 브리핑/가격 산출 에러 발생 (건너뜀): {e}")
+        print(f"🌅 {current_hour}시 전략 브리핑 완료! 프로그램 종료.")
         exit(0)
 
     # 🔴 [모드 3] 15시 모드 (메인 리포트 생성 및 풀 코스)
@@ -180,7 +221,8 @@ try:
     """
     
     result_text = safe_generate_content(pick_prompt).text
-    cleaned_text = result_text.replace('```json', '').replace('```', '').strip()
+    cleaned_text = result_text.replace('```json', '').replace('
+```', '').strip()
     picks_json = json.loads(cleaned_text)
     
     code_short = picks_json.get('short_term_code', '')
@@ -225,7 +267,7 @@ try:
 
 [HYEOKS 딥리딩 절대 지침 - 명심하십시오]
 1. 분량 및 깊이: 귀하의 전문적인 통찰력을 발휘하여 충분히 길고 논리적으로 1.5~2페이지 분량이 나오도록 상세히 서술하십시오. 
-2. 🚨 [할루시네이션(거짓 정보) 엄격 금지]: 차트를 판독하여 지지/저항선을 제시할 때, 반드시 위 [입력 데이터]에 제공된 ★확정 현재가({best_cand['curr_p']}원)를 기준으로 상/하단 가격을 계산하십시오. 이전 대화의 다른 종목 가격을 섞거나 터무니없는 가격을 적는 오류를 절대 범하지 마십시오. 1차 진입가는 현재가 부근으로 설정하십시오.
+2. 🚨 [할루시네이션(거짓 정보) 엄격 금지]: 차트를 판독하여 지지/저항선을 제시할 때, 반드시 위 [입력 데이터]에 제공된 ★확정 현재가({best_cand['curr_p']}원)를 기준으로 상/하단 가격을 계산하십시오. 1차 진입가는 현재가 부근으로 설정하십시오.
 3. 실전 액션 플랜 강화: 구체적인 '진입 타점'과 명확한 '손절가'를 반드시 명시하십시오.
 4. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'X' if st_type=='short' else 'O'} 형식으로 출력하십시오.
 
@@ -269,9 +311,9 @@ try:
 
 
     # ==========================================
-    # 6. 3시 15분 마감 최신 DB_스캐너 동기화 및 브리핑 일괄 덮어쓰기
+    # 6. 3시 마감 최신 DB_스캐너 동기화 및 브리핑 일괄 덮어쓰기
     # ==========================================
-    print("\n▶ [3단계] 최신 DB_스캐너 동기화 및 브리핑 일괄 덮어쓰기...")
+    print("\n▶ [3단계] 최신 DB_스캐너 동기화 및 리포트 종목/나머지 종목 갱신...")
     latest_db_data = db_sheet.get_all_values()
 
     def extract_summary(report_text):
@@ -290,38 +332,68 @@ try:
 
     for i, r in enumerate(latest_db_data[1:], start=2):
         if len(r) > 9:
-            # 💡 [버그 수정] 종목코드의 앞자리 '0'이 날아가는 현상 복구
             code = str(r[2]).replace("'", "").strip().zfill(6)
             stock_name = r[0] if len(r) > 0 else "알수없음"
 
-            # 1) 리포트 타겟 종목 덮어쓰기
+            # 1) 리포트 타겟 종목: 리포트의 목표가/손절가를 그대로 업데이트
             if best_short and code == best_short['code']:
-                print(f" - [{stock_name}] 리포트 발송 요약 업데이트 중...")
+                print(f" - [{stock_name}] 리포트 정보 및 가격 시트에 업데이트 중...")
                 db_sheet.update_cell(i, 10, short_summary)
-                time.sleep(3.5)
-                continue
-            if best_mid and code == best_mid['code']:
-                print(f" - [{stock_name}] 리포트 발송 요약 업데이트 중...")
-                db_sheet.update_cell(i, 10, mid_summary)
+                if pick_short:
+                    db_sheet.update_cell(i, 15, f"{pick_short['target']:,}원")
+                    db_sheet.update_cell(i, 16, f"{pick_short['stop']:,}원")
                 time.sleep(3.5)
                 continue
             
-            # 2) 나머지 '대기중' 종목들 간단 브리핑 생성
+            if best_mid and code == best_mid['code']:
+                print(f" - [{stock_name}] 리포트 정보 및 가격 시트에 업데이트 중...")
+                db_sheet.update_cell(i, 10, mid_summary)
+                if pick_mid:
+                    db_sheet.update_cell(i, 15, f"{pick_mid['target']:,}원")
+                    db_sheet.update_cell(i, 16, f"{pick_mid['stop']:,}원")
+                time.sleep(3.5)
+                continue
+            
+            # 2) 나머지 '대기중' 종목들은 다시 JSON 프롬프트로 글+숫자 동시 산출
             if "대기중" in str(r[9]):
-                print(f" - [{stock_name}] 간단 브리핑 작성 중...")
+                print(f" - [{stock_name}] AI 전략 및 가격 산출 중...")
                 prompt = f"""
+                당신은 천상계 트레이더의 수석 퀀트 애널리스트입니다.
                 [{sys_instruction}]
+                
                 ■ 종목명: {stock_name}
+                ■ 현재가: {r[3] if len(r) > 3 else ''}
                 ■ 타점 위치: {r[8] if len(r) > 8 else ''}
                 ■ 당일 수급: {r[11] if len(r) > 11 else ''}
-                위 데이터를 바탕으로 실전 대응 전략을 1~2문장(70자 내외)으로 요약하라.
+                ■ 52주 고가: {r[12] if len(r) > 12 else ''}
+                ■ 테마: {r[5] if len(r) > 5 else ''}
+                
+                위 데이터를 바탕으로 실전 대응 전략을 1~2문장(70자 내외)으로 작성하고, 전략적 목표가와 손절가를 산출하십시오.
+                (핵심/신고가 타점은 공격적 목표가를, 눌림목 타점은 타이트한 손절가를 설정하십시오.)
+                
+                반드시 아래의 엄격한 JSON 형식으로만 대답하십시오. 마크다운이나 다른 설명은 절대 금지합니다.
+                {{
+                    "briefing": "여기에 전략 요약 작성",
+                    "target_price": 150000,
+                    "stop_loss": 135000
+                }}
                 """
                 try:
-                    briefing_text = safe_generate_content(prompt, is_fast=True).text.strip()
-                    db_sheet.update_cell(i, 10, f"✅ [간단 브리핑] {briefing_text}")
+                    res_text = safe_generate_content(prompt, is_fast=True).text
+                    parsed_data = parse_ai_json(res_text)
+                    
+                    briefing_text = parsed_data.get("briefing", "브리핑 생성 에러")
+                    if not briefing_text.startswith("✅"): briefing_text = f"✅ [간단 브리핑] {briefing_text}"
+                    
+                    target_val = f"{int(parsed_data.get('target_price', 0)):,}원"
+                    stop_val = f"{int(parsed_data.get('stop_loss', 0)):,}원"
+                    
+                    db_sheet.update_cell(i, 10, briefing_text)
+                    db_sheet.update_cell(i, 15, target_val)
+                    db_sheet.update_cell(i, 16, stop_val)
                     time.sleep(3.5)
                 except Exception as e:
-                    print(f"[{stock_name}] 브리핑 에러 발생 (건너뜀): {e}")
+                    print(f"[{stock_name}] 브리핑/가격 산출 에러 발생 (건너뜀): {e}")
 
     # ==========================================
     # 7. 가상계좌 업데이트
