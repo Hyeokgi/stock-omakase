@@ -357,6 +357,7 @@ def manage_schedule_sheet(schedules):
         for sch in schedules:
             if sch[1] not in existing_titles:
                 valid_rows.append(sch)
+                existing_titles.append(sch[1])  # 💡 핵심: 방금 시트에 넣은 일정을 중복 검사 목록에 즉시 추가!
 
         # 3. 날짜 오름차순 정렬 (이제 에러 없이 완벽하게 정렬됨)
         def sort_key(x):
