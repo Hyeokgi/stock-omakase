@@ -897,7 +897,7 @@ def update_technical_data(df_theme, all_theme_map):
             helper_sheet.update(range_name="A2", values=results, value_input_option="USER_ENTERED")
             print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 업데이트 완료)")
             
-            scanner_keywords = ["[테마대장]", "[후발주]", "[개별주]", "[핵심]", "[타점]", "[에너지응축]", "[관심]", "[분할매수]", "[우량]", "[주력]", "[기회]", "[단기]"]
+            scanner_keywords = ["[테마대장]", "[후발주]", "[개별주]", "[핵심]", "[타점]", "[에너지응축]", "[관심]", "[분할매수]", "[우량]", "[주력]", "[기회]", "[단기]", "[종가베팅]"]
             
             scanner_results = []
             for r in results:
