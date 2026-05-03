@@ -760,18 +760,20 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         now_kst_tajeom = datetime.datetime.now(KST)
         is_overnight_time = (now_kst_tajeom.hour == 15 and now_kst_tajeom.minute <= 30)
-        # 💡 [종가베팅 투트랙 로직] 돌파형과 눌림목형을 모두 잡아냅니다.
+        # 💡 [종가베팅 투트랙 초정밀 압축 로직] 천상계 확률 높은 2~4종목만 걸러내기
         is_overnight_breakout = (
-            (trading_value >= 50_000_000_000) and           # 거래대금 500억 이상
-            (pg_amount_eok >= 10 or is_strong_dual_buy) and # 메이저 10억 이상 유입
-            (change_rate >= 0.03) and                       # 3% 이상 상승 중
-            (current_price >= today_high * 0.90) and        # 윗꼬리 길지 않음 (고점 대비 -10% 이내 방어)
+            (trading_value >= 100_000_000_000) and          # 1. 거래대금 1,000억 이상 (완벽한 시장 주도주)
+            (pg_amount_eok >= 20 or is_strong_dual_buy) and # 2. 프로그램 20억 이상 or 완벽한 쌍끌이
+            (0.06 <= change_rate <= 0.28) and               # 3. 6% ~ 28% 상승 (상한가 제외, 강한 파동)
+            (current_price >= today_high * 0.96) and        # 4. 고점 대비 -4% 이내 (윗꼬리 거의 없는 꽉 찬 양봉)
+            (is_near_high or is_near_52w_high) and          # 5. 신고가/전고점 돌파 직전의 확신 자리
             is_breakout_track and not is_long_shadow
         )
         
         is_overnight_pullback = (
-            (is_stealth_nulim or flag_days >= 1) and        # 에너지응축 숨고르기 또는 눌림목 확인
-            (pg_amount_eok >= 5 or i_buy_today >= 50_000_000) # 주가는 눌려도 메이저 수급이 이탈하지 않거나 들어옴
+            is_stealth_nulim and                            # 1. 완벽한 에너지응축(숨고르기) 패턴만 허용 (일반 눌림목 탈락)
+            (current_price >= ma5) and                      # 2. 5일선 위에서 정확히 지지받는 놈만 허용
+            (pg_amount_eok >= 10 or i_buy_today >= 100_000_000) # 3. 쉬어가는 자리임에도 프로그램 10억 or 기관 1억 이상 유입
         )
 
         is_overnight_candidate = is_overnight_time and (is_overnight_breakout or is_overnight_pullback)
@@ -784,9 +786,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         elif is_theme_hubal_sang: master_tajeom = "🔒 [후발주] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 40
         elif is_individual_sang: master_tajeom = "🔒 [개별주] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 30
         
-        # 💡 [종가베팅 우선순위 최상단 배치] 15:00~15:30 사이에는 무조건 종베 태그가 우선 표출됨!
+        # 💡 [최상위 종가베팅] S급 조건을 통과한 소수의 종목만 이 태그를 획득함
         elif is_overnight_candidate: master_tajeom = "🌙 [종가베팅] 돌파/눌림 수급확인" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 30
         
+        # S급 종가베팅 조건을 통과하지 못한 종목들은 아래의 본래 차트 태그를 달게 됨
         elif is_theme_daejang: master_tajeom = "🚀 [테마대장] 당일 주도주" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 45
         elif is_stealth_nulim: master_tajeom = "🎯 [에너지응축] 숨고르기 음봉 (비중 40%)" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 45
         elif is_platform_breakout: master_tajeom = "📦 [스윙] 플랫폼 돌파 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 40
@@ -795,6 +798,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         elif is_long_shadow: master_tajeom = "⚠️ [캔들] 저항 출회 (매수금지)"
         elif is_huge_gap: master_tajeom = "⚠️ 갭상승 과다 (추격금지)"
         elif is_ss_breakout: master_tajeom = "👑 [핵심] 신고가 돌파" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 20
+        # ... (이하 동일) ...
         elif flag_days == 3: master_tajeom = "🎯 [타점] 눌림목 3일 차 완성 (비중 40%)" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 10
         elif is_runner_up_breakout: master_tajeom = "👀 [관심] 돌파 턱밑 대기"; quant_score += 5
         elif is_runner_up_pullback: master_tajeom = "👀 [관심] 눌림목 방어 테스트"; quant_score += 5
