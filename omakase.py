@@ -351,31 +351,31 @@ def manage_schedule_sheet(schedules):
         today = datetime.datetime.now(KST).date()
         three_months_ago = today - datetime.timedelta(days=90)
 
-        # 1. [핵심 수정] 어떤 형태의 날짜든 YYYY-MM-DD로 자동 변환 및 3개월 이전 데이터 폐기
+        # 1. 포맷 정규화 및 3개월 이전 데이터 자동 폐기
         valid_rows = []
         for row in rows:
             if not row or not row[0]: continue
             
-            # 기존 "2026. 3. 3" 같은 포맷을 "2026-3-3"으로 변환하여 파싱 시도
+            # 기존 "2026. 3. 3" 같은 포맷을 "2026-03-03"으로 변환하여 파싱 시도
             raw_date = str(row[0]).strip().replace('.', '-').replace(' ', '').strip('-')
             try:
                 row_date = datetime.datetime.strptime(raw_date, '%Y-%m-%d').date()
                 if row_date >= three_months_ago:
-                    # 완벽한 정렬을 위해 YYYY-MM-DD 포맷으로 강제 통일하여 덮어쓰기
                     row[0] = row_date.strftime('%Y-%m-%d')
                     valid_rows.append(row)
             except ValueError:
-                # 날짜가 아닌 텍스트(제목 등)가 있다면 안전하게 유지
                 valid_rows.append(row)
 
-        # 2. 오늘 자동 수집된 일정 중복 확인 후 병합
-        existing_titles = [r[1] for r in valid_rows if len(r) > 1 and r[0] == today.strftime('%Y-%m-%d')]
+        # 2. 💡 [핵심] 시트 병합 시 띄어쓰기 무시하고 중복 2차 철통 방어
+        existing_titles_clean = [str(r[1]).replace(" ", "").strip() for r in valid_rows if len(r) > 1 and r[0] == today.strftime('%Y-%m-%d')]
+        
         for sch in schedules:
-            if sch[1] not in existing_titles:
+            clean_sch_title = str(sch[1]).replace(" ", "").strip()
+            if clean_sch_title not in existing_titles_clean:
                 valid_rows.append(sch)
-                existing_titles.append(sch[1])  # 💡 핵심: 방금 시트에 넣은 일정을 중복 검사 목록에 즉시 추가!
+                existing_titles_clean.append(clean_sch_title) # 방금 넣은 것도 바로 메모
 
-        # 3. 날짜 오름차순 정렬 (이제 에러 없이 완벽하게 정렬됨)
+        # 3. 날짜 오름차순 정렬
         def sort_key(x):
             try: return datetime.datetime.strptime(x[0], '%Y-%m-%d').date()
             except: return datetime.date(2099, 12, 31)
@@ -421,7 +421,7 @@ def manage_schedule_sheet(schedules):
 
         if requests_list:
             doc.batch_update({"requests": requests_list})
-            print(f"📅 HYEOKS 주요일정 관리 완료 (스마트 포맷팅 + 과거일정 숨김 처리 완료)")
+            print(f"📅 HYEOKS 주요일정 관리 완료 (완벽 중복제거 + 서술형 뉴스 차단 + 포맷팅 + 과거숨김)")
 
     except Exception as e:
         print(f"❌ 주요일정 시트 관리 에러: {e}")
@@ -953,7 +953,6 @@ if __name__ == "__main__":
     
     # 💡 [새로 추가된 주요일정 관리 시스템 가동]
     today_schedules = get_market_schedule()
-    # 수집된 일정이 있든 없든 시트 정리(3개월 파기 및 과거 숨김)가 이루어지도록 함수 실행
     manage_schedule_sheet(today_schedules)
     
     update_technical_data(df_theme, all_theme_map)
