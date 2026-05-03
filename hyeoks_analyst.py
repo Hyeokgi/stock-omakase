@@ -122,7 +122,8 @@ try:
     if current_hour != 15:
         print(f"▶ [{current_hour}시 모드] 메인 리포트 시간이 아니므로, 대기 중인 종목의 브리핑 및 가격 산출을 진행합니다.")
         for i, row in enumerate(db_rows[1:], start=2):
-            if len(row) > 9 and "대기중" in str(row[9]):
+            # 💡 '대기중' 조건 삭제 -> '리포트 발송 완료'가 아닌 모든 종목 매번 새로 갱신!
+            if len(row) > 9 and "리포트 발송 완료" not in str(row[9]):
                 stock_name = row[0] if len(row) > 0 else "알수없음"
                 print(f" - [{stock_name}] AI 전략 및 가격 산출 중...")
                 prompt = f"""
