@@ -760,13 +760,14 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         now_kst_tajeom = datetime.datetime.now(KST)
         is_overnight_time = (now_kst_tajeom.hour == 15 and now_kst_tajeom.minute <= 30)
-        # 💡 [종가베팅 투트랙 초정밀 압축 로직] 천상계 확률 높은 2~4종목만 걸러내기
+        # 💡 [천상계 압축] 가짜 수급 차단 로직 (이전 패치 유지)
         is_overnight_breakout = (
-            (trading_value >= 100_000_000_000) and          # 1. 거래대금 1,000억 이상 (완벽한 시장 주도주)
-            (pg_amount_eok >= 20 or is_strong_dual_buy) and # 2. 프로그램 20억 이상 or 완벽한 쌍끌이
-            (0.06 <= change_rate <= 0.28) and               # 3. 6% ~ 28% 상승 (상한가 제외, 강한 파동)
-            (current_price >= today_high * 0.96) and        # 4. 고점 대비 -4% 이내 (윗꼬리 거의 없는 꽉 찬 양봉)
-            (is_near_high or is_near_52w_high) and          # 5. 신고가/전고점 돌파 직전의 확신 자리
+            (trading_value >= 100_000_000_000) and          
+            (pg_amount_eok >= 20 or is_strong_dual_buy) and 
+            (acc_i_buy_eok >= 5) and                        
+            (0.06 <= change_rate <= 0.28) and               
+            (current_price >= today_high * 0.96) and        
+            (is_near_high or is_near_52w_high) and          
             is_breakout_track and not is_long_shadow
         )
         
@@ -786,9 +787,11 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         elif is_theme_hubal_sang: master_tajeom = "🔒 [후발주] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 40
         elif is_individual_sang: master_tajeom = "🔒 [개별주] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 30
         
-        # 💡 [최상위 종가베팅] S급 조건을 통과한 소수의 종목만 이 태그를 획득함
-        elif is_overnight_candidate: master_tajeom = "🌙 [종가베팅] 돌파/눌림 수급확인" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 30
-        
+        # 💡 글자에 섞지 않고 원래의 깔끔한 태그 유지!
+        elif is_overnight_candidate: 
+            master_tajeom = "🌙 [종가베팅] 돌파/눌림 수급확인" + (" ⚠️(주의장세)" if is_warning_market else "")
+            quant_score += 30
+            
         # S급 종가베팅 조건을 통과하지 못한 종목들은 아래의 본래 차트 태그를 달게 됨
         elif is_theme_daejang: master_tajeom = "🚀 [테마대장] 당일 주도주" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 45
         elif is_stealth_nulim: master_tajeom = "🎯 [에너지응축] 숨고르기 음봉 (비중 40%)" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 45
@@ -833,14 +836,17 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️(3년적자)"
         if is_high_altitude and "[" in master_tajeom:
             quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️고가(단기)"
-
+        # 💡 목표가와 손절가를 독립된 숫자로 계산
+        target_price = int(current_price * 1.05)
+        stop_loss = int(current_price * 0.97)
         return [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", 
             int(ma5), int(ma20), vol_ratio_text, signal, 
             score_display, master_tajeom, today_high, today_low, int(display_high_60d), 
             market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, my_theme_name,
             program_text,
-            int(display_high_250d), f"{int(acc_i_buy_eok)}억"
+            int(display_high_250d), f"{int(acc_i_buy_eok)}억",
+            target_price, stop_loss  # ⬅️ 이 두 개가 인덱스 23, 24번으로 새롭게 추가됨
         ]
     except Exception as e:
         return None
@@ -938,8 +944,13 @@ def update_technical_data(df_theme, all_theme_map):
                     고가_52주 = r[21]
                     기관누적수급 = r[22]
                     
-                    scanner_results.append([하이퍼링크, 시장구분, f"'{종목코드}", 현재가, 등락률, 테마명, AI신호, 거래량비율, tajeom, "AI 브리핑 대기중", 스코어, 프로그램, 고가_52주, 기관누적수급])
-            
+                    # 💡 새로 추가된 인덱스 23, 24번에서 목표가/손절가를 꺼냄
+                    목표가 = r[23]
+                    손절가 = r[24]
+                    
+                    # 💡 배열 맨 끝에 목표가와 손절가를 추가하여 구글 시트로 쏨
+                    scanner_results.append([하이퍼링크, 시장구분, f"'{종목코드}", 현재가, 등락률, 테마명, AI신호, 거래량비율, tajeom, "AI 브리핑 대기중", 스코어, 프로그램, 고가_52주, 기관누적수급, 목표가, 손절가])
+                    
             if scanner_results:
                 try: 
                     db_scanner_sheet = doc.worksheet("DB_스캐너")
