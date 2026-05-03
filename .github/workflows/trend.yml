@@ -23,12 +23,12 @@ jobs:
         run: |
           pip install google-genai gspread oauth2client google-api-python-client # 💡 google-genai 로 최신 패키지 이름 수정
 
-      # 깃허브 시크릿에 저장된 서비스 계정 키를 secret.json 파일로 복원
+      # 💡 깃허브가 큰따옴표를 지우지 못하도록 안전하게 파일 생성 (cat EOF 방식)
       - name: Create secret.json
         run: |
-          echo "${{ secrets.GCP_CREDENTIALS }}" > secret.json
-          # (주의: 기존 omakase.yml 파일에서 secret.json을 만드는 방식을 그대로 동일하게 써주세요)
-
+          cat << 'EOF' > secret.json
+          ${{ secrets.GCP_CREDENTIALS }}
+          EOF
       - name: Run Trend Analyzer
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
