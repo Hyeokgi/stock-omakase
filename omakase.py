@@ -291,9 +291,9 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
     except Exception as e: 
         print(f"❌ 데이터 업데이트 에러: {e}")
 
-# 💡 [새로 추가] 네이버 캘린더 파싱 및 필터링 함수
+# 💡 [업데이트] 네이버 캘린더 파싱 및 필터링 함수 (서술형 뉴스/전망 기사 차단)
 def get_market_schedule():
-    """네이버 금융 오늘의 증시 일정 수집 (주주총회, 공모, 청약 제외)"""
+    """네이버 금융 오늘의 증시 일정 수집 (순수 일정만 추출)"""
     try:
         today_str = datetime.datetime.now(KST).strftime('%Y-%m-%d')
         url = "https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258"
@@ -301,6 +301,8 @@ def get_market_schedule():
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
         
         schedules = []
+        seen_titles = set()
+        
         for dl in soup.find_all('dl')[:15]:
             title_tag = dl.find('dt', {'class': 'articleSubject'})
             if not title_tag:
@@ -308,12 +310,26 @@ def get_market_schedule():
             
             if title_tag and title_tag.find('a'):
                 title = title_tag.find('a').text.strip()
+                clean_title = title.replace(" ", "").strip()
                 
-                include_kws = ['실적', '발표', '만기', '배당', '금통위', 'FOMC', '고용', '학회', '임상']
-                exclude_kws = ['주주총회', '주총', '공모', '청약']
+                # 1. 긍정 키워드: 반드시 포함되어야 하는 '일정' 관련 단어
+                include_kws = ['실적', '발표', '만기', '배당', '금통위', 'FOMC', '고용', '학회', '임상', '상장', '개막', '출시']
                 
+                # 2. 💡 [핵심] 부정 키워드: 기획 기사, 주간 전망, 서술형 뉴스를 걸러내는 단어
+                exclude_kws = [
+                    '주주총회', '주총', '공모', '청약', # 기존 제외
+                    '전망', '주목', '대기', '반환점', '서프라이즈', '쇼크', 
+                    '기대감', '우려', '물귀신', '박스권', '코스피', '코스닥', 
+                    '증시', '마감', '시황', '특징주', '주간'
+                ]
+                
+                # 3. 필터링 로직: 긍정 키워드가 하나라도 있고, 부정 키워드는 하나도 없어야 함
                 if any(kw in title for kw in include_kws) and not any(ex_kw in title for ex_kw in exclude_kws):
-                    schedules.append([today_str, title, "📅 자동수집(당일)"])
+                    # 제목에 '[', ']' 대괄호나 '…' 같은 말줄임표가 포함되어 있으면 보통 기획 기사이므로 한 번 더 거름
+                    if "증시 전망" not in title and "외환전망" not in title:
+                        if clean_title not in seen_titles:
+                            schedules.append([today_str, title, "📅 자동수집(당일)"])
+                            seen_titles.add(clean_title)
         
         return schedules
     except Exception as e:
