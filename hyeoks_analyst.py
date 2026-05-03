@@ -52,7 +52,8 @@ def safe_generate_content(contents, is_fast=False):
 def parse_ai_json(text):
     """제미나이가 반환한 JSON 문자열을 딕셔너리로 안전하게 파싱합니다."""
     try:
-        clean_text = text.replace('```json', '').replace('```', '').strip()
+        # 💡 마크다운 복사 오류 방지를 위한 안전한 문자열 치환
+        clean_text = text.replace('`'*3 + 'json', '').replace('`'*3, '').strip()
         return json.loads(clean_text)
     except Exception as e:
         print(f"JSON 파싱 에러 (정규식 대체 시도): {e}")
@@ -221,8 +222,8 @@ try:
     """
     
     result_text = safe_generate_content(pick_prompt).text
-    cleaned_text = result_text.replace('```json', '').replace('
-```', '').strip()
+    # 💡 마크다운 복사 오류 방지를 위한 안전한 문자열 치환
+    cleaned_text = result_text.replace('`'*3 + 'json', '').replace('`'*3, '').strip()
     picks_json = json.loads(cleaned_text)
     
     code_short = picks_json.get('short_term_code', '')
