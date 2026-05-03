@@ -760,7 +760,18 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         now_kst_tajeom = datetime.datetime.now(KST)
         is_overnight_time = (now_kst_tajeom.hour == 15 and now_kst_tajeom.minute <= 30)
-        is_overnight_candidate = is_overnight_time and (quant_score >= 50) and (pg_amount_eok >= 10 or is_strong_dual_buy) and (current_price >= today_high * 0.94) and is_breakout_track and not is_long_shadow
+        # 💡 [천상계 트레이더 종가베팅 필터링] 확률 높은 2~4종목 압축 로직
+        is_overnight_candidate = (
+            is_overnight_time and 
+            (trading_value >= 100_000_000_000) and            # 1. 거래대금 1,000억 이상 (그날 시장을 지배한 주도주)
+            (pg_amount_eok >= 30 or is_strong_dual_buy) and   # 2. 프로그램 30억 이상 대량 유입 or 완벽한 기관/외인 쌍끌이
+            (current_price >= today_high * 0.97) and          # 3. 당일 최고가 대비 -3% 이내 마감 (윗꼬리 없는 꽉 찬 양봉)
+            (0.05 <= change_rate <= 0.28) and                 # 4. 등락률 5% ~ 28% (강한 상승세 유지, 상한가 제외)
+            (is_near_high or is_near_52w_high) and            # 5. 60일 전고점 또는 52주 신고가 턱밑 (가장 확신이 큰 자리)
+            (quant_score >= 60) and                           # 6. 기본 퀀트 펀더멘털 충족
+            is_breakout_track and                             # 7. 20일선 위 정배열
+            not is_long_shadow
+        )
 
         master_tajeom = "⏸️ 관망 및 대기"
         if len(history) < 20: master_tajeom = "⚠️ 신규상장 (데이터 부족)"
