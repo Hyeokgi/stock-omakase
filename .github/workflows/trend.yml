@@ -1,0 +1,35 @@
+name: 📈 HYEOKS Mid-Term Trend Analyzer
+
+on:
+  schedule:
+    # 매주 토요일, 일요일 한국 시간 오전 10시 가동 (UTC 기준 01:00)
+    - cron: '0 1 * * 5,6'
+  workflow_dispatch: # 깃허브 웹에서 수동으로 버튼을 눌러 즉시 실행할 수 있게 하는 옵션
+
+jobs:
+  analyze_reports:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install google-generativeai gspread oauth2client google-api-python-client
+
+      # 깃허브 시크릿에 저장된 서비스 계정 키를 secret.json 파일로 복원
+      - name: Create secret.json
+        run: |
+          echo "${{ secrets.GCP_CREDENTIALS }}" > secret.json
+          # (주의: 기존 omakase.yml 파일에서 secret.json을 만드는 방식을 그대로 동일하게 써주세요)
+
+      - name: Run Trend Analyzer
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python hyeoks_trend.py
