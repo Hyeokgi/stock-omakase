@@ -949,9 +949,18 @@ def update_technical_data(df_theme, all_theme_map):
                     손절가 = r[24]
                     
                     # 💡 배열 맨 끝에 목표가와 손절가를 추가하여 구글 시트로 쏨
+                    # 💡 배열 맨 끝에 목표가와 손절가를 추가하여 구글 시트로 쏨
                     scanner_results.append([하이퍼링크, 시장구분, f"'{종목코드}", 현재가, 등락률, 테마명, AI신호, 거래량비율, tajeom, "AI 브리핑 대기중", 스코어, 프로그램, 고가_52주, 기관누적수급, 목표가, 손절가])
                     
+            # 💡 [오전장 완벽 압축] 스코어 기준으로 정렬하고 상위 20개만 자릅니다!
             if scanner_results:
+                # 1. 스코어(인덱스 10번) 숫자를 추출하여 내림차순(점수 높은 순)으로 정렬
+                scanner_results.sort(key=lambda x: int(str(x[10]).split('점')[0]), reverse=True)
+                
+                # 2. 최대 20개까지만 남기고 과감하게 자르기 (뷔페 방지, 오마카세 모드)
+                MAX_DISPLAY_COUNT = 20
+                scanner_results = scanner_results[:MAX_DISPLAY_COUNT]
+
                 try: 
                     db_scanner_sheet = doc.worksheet("DB_스캐너")
                     existing_data = {}
