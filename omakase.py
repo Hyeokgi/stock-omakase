@@ -724,118 +724,76 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             (not is_long_shadow)                                             
         )
         
-        quant_score = 0
-        if not (is_junk or is_financial_risk):
-            if is_breakout_track:
-                if is_near_52w_high: quant_score += 20
-                elif current_price >= (high_60d_calc * 0.90): quant_score += 15
-                elif current_price >= (high_60d_calc * 0.85): quant_score += 5
-                
-                if vol_ratio_yest >= 300 and vol_ratio_10d >= 200: quant_score += 10
-                elif vol_ratio_yest >= 150: quant_score += 5
-                
-                if band_width <= 0.20: quant_score += 10
-                if ma5 > ma20 and current_price >= ma5: quant_score += 10
-            else:
-                if vol_ratio_10d <= 35: quant_score += 15
-                elif vol_ratio_10d <= 50: quant_score += 5
-                
-                if is_today_yangbong or today_body_ratio <= 0.015: quant_score += 10
-                if ma20 * 0.95 <= current_price <= ma20 * 1.02: quant_score += 10
-                if band_width <= 0.15: quant_score += 10
-            
-            if "대량유입" in program_text: quant_score += 30
-            elif "매수우위" in program_text: quant_score += 15
-            elif "대량출회" in program_text: quant_score -= 20
-            elif "매도우위" in program_text: quant_score -= 10
-            
-            if is_strong_dual_buy: quant_score += 15
-            
-            if acc_i_buy_eok >= 50: quant_score += 15 
-            elif acc_i_buy_eok >= 10: quant_score += 5
+        # -------------------------------------------------------------
+        # 💡 [HYEOKS 리빌딩] 곱셈형 타점 계수 및 직관적 배지 시스템
+        # -------------------------------------------------------------
+        
+        # 1. 하드 드랍 (Hard Drop) 조건: 치명적 결함 시 스캐너 노출 원천 차단
+        is_hard_drop = is_junk or is_financial_risk or is_chronic_loss or is_high_altitude or is_long_shadow or is_huge_gap
+        
+        # 2. 베이스 모멘텀 스코어 산출 (수급, 거래량, 테마 강도의 기초 체력)
+        base_score = 0
+        if is_near_52w_high: base_score += 20
+        elif current_price >= (high_60d_calc * 0.90): base_score += 15
+        elif current_price >= (high_60d_calc * 0.85): base_score += 5
+        
+        if vol_ratio_yest >= 300 and vol_ratio_10d >= 200: base_score += 15
+        elif vol_ratio_yest >= 150: base_score += 10
+        elif vol_ratio_10d <= 35: base_score += 15 # 완벽한 거래량 감소 (눌림목)
+        elif vol_ratio_10d <= 50: base_score += 5
+        
+        if "대량유입" in program_text: base_score += 25
+        elif "매수우위" in program_text: base_score += 15
+        elif "대량출회" in program_text: base_score -= 20
+        elif "매도우위" in program_text: base_score -= 10
+        
+        if is_strong_dual_buy: base_score += 15
+        if acc_i_buy_eok >= 50: base_score += 15 
+        elif acc_i_buy_eok >= 10: base_score += 5
 
-        is_ss_breakout = (trading_value >= 100_000_000_000) and (change_rate >= 0.04) and not is_long_shadow and is_near_high
-        is_runner_up_breakout = not is_ss_breakout and is_breakout_track and (quant_score >= 50) and (trading_value >= 50_000_000_000) and (change_rate >= 0.02) and not is_long_shadow
-        is_runner_up_pullback = not is_breakout_track and flag_days != 3 and (quant_score >= 45) and (vol_ratio_10d <= 50) and (is_today_yangbong or today_body_ratio <= 0.02)
+        # 3. 타점 계수 (Multiplier) 및 직관적 배지 부여
+        tajeom_multiplier = 0.0
+        master_tajeom = "⏸️ 관망"
+        
+        if is_hard_drop:
+            master_tajeom = "🚫 [제외] 리스크/차트훼손"
+            tajeom_multiplier = 0.0
+        elif is_overnight_candidate:
+            master_tajeom = "🌙 [종가] 수급돌파/눌림"
+            tajeom_multiplier = 1.5  # 1순위: 가장 빠르고 확률 높은 종베
+        elif is_stealth_nulim or flag_days > 0:
+            master_tajeom = "🎯 [눌림] N자 파동 대기"
+            tajeom_multiplier = 1.3  # 2순위: 직장인에게 가장 편안한 스윙 타점
+        elif is_platform_breakout or is_ss_breakout:
+            master_tajeom = "📦 [스윙] 플랫폼/신고가"
+            tajeom_multiplier = 1.1  # 3순위: 안정적인 추세 스윙
+        elif is_theme_daejang or is_theme_hubal:
+            master_tajeom = "🚀 [돌파] 테마 주도주"
+            tajeom_multiplier = 1.0  # 4순위: 당일 수급 단기 돌파 (추격 주의)
+        elif "🌟" in signal or (change_rate >= 0.12 and trading_value >= 50_000_000_000):
+            master_tajeom = "🌟 [수급] 기준봉/양매수"
+            tajeom_multiplier = 0.9  # 5순위: 당장 사진 않지만 관심종목 편입
+        else:
+            master_tajeom = "👀 [관심] 타점 대기중"
+            tajeom_multiplier = 0.5  # 기타: 점수 대폭 삭감
 
+        # 4. 오후장 휩쏘 방지 (오전 주도주가 오후에 무너지는 것 방어)
         now_kst_tajeom = datetime.datetime.now(KST)
-        is_overnight_time = (now_kst_tajeom.hour == 15 and now_kst_tajeom.minute <= 30)
-        # 💡 [천상계 압축] 가짜 수급 차단 로직 (이전 패치 유지)
-        is_overnight_breakout = (
-            (trading_value >= 100_000_000_000) and          
-            (pg_amount_eok >= 20 or is_strong_dual_buy) and 
-            (acc_i_buy_eok >= 5) and                        
-            (0.06 <= change_rate <= 0.28) and               
-            (current_price >= today_high * 0.96) and        
-            (is_near_high or is_near_52w_high) and          
-            is_breakout_track and not is_long_shadow
-        )
-        
-        is_overnight_pullback = (
-            is_stealth_nulim and                            # 1. 완벽한 에너지응축(숨고르기) 패턴만 허용 (일반 눌림목 탈락)
-            (current_price >= ma5) and                      # 2. 5일선 위에서 정확히 지지받는 놈만 허용
-            (pg_amount_eok >= 10 or i_buy_today >= 100_000_000) # 3. 쉬어가는 자리임에도 프로그램 10억 or 기관 1억 이상 유입
-        )
+        is_after_1030 = (now_kst_tajeom.hour > 10 or (now_kst_tajeom.hour == 10 and now_kst_tajeom.minute >= 30))
+        if "돌파" in master_tajeom and is_after_1030 and not is_overnight_candidate:
+            tajeom_multiplier -= 0.3 # 오후장 돌파 시도는 가중치 대폭 삭감
 
-        is_overnight_candidate = is_overnight_time and (is_overnight_breakout or is_overnight_pullback)
-
-        master_tajeom = "⏸️ 관망 및 대기"
-        if len(history) < 20: master_tajeom = "⚠️ 신규상장 (데이터 부족)"
-        elif is_junk: master_tajeom = "🚨 매매제한 (관리/주의)"
-        elif is_financial_risk: master_tajeom = "🚨 매매제한 (재무위험)"
-        elif is_theme_daejang_sang: master_tajeom = "👑 [테마대장] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 50
-        elif is_theme_hubal_sang: master_tajeom = "🔒 [후발주] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 40
-        elif is_individual_sang: master_tajeom = "🔒 [개별주] 상한가 안착" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 30
+        # 5. 최종 스코어 산출 (기초 체력 × 타점 계수)
+        quant_score = int(base_score * tajeom_multiplier)
+        score_display = f"{quant_score}점 ({track_type})"
         
-        # 💡 글자에 섞지 않고 원래의 깔끔한 태그 유지!
-        elif is_overnight_candidate: 
-            master_tajeom = "🌙 [종가베팅] 돌파/눌림 수급확인" + (" ⚠️(주의장세)" if is_warning_market else "")
-            quant_score += 30
-            
-        # S급 종가베팅 조건을 통과하지 못한 종목들은 아래의 본래 차트 태그를 달게 됨
-        elif is_theme_daejang: master_tajeom = "🚀 [테마대장] 당일 주도주" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 45
-        elif is_stealth_nulim: master_tajeom = "🎯 [에너지응축] 숨고르기 음봉 (비중 40%)" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 45
-        elif is_platform_breakout: master_tajeom = "📦 [스윙] 플랫폼 돌파 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 40
-        elif is_theme_hubal: master_tajeom = "🏃 [후발주] 테마 추종" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 35
-        elif is_individual_surge: master_tajeom = "🐎 [개별주] 독자 모멘텀" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 25
-        elif is_long_shadow: master_tajeom = "⚠️ [캔들] 저항 출회 (매수금지)"
-        elif is_huge_gap: master_tajeom = "⚠️ 갭상승 과다 (추격금지)"
-        elif is_ss_breakout: master_tajeom = "👑 [핵심] 신고가 돌파" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 20
-        # ... (이하 동일) ...
-        elif flag_days == 3: master_tajeom = "🎯 [타점] 눌림목 3일 차 완성 (비중 40%)" + (" ⚠️(주의장세)" if is_warning_market else ""); quant_score += 10
-        elif is_runner_up_breakout: master_tajeom = "👀 [관심] 돌파 턱밑 대기"; quant_score += 5
-        elif is_runner_up_pullback: master_tajeom = "👀 [관심] 눌림목 방어 테스트"; quant_score += 5
-        elif flag_days == 2: master_tajeom = "🚩 [분할매수] 눌림목 2일 차 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else "")
-        elif flag_days == 1: master_tajeom = "🚩 [분할매수] 단기 눌림 진입 (비중 30%)" + (" ⚠️(주의장세)" if is_warning_market else "")
-        elif "🌟" in signal: master_tajeom = "🌟 [우량] 기관/외인 수급 유입"; quant_score += 15
-        elif change_rate >= 0.12 and trading_value >= 50_000_000_000: 
-            dynamic_supply = supply_text if supply_text != "" else " (대규모 거래대금)"
-            master_tajeom = f"👀 [관심] 신규 기준봉 출현{dynamic_supply}" + (" ⚠️(주의장세)" if is_warning_market else "")
-        
+        # 6. 시장 해지 프리미엄 추가 (하락장 방어)
         is_hedge_theme = any(kw in my_theme_name for kw in ['방산', '방위산업', '해운', '조선', '석유', '가스', '전쟁', '사료', '원자재', '품절주', '식품'])
-        hedge_premium = 0
         if is_hedge_theme and kospi_rate <= -0.5:
             hedge_premium = 5 + int((abs(kospi_rate) - 0.5) / 0.1) * 1 
             quant_score += hedge_premium
-            master_tajeom += f" 🛡️(해지프리미엄 +{hedge_premium}점)"
+            master_tajeom += f" 🛡️(+{hedge_premium}점)"
 
-        is_after_1030 = (now_kst_tajeom.hour > 10 or (now_kst_tajeom.hour == 10 and now_kst_tajeom.minute >= 30))
-        is_after_1400 = (now_kst_tajeom.hour >= 14)
-
-        if is_breakout_track and is_after_1030:
-            if ("돌파" in master_tajeom or "안착" in master_tajeom or "주도주" in master_tajeom) and "핵심" not in master_tajeom:
-                if is_after_1400 and not is_long_shadow and (pg_amount_eok >= 10 or is_strong_dual_buy):
-                    quant_score += 10
-                    master_tajeom += " 🌙(종가베팅 수급프리미엄 +10점)"
-                else:
-                    quant_score -= 15
-                    master_tajeom += " ⏰(오후돌파 감점)"
-
-        score_display = f"{quant_score}점 ({track_type})"
-        if is_chronic_loss and "[" in master_tajeom:
-            quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️(3년적자)"
-        if is_high_altitude and "[" in master_tajeom:
-            quant_score -= 10; score_display = f"{quant_score}점 ({track_type})"; master_tajeom += " ⚠️고가(단기)"
         # 💡 목표가와 손절가를 독립된 숫자로 계산
         target_price = int(current_price * 1.05)
         stop_loss = int(current_price * 0.97)
@@ -924,7 +882,8 @@ def update_technical_data(df_theme, all_theme_map):
             helper_sheet.update(range_name="A2", values=results, value_input_option="USER_ENTERED")
             print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 업데이트 완료)")
             
-            scanner_keywords = ["[테마대장]", "[후발주]", "[개별주]", "[핵심]", "[타점]", "[에너지응축]", "[관심]", "[분할매수]", "[우량]", "[주력]", "[기회]", "[단기]", "[종가베팅]"]
+            # 💡 직관적으로 개편된 5대 핵심 배지만 스캐너에 통과시킴
+            scanner_keywords = ["[종가]", "[눌림]", "[스윙]", "[돌파]", "[수급]"]
             
             scanner_results = []
             for r in results:
