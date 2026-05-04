@@ -131,11 +131,11 @@ try:
                 [{sys_instruction}]
                 
                 ■ 종목명: {stock_name}
-                ■ 현재가: {r[3] if len(r) > 3 else ''}
-                ■ 타점 위치: {r[8] if len(r) > 8 else ''}
-                ■ 당일 수급: {r[11] if len(r) > 11 else ''}
-                ■ 52주 고가: {r[12] if len(r) > 12 else ''}
-                ■ 테마: {r[5] if len(r) > 5 else ''}
+                ■ 현재가: {row[3] if len(row) > 3 else ''}
+                ■ 타점 위치: {row[8] if len(row) > 8 else ''}
+                ■ 당일 수급: {row[11] if len(row) > 11 else ''}
+                ■ 52주 고가: {row[12] if len(row) > 12 else ''}
+                ■ 테마: {row[5] if len(row) > 5 else ''}
                 
                 💡 [시간대별 실전 지침 (현재 KST 시간: {current_hour}시)]
                 - 만약 현재 시간이 11시~13시(마의 구간)라면: 가짜 돌파(휩쏘) 확률이 매우 높으므로, 추격 매수 대신 "오후장까지 관망하며 지지선 이탈 여부 확인"을 권고하고 손절가를 매우 타이트하게 잡으십시오.
