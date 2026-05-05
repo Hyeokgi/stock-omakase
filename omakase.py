@@ -534,7 +534,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         supply_text = ""
         
         acc_i_buy_won = 0
-        dual_buy_days = 0           
+        dual_buy_days = 0            
         i_buy_today = 0
         f_buy_today = 0
         today_dual_buy_ratio = 0.0
