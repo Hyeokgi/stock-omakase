@@ -713,15 +713,32 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         if int(df_hist['volume'].iloc[j]) > anchor_vol * 0.45: is_holding = False; break
                     if is_holding: flag_days = d; break
 
+        # 💡 [HYEOKS 리빌딩 v3] 실전 고수들의 '전고점 돌파 후 진정한 눌림목' 로직 적용
+        # 1. 전일 혹은 며칠 내에 60일 전고점을 시원하게 뚫었는가?
+        is_recent_breakout = False
+        breakout_days_ago = 0
+        for d in range(1, 6): # 최근 5일 이내에 돌파했는지 확인
+            check_idx = -d
+            if len(df_hist) >= abs(check_idx) + 1:
+                check_close = int(df_hist['close'].iloc[check_idx])
+                # 그날 이전까지의 60일 고점 계산
+                hist_before_check = high_prices[:check_idx] if check_idx < -1 else high_prices[:-1]
+                high_60d_check = max(hist_before_check) if len(hist_before_check) > 0 else check_close
+                
+                # 그날 종가가 이전 60일 고점을 돌파했다면!
+                if check_close > high_60d_check:
+                    is_recent_breakout = True
+                    breakout_days_ago = d
+                    break
+
+        # 2. 진정한 눌림목 조건: 돌파 후 쉬고 있지만, 절대 그 고점(지지선)을 깨진 않는다!
         is_stealth_nulim = (
-            is_breakout_track and                                            
-            (ma5 > ma20) and                                                 
-            (current_price >= high_60d_calc * 0.85) and                      
-            (vol_ratio_yest <= 35) and                                       
-            (vol_ratio_10d <= 80) and                                        
-            (yest_tv >= 50_000_000_000 or flag_days > 0) and                 
-            (not is_today_yangbong or today_body_ratio <= 0.015) and         
-            (not is_long_shadow)                                             
+            is_recent_breakout and                               # 최근 5일 내 전고점 돌파 이력이 있고
+            (current_price >= high_60d_calc * 0.95) and          # 현재가가 그 돌파했던 전고점을 훼손하지 않고 지지 중이며 (5% 이내 마진 허용)
+            (vol_ratio_yest <= 50) and                           # ★핵심★ 전일 대비 거래량이 반토막(50% 이하) 나며 바짝 죽어있고
+            (vol_ratio_10d <= 80) and                            # 최근 10일 평균 거래량보다도 적으며
+            (not is_today_yangbong or today_body_ratio <= 0.015) and # 오늘 쉬어가는 흐름(음봉이거나 도지형 양봉)이고
+            (not is_long_shadow)                                 # 윗꼬리를 달며 매물을 맞은 흔적이 없을 것
         )
        
         # 1. (삭제되었던 핵심 변수 복구) 종가베팅 및 신고가 돌파 조건 계산
