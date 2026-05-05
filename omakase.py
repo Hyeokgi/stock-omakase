@@ -478,6 +478,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         min_20d = int(df_hist['close'].tail(20).min()) if len(df_hist) >= 20 else int(df_hist['close'].min())
         surge_rate_20d = (current_price - min_20d) / min_20d if min_20d > 0 else 0
         is_high_altitude = surge_rate_20d >= 0.50 
+        # 💡 [HYEOKS 리빌딩] 여기에 250일(1년) 장기 대시세 피로도 체크 로직을 추가합니다!
+        min_250d = int(df_hist['close'].min()) # 수집된 250일치 중 최저가
+        surge_rate_250d = (current_price - min_250d) / min_250d if min_250d > 0 else 0
+        is_mega_trend_exhausted = surge_rate_250d >= 2.0 # 바닥 대비 200% (3배) 이상 상승한 종목
         
         body_top = max(current_price, open_price)
         body_bottom = min(current_price, open_price)
@@ -824,6 +828,11 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 tajeom_multiplier -= 0.3
             if is_high_altitude:
                 tajeom_multiplier -= 0.2
+            
+            # 💡 [추가] 바닥 대비 200% 이상 오른 종목은 점수를 크게 깎고 경고 딱지를 붙인다.
+            if is_mega_trend_exhausted:
+                tajeom_multiplier -= 0.3
+                master_tajeom += " ⚠️(대시세 고점주의)"
 
         # 6. 오후장 휩쏘 방지 (오후 돌파는 계수 삭감)
         if "돌파" in master_tajeom and is_after_1030 and not is_overnight_candidate:
