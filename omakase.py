@@ -478,10 +478,11 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         min_20d = int(df_hist['close'].tail(20).min()) if len(df_hist) >= 20 else int(df_hist['close'].min())
         surge_rate_20d = (current_price - min_20d) / min_20d if min_20d > 0 else 0
         is_high_altitude = surge_rate_20d >= 0.50 
-        # 💡 [HYEOKS 리빌딩] 여기에 250일(1년) 장기 대시세 피로도 체크 로직을 추가합니다!
-        min_250d = int(df_hist['close'].min()) # 수집된 250일치 중 최저가
+        
+        # 💡 250일(1년) 장기 대시세 피로도 체크 로직
+        min_250d = int(df_hist['close'].min()) 
         surge_rate_250d = (current_price - min_250d) / min_250d if min_250d > 0 else 0
-        is_mega_trend_exhausted = surge_rate_250d >= 2.0 # 바닥 대비 200% (3배) 이상 상승한 종목
+        is_mega_trend_exhausted = surge_rate_250d >= 2.0 
         
         body_top = max(current_price, open_price)
         body_bottom = min(current_price, open_price)
@@ -717,54 +718,51 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         if int(df_hist['volume'].iloc[j]) > anchor_vol * 0.45: is_holding = False; break
                     if is_holding: flag_days = d; break
 
-        # 💡 [HYEOKS 리빌딩 v3] 실전 고수들의 '전고점 돌파 후 진정한 눌림목' 로직 적용
-        # 1. 전일 혹은 며칠 내에 60일 전고점을 시원하게 뚫었는가?
+        # 💡 [HYEOKS 리빌딩 v3] '전고점 돌파 후 거래급감 눌림목' 로직 적용 (스텔스 대체)
         is_recent_breakout = False
         breakout_days_ago = 0
         for d in range(1, 6): # 최근 5일 이내에 돌파했는지 확인
             check_idx = -d
             if len(df_hist) >= abs(check_idx) + 1:
                 check_close = int(df_hist['close'].iloc[check_idx])
-                # 그날 이전까지의 60일 고점 계산
                 hist_before_check = high_prices[:check_idx] if check_idx < -1 else high_prices[:-1]
                 high_60d_check = max(hist_before_check) if len(hist_before_check) > 0 else check_close
                 
-                # 그날 종가가 이전 60일 고점을 돌파했다면!
                 if check_close > high_60d_check:
                     is_recent_breakout = True
                     breakout_days_ago = d
                     break
 
-        # 2. 진정한 눌림목 조건: 돌파 후 쉬고 있지만, 절대 그 고점(지지선)을 깨진 않는다!
-        is_stealth_nulim = (
+        # 2. 거래급감 눌림목 조건 (종베 후보)
+        is_extreme_nulim = (
             is_recent_breakout and                               # 최근 5일 내 전고점 돌파 이력이 있고
-            (current_price >= high_60d_calc * 0.95) and          # 현재가가 그 돌파했던 전고점을 훼손하지 않고 지지 중이며 (5% 이내 마진 허용)
-            (vol_ratio_yest <= 50) and                           # ★핵심★ 전일 대비 거래량이 반토막(50% 이하) 나며 바짝 죽어있고
-            (vol_ratio_10d <= 80) and                            # 최근 10일 평균 거래량보다도 적으며
-            (not is_today_yangbong or today_body_ratio <= 0.015) and # 오늘 쉬어가는 흐름(음봉이거나 도지형 양봉)이고
+            (current_price >= high_60d_calc * 0.95) and          # 현재가가 그 돌파했던 전고점을 훼손하지 않고 지지 중이며
+            (vol_ratio_yest <= 60) and                           # ★완화★ 전일 대비 거래량이 60% 이하로 급감 (종베 포착량 증가)
+            (vol_ratio_10d <= 100) and                           # ★완화★ 최근 10일 평균 거래량 이하 수준
+            (not is_today_yangbong or today_body_ratio <= 0.02) and # 오늘 쉬어가는 흐름
             (not is_long_shadow)                                 # 윗꼬리를 달며 매물을 맞은 흔적이 없을 것
         )
        
-        # 1. (삭제되었던 핵심 변수 복구) 종가베팅 및 신고가 돌파 조건 계산
+        # 1. 종가베팅 및 신고가 돌파 조건 계산 (완화됨)
         is_ss_breakout = (trading_value >= 100_000_000_000) and (change_rate >= 0.04) and not is_long_shadow and is_near_high
         
         now_kst_tajeom = datetime.datetime.now(KST)
-        is_overnight_time = (now_kst_tajeom.hour == 15 and now_kst_tajeom.minute <= 30)
+        is_overnight_time = (now_kst_tajeom.hour >= 14) # ★확대★ 오후 2시부터 종베 후보를 띄워 직장인 준비 시간 확보
         
         is_overnight_breakout = (
-            (trading_value >= 100_000_000_000) and          
-            (pg_amount_eok >= 20 or is_strong_dual_buy) and 
-            (acc_i_buy_eok >= 5) and                        
-            (0.06 <= change_rate <= 0.28) and               
-            (current_price >= today_high * 0.96) and        
+            (trading_value >= 50_000_000_000) and           # ★완화★ 1000억 -> 500억
+            (pg_amount_eok >= 10 or is_strong_dual_buy) and # ★완화★ 프로그램 20억 -> 10억
+            (acc_i_buy_eok >= 3) and                        # ★완화★ 기관누적매집 5억 -> 3억
+            (0.04 <= change_rate <= 0.28) and               # ★완화★ 6% 상승 -> 4% 상승
+            (current_price >= today_high * 0.95) and        # ★완화★ 최고가 대비 -4% 마감 -> -5% 마감
             (is_near_high or is_near_52w_high) and          
             is_breakout_track and not is_long_shadow
         )
         
         is_overnight_pullback = (
-            is_stealth_nulim and                            
+            is_extreme_nulim and                            
             (current_price >= ma5) and                      
-            (pg_amount_eok >= 10 or i_buy_today >= 100_000_000) 
+            (pg_amount_eok >= 5 or i_buy_today >= 50_000_000) # ★완화★ 쉬는 날에도 프로그램 5억 이상이면 통과
         )
 
         is_overnight_candidate = is_overnight_time and (is_overnight_breakout or is_overnight_pullback)
@@ -792,36 +790,42 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if acc_i_buy_eok >= 50: base_score += 15 
         elif acc_i_buy_eok >= 10: base_score += 5
 
-        # 4. 타점 계수 (Multiplier) 및 직관적 배지 부여
+        # 4. 타점 계수 (Multiplier) 및 듀얼 배지 부여 (사용자 친화적 개편)
         tajeom_multiplier = 0.0
-        master_tajeom = "⏸️ 관망"
+        master_tajeom = "⏸️ [대기] 분석 중"
         
         if is_fatal_drop:
-            master_tajeom = "🚫 [제외] 재무/관리위험"
+            master_tajeom = "🚫 [제외] 상폐/재무위험"
             tajeom_multiplier = 0.0
         elif is_overnight_candidate:
-            master_tajeom = "🌙 [종가] 수급돌파/눌림"
+            if is_breakout_track and not is_overnight_pullback:
+                master_tajeom = "🌙 [종베] 신고가 돌파 대기"
+            else:
+                master_tajeom = "🌙 [종베] 거래급감 눌림"
             tajeom_multiplier = 1.5  
-        elif is_stealth_nulim or flag_days > 0:
-            master_tajeom = "🎯 [눌림] N자 파동 대기"
+        elif is_extreme_nulim or flag_days > 0:
+            if current_price >= high_60d_calc * 0.95:
+                master_tajeom = "🎯 [스윙/눌림] 전고점 지지"
+            else:
+                master_tajeom = "🎯 [스윙/눌림] 20일선 방어전"
             tajeom_multiplier = 1.3  
         elif is_platform_breakout or is_ss_breakout:
-            master_tajeom = "📦 [스윙] 플랫폼/신고가"
+            master_tajeom = "📦 [스윙/추세] 박스권 탈출"
             tajeom_multiplier = 1.1  
         elif is_theme_daejang or is_theme_hubal:
-            master_tajeom = "🚀 [돌파] 테마 주도주"
+            master_tajeom = "🚀 [당일/단타] 대장주 불기둥"
             tajeom_multiplier = 1.0  
         elif "🌟" in signal or (change_rate >= 0.12 and trading_value >= 50_000_000_000):
-            master_tajeom = "🌟 [수급] 기준봉/양매수"
+            master_tajeom = "🌟 [관심/수급] 기준봉 포착"
             tajeom_multiplier = 0.9  
         else:
-            master_tajeom = "👀 [관심] 타점 대기중"
+            master_tajeom = "👀 [관망] 타점 미도달"
             tajeom_multiplier = 0.6  
 
         # 5. 차트 훼손 및 리스크에 따른 감점 
         if not is_fatal_drop:
             if is_long_shadow or is_huge_gap:
-                master_tajeom = "👀 [관심] 당일타점 훼손"
+                master_tajeom = "👀 [관망] 윗꼬리 저항/이격 큼"
                 tajeom_multiplier = 0.5
             
             if is_chronic_loss:
@@ -829,10 +833,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if is_high_altitude:
                 tajeom_multiplier -= 0.2
             
-            # 💡 [추가] 바닥 대비 200% 이상 오른 종목은 점수를 크게 깎고 경고 딱지를 붙인다.
+            # 바닥 대비 200% 이상 오른 종목 경고
             if is_mega_trend_exhausted:
                 tajeom_multiplier -= 0.3
-                master_tajeom += " ⚠️(대시세 고점주의)"
+                master_tajeom += " ⚠️(대시세 고점)"
 
         # 6. 오후장 휩쏘 방지 (오후 돌파는 계수 삭감)
         if "돌파" in master_tajeom and is_after_1030 and not is_overnight_candidate:
@@ -855,8 +859,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         
         # =====================================================================
         # (이 아래는 기존 return 구문이 그대로 이어집니다)
-        # return [
-        #     name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", ...
         return [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", 
             int(ma5), int(ma20), vol_ratio_text, signal, 
@@ -942,8 +944,8 @@ def update_technical_data(df_theme, all_theme_map):
             helper_sheet.update(range_name="A2", values=results, value_input_option="USER_ENTERED")
             print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 업데이트 완료)")
             
-            # 💡 직관적으로 개편된 5대 핵심 배지만 스캐너에 통과시킴
-            scanner_keywords = ["[종가]", "[눌림]", "[스윙]", "[돌파]", "[수급]"]
+            # 💡 개편된 듀얼 배지 키워드 스캐너 통과
+            scanner_keywords = ["[종베]", "[스윙/눌림]", "[스윙/추세]", "[당일/단타]", "[관심/수급]"]
             
             scanner_results = []
             for r in results:
@@ -962,21 +964,14 @@ def update_technical_data(df_theme, all_theme_map):
                     프로그램 = r[20]
                     고가_52주 = r[21]
                     기관누적수급 = r[22]
-                    
-                    # 💡 새로 추가된 인덱스 23, 24번에서 목표가/손절가를 꺼냄
                     목표가 = r[23]
                     손절가 = r[24]
                     
-                    # 💡 배열 맨 끝에 목표가와 손절가를 추가하여 구글 시트로 쏨
-                    # 💡 배열 맨 끝에 목표가와 손절가를 추가하여 구글 시트로 쏨
                     scanner_results.append([하이퍼링크, 시장구분, f"'{종목코드}", 현재가, 등락률, 테마명, AI신호, 거래량비율, tajeom, "AI 브리핑 대기중", 스코어, 프로그램, 고가_52주, 기관누적수급, 목표가, 손절가])
                     
-            # 💡 [오전장 완벽 압축] 스코어 기준으로 정렬하고 상위 20개만 자릅니다!
             if scanner_results:
-                # 1. 스코어(인덱스 10번) 숫자를 추출하여 내림차순(점수 높은 순)으로 정렬
                 scanner_results.sort(key=lambda x: int(str(x[10]).split('점')[0]), reverse=True)
                 
-                # 2. 최대 20개까지만 남기고 과감하게 자르기 (뷔페 방지, 오마카세 모드)
                 MAX_DISPLAY_COUNT = 20
                 scanner_results = scanner_results[:MAX_DISPLAY_COUNT]
 
@@ -985,15 +980,13 @@ def update_technical_data(df_theme, all_theme_map):
                     existing_data = {}
                     old_data = db_scanner_sheet.get_all_values()
                     
-                    # 💡 [핵심] 아침 7시 ~ 8시 50분 사이에는 기존 데이터를 기억하지 않고 초기화
                     now_time = datetime.datetime.now(KST)
                     is_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50)
 
                     if not is_reset_time:
                         for row in old_data[1:]:
-                            if len(row) > 15: # 목표가/손절가 열(15, 16번째)까지 데이터가 있는지 확인
+                            if len(row) > 15:
                                 saved_code = str(row[2]).replace("'", "").strip().zfill(6)
-                                # 브리핑(9), 목표가(14), 손절가(15) 인덱스 저장
                                 if "대기중" not in str(row[9]):
                                     existing_data[saved_code] = {
                                         "briefing": str(row[9]).strip(),
@@ -1004,13 +997,9 @@ def update_technical_data(df_theme, all_theme_map):
                     db_scanner_sheet = doc.add_worksheet(title="DB_스캐너", rows="50", cols="17")
                     existing_data = {}
                 
-                # ... (섹터 쏠림 강등 로직 등 중간 부분 그대로 유지) ...
-
-                # 최종 결과물 조립 시 기존 브리핑과 가격 복원
                 final_scanner_results = []
                 for res in scanner_results:
                     check_code = str(res[2]).replace("'", "").strip().zfill(6)
-                    # res의 길이를 16개로 맞춤 (기본값 설정)
                     while len(res) < 16: res.append("")
                     
                     if check_code in existing_data:
@@ -1036,7 +1025,6 @@ if __name__ == "__main__":
     df_news, df_naver, df_main_news = get_news_keywords(), get_naver_search_ranking(), get_naver_main_news()
     update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_closed)
     
-    # 💡 [새로 추가된 주요일정 관리 시스템 가동]
     today_schedules = get_market_schedule()
     manage_schedule_sheet(today_schedules)
     
