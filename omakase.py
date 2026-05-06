@@ -1017,12 +1017,13 @@ def update_technical_data(df_theme, all_theme_map):
                     
                     if check_code in existing_data:
                         res[9] = existing_data[check_code]["briefing"]
-                        res[14] = existing_data[check_code]["target"]
-                        res[15] = existing_data[check_code]["stop"]
+                        # 💡 기존 시트에 AI 값이 있다면 유지하되, '계산 대기' 상태면 파이썬 계산값을 덮어씀
+                        if "계산" not in str(existing_data[check_code]["target"]):
+                            res[14] = existing_data[check_code]["target"]
+                            res[15] = existing_data[check_code]["stop"]
                     else:
                         res[9] = "AI 브리핑 대기중"
-                        res[14] = "계산 대기"
-                        res[15] = "계산 대기"
+                        # 💡 res[14]와 res[15]를 "계산 대기"로 덮어쓰지 않고 파이썬 원본 계산값을 그대로 보존!
                         
                     final_scanner_results.append(res)
                 
