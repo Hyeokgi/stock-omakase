@@ -131,13 +131,13 @@ try:
                 [{sys_instruction}]
                 
                 ■ 종목명: {stock_name}
-                ■ 현재가: {row[3] if len(row) > 3 else ''}
-                ■ 타점 위치: {row[8] if len(row) > 8 else ''}
-                ■ 당일 수급: {row[11] if len(row) > 11 else ''}
+                ■ 현재가: {r[3] if len(r) > 3 else ''}
+                ■ 타점 위치: {r[8] if len(r) > 8 else ''}
+                ■ 당일 수급: {r[11] if len(r) > 11 else ''}
                 ■ 52주 고가: {r[12] if len(r) > 12 else ''}
-                ■ 테마: {row[5] if len(row) > 5 else ''}
-                ■ 파이썬 시스템 권장 목표가: {row[14] if len(row) > 14 else ''}
-                ■ 파이썬 시스템 권장 손절가: {row[15] if len(row) > 15 else ''}
+                ■ 테마: {r[5] if len(r) > 5 else ''}
+                ■ 파이썬 1차 계산 목표가: {r[14] if len(r) > 14 else ''}
+                ■ 파이썬 1차 계산 손절가: {r[15] if len(r) > 15 else ''}
                 
                💡 [시간대별 실전 지침 및 AI 자율 가격 설정 룰 (현재 KST 시간: {current_hour}시)]
                 - [핵심 가격 룰] 위 '파이썬 1차 계산 가격'은 단순 이평선 기반의 참고용 수치입니다. 당신은 실전 트레이더로서 이 수치의 '손익비(Risk/Reward)'와 '변동성'을 평가하여 최종 "target_price"와 "stop_loss"를 독자적으로 결정하십시오.
@@ -372,13 +372,13 @@ try:
                 [{sys_instruction}]
                 
                 ■ 종목명: {stock_name}
-                ■ 현재가: {row[3] if len(row) > 3 else ''}
-                ■ 타점 위치: {row[8] if len(row) > 8 else ''}
-                ■ 당일 수급: {row[11] if len(row) > 11 else ''}
+                ■ 현재가: {r[3] if len(r) > 3 else ''}
+                ■ 타점 위치: {r[8] if len(r) > 8 else ''}
+                ■ 당일 수급: {r[11] if len(r) > 11 else ''}
                 ■ 52주 고가: {r[12] if len(r) > 12 else ''}
-                ■ 테마: {row[5] if len(row) > 5 else ''}
-                ■ 파이썬 시스템 권장 목표가: {row[14] if len(row) > 14 else ''}
-                ■ 파이썬 시스템 권장 손절가: {row[15] if len(row) > 15 else ''}
+                ■ 테마: {r[5] if len(r) > 5 else ''}
+                ■ 파이썬 1차 계산 목표가: {r[14] if len(r) > 14 else ''}
+                ■ 파이썬 1차 계산 손절가: {r[15] if len(r) > 15 else ''}
                 
                 💡 [시간대별 실전 지침 및 AI 자율 가격 설정 룰 (현재 KST 시간: {current_hour}시)]
                 - [핵심 가격 룰] 위 '파이썬 1차 계산 가격'은 단순 이평선 기반의 참고용 수치입니다. 당신은 실전 트레이더로서 이 수치의 '손익비(Risk/Reward)'와 '변동성'을 평가하여 최종 "target_price"와 "stop_loss"를 독자적으로 결정하십시오.
