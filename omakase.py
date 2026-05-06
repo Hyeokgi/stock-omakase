@@ -828,13 +828,11 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 master_tajeom = "👀 [관망] 윗꼬리 저항/이격 큼"
                 tajeom_multiplier = 0.5
             
-            if is_chronic_loss:
-                tajeom_multiplier -= 0.3
-            if is_high_altitude:
-                tajeom_multiplier -= 0.2
+            if is_chronic_loss: tajeom_multiplier -= 0.3
+            if is_high_altitude: tajeom_multiplier -= 0.2
             
-            # 바닥 대비 200% 이상 오른 종목 경고
-            if is_mega_trend_exhausted:
+            # 💡 [수정 1] 시가총액 10조 이상 우량주(삼성전자 등)는 대시세 고점 페널티 면제
+            if is_mega_trend_exhausted and market_cap < 100000:
                 tajeom_multiplier -= 0.3
                 master_tajeom += " ⚠️(대시세 고점)"
 
@@ -842,9 +840,28 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if "돌파" in master_tajeom and is_after_1030 and not is_overnight_candidate:
             tajeom_multiplier -= 0.3 
 
-        # 7. 최종 스코어 산출 (기초 체력 × 타점 계수, 음수 방지)
+        # 💡 [수정 2] 고정 5%/-3% 폐기 -> 이평선 및 전고점 기반 다이내믹 가격 설정
+        if is_breakout_track: # 돌파 및 종베 타점
+            target_price = int(current_price * 1.10) # 위가 열려있으므로 +10% 기대
+            stop_loss = int(max(ma5, today_low)) # 5일선 혹은 당일 저가 이탈 시 칼손절
+        else: # 스윙 및 눌림목 타점
+            target_price = int(display_high_60d) if display_high_60d > current_price else int(current_price * 1.10) # 이전 고점 탈환 목표
+            stop_loss = int(min(ma20, current_price * 0.95)) # 20일선 생명선 이탈 시 손절
+            
+        if stop_loss >= current_price: stop_loss = int(current_price * 0.96)
+        if target_price <= current_price: target_price = int(current_price * 1.05)
+
+        # 💡 [수정 3] 손익비(Risk/Reward) 필터링 (SK이노베이션 오류 방지)
+        upside = target_price - current_price
+        downside = current_price - stop_loss
+        
+        if downside > 0 and (upside / downside) < 1.0: # 먹을 폭보다 잃을 폭이 크거나 저항이 코앞이면
+            if "스윙" in master_tajeom or "눌림" in master_tajeom:
+                tajeom_multiplier -= 0.4
+                master_tajeom = "👀 [관망] 손익비 불량 (저항 근접)"
+
+        # 7. 최종 스코어 산출 
         quant_score = int(max(0, base_score * tajeom_multiplier))
-        score_display = f"{quant_score}점 ({track_type})"
         
         # 8. 시장 해지 프리미엄 추가 (하락장 방어)
         is_hedge_theme = any(kw in my_theme_name for kw in ['방산', '방위산업', '해운', '조선', '석유', '가스', '전쟁', '사료', '원자재', '품절주', '식품'])
@@ -853,12 +870,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             quant_score += hedge_premium
             master_tajeom += f" 🛡️(+{hedge_premium}점)"
 
-        # 9. 목표가와 손절가를 독립된 숫자로 계산
-        target_price = int(current_price * 1.05)
-        stop_loss = int(current_price * 0.97)
-        
         # =====================================================================
-        # (이 아래는 기존 return 구문이 그대로 이어집니다)
+        # (이 아래는 기존 return [ name, f"'{code}", ... ] 구문이 그대로 이어집니다)
         return [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", 
             int(ma5), int(ma20), vol_ratio_text, signal, 
