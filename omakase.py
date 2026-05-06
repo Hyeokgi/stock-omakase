@@ -1004,13 +1004,18 @@ def update_technical_data(df_theme, all_theme_map):
                                     existing_data[saved_code] = {
                                         "briefing": str(row[9]).strip(),
                                         "target": str(row[14]).strip(),
-                                        "stop": str(row[15]).strip()
+                                        "stop": str(row[15]).strip(),
+                                        "raw_row": row  # 💡 나중에 부활시키기 위해 기존 행 전체를 백업!
                                     }
                 except: 
                     db_scanner_sheet = doc.add_worksheet(title="DB_스캐너", rows="50", cols="17")
                     existing_data = {}
+                    now_time = datetime.datetime.now(KST)
+                    is_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50)
                 
                 final_scanner_results = []
+                included_codes = set() # 💡 현재 상위 20개에 포함된 종목들 추적
+                
                 for res in scanner_results:
                     check_code = str(res[2]).replace("'", "").strip().zfill(6)
                     while len(res) < 16: res.append("")
@@ -1026,6 +1031,14 @@ def update_technical_data(df_theme, all_theme_map):
                         # 💡 res[14]와 res[15]를 "계산 대기"로 덮어쓰지 않고 파이썬 원본 계산값을 그대로 보존!
                         
                     final_scanner_results.append(res)
+                    included_codes.add(check_code)
+
+                # 💡 [핵심 해결책] 리포트 발급 VIP 종목이 20위 밖으로 밀려났더라도 스캐너에 강제 소환!
+                # 단, 아침 리셋 시간(is_reset_time)에는 살려내지 않고 깔끔하게 날려버림.
+                if not is_reset_time:
+                    for code, data in existing_data.items():
+                        if "리포트 발송 완료" in data["briefing"] and code not in included_codes:
+                            final_scanner_results.append(data["raw_row"])
                 
                 db_scanner_sheet.batch_clear(['A2:Z'])
                 db_scanner_sheet.update(range_name="A2", values=final_scanner_results, value_input_option="USER_ENTERED")
