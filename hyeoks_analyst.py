@@ -131,12 +131,12 @@ try:
                 [{sys_instruction}]
                 
                 ■ 종목명: {stock_name}
-                ■ 현재가: {r[3] if len(r) > 3 else ''}
-                ■ 타점 위치: {r[8] if len(r) > 8 else ''}
-                ■ 당일 수급: {r[11] if len(r) > 11 else ''}
-                ■ 테마: {r[5] if len(r) > 5 else ''}
-                ■ 파이썬 시스템 권장 목표가: {r[14] if len(r) > 14 else ''}
-                ■ 파이썬 시스템 권장 손절가: {r[15] if len(r) > 15 else ''}
+                ■ 현재가: {row[3] if len(row) > 3 else ''}
+                ■ 타점 위치: {row[8] if len(row) > 8 else ''}
+                ■ 당일 수급: {row[11] if len(row) > 11 else ''}
+                ■ 테마: {row[5] if len(row) > 5 else ''}
+                ■ 파이썬 시스템 권장 목표가: {row[14] if len(row) > 14 else ''}
+                ■ 파이썬 시스템 권장 손절가: {row[15] if len(row) > 15 else ''}
                 
                 💡 [시간대별 실전 지침 및 가격 설정 룰 (현재 KST 시간: {current_hour}시)]
                 - [가격 룰] 제공된 '파이썬 시스템 권장 목표가/손절가'는 이동평균선(5일/20일선)과 60일 전고점 저항을 수학적으로 계산한 매우 정확한 지표입니다. 브리핑 작성 시 반드시 이 시스템 권장 가격을 최우선으로 참고하여 최종 "target_price"와 "stop_loss" 수치를 도출하십시오. 임의의 좁은 비율(예: -3%)로 억지 손절가를 창조하지 마십시오.
