@@ -873,22 +873,32 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if stop_loss >= current_price: stop_loss = int(current_price * 0.96)
         if target_price <= current_price: target_price = int(current_price * 1.05)
 
-        # 💡 [V9.5] 손익비(Risk/Reward) 필터링 (신정재 트레이더 2:1 룰 적용)
-        upside = target_price - current_price
-        downside = current_price - stop_loss
+        # 👇👇👇 V9.6: 진짜 대장주를 살리기 위한 '절대 면책 특권' 로직 👇👇👇
         
-        if downside > 0:
-            rr_ratio = upside / downside
+        # 1. 절대 대장주 조건: 당일 15% 이상 급등 & 거래대금 1000억 이상 & 수급 유입
+        is_super_leader = (change_rate >= 0.15) and (trading_value >= 100_000_000_000) and ("대량유입" in program_text or "매수우위" in program_text)
+        
+        if is_super_leader:
+            # [특권 1] 손절가를 5일선이 아닌 '현재가 대비 -4%'로 타이트하게 강제 조정 (손익비 불량 감점 방지)
+            stop_loss = int(current_price * 0.96)
+            target_price = int(current_price * 1.15) # 목표가는 +15%로 확장
             
-            # 먹을 폭이 잃을 폭의 2배가 안 되면 (손익비 2.0 미만)
-            if rr_ratio < 2.0: 
-                if "스윙" in master_tajeom or "눌림" in master_tajeom:
-                    tajeom_multiplier -= 0.5  # 점수 대폭 삭감
+            # [특권 2] 그동안 두드려 맞은 모든 감점(이격도, 윗꼬리 등)을 초기화하고 강제 복구
+            tajeom_multiplier = max(1.2, tajeom_multiplier) 
+            master_tajeom = "🔥 [절대대장] 시장 주도주 프리미엄 (감점면제)"
+            
+        else:
+            # 대장주가 아닌 일반 종목에만 손익비 2:1 룰 엄격 적용 (기존 V9.5 로직)
+            upside = target_price - current_price
+            downside = current_price - stop_loss
+            if downside > 0:
+                rr_ratio = upside / downside
+                if rr_ratio < 2.0 and ("스윙" in master_tajeom or "눌림" in master_tajeom):
+                    tajeom_multiplier -= 0.5
                     master_tajeom = f"👀 [관망] 손익비 불량 (1:{rr_ratio:.1f})"
-            else:
-                # 손익비가 2.0 이상인 훌륭한 자리라면 이름표에 훈장처럼 달아줍니다!
-                # 예: "🌙 [종베] 20일선 눌림 [손익비 3.5:1]"
-                master_tajeom = f"{master_tajeom} [손익비 {rr_ratio:.1f}:1]"
+                elif rr_ratio >= 2.0:
+                    master_tajeom = f"{master_tajeom} [손익비 {rr_ratio:.1f}:1]"
+        # 👆👆👆 코드 교체 완료 👆👆👆
 
         # 7. 최종 스코어 산출 
         quant_score = int(max(0, base_score * tajeom_multiplier))
