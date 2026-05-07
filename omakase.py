@@ -435,15 +435,23 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         high_prices = []
         items = root.findall(".//item")
         
+        # 💡 오늘 날짜 문자열 준비
+        today_str = datetime.datetime.now(KST).strftime('%Y%m%d')
+        
         for item in items:
             data = item.get("data").split("|")
+            date_str = data[0]
             open_p, high_p, low_p, close_p, vol = int(data[1]), int(data[2]), int(data[3]), int(data[4]), int(data[5])
             
-            if vol == 0: continue
-            if open_p == 0 and close_p > 0: continue
-            if high_p == low_p == open_p == close_p and vol < 10000: continue
+            # 💡 과거 데이터의 비정상 캔들은 스킵하되, '오늘' 캔들은 거래량이 적어도 절대 스킵하지 않음!
+            is_today = (date_str == today_str)
+            if not is_today:
+                if vol == 0: continue
+                if open_p == 0 and close_p > 0: continue
+                if high_p == low_p == open_p == close_p and vol < 10000: continue
             
             history.append({
+                "date": date_str,
                 "open": open_p,
                 "high": high_p,
                 "low": low_p,
@@ -454,6 +462,38 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             
         if len(history) < 2: return None
         
+        # 💡 [핵심 처방] 네이버 모바일 실시간 API로 현재가 강제 동기화 (fchart 딜레이 완벽 무시)
+        try:
+            rt_url = f"https://m.stock.naver.com/api/stock/{code}/basic"
+            rt_res = session.get(rt_url, verify=False, timeout=3).json()
+            rt_close = int(rt_res['closePrice'].replace(',', ''))
+            rt_open = int(rt_res['openPrice'].replace(',', ''))
+            rt_high = int(rt_res['highPrice'].replace(',', ''))
+            rt_low = int(rt_res['lowPrice'].replace(',', ''))
+            rt_vol = int(rt_res['accumulatedTradingVolume'].replace(',', ''))
+            
+            if history[-1]['date'] == today_str:
+                # fchart에 오늘 데이터가 있다면 실시간 값으로 덮어쓰기
+                history[-1]['close'] = rt_close
+                history[-1]['open'] = rt_open
+                history[-1]['high'] = rt_high
+                history[-1]['low'] = rt_low
+                history[-1]['volume'] = rt_vol
+                high_prices[-1] = rt_high
+            else:
+                # fchart에 오늘 데이터가 아예 없다면 새로 추가하기
+                history.append({
+                    "date": today_str,
+                    "open": rt_open,
+                    "high": rt_high,
+                    "low": rt_low,
+                    "close": rt_close,
+                    "volume": rt_vol
+                })
+                high_prices.append(rt_high)
+        except Exception:
+            pass # 실시간 API 실패 시 기존 fchart 데이터 그대로 사용
+
         last_day = history[-1]
         open_price, today_high, today_low, current_price, today_vol = last_day['open'], last_day['high'], last_day['low'], last_day['close'], last_day['volume']
         
