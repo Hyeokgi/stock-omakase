@@ -981,35 +981,6 @@ def update_technical_data(df_theme, all_theme_map):
         results.sort(key=lambda x: x[18], reverse=True) 
         
         if results:
-            # 💡 [V10.5 핵심] DB_스캐너에 기록된 AI의 '절대 가격(목표가/손절가)'을 먼저 가져오기
-            try: 
-                db_scanner_sheet = doc.worksheet("DB_스캐너")
-                existing_data = {}
-                old_data = db_scanner_sheet.get_all_values()
-                
-                now_time = datetime.datetime.now(KST)
-                is_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50)
-                
-                # 아침 초기화 시간이 아니면 기존 AI 데이터(브리핑, 목표가, 손절가) 백업
-                if not is_reset_time:
-                    for row in old_data[1:]:
-                        if len(row) > 15:
-                            saved_code = str(row[2]).replace("'", "").strip().zfill(6)
-                            if "대기중" not in str(row[9]):
-                                existing_data[saved_code] = {
-                                    "briefing": str(row[9]).strip(),
-                                    "target": str(row[14]).strip(),
-                                    "stop": str(row[15]).strip(),
-                                    "raw_row": row  
-                                }
-            except: 
-                doc.add_worksheet(title="DB_스캐너", rows="50", cols="17")
-                existing_data = {}
-                now_time = datetime.datetime.now(KST)
-                is_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50)
-
-            if results:
-            # 💡 [V11 핵심] DB_스캐너에서 기존 AI 메모리 추출
             try: 
                 db_scanner_sheet = doc.worksheet("DB_스캐너")
                 existing_data = {}
@@ -1026,7 +997,6 @@ def update_technical_data(df_theme, all_theme_map):
                             target = str(row[14]).strip()
                             stop = str(row[15]).strip()
                             
-                            # AI가 분석한 데이터가 있다면 백업 메모리에 영구 저장!
                             if "대기중" not in briefing and "계산중" not in target and "계산 대기" not in target:
                                 existing_data[saved_code] = {
                                     "briefing": briefing,
@@ -1034,13 +1004,13 @@ def update_technical_data(df_theme, all_theme_map):
                                     "stop": stop,
                                     "raw_row": row
                                 }
-            except: 
+            except Exception as e: 
+                print(f"DB_스캐너 로드 에러: {e}")
                 doc.add_worksheet(title="DB_스캐너", rows="50", cols="17")
                 existing_data = {}
                 now_time = datetime.datetime.now(KST)
                 is_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50)
             
-            # 💡 주가데이터_보조 덮어쓰기 (기계적 값 날리고 AI 값으로 락인)
             for r in results:
                 c_code = str(r[1]).replace("'", "").strip().zfill(6)
                 if c_code in existing_data:
@@ -1054,7 +1024,6 @@ def update_technical_data(df_theme, all_theme_map):
             helper_sheet.update(range_name="A2", values=results, value_input_option="USER_ENTERED")
             print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 업데이트 완료)")
             
-            # 💡 DB_스캐너 전송용 데이터 조립 (기계적 타점 배제)
             scanner_keywords = ["[종베]", "[스윙/눌림]", "[스윙/추세]", "[당일/단타]", "[관심/수급]"]
             
             scanner_results = []
@@ -1075,12 +1044,10 @@ def update_technical_data(df_theme, all_theme_map):
                     고가_52주 = r[21]
                     기관누적수급 = r[22]
                     
-                    # 💡 무조건 'AI 데이터 계산중'으로 초기화 (기계적 값 차단)
                     ai_briefing = "AI 브리핑 대기중"
                     ai_target = "AI 데이터 계산중"
                     ai_stop = "AI 데이터 계산중"
                     
-                    # AI 메모리가 있다면 불러와서 채움
                     if 종목코드 in existing_data:
                         ai_briefing = existing_data[종목코드]["briefing"]
                         ai_target = existing_data[종목코드]["target"]
@@ -1098,22 +1065,18 @@ def update_technical_data(df_theme, all_theme_map):
                 top_20_results = scanner_results[:MAX_DISPLAY_COUNT]
                 top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results}
 
-                # 💡 [V11 핵심] 20위 밖으로 밀려났더라도 AI 메모리가 있는 종목은 구출해서 스캐너에 유지!
                 if not is_reset_time:
-                    # 1) 현재 150위 안에 있는데 20위 밖으로 밀린 종목들 (최신 현재가 반영됨)
                     for res in scanner_results:
                         c_code = str(res[2]).replace("'", "").strip().zfill(6)
                         if c_code not in top_20_codes and c_code in existing_data:
                             top_20_results.append(res)
                             top_20_codes.add(c_code)
                             
-                    # 2) 150위 밖으로 아예 사라졌지만 '리포트 발송 완료'인 VIP 종목들 (과거 데이터로 보존)
                     for c_code, data in existing_data.items():
                         if "리포트 발송 완료" in data["briefing"] and c_code not in top_20_codes:
                             top_20_results.append(data["raw_row"])
                             top_20_codes.add(c_code)
 
-                # 3. 백테스트 자동 갱신 로직 (아침 리셋 시간에만 동작)
                 if is_reset_time:
                     try:
                         bt_sheet = doc.worksheet("백테스트_로그")
