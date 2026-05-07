@@ -797,7 +797,17 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if is_strong_dual_buy: base_score += 15
         if acc_i_buy_eok >= 50: base_score += 15 
         elif acc_i_buy_eok >= 10: base_score += 5
-
+        # 💡 [V9 패치] 진짜 대장주(선발주) 프리미엄 점수 산출
+        high_retention = current_price / today_high if today_high > 0 else 0
+        if high_retention >= 0.97: 
+            base_score += 30  # 고가 대비 -3% 이내 마감 (최상위 대장 유지력)
+            master_tajeom += " 👑(진성대장)"
+        elif high_retention >= 0.93: 
+            base_score += 15  # 고가 대비 -7% 이내 마감 (2등주 급)
+            
+        if is_near_52w_high and "대량유입" in program_text:
+            base_score += 20  # 신고가 부근에서 수급 폭발 시 추가 가중치
+            
         # 4. 타점 계수 (Multiplier) 및 듀얼 배지 부여 (사용자 친화적 개편)
         tajeom_multiplier = 0.0
         master_tajeom = "⏸️ [대기] 분석 중"
@@ -1009,7 +1019,47 @@ def update_technical_data(df_theme, all_theme_map):
                     
                     now_time = datetime.datetime.now(KST)
                     is_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50)
-
+                    if is_reset_time:
+                        try:
+                            bt_sheet = doc.worksheet("백테스트_로그")
+                            bt_data = bt_sheet.get_all_values()
+                            if len(bt_data) == 0 or bt_data[0][0] != "진입일":
+                                bt_sheet.clear()
+                                bt_sheet.append_row(["진입일", "종목명", "종목코드", "테마명", "진입가", "타점유형", "퀀트점수", "T+1수익률", "T+3수익률"])
+                                bt_data = bt_sheet.get_all_values()
+                            
+                            today_date = datetime.datetime.now(KST).date()
+                            updated = False
+                            
+                            for i in range(1, len(bt_data)):
+                                row = bt_data[i]
+                                while len(row) < 9: row.append("") # 빈 칸 채우기
+                                
+                                try:
+                                    entry_date = datetime.datetime.strptime(row[0], '%Y-%m-%d').date()
+                                    days_elapsed = (today_date - entry_date).days
+                                    
+                                    needs_t1 = (days_elapsed >= 1 and row[7] == "")
+                                    needs_t3 = (days_elapsed >= 3 and row[8] == "")
+                                    
+                                    if needs_t1 or needs_t3:
+                                        t_code = str(row[2]).replace("'", "").zfill(6)
+                                        entry_p = int(str(row[4]).replace(',', '').replace('원', ''))
+                                        rt_res = requests.get(f"https://m.stock.naver.com/api/stock/{t_code}/basic", verify=False, timeout=3).json()
+                                        curr_p = int(str(rt_res.get('closePrice', '0')).replace(',', ''))
+                                        
+                                        if curr_p > 0:
+                                            rtn = ((curr_p - entry_p) / entry_p) * 100
+                                            if needs_t1: row[7] = f"{rtn:.2f}%"
+                                            if needs_t3: row[8] = f"{rtn:.2f}%"
+                                            updated = True
+                                except: pass
+                                
+                            if updated:
+                                bt_sheet.update(range_name="A1", values=bt_data, value_input_option="USER_ENTERED")
+                                print("✅ 아침 백테스트 로그 수익률 자동 갱신 완료!")
+                        except Exception as e:
+                            print(f"⚠️ 백테스트 업데이트 에러: {e}")
                     if not is_reset_time:
                         for row in old_data[1:]:
                             if len(row) > 15:
