@@ -428,6 +428,7 @@ def manage_schedule_sheet(schedules):
 
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate):
     try:
+        # 1. fchart 데이터 가져오기 (과거 차트 분석용)
         url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=250&requestType=0"
         root = ET.fromstring(session.get(url, verify=False, timeout=3).text)
         
@@ -435,18 +436,13 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         high_prices = []
         items = root.findall(".//item")
         
-        for i, item in enumerate(items):
+        for item in items:
             data = item.get("data").split("|")
             date_str = data[0]
             open_p, high_p, low_p, close_p, vol = int(data[1]), int(data[2]), int(data[3]), int(data[4]), int(data[5])
             
-            # 💡 맨 마지막 캔들(현재 진행 중이거나 가장 최근 마감된 캔들)은 무조건 보존!
-            is_last = (i == len(items) - 1)
-            
-            if not is_last:
-                if vol == 0: continue
-                if open_p == 0 and close_p > 0: continue
-                if high_p == low_p == open_p == close_p and vol < 10000: continue
+            # 💡 [버그 픽스] 멀쩡한 캔들을 삭제하던 악성 필터링 제거! (거래량 0인 완전 빈 캔들만 스킵)
+            if vol == 0 and close_p == 0: continue
             
             history.append({
                 "date": date_str,
@@ -460,30 +456,36 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             
         if len(history) < 2: return None
         
-        # 💡 [핵심 처방] 모바일 실시간 API 강제 동기화 (가상 시간 의존성 100% 제거)
+        # 2. 💡 [절대 무적 처방] 네이버 실시간 API에서 '현재가'와 '등락률' 직접 뜯어오기!
         try:
             rt_url = f"https://m.stock.naver.com/api/stock/{code}/basic"
             rt_res = session.get(rt_url, verify=False, timeout=3).json()
+            
             rt_close = int(str(rt_res.get('closePrice', '0')).replace(',', ''))
             rt_open = int(str(rt_res.get('openPrice', '0')).replace(',', ''))
             rt_high = int(str(rt_res.get('highPrice', '0')).replace(',', ''))
             rt_low = int(str(rt_res.get('lowPrice', '0')).replace(',', ''))
             rt_vol = int(str(rt_res.get('accumulatedTradingVolume', '0')).replace(',', ''))
-            rt_date_raw = rt_res.get('localTradedAt', '') # 예: '2024-10-25T15:30:00+09:00'
+            
+            # 등락률을 수동 계산하지 않고 API에서 주는 공식 % 값을 바로 가져옴
+            rt_rate_str = str(rt_res.get('fluctuationsRatio', '0')).replace(',', '')
+            rt_rate = float(rt_rate_str) / 100.0 
+            
+            rt_date_raw = rt_res.get('localTradedAt', '') 
             
             if rt_close > 0 and len(rt_date_raw) >= 10:
-                rt_date = rt_date_raw[:10].replace('-', '') # '20241025' 형식으로 추출
+                rt_date = rt_date_raw[:10].replace('-', '') # '20241025'
                 
+                # fchart 마지막 데이터와 실시간 날짜가 같으면 -> 덮어쓰기
                 if history[-1]['date'] == rt_date:
-                    # 네이버 fchart의 마지막 날짜와 실시간 날짜가 같으면 무조건 최신 실시간 데이터로 덮어쓰기
                     history[-1]['close'] = rt_close
                     if rt_open > 0: history[-1]['open'] = rt_open
                     if rt_high > 0: history[-1]['high'] = rt_high
                     if rt_low > 0: history[-1]['low'] = rt_low
                     if rt_vol > 0: history[-1]['volume'] = rt_vol
                     high_prices[-1] = history[-1]['high']
+                # 실시간 날짜가 더 최신이면 -> 새 캔들로 맨 뒤에 추가하기!
                 elif rt_date > history[-1]['date']:
-                    # fchart가 너무 느려서 오늘 날짜 캔들 생성을 아예 안 했다면, 우리가 직접 캔들을 만들어 추가!
                     history.append({
                         "date": rt_date,
                         "open": rt_open,
@@ -494,20 +496,30 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     })
                     high_prices.append(rt_high)
         except Exception:
-            pass # 통신 지연 시 기존 데이터로 무사 통과
+            pass # 통신 실패 시에만 기존 fchart 데이터 사용
 
+        # 3. 확정된 지표 추출
         last_day = history[-1]
         open_price, today_high, today_low, current_price, today_vol = last_day['open'], last_day['high'], last_day['low'], last_day['close'], last_day['volume']
         
         df_hist = pd.DataFrame(history)
-        prev_price = int(df_hist['close'].iloc[-2]) if len(df_hist) >= 2 else current_price
-        change_rate = (current_price - prev_price) / prev_price if prev_price > 0 else 0.0
         
-        yest_close = prev_price
+        # 전일 종가를 정확히 바로 앞 캔들에서 추출
+        yest_close = int(df_hist['close'].iloc[-2]) if len(df_hist) >= 2 else current_price
+        
+        # 💡 [핵심] API의 실시간 등락률이 있다면 최우선 적용! 없으면 수동 계산
+        change_rate = (current_price - yest_close) / yest_close if yest_close > 0 else 0.0
+        try:
+            if 'rt_rate' in locals() and history[-1]['date'] == rt_date:
+                change_rate = rt_rate
+        except: pass
+        
         yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) >= 2 else today_vol
         yest_tv = yest_close * yest_vol 
 
         trading_value = current_price * today_vol
+        
+        # --- (여기서부터 아래의 high_prices_60 = ... 등 기존 코드 그대로 이어집니다) ---
         
         high_prices_60 = high_prices[-60:] if len(high_prices) >= 60 else high_prices
         
