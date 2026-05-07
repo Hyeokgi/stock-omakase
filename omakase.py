@@ -435,16 +435,15 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         high_prices = []
         items = root.findall(".//item")
         
-        # 💡 오늘 날짜 문자열 준비
-        today_str = datetime.datetime.now(KST).strftime('%Y%m%d')
-        
-        for item in items:
+        for i, item in enumerate(items):
             data = item.get("data").split("|")
             date_str = data[0]
             open_p, high_p, low_p, close_p, vol = int(data[1]), int(data[2]), int(data[3]), int(data[4]), int(data[5])
             
-            is_today = (date_str == today_str)
-            if not is_today:
+            # 💡 맨 마지막 캔들(현재 진행 중이거나 가장 최근 마감된 캔들)은 무조건 보존!
+            is_last = (i == len(items) - 1)
+            
+            if not is_last:
                 if vol == 0: continue
                 if open_p == 0 and close_p > 0: continue
                 if high_p == low_p == open_p == close_p and vol < 10000: continue
@@ -461,40 +460,41 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             
         if len(history) < 2: return None
         
-        # 💡 [핵심 처방] 모바일 실시간 API 강제 동기화 (자정 캔들 복제 버그 완벽 차단)
+        # 💡 [핵심 처방] 모바일 실시간 API 강제 동기화 (가상 시간 의존성 100% 제거)
         try:
             rt_url = f"https://m.stock.naver.com/api/stock/{code}/basic"
             rt_res = session.get(rt_url, verify=False, timeout=3).json()
-            rt_close = int(rt_res['closePrice'].replace(',', ''))
-            rt_open = int(rt_res['openPrice'].replace(',', ''))
-            rt_high = int(rt_res['highPrice'].replace(',', ''))
-            rt_low = int(rt_res['lowPrice'].replace(',', ''))
-            rt_vol = int(rt_res['accumulatedTradingVolume'].replace(',', ''))
+            rt_close = int(str(rt_res.get('closePrice', '0')).replace(',', ''))
+            rt_open = int(str(rt_res.get('openPrice', '0')).replace(',', ''))
+            rt_high = int(str(rt_res.get('highPrice', '0')).replace(',', ''))
+            rt_low = int(str(rt_res.get('lowPrice', '0')).replace(',', ''))
+            rt_vol = int(str(rt_res.get('accumulatedTradingVolume', '0')).replace(',', ''))
+            rt_date_raw = rt_res.get('localTradedAt', '') # 예: '2024-10-25T15:30:00+09:00'
             
-            now_h = datetime.datetime.now(KST).hour
-            
-            # 1. fchart의 마지막 캔들이 '오늘'이 맞다면, 실시간 데이터로 덮어쓰기
-            if history[-1]['date'] == today_str:
-                history[-1]['close'] = rt_close
-                history[-1]['open'] = rt_open
-                history[-1]['high'] = rt_high
-                history[-1]['low'] = rt_low
-                history[-1]['volume'] = rt_vol
-                high_prices[-1] = rt_high
-            # 2. 장중(오전 9시~오후 3시)이고 거래가 발생했는데, fchart가 느려서 오늘 캔들이 없다면 추가하기
-            elif 9 <= now_h <= 15 and rt_vol > 0:
-                history.append({
-                    "date": today_str,
-                    "open": rt_open,
-                    "high": rt_high,
-                    "low": rt_low,
-                    "close": rt_close,
-                    "volume": rt_vol
-                })
-                high_prices.append(rt_high)
-            # 3. 밤 12시가 넘었거나 주말이라면 아무것도 하지 않음 (복제 버그 방어!)
+            if rt_close > 0 and len(rt_date_raw) >= 10:
+                rt_date = rt_date_raw[:10].replace('-', '') # '20241025' 형식으로 추출
+                
+                if history[-1]['date'] == rt_date:
+                    # 네이버 fchart의 마지막 날짜와 실시간 날짜가 같으면 무조건 최신 실시간 데이터로 덮어쓰기
+                    history[-1]['close'] = rt_close
+                    if rt_open > 0: history[-1]['open'] = rt_open
+                    if rt_high > 0: history[-1]['high'] = rt_high
+                    if rt_low > 0: history[-1]['low'] = rt_low
+                    if rt_vol > 0: history[-1]['volume'] = rt_vol
+                    high_prices[-1] = history[-1]['high']
+                elif rt_date > history[-1]['date']:
+                    # fchart가 너무 느려서 오늘 날짜 캔들 생성을 아예 안 했다면, 우리가 직접 캔들을 만들어 추가!
+                    history.append({
+                        "date": rt_date,
+                        "open": rt_open,
+                        "high": rt_high,
+                        "low": rt_low,
+                        "close": rt_close,
+                        "volume": rt_vol
+                    })
+                    high_prices.append(rt_high)
         except Exception:
-            pass
+            pass # 통신 지연 시 기존 데이터로 무사 통과
 
         last_day = history[-1]
         open_price, today_high, today_low, current_price, today_vol = last_day['open'], last_day['high'], last_day['low'], last_day['close'], last_day['volume']
