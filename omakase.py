@@ -4,7 +4,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import sys
 import xml.etree.ElementTree as ET
 from collections import Counter
-import concurrent.futures 
+import concurrent.futures
 import urllib3
 import pandas as pd
 
@@ -797,6 +797,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if is_strong_dual_buy: base_score += 15
         if acc_i_buy_eok >= 50: base_score += 15 
         elif acc_i_buy_eok >= 10: base_score += 5
+
         # 💡 [V9 패치] 진짜 대장주(선발주) 프리미엄 점수 산출
         high_retention = current_price / today_high if today_high > 0 else 0
         if high_retention >= 0.97: 
@@ -843,8 +844,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         # 5. 차트 훼손 및 리스크에 따른 감점 
         if not is_fatal_drop:
             if is_long_shadow or is_huge_gap:
-                master_tajeom = "👀 [관망] 윗꼬리 저항/이격 큼"
-                tajeom_multiplier = 0.5
+                master_tajeom += " ⚠️(윗꼬리/이격)" # 💡 덮어쓰기 금지! 경고만 추가
+                tajeom_multiplier -= 0.3 # 💡 페널티 완화
             
             if is_chronic_loss: tajeom_multiplier -= 0.3
             if is_high_altitude: tajeom_multiplier -= 0.2
@@ -885,7 +886,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             
             # [특권 2] 그동안 두드려 맞은 모든 감점(이격도, 윗꼬리 등)을 초기화하고 강제 복구
             tajeom_multiplier = max(1.2, tajeom_multiplier) 
-            master_tajeom = "🔥 [절대대장] 시장 주도주 프리미엄 (감점면제)"
+            master_tajeom += " 🔥(절대대장/면책)" # 💡 덮어쓰기 금지! 스캐너 필터 유지
             
         else:
             # 대장주가 아닌 일반 종목에만 손익비 2:1 룰 엄격 적용 (기존 V9.5 로직)
@@ -894,11 +895,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if downside > 0:
                 rr_ratio = upside / downside
                 if rr_ratio < 2.0 and ("스윙" in master_tajeom or "눌림" in master_tajeom):
-                    tajeom_multiplier -= 0.5
-                    master_tajeom = f"👀 [관망] 손익비 불량 (1:{rr_ratio:.1f})"
+                    tajeom_multiplier -= 0.3
+                    master_tajeom += f" ⚠️(손익비 {rr_ratio:.1f}:1 불량)" # 💡 덮어쓰기 금지!
                 elif rr_ratio >= 2.0:
-                    master_tajeom = f"{master_tajeom} [손익비 {rr_ratio:.1f}:1]"
-        # 👆👆👆 코드 교체 완료 👆👆👆
+                    master_tajeom += f" 🎯(손익비 {rr_ratio:.1f}:1 훌륭)"
 
         # 7. 최종 스코어 산출 
         quant_score = int(max(0, base_score * tajeom_multiplier))
@@ -913,7 +913,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             master_tajeom += f" 🛡️(+{hedge_premium}점)"
 
         # =====================================================================
-        # (이 아래는 기존 return [ name, f"'{code}", ... ] 구문이 그대로 이어집니다)
         return [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", 
             int(ma5), int(ma20), vol_ratio_text, signal, 
