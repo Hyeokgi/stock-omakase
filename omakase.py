@@ -441,7 +441,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             date_str = data[0]
             open_p, high_p, low_p, close_p, vol = int(data[1]), int(data[2]), int(data[3]), int(data[4]), int(data[5])
             
-            # 💡 [버그 픽스] 멀쩡한 캔들을 삭제하던 악성 필터링 제거! (거래량 0인 완전 빈 캔들만 스킵)
+            # 💡 멀쩡한 캔들을 삭제하던 악성 필터링 제거! (거래량 0인 완전 빈 캔들만 스킵)
             if vol == 0 and close_p == 0: continue
             
             history.append({
@@ -456,7 +456,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             
         if len(history) < 2: return None
         
-        # 2. 💡 [절대 무적 처방] 네이버 실시간 API에서 '현재가'와 '등락률' 직접 뜯어오기!
+        # 2. 💡 네이버 실시간 API에서 '현재가'와 '등락률' 직접 뜯어오기!
         try:
             rt_url = f"https://m.stock.naver.com/api/stock/{code}/basic"
             rt_res = session.get(rt_url, verify=False, timeout=3).json()
@@ -467,16 +467,14 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             rt_low = int(str(rt_res.get('lowPrice', '0')).replace(',', ''))
             rt_vol = int(str(rt_res.get('accumulatedTradingVolume', '0')).replace(',', ''))
             
-            # 등락률을 수동 계산하지 않고 API에서 주는 공식 % 값을 바로 가져옴
             rt_rate_str = str(rt_res.get('fluctuationsRatio', '0')).replace(',', '')
             rt_rate = float(rt_rate_str) / 100.0 
             
             rt_date_raw = rt_res.get('localTradedAt', '') 
             
             if rt_close > 0 and len(rt_date_raw) >= 10:
-                rt_date = rt_date_raw[:10].replace('-', '') # '20241025'
+                rt_date = rt_date_raw[:10].replace('-', '') 
                 
-                # fchart 마지막 데이터와 실시간 날짜가 같으면 -> 덮어쓰기
                 if history[-1]['date'] == rt_date:
                     history[-1]['close'] = rt_close
                     if rt_open > 0: history[-1]['open'] = rt_open
@@ -484,7 +482,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     if rt_low > 0: history[-1]['low'] = rt_low
                     if rt_vol > 0: history[-1]['volume'] = rt_vol
                     high_prices[-1] = history[-1]['high']
-                # 실시간 날짜가 더 최신이면 -> 새 캔들로 맨 뒤에 추가하기!
                 elif rt_date > history[-1]['date']:
                     history.append({
                         "date": rt_date,
@@ -496,7 +493,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     })
                     high_prices.append(rt_high)
         except Exception:
-            pass # 통신 실패 시에만 기존 fchart 데이터 사용
+            pass
 
         # 3. 확정된 지표 추출
         last_day = history[-1]
@@ -504,23 +501,22 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         
         df_hist = pd.DataFrame(history)
         
-        # 전일 종가를 정확히 바로 앞 캔들에서 추출
-        yest_close = int(df_hist['close'].iloc[-2]) if len(df_hist) >= 2 else current_price
+        # 💡 [치명적 오류 복구] 아래 코드에서 사용하는 prev_price 변수명 부활!!
+        prev_price = int(df_hist['close'].iloc[-2]) if len(df_hist) >= 2 else current_price
+        yest_close = prev_price  # 혹시 모를 충돌을 막기 위해 yest_close도 같이 선언
         
-        # 💡 [핵심] API의 실시간 등락률이 있다면 최우선 적용! 없으면 수동 계산
-        change_rate = (current_price - yest_close) / yest_close if yest_close > 0 else 0.0
+        # API의 실시간 등락률이 있다면 최우선 적용! 없으면 수동 계산
+        change_rate = (current_price - prev_price) / prev_price if prev_price > 0 else 0.0
         try:
             if 'rt_rate' in locals() and history[-1]['date'] == rt_date:
                 change_rate = rt_rate
         except: pass
         
         yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) >= 2 else today_vol
-        yest_tv = yest_close * yest_vol 
+        yest_tv = prev_price * yest_vol 
 
         trading_value = current_price * today_vol
-        
-        # --- (여기서부터 아래의 high_prices_60 = ... 등 기존 코드 그대로 이어집니다) ---
-        
+ 
         high_prices_60 = high_prices[-60:] if len(high_prices) >= 60 else high_prices
         
         high_60d_calc = max(high_prices_60[:-1]) if len(high_prices_60) > 1 else today_high
