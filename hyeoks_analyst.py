@@ -501,6 +501,41 @@ try:
                       files={'document': open(pdf_file, 'rb')}, data={'chat_id': TELEGRAM_CHAT_ID, 'caption': "[HYEOKS] AI 심층 리서치 보고서"})
         print("✅ 텔레그램 발송 완료!")
 
+    # ==========================================
+    # 9. 백테스트 로그 스냅샷 저장 (V9 패치)
+    # ==========================================
+    try:
+        print("▶ 백테스트 로그 스냅샷 기록 중...")
+        bt_sheet = doc.worksheet("백테스트_로그")
+        today_str = datetime.datetime.now(KST).strftime('%Y-%m-%d')
+        
+        bt_data = bt_sheet.get_all_values()
+        already_logged = any(today_str in str(r[0]) for r in bt_data if r)
+        
+        if not already_logged:
+            log_rows = []
+            # 오늘 스코어 상위 5개 종목을 기록
+            for cand in pool_150[:5]:
+                # info 텍스트에서 데이터 정규식 추출
+                tajeom_match = re.search(r'타점:(.*?)\|', cand['info'])
+                tajeom_str = tajeom_match.group(1).strip() if tajeom_match else "분석대기"
+                
+                log_rows.append([
+                    today_str, 
+                    cand['name'], 
+                    f"'{cand['code']}", 
+                    "수동확인요망", 
+                    f"{cand['curr_p']:,}원", 
+                    tajeom_str, 
+                    f"{cand['score']}점", 
+                    "", "" # T+1, T+3 자리는 비워둠 (omakase.py가 채울 예정)
+                ])
+            
+            bt_sheet.append_rows(log_rows, value_input_option="USER_ENTERED")
+            print("✅ 오늘자 상위 5개 종목 백테스트 로그 기록 완료!")
+    except Exception as e:
+        print(f"⚠️ 백테스트 로그 기록 에러: {e}")
+        
     print(f"🎉 모든 작업이 성공적으로 완료되었습니다: {pdf_file}")
 
 except Exception as e:
