@@ -873,14 +873,22 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if stop_loss >= current_price: stop_loss = int(current_price * 0.96)
         if target_price <= current_price: target_price = int(current_price * 1.05)
 
-        # 💡 [수정 3] 손익비(Risk/Reward) 필터링
+        # 💡 [V9.5] 손익비(Risk/Reward) 필터링 (신정재 트레이더 2:1 룰 적용)
         upside = target_price - current_price
         downside = current_price - stop_loss
         
-        if downside > 0 and (upside / downside) < 1.0: # 먹을 폭보다 잃을 폭이 크거나 저항이 코앞이면
-            if "스윙" in master_tajeom or "눌림" in master_tajeom:
-                tajeom_multiplier -= 0.4
-                master_tajeom = "👀 [관망] 손익비 불량 (저항 근접)"
+        if downside > 0:
+            rr_ratio = upside / downside
+            
+            # 먹을 폭이 잃을 폭의 2배가 안 되면 (손익비 2.0 미만)
+            if rr_ratio < 2.0: 
+                if "스윙" in master_tajeom or "눌림" in master_tajeom:
+                    tajeom_multiplier -= 0.5  # 점수 대폭 삭감
+                    master_tajeom = f"👀 [관망] 손익비 불량 (1:{rr_ratio:.1f})"
+            else:
+                # 손익비가 2.0 이상인 훌륭한 자리라면 이름표에 훈장처럼 달아줍니다!
+                # 예: "🌙 [종베] 20일선 눌림 [손익비 3.5:1]"
+                master_tajeom = f"{master_tajeom} [손익비 {rr_ratio:.1f}:1]"
 
         # 7. 최종 스코어 산출 
         quant_score = int(max(0, base_score * tajeom_multiplier))
