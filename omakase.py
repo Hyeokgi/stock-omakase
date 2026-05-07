@@ -989,14 +989,53 @@ def update_technical_data(df_theme, all_theme_map):
         results.sort(key=lambda x: x[18], reverse=True) 
         
         if results:
+            # 💡 [V10.5 핵심] DB_스캐너에 기록된 AI의 '절대 가격(목표가/손절가)'을 먼저 가져오기
+            try: 
+                db_scanner_sheet = doc.worksheet("DB_스캐너")
+                existing_data = {}
+                old_data = db_scanner_sheet.get_all_values()
+                
+                now_time = datetime.datetime.now(KST)
+                is_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50)
+                
+                # 아침 초기화 시간이 아니면 기존 AI 데이터(브리핑, 목표가, 손절가) 백업
+                if not is_reset_time:
+                    for row in old_data[1:]:
+                        if len(row) > 15:
+                            saved_code = str(row[2]).replace("'", "").strip().zfill(6)
+                            if "대기중" not in str(row[9]):
+                                existing_data[saved_code] = {
+                                    "briefing": str(row[9]).strip(),
+                                    "target": str(row[14]).strip(),
+                                    "stop": str(row[15]).strip(),
+                                    "raw_row": row  
+                                }
+            except: 
+                doc.add_worksheet(title="DB_스캐너", rows="50", cols="17")
+                existing_data = {}
+                now_time = datetime.datetime.now(KST)
+                is_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50)
+
+            # 💡 [V10.5 핵심] AI가 확정한 목표가/손절가가 있다면 주가데이터_보조(results)에 강제 덮어쓰기! 
+            for r in results:
+                c_code = str(r[1]).replace("'", "").strip().zfill(6)
+                if c_code in existing_data:
+                    ai_target = existing_data[c_code]["target"]
+                    ai_stop = existing_data[c_code]["stop"]
+                    # 파이썬의 기계적 멍청한 값을 날려버리고 AI의 똑똑한 값으로 잠금(Lock)
+                    if "계산" not in str(ai_target) and ai_target != "":
+                        r[23] = ai_target  
+                        r[24] = ai_stop    
+
+            # 1. 덮어씌워진 완벽한 데이터를 '주가데이터_보조' 시트에 업데이트
             try: helper_sheet = doc.worksheet("주가데이터_보조")
             except: helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="23")
             
             helper_sheet.batch_clear(['A2:Z'])
             helper_sheet.update(range_name="A2", values=results, value_input_option="USER_ENTERED")
-            print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 업데이트 완료)")
+            print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 AI 데이터로 업데이트 완료)")
             
-            # 💡 개편된 듀얼 배지 키워드 스캐너 통과
+            # 2. 개편된 듀얼 배지 키워드 스캐너 통과
             scanner_keywords = ["[종베]", "[스윙/눌림]", "[스윙/추세]", "[당일/단타]", "[관심/수급]"]
             
             scanner_results = []
@@ -1016,8 +1055,8 @@ def update_technical_data(df_theme, all_theme_map):
                     프로그램 = r[20]
                     고가_52주 = r[21]
                     기관누적수급 = r[22]
-                    목표가 = r[23]
-                    손절가 = r[24]
+                    목표가 = r[23] # 이제 여기엔 AI가 확정한 잠금 가격이 들어있음
+                    손절가 = r[24] # 이제 여기엔 AI가 확정한 잠금 가격이 들어있음
                     
                     scanner_results.append([하이퍼링크, 시장구분, f"'{종목코드}", 현재가, 등락률, 테마명, AI신호, 거래량비율, tajeom, "AI 브리핑 대기중", 스코어, 프로그램, 고가_52주, 기관누적수급, 목표가, 손절가])
                     
@@ -1027,73 +1066,52 @@ def update_technical_data(df_theme, all_theme_map):
                 MAX_DISPLAY_COUNT = 20
                 scanner_results = scanner_results[:MAX_DISPLAY_COUNT]
 
-                try: 
-                    db_scanner_sheet = doc.worksheet("DB_스캐너")
-                    existing_data = {}
-                    old_data = db_scanner_sheet.get_all_values()
-                    
-                    now_time = datetime.datetime.now(KST)
-                    is_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50)
-                    if is_reset_time:
-                        try:
-                            bt_sheet = doc.worksheet("백테스트_로그")
+                # 3. 백테스트 자동 갱신 로직 (아침 리셋 시간에만 동작)
+                if is_reset_time:
+                    try:
+                        bt_sheet = doc.worksheet("백테스트_로그")
+                        bt_data = bt_sheet.get_all_values()
+                        if len(bt_data) == 0 or bt_data[0][0] != "진입일":
+                            bt_sheet.clear()
+                            bt_sheet.append_row(["진입일", "종목명", "종목코드", "테마명", "진입가", "타점유형", "퀀트점수", "T+1수익률", "T+3수익률"])
                             bt_data = bt_sheet.get_all_values()
-                            if len(bt_data) == 0 or bt_data[0][0] != "진입일":
-                                bt_sheet.clear()
-                                bt_sheet.append_row(["진입일", "종목명", "종목코드", "테마명", "진입가", "타점유형", "퀀트점수", "T+1수익률", "T+3수익률"])
-                                bt_data = bt_sheet.get_all_values()
+                        
+                        today_date = datetime.datetime.now(KST).date()
+                        updated = False
+                        
+                        for i in range(1, len(bt_data)):
+                            row = bt_data[i]
+                            while len(row) < 9: row.append("") 
                             
-                            today_date = datetime.datetime.now(KST).date()
-                            updated = False
+                            try:
+                                entry_date = datetime.datetime.strptime(row[0], '%Y-%m-%d').date()
+                                days_elapsed = (today_date - entry_date).days
+                                
+                                needs_t1 = (days_elapsed >= 1 and row[7] == "")
+                                needs_t3 = (days_elapsed >= 3 and row[8] == "")
+                                
+                                if needs_t1 or needs_t3:
+                                    t_code = str(row[2]).replace("'", "").zfill(6)
+                                    entry_p = int(str(row[4]).replace(',', '').replace('원', ''))
+                                    rt_res = requests.get(f"https://m.stock.naver.com/api/stock/{t_code}/basic", verify=False, timeout=3).json()
+                                    curr_p = int(str(rt_res.get('closePrice', '0')).replace(',', ''))
+                                    
+                                    if curr_p > 0:
+                                        rtn = ((curr_p - entry_p) / entry_p) * 100
+                                        if needs_t1: row[7] = f"{rtn:.2f}%"
+                                        if needs_t3: row[8] = f"{rtn:.2f}%"
+                                        updated = True
+                            except: pass
                             
-                            for i in range(1, len(bt_data)):
-                                row = bt_data[i]
-                                while len(row) < 9: row.append("") # 빈 칸 채우기
-                                
-                                try:
-                                    entry_date = datetime.datetime.strptime(row[0], '%Y-%m-%d').date()
-                                    days_elapsed = (today_date - entry_date).days
-                                    
-                                    needs_t1 = (days_elapsed >= 1 and row[7] == "")
-                                    needs_t3 = (days_elapsed >= 3 and row[8] == "")
-                                    
-                                    if needs_t1 or needs_t3:
-                                        t_code = str(row[2]).replace("'", "").zfill(6)
-                                        entry_p = int(str(row[4]).replace(',', '').replace('원', ''))
-                                        rt_res = requests.get(f"https://m.stock.naver.com/api/stock/{t_code}/basic", verify=False, timeout=3).json()
-                                        curr_p = int(str(rt_res.get('closePrice', '0')).replace(',', ''))
-                                        
-                                        if curr_p > 0:
-                                            rtn = ((curr_p - entry_p) / entry_p) * 100
-                                            if needs_t1: row[7] = f"{rtn:.2f}%"
-                                            if needs_t3: row[8] = f"{rtn:.2f}%"
-                                            updated = True
-                                except: pass
-                                
-                            if updated:
-                                bt_sheet.update(range_name="A1", values=bt_data, value_input_option="USER_ENTERED")
-                                print("✅ 아침 백테스트 로그 수익률 자동 갱신 완료!")
-                        except Exception as e:
-                            print(f"⚠️ 백테스트 업데이트 에러: {e}")
-                    if not is_reset_time:
-                        for row in old_data[1:]:
-                            if len(row) > 15:
-                                saved_code = str(row[2]).replace("'", "").strip().zfill(6)
-                                if "대기중" not in str(row[9]):
-                                    existing_data[saved_code] = {
-                                        "briefing": str(row[9]).strip(),
-                                        "target": str(row[14]).strip(),
-                                        "stop": str(row[15]).strip(),
-                                        "raw_row": row  # 💡 나중에 부활시키기 위해 기존 행 전체를 백업!
-                                    }
-                except: 
-                    db_scanner_sheet = doc.add_worksheet(title="DB_스캐너", rows="50", cols="17")
-                    existing_data = {}
-                    now_time = datetime.datetime.now(KST)
-                    is_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50)
-                
+                        if updated:
+                            bt_sheet.update(range_name="A1", values=bt_data, value_input_option="USER_ENTERED")
+                            print("✅ 아침 백테스트 로그 수익률 자동 갱신 완료!")
+                    except Exception as e:
+                        print(f"⚠️ 백테스트 업데이트 에러: {e}")
+
+                # 4. DB 스캐너 최종 전송 준비
                 final_scanner_results = []
-                included_codes = set() # 💡 현재 상위 20개에 포함된 종목들 추적
+                included_codes = set() 
                 
                 for res in scanner_results:
                     check_code = str(res[2]).replace("'", "").strip().zfill(6)
@@ -1101,24 +1119,19 @@ def update_technical_data(df_theme, all_theme_map):
                     
                     if check_code in existing_data:
                         res[9] = existing_data[check_code]["briefing"]
-                        # 💡 기존 시트에 AI 값이 있다면 유지하되, '계산 대기' 상태면 파이썬 계산값을 덮어씀
-                        if "계산" not in str(existing_data[check_code]["target"]):
-                            res[14] = existing_data[check_code]["target"]
-                            res[15] = existing_data[check_code]["stop"]
                     else:
                         res[9] = "AI 브리핑 대기중"
-                        # 💡 res[14]와 res[15]를 "계산 대기"로 덮어쓰지 않고 파이썬 원본 계산값을 그대로 보존!
                         
                     final_scanner_results.append(res)
                     included_codes.add(check_code)
 
-                # 💡 [핵심 해결책] 리포트 발급 VIP 종목이 20위 밖으로 밀려났더라도 스캐너에 강제 소환!
-                # 단, 아침 리셋 시간(is_reset_time)에는 살려내지 않고 깔끔하게 날려버림.
+                # 리포트 발급 VIP 종목이 20위 밖으로 밀려났더라도 스캐너에 강제 소환!
                 if not is_reset_time:
                     for code, data in existing_data.items():
                         if "리포트 발송 완료" in data["briefing"] and code not in included_codes:
                             final_scanner_results.append(data["raw_row"])
                 
+                db_scanner_sheet = doc.worksheet("DB_스캐너")
                 db_scanner_sheet.batch_clear(['A2:Z'])
                 db_scanner_sheet.update(range_name="A2", values=final_scanner_results, value_input_option="USER_ENTERED")
                 print(f"🎯 DB_스캐너 {len(final_scanner_results)}개 전송 (초기화시간:{is_reset_time})")
