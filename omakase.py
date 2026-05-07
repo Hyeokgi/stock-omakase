@@ -880,28 +880,26 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_super_leader = (change_rate >= 0.15) and (trading_value >= 100_000_000_000) and ("대량유입" in program_text or "매수우위" in program_text)
         
         if is_super_leader:
-            # [특권 1] 손절가를 5일선이 아닌 '현재가 대비 -4%'로 타이트하게 강제 조정 (손익비 불량 감점 방지)
+            # [특권 1] 손절가를 5일선이 아닌 '현재가 대비 -4%'로 타이트하게 강제 조정
             stop_loss = int(current_price * 0.96)
             target_price = int(current_price * 1.15) # 목표가는 +15%로 확장
-            
-            # [특권 2] 그동안 두드려 맞은 모든 감점(이격도, 윗꼬리 등)을 초기화하고 강제 복구
             tajeom_multiplier = max(1.2, tajeom_multiplier) 
-            master_tajeom += " 🔥(절대대장/면책)" # 💡 덮어쓰기 금지! 스캐너 필터 유지
-            
+            master_tajeom += " 🔥(절대대장/면책)" 
         else:
-            # 대장주가 아닌 일반 종목에만 손익비 2:1 룰 엄격 적용 (기존 V9.5 로직)
+            # 💡 [V10 핵심 수정] 여기서 점수를 깎고 뱃지를 떼버리던 기계적 짓을 중단합니다!
+            # 어차피 hyeoks_analyst.py (AI)가 다시 계산해줄 것이므로 냅둡니다.
             upside = target_price - current_price
             downside = current_price - stop_loss
             if downside > 0:
                 rr_ratio = upside / downside
+                # 단지 스캐너에 정보용으로만 표시하고, 감점(tajeom_multiplier -= 0.3)은 하지 않음!
                 if rr_ratio < 2.0 and ("스윙" in master_tajeom or "눌림" in master_tajeom):
-                    tajeom_multiplier -= 0.3
-                    master_tajeom += f" ⚠️(손익비 {rr_ratio:.1f}:1 불량)" # 💡 덮어쓰기 금지!
+                    master_tajeom += f" ⚠️(AI 교정 대기중)" 
                 elif rr_ratio >= 2.0:
-                    master_tajeom += f" 🎯(손익비 {rr_ratio:.1f}:1 훌륭)"
+                    master_tajeom += f" 🎯(기초손익비 {rr_ratio:.1f}:1)"
 
         # 7. 최종 스코어 산출 
-        quant_score = int(max(0, base_score * tajeom_multiplier))
+        quant_score = int(max(0, base_score * tajeom_multiplier)))
         # 💡 [버그 픽스] score_display 변수 부활!
         score_display = f"{quant_score}점 ({track_type})"
         
