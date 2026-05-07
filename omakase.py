@@ -443,7 +443,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             date_str = data[0]
             open_p, high_p, low_p, close_p, vol = int(data[1]), int(data[2]), int(data[3]), int(data[4]), int(data[5])
             
-            # 💡 과거 데이터의 비정상 캔들은 스킵하되, '오늘' 캔들은 거래량이 적어도 절대 스킵하지 않음!
             is_today = (date_str == today_str)
             if not is_today:
                 if vol == 0: continue
@@ -462,7 +461,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             
         if len(history) < 2: return None
         
-        # 💡 [핵심 처방] 네이버 모바일 실시간 API로 현재가 강제 동기화 (fchart 딜레이 완벽 무시)
+        # 💡 [핵심 처방] 모바일 실시간 API 강제 동기화 (자정 캔들 복제 버그 완벽 차단)
         try:
             rt_url = f"https://m.stock.naver.com/api/stock/{code}/basic"
             rt_res = session.get(rt_url, verify=False, timeout=3).json()
@@ -472,16 +471,18 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             rt_low = int(rt_res['lowPrice'].replace(',', ''))
             rt_vol = int(rt_res['accumulatedTradingVolume'].replace(',', ''))
             
+            now_h = datetime.datetime.now(KST).hour
+            
+            # 1. fchart의 마지막 캔들이 '오늘'이 맞다면, 실시간 데이터로 덮어쓰기
             if history[-1]['date'] == today_str:
-                # fchart에 오늘 데이터가 있다면 실시간 값으로 덮어쓰기
                 history[-1]['close'] = rt_close
                 history[-1]['open'] = rt_open
                 history[-1]['high'] = rt_high
                 history[-1]['low'] = rt_low
                 history[-1]['volume'] = rt_vol
                 high_prices[-1] = rt_high
-            else:
-                # fchart에 오늘 데이터가 아예 없다면 새로 추가하기
+            # 2. 장중(오전 9시~오후 3시)이고 거래가 발생했는데, fchart가 느려서 오늘 캔들이 없다면 추가하기
+            elif 9 <= now_h <= 15 and rt_vol > 0:
                 history.append({
                     "date": today_str,
                     "open": rt_open,
@@ -491,8 +492,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     "volume": rt_vol
                 })
                 high_prices.append(rt_high)
+            # 3. 밤 12시가 넘었거나 주말이라면 아무것도 하지 않음 (복제 버그 방어!)
         except Exception:
-            pass # 실시간 API 실패 시 기존 fchart 데이터 그대로 사용
+            pass
 
         last_day = history[-1]
         open_price, today_high, today_low, current_price, today_vol = last_day['open'], last_day['high'], last_day['low'], last_day['close'], last_day['volume']
