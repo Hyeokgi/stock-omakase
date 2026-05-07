@@ -428,9 +428,10 @@ def manage_schedule_sheet(schedules):
 
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate):
     try:
-        # 1. fchart 데이터 가져오기 (과거 차트 분석용)
+        # 1. fchart 데이터 가져오기 (과거 차트 및 현재가 동시 수집)
         url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=250&requestType=0"
-        root = ET.fromstring(session.get(url, verify=False, timeout=3).text)
+        res = session.get(url, verify=False, timeout=3)
+        root = ET.fromstring(res.text)
         
         history = []
         high_prices = []
@@ -438,11 +439,15 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         
         for item in items:
             data = item.get("data").split("|")
+            date_str = data[0]
             open_p, high_p, low_p, close_p, vol = int(data[1]), int(data[2]), int(data[3]), int(data[4]), int(data[5])
             
-            if vol == 0 and close_p == 0: continue
+            # 💡 [핵심 픽스] 네이버가 자정 이후 뱉어내는 '거래량 0'의 가짜(Dummy) 캔들 완벽 차단!
+            if vol == 0: 
+                continue
             
             history.append({
+                "date": date_str,
                 "open": open_p,
                 "high": high_p,
                 "low": low_p,
@@ -453,58 +458,21 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             
         if len(history) < 2: return None
 
-        # 기본값 세팅 (에러 방지용)
+        # 2. 확정된 지표 추출 (IP 차단을 유발하던 모바일 API 호출 100% 제거)
+        last_day = history[-1]
+        open_price, today_high, today_low, current_price, today_vol = last_day['open'], last_day['high'], last_day['low'], last_day['close'], last_day['volume']
+        
         df_hist = pd.DataFrame(history)
-        current_price = history[-1]['close']
+        
+        # 💡 [정확한 역산] 가짜 캔들이 제거되었으므로, -2번째 인덱스는 무조건 진짜 '전일 종가'입니다.
         prev_price = int(df_hist['close'].iloc[-2]) if len(df_hist) >= 2 else current_price
+        yest_close = prev_price 
+        
+        # 이제 등락률이 0.00%가 아닌, 진짜 시장의 등락률로 완벽하게 계산됩니다.
         change_rate = (current_price - prev_price) / prev_price if prev_price > 0 else 0.0
         
-        open_price = history[-1]['open']
-        today_high = history[-1]['high']
-        today_low = history[-1]['low']
-        today_vol = history[-1]['volume']
-
-        # 2. 💡 [최종 완벽 처방] 네이버 실시간 API로 모든 현재/전일 데이터를 강제 덮어쓰기!
-        try:
-            rt_url = f"https://m.stock.naver.com/api/stock/{code}/basic"
-            rt_res = session.get(rt_url, verify=False, timeout=3).json()
-            
-            if 'closePrice' in rt_res:
-                rt_close = int(str(rt_res['closePrice']).replace(',', ''))
-                rt_diff = int(str(rt_res.get('compareToPreviousClosePrice', '0')).replace(',', ''))
-                rt_rate = float(str(rt_res.get('fluctuationsRatio', '0')).replace(',', '')) / 100.0
-                rt_open = int(str(rt_res.get('openPrice', '0')).replace(',', ''))
-                rt_high = int(str(rt_res.get('highPrice', '0')).replace(',', ''))
-                rt_low = int(str(rt_res.get('lowPrice', '0')).replace(',', ''))
-                rt_vol = int(str(rt_res.get('accumulatedTradingVolume', '0')).replace(',', ''))
-
-                if rt_close > 0:
-                    current_price = rt_close
-                    prev_price = rt_close - rt_diff  # 💡 전일종가를 API 변동폭으로 역산하여 100% 정확하게 맞춤!
-                    change_rate = rt_rate
-                    open_price = rt_open if rt_open > 0 else open_price
-                    today_high = rt_high if rt_high > 0 else today_high
-                    today_low = rt_low if rt_low > 0 else today_low
-                    today_vol = rt_vol if rt_vol > 0 else today_vol
-
-                    # 이평선(ma5, ma20) 꼬임 방지를 위해 history 마지막 캔들 강제 조작
-                    if history[-1]['close'] == prev_price and rt_diff != 0:
-                        # 오늘 캔들이 아직 생성되지 않았다면 새 캔들을 추가
-                        history.append({"open": open_price, "high": today_high, "low": today_low, "close": current_price, "volume": today_vol})
-                        high_prices.append(today_high)
-                    else:
-                        # 이미 오늘 캔들이 있다면 덮어쓰기
-                        history[-1]['close'] = current_price
-                        history[-1]['volume'] = today_vol
-                        high_prices[-1] = today_high
-                        
-                    df_hist = pd.DataFrame(history)
-        except Exception:
-            pass
-
-        yest_close = prev_price
         yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) >= 2 else today_vol
-        yest_tv = yest_close * yest_vol 
+        yest_tv = prev_price * yest_vol 
 
         trading_value = current_price * today_vol
         high_prices_60 = high_prices[-60:] if len(high_prices) >= 60 else high_prices
