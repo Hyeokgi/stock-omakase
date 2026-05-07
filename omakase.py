@@ -438,14 +438,11 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         
         for item in items:
             data = item.get("data").split("|")
-            date_str = data[0]
             open_p, high_p, low_p, close_p, vol = int(data[1]), int(data[2]), int(data[3]), int(data[4]), int(data[5])
             
-            # 💡 멀쩡한 캔들을 삭제하던 악성 필터링 제거! (거래량 0인 완전 빈 캔들만 스킵)
             if vol == 0 and close_p == 0: continue
             
             history.append({
-                "date": date_str,
                 "open": open_p,
                 "high": high_p,
                 "low": low_p,
@@ -455,68 +452,61 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             high_prices.append(high_p)
             
         if len(history) < 2: return None
+
+        # 기본값 세팅 (에러 방지용)
+        df_hist = pd.DataFrame(history)
+        current_price = history[-1]['close']
+        prev_price = int(df_hist['close'].iloc[-2]) if len(df_hist) >= 2 else current_price
+        change_rate = (current_price - prev_price) / prev_price if prev_price > 0 else 0.0
         
-        # 2. 💡 네이버 실시간 API에서 '현재가'와 '등락률' 직접 뜯어오기!
+        open_price = history[-1]['open']
+        today_high = history[-1]['high']
+        today_low = history[-1]['low']
+        today_vol = history[-1]['volume']
+
+        # 2. 💡 [최종 완벽 처방] 네이버 실시간 API로 모든 현재/전일 데이터를 강제 덮어쓰기!
         try:
             rt_url = f"https://m.stock.naver.com/api/stock/{code}/basic"
             rt_res = session.get(rt_url, verify=False, timeout=3).json()
             
-            rt_close = int(str(rt_res.get('closePrice', '0')).replace(',', ''))
-            rt_open = int(str(rt_res.get('openPrice', '0')).replace(',', ''))
-            rt_high = int(str(rt_res.get('highPrice', '0')).replace(',', ''))
-            rt_low = int(str(rt_res.get('lowPrice', '0')).replace(',', ''))
-            rt_vol = int(str(rt_res.get('accumulatedTradingVolume', '0')).replace(',', ''))
-            
-            rt_rate_str = str(rt_res.get('fluctuationsRatio', '0')).replace(',', '')
-            rt_rate = float(rt_rate_str) / 100.0 
-            
-            rt_date_raw = rt_res.get('localTradedAt', '') 
-            
-            if rt_close > 0 and len(rt_date_raw) >= 10:
-                rt_date = rt_date_raw[:10].replace('-', '') 
-                
-                if history[-1]['date'] == rt_date:
-                    history[-1]['close'] = rt_close
-                    if rt_open > 0: history[-1]['open'] = rt_open
-                    if rt_high > 0: history[-1]['high'] = rt_high
-                    if rt_low > 0: history[-1]['low'] = rt_low
-                    if rt_vol > 0: history[-1]['volume'] = rt_vol
-                    high_prices[-1] = history[-1]['high']
-                elif rt_date > history[-1]['date']:
-                    history.append({
-                        "date": rt_date,
-                        "open": rt_open,
-                        "high": rt_high,
-                        "low": rt_low,
-                        "close": rt_close,
-                        "volume": rt_vol
-                    })
-                    high_prices.append(rt_high)
+            if 'closePrice' in rt_res:
+                rt_close = int(str(rt_res['closePrice']).replace(',', ''))
+                rt_diff = int(str(rt_res.get('compareToPreviousClosePrice', '0')).replace(',', ''))
+                rt_rate = float(str(rt_res.get('fluctuationsRatio', '0')).replace(',', '')) / 100.0
+                rt_open = int(str(rt_res.get('openPrice', '0')).replace(',', ''))
+                rt_high = int(str(rt_res.get('highPrice', '0')).replace(',', ''))
+                rt_low = int(str(rt_res.get('lowPrice', '0')).replace(',', ''))
+                rt_vol = int(str(rt_res.get('accumulatedTradingVolume', '0')).replace(',', ''))
+
+                if rt_close > 0:
+                    current_price = rt_close
+                    prev_price = rt_close - rt_diff  # 💡 전일종가를 API 변동폭으로 역산하여 100% 정확하게 맞춤!
+                    change_rate = rt_rate
+                    open_price = rt_open if rt_open > 0 else open_price
+                    today_high = rt_high if rt_high > 0 else today_high
+                    today_low = rt_low if rt_low > 0 else today_low
+                    today_vol = rt_vol if rt_vol > 0 else today_vol
+
+                    # 이평선(ma5, ma20) 꼬임 방지를 위해 history 마지막 캔들 강제 조작
+                    if history[-1]['close'] == prev_price and rt_diff != 0:
+                        # 오늘 캔들이 아직 생성되지 않았다면 새 캔들을 추가
+                        history.append({"open": open_price, "high": today_high, "low": today_low, "close": current_price, "volume": today_vol})
+                        high_prices.append(today_high)
+                    else:
+                        # 이미 오늘 캔들이 있다면 덮어쓰기
+                        history[-1]['close'] = current_price
+                        history[-1]['volume'] = today_vol
+                        high_prices[-1] = today_high
+                        
+                    df_hist = pd.DataFrame(history)
         except Exception:
             pass
 
-        # 3. 확정된 지표 추출
-        last_day = history[-1]
-        open_price, today_high, today_low, current_price, today_vol = last_day['open'], last_day['high'], last_day['low'], last_day['close'], last_day['volume']
-        
-        df_hist = pd.DataFrame(history)
-        
-        # 💡 [치명적 오류 복구] 아래 코드에서 사용하는 prev_price 변수명 부활!!
-        prev_price = int(df_hist['close'].iloc[-2]) if len(df_hist) >= 2 else current_price
-        yest_close = prev_price  # 혹시 모를 충돌을 막기 위해 yest_close도 같이 선언
-        
-        # API의 실시간 등락률이 있다면 최우선 적용! 없으면 수동 계산
-        change_rate = (current_price - prev_price) / prev_price if prev_price > 0 else 0.0
-        try:
-            if 'rt_rate' in locals() and history[-1]['date'] == rt_date:
-                change_rate = rt_rate
-        except: pass
-        
+        yest_close = prev_price
         yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) >= 2 else today_vol
-        yest_tv = prev_price * yest_vol 
+        yest_tv = yest_close * yest_vol 
 
         trading_value = current_price * today_vol
- 
         high_prices_60 = high_prices[-60:] if len(high_prices) >= 60 else high_prices
         
         high_60d_calc = max(high_prices_60[:-1]) if len(high_prices_60) > 1 else today_high
