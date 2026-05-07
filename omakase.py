@@ -845,6 +845,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 master_tajeom += " ⚠️(대시세 고점)"
 
         # 6. 오후장 휩쏘 방지 (오후 돌파는 계수 삭감)
+        # 💡 [버그 픽스] is_after_1030 변수 부활!
+        now_kst_tajeom = datetime.datetime.now(KST)
+        is_after_1030 = (now_kst_tajeom.hour * 100 + now_kst_tajeom.minute >= 1030)
+        
         if "돌파" in master_tajeom and is_after_1030 and not is_overnight_candidate:
             tajeom_multiplier -= 0.3 
 
@@ -859,7 +863,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if stop_loss >= current_price: stop_loss = int(current_price * 0.96)
         if target_price <= current_price: target_price = int(current_price * 1.05)
 
-        # 💡 [수정 3] 손익비(Risk/Reward) 필터링 (SK이노베이션 오류 방지)
+        # 💡 [수정 3] 손익비(Risk/Reward) 필터링
         upside = target_price - current_price
         downside = current_price - stop_loss
         
@@ -870,6 +874,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         # 7. 최종 스코어 산출 
         quant_score = int(max(0, base_score * tajeom_multiplier))
+        # 💡 [버그 픽스] score_display 변수 부활!
+        score_display = f"{quant_score}점 ({track_type})"
         
         # 8. 시장 해지 프리미엄 추가 (하락장 방어)
         is_hedge_theme = any(kw in my_theme_name for kw in ['방산', '방위산업', '해운', '조선', '석유', '가스', '전쟁', '사료', '원자재', '품절주', '식품'])
