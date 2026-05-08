@@ -24,6 +24,33 @@ if 2 <= now_kst_check.hour < 7:
     sys.exit(0)
 
 # ==========================================
+# 💡 [V11.2] 시트 자동 정렬 및 청소 함수 (오류 방지)
+# ==========================================
+def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
+    try:
+        sheet = doc.worksheet(sheet_name)
+        data = sheet.get_all_values()
+        if len(data) <= 2: return
+        
+        # 빈 줄 제어 및 날짜 파싱
+        rows = [r for r in data[1:] if len(r) > sort_col_idx and str(r[sort_col_idx]).strip()]
+        
+        def parse_date(val):
+            val = str(val).strip()
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y. %m. %d"):
+                try: return datetime.datetime.strptime(val, fmt)
+                except: continue
+            return val
+            
+        rows.sort(key=lambda x: parse_date(x[sort_col_idx]), reverse=True)
+        
+        sheet.batch_clear(['A2:Z'])
+        sheet.update(range_name="A2", values=rows, value_input_option="USER_ENTERED")
+        print(f"✅ [{sheet_name}] 최신순 정렬 및 청소 완료")
+    except Exception as e:
+        print(f"⚠️ [{sheet_name}] 정렬 실패: {e}")
+
+# ==========================================
 # 💡 한국투자증권 API 인증 엔진
 # ==========================================
 KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
@@ -291,7 +318,7 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
     except Exception as e: 
         print(f"❌ 데이터 업데이트 에러: {e}")
 
-# 💡 [업데이트] 네이버 캘린더 파싱 및 필터링 함수 (서술형 뉴스/전망 기사 차단)
+# [업데이트] 네이버 캘린더 파싱 및 필터링 함수 (서술형 뉴스/전망 기사 차단)
 def get_market_schedule():
     """네이버 금융 오늘의 증시 일정 수집 (순수 일정만 추출)"""
     try:
@@ -315,7 +342,7 @@ def get_market_schedule():
                 # 1. 긍정 키워드: 반드시 포함되어야 하는 '일정' 관련 단어
                 include_kws = ['실적', '발표', '만기', '배당', '금통위', 'FOMC', '고용', '학회', '임상', '상장', '개막', '출시']
                 
-                # 2. 💡 [핵심] 부정 키워드: 기획 기사, 주간 전망, 서술형 뉴스를 걸러내는 단어
+                # 2. [핵심] 부정 키워드: 기획 기사, 주간 전망, 서술형 뉴스를 걸러내는 단어
                 exclude_kws = [
                     '주주총회', '주총', '공모', '청약', # 기존 제외
                     '전망', '주목', '대기', '반환점', '서프라이즈', '쇼크', 
@@ -336,7 +363,7 @@ def get_market_schedule():
         print(f"❌ 일정 수집 에러: {e}")
         return []
 
-# 💡 [업데이트] 주요일정 시트 자동 유지보수 함수 (스마트 포맷팅 + 과거 숨김 + 3개월 삭제)
+# [업데이트] 주요일정 시트 자동 유지보수 함수 (스마트 포맷팅 + 과거 숨김 + 3개월 삭제)
 def manage_schedule_sheet(schedules):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -366,7 +393,7 @@ def manage_schedule_sheet(schedules):
             except ValueError:
                 valid_rows.append(row)
 
-        # 2. 💡 [핵심] 시트 병합 시 띄어쓰기 무시하고 중복 2차 철통 방어
+        # 2. [핵심] 시트 병합 시 띄어쓰기 무시하고 중복 2차 철통 방어
         existing_titles_clean = [str(r[1]).replace(" ", "").strip() for r in valid_rows if len(r) > 1 and r[0] == today.strftime('%Y-%m-%d')]
         
         for sch in schedules:
@@ -442,7 +469,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             date_str = data[0]
             open_p, high_p, low_p, close_p, vol = int(data[1]), int(data[2]), int(data[3]), int(data[4]), int(data[5])
             
-            # 💡 [핵심 픽스] 네이버가 자정 이후 뱉어내는 '거래량 0'의 가짜(Dummy) 캔들 완벽 차단!
+            # [핵심 픽스] 네이버가 자정 이후 뱉어내는 '거래량 0'의 가짜(Dummy) 캔들 완벽 차단!
             if vol == 0: 
                 continue
             
@@ -464,7 +491,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         
         df_hist = pd.DataFrame(history)
         
-        # 💡 [정확한 역산] 가짜 캔들이 제거되었으므로, -2번째 인덱스는 무조건 진짜 '전일 종가'입니다.
+        # [정확한 역산] 가짜 캔들이 제거되었으므로, -2번째 인덱스는 무조건 진짜 '전일 종가'입니다.
         prev_price = int(df_hist['close'].iloc[-2]) if len(df_hist) >= 2 else current_price
         yest_close = prev_price 
         
@@ -487,7 +514,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         surge_rate_20d = (current_price - min_20d) / min_20d if min_20d > 0 else 0
         is_high_altitude = surge_rate_20d >= 0.50 
         
-        # 💡 250일(1년) 장기 대시세 피로도 체크 로직
+        # 250일(1년) 장기 대시세 피로도 체크 로직
         min_250d = int(df_hist['close'].min()) 
         surge_rate_250d = (current_price - min_250d) / min_250d if min_250d > 0 else 0
         is_mega_trend_exhausted = surge_rate_250d >= 2.0 
@@ -726,7 +753,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         if int(df_hist['volume'].iloc[j]) > anchor_vol * 0.45: is_holding = False; break
                     if is_holding: flag_days = d; break
 
-        # 💡 [HYEOKS 리빌딩 v3] '전고점 돌파 후 거래급감 눌림목' 로직 적용 (스텔스 대체)
+        # [HYEOKS 리빌딩 v3] '전고점 돌파 후 거래급감 눌림목' 로직 적용 (스텔스 대체)
         is_recent_breakout = False
         breakout_days_ago = 0
         for d in range(1, 6): # 최근 5일 이내에 돌파했는지 확인
@@ -798,7 +825,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if acc_i_buy_eok >= 50: base_score += 15 
         elif acc_i_buy_eok >= 10: base_score += 5
 
-        # 💡 [V9 패치] 진짜 대장주(선발주) 프리미엄 점수 산출
+        # [V9 패치] 진짜 대장주(선발주) 프리미엄 점수 산출
         high_retention = current_price / today_high if today_high > 0 else 0
         if high_retention >= 0.97: 
             base_score += 30  # 고가 대비 -3% 이내 마감 (최상위 대장 유지력)
@@ -844,26 +871,26 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         # 5. 차트 훼손 및 리스크에 따른 감점 
         if not is_fatal_drop:
             if is_long_shadow or is_huge_gap:
-                master_tajeom += " ⚠️(윗꼬리/이격)" # 💡 덮어쓰기 금지! 경고만 추가
-                tajeom_multiplier -= 0.3 # 💡 페널티 완화
+                master_tajeom += " ⚠️(윗꼬리/이격)" # 덮어쓰기 금지! 경고만 추가
+                tajeom_multiplier -= 0.3 # 페널티 완화
             
             if is_chronic_loss: tajeom_multiplier -= 0.3
             if is_high_altitude: tajeom_multiplier -= 0.2
             
-            # 💡 [수정 1] 시가총액 10조 이상 우량주(삼성전자 등)는 대시세 고점 페널티 면제
+            # [수정 1] 시가총액 10조 이상 우량주(삼성전자 등)는 대시세 고점 페널티 면제
             if is_mega_trend_exhausted and market_cap < 100000:
                 tajeom_multiplier -= 0.3
                 master_tajeom += " ⚠️(대시세 고점)"
 
         # 6. 오후장 휩쏘 방지 (오후 돌파는 계수 삭감)
-        # 💡 [버그 픽스] is_after_1030 변수 부활!
+        # [버그 픽스] is_after_1030 변수 부활!
         now_kst_tajeom = datetime.datetime.now(KST)
         is_after_1030 = (now_kst_tajeom.hour * 100 + now_kst_tajeom.minute >= 1030)
         
         if "돌파" in master_tajeom and is_after_1030 and not is_overnight_candidate:
             tajeom_multiplier -= 0.3 
 
-        # 💡 [수정 2] 고정 5%/-3% 폐기 -> 이평선 및 전고점 기반 다이내믹 가격 설정
+        # [수정 2] 고정 5%/-3% 폐기 -> 이평선 및 전고점 기반 다이내믹 가격 설정
         if is_breakout_track: # 돌파 및 종베 타점
             target_price = int(current_price * 1.10) # 위가 열려있으므로 +10% 기대
             stop_loss = int(max(ma5, today_low)) # 5일선 혹은 당일 저가 이탈 시 칼손절
@@ -874,8 +901,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if stop_loss >= current_price: stop_loss = int(current_price * 0.96)
         if target_price <= current_price: target_price = int(current_price * 1.05)
 
-        # 👇👇👇 V9.6: 진짜 대장주를 살리기 위한 '절대 면책 특권' 로직 👇👇👇
-        
         # 👇👇👇 V11: 기계적 손익비 페널티 완전 삭제 (AI 전권 위임) 👇👇👇
         
         # 1. 절대 대장주 조건: 당일 15% 이상 급등 & 거래대금 1000억 이상 & 수급 유입
@@ -887,7 +912,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             tajeom_multiplier = max(1.2, tajeom_multiplier) 
             master_tajeom += " 🔥(절대대장/면책)" 
             
-        # 💡 기존에 있던 else: (손익비 2.0 미만 감점 로직)을 통째로 삭제했습니다!
+        # 기존에 있던 else: (손익비 2.0 미만 감점 로직)을 통째로 삭제했습니다!
         # 이제 기계는 얌전히 종목만 찾고, 실전 타점은 AI가 결정합니다.
         # 👆👆👆 코드 교체 완료 👆👆👆
 
@@ -910,13 +935,21 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, my_theme_name,
             program_text,
             int(display_high_250d), f"{int(acc_i_buy_eok)}억",
-            target_price, stop_loss  # ⬅️ 이 두 개가 인덱스 23, 24번으로 새롭게 추가됨
+            "AI 데이터 계산중", "AI 데이터 계산중"
         ]
     except Exception as e:
         return None
 
 def update_technical_data(df_theme, all_theme_map):
     try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        gc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope))
+        doc = gc.open_by_url(SHEET_URL)
+        
+        # [V11.2] 접속로그 및 DB_중장기 최신순 정렬 강제 집행
+        cleanup_and_reorder(doc, "접속로그", 1) # 2번째 열(시간) 기준
+        cleanup_and_reorder(doc, "DB_중장기", 0) # 1번째 열(날짜) 기준
+
         print("▶️ 기술적 지표 초고속 멀티스레딩 판독 시작...")
         is_warning_market = check_warning_market()
         if is_warning_market: print("⚠️ 코스닥 20일선 이탈(하락장) 감지!")
@@ -925,8 +958,6 @@ def update_technical_data(df_theme, all_theme_map):
         if kospi_rate <= -0.5:
             print(f"📊 코스피 실시간 등락률: {kospi_rate:.2f}% (해지 프리미엄 발동 대기)")
         
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        doc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)).open_by_url(SHEET_URL)
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
         target_names = set()
         
@@ -981,6 +1012,7 @@ def update_technical_data(df_theme, all_theme_map):
         results.sort(key=lambda x: x[18], reverse=True) 
         
         if results:
+            # 💡 [V11 핵심] DB_스캐너에서 기존 AI 메모리 추출
             try: 
                 db_scanner_sheet = doc.worksheet("DB_스캐너")
                 existing_data = {}
@@ -997,6 +1029,7 @@ def update_technical_data(df_theme, all_theme_map):
                             target = str(row[14]).strip()
                             stop = str(row[15]).strip()
                             
+                            # AI가 분석한 데이터가 있다면 백업 메모리에 영구 저장!
                             if "대기중" not in briefing and "계산중" not in target and "계산 대기" not in target:
                                 existing_data[saved_code] = {
                                     "briefing": briefing,
@@ -1004,13 +1037,13 @@ def update_technical_data(df_theme, all_theme_map):
                                     "stop": stop,
                                     "raw_row": row
                                 }
-            except Exception as e: 
-                print(f"DB_스캐너 로드 에러: {e}")
+            except: 
                 doc.add_worksheet(title="DB_스캐너", rows="50", cols="17")
                 existing_data = {}
                 now_time = datetime.datetime.now(KST)
                 is_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50)
             
+            # 💡 주가데이터_보조 덮어쓰기 (기계적 값 날리고 AI 값으로 락인)
             for r in results:
                 c_code = str(r[1]).replace("'", "").strip().zfill(6)
                 if c_code in existing_data:
@@ -1024,6 +1057,7 @@ def update_technical_data(df_theme, all_theme_map):
             helper_sheet.update(range_name="A2", values=results, value_input_option="USER_ENTERED")
             print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 업데이트 완료)")
             
+            # 💡 DB_스캐너 전송용 데이터 조립 (기계적 타점 배제)
             scanner_keywords = ["[종베]", "[스윙/눌림]", "[스윙/추세]", "[당일/단타]", "[관심/수급]"]
             
             scanner_results = []
@@ -1044,10 +1078,12 @@ def update_technical_data(df_theme, all_theme_map):
                     고가_52주 = r[21]
                     기관누적수급 = r[22]
                     
+                    # 💡 무조건 'AI 데이터 계산중'으로 초기화 (기계적 값 차단)
                     ai_briefing = "AI 브리핑 대기중"
                     ai_target = "AI 데이터 계산중"
                     ai_stop = "AI 데이터 계산중"
                     
+                    # AI 메모리가 있다면 불러와서 채움
                     if 종목코드 in existing_data:
                         ai_briefing = existing_data[종목코드]["briefing"]
                         ai_target = existing_data[종목코드]["target"]
@@ -1065,18 +1101,22 @@ def update_technical_data(df_theme, all_theme_map):
                 top_20_results = scanner_results[:MAX_DISPLAY_COUNT]
                 top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results}
 
+                # 💡 [V11 핵심] 20위 밖으로 밀려났더라도 AI 메모리가 있는 종목은 구출해서 스캐너에 유지!
                 if not is_reset_time:
+                    # 1) 현재 150위 안에 있는데 20위 밖으로 밀린 종목들 (최신 현재가 반영됨)
                     for res in scanner_results:
                         c_code = str(res[2]).replace("'", "").strip().zfill(6)
                         if c_code not in top_20_codes and c_code in existing_data:
                             top_20_results.append(res)
                             top_20_codes.add(c_code)
                             
+                    # 2) 150위 밖으로 아예 사라졌지만 '리포트 발송 완료'인 VIP 종목들 (과거 데이터로 보존)
                     for c_code, data in existing_data.items():
                         if "리포트 발송 완료" in data["briefing"] and c_code not in top_20_codes:
                             top_20_results.append(data["raw_row"])
                             top_20_codes.add(c_code)
 
+                # 3. 백테스트 자동 갱신 로직 (아침 리셋 시간에만 동작)
                 if is_reset_time:
                     try:
                         bt_sheet = doc.worksheet("백테스트_로그")
