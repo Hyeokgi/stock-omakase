@@ -534,9 +534,14 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             kalman_turned_green = (curr_kalman > prev_kalman) and (prev_kalman <= pprev_kalman)
             kalman_turned_red = (curr_kalman < prev_kalman) and (prev_kalman >= pprev_kalman)
             
-            # 4. ATR 파동 카운팅 (테스타 매매법 적용)
-            # 최근 20일 최저가를 추세 시작점(0)으로 간주
-            trend_start_price = int(df_hist['close'].tail(20).min()) if len(df_hist) >= 20 else int(df_hist['close'].min())
+            # 4. ATR 파동 카운팅 (테스타 매매법 완벽 이식)
+            # 기존 '20일 최저가' 룰을 버리고, '칼만이평이 초록색으로 턴한 시점'을 추세 시작가로 추적
+            trend_start_price = current_price
+            for i in range(len(kalman_ma)-1, 1, -1):
+                if kalman_ma[i] <= kalman_ma[i-1]: # 과거로 거슬러 올라가 하락(빨강)이었던 지점을 만나면
+                    trend_start_price = prices[i]  # 그곳이 바로 이번 상승 추세의 시작점!
+                    break
+            
             price_climb = current_price - trend_start_price
             
             secret_tajeom = ""
