@@ -500,7 +500,68 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         
         yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) >= 2 else today_vol
         yest_tv = prev_price * yest_vol 
-
+# =====================================================================
+        # 🚀 [시크릿 이평 엔진] 칼만 필터(Kalman Filter) & ATR 파동 카운팅
+        # =====================================================================
+        try:
+            # 1. ATR(Average True Range) 계산 (최근 14일 변동성 기준)
+            high_low = df_hist['high'] - df_hist['low']
+            high_close = (df_hist['high'] - df_hist['close'].shift()).abs()
+            low_close = (df_hist['low'] - df_hist['close'].shift()).abs()
+            tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+            atr_14 = tr.rolling(14).mean().iloc[-1]
+            if pd.isna(atr_14) or atr_14 == 0: atr_14 = current_price * 0.03 # 예외 처리
+            
+            # 2. 1D 칼만 필터(Kalman Filter) 가격 평활화 (노이즈 제거)
+            prices = df_hist['close'].values
+            kalman_ma = []
+            x_hat = prices[0]
+            p = 1.0
+            Q, R = 1e-4, 1e-2  # 노이즈 필터링 계수
+            for z in prices:
+                p_hat = p + Q
+                K = p_hat / (p_hat + R)
+                x_hat = x_hat + K * (z - x_hat)
+                p = (1 - K) * p_hat
+                kalman_ma.append(x_hat)
+            
+            curr_kalman = kalman_ma[-1]
+            prev_kalman = kalman_ma[-2] if len(kalman_ma) > 1 else curr_kalman
+            pprev_kalman = kalman_ma[-3] if len(kalman_ma) > 2 else prev_kalman
+            
+            # 3. 칼만 추세 판독 및 시크릿 신호 생성
+            is_kalman_uptrend = curr_kalman > prev_kalman
+            kalman_turned_green = (curr_kalman > prev_kalman) and (prev_kalman <= pprev_kalman)
+            kalman_turned_red = (curr_kalman < prev_kalman) and (prev_kalman >= pprev_kalman)
+            
+            # 4. ATR 파동 카운팅 (테스타 매매법 적용)
+            # 최근 20일 최저가를 추세 시작점(0)으로 간주
+            trend_start_price = int(df_hist['close'].tail(20).min()) if len(df_hist) >= 20 else int(df_hist['close'].min())
+            price_climb = current_price - trend_start_price
+            
+            secret_tajeom = ""
+            if kalman_turned_green:
+                secret_tajeom = "🟢 [시크릿] 추세 전환 (1차 매수 타점)"
+            elif is_kalman_uptrend:
+                if price_climb >= atr_14 * 3.0:
+                    secret_tajeom = "🔴 [시크릿] 3차 파동 도달 (전량 익절)"
+                elif price_climb >= atr_14 * 2.0:
+                    secret_tajeom = "🟡 [시크릿] 2차 파동 진행 (본절 스탑 상향)"
+                elif price_climb >= atr_14 * 1.0:
+                    secret_tajeom = "🟢 [시크릿] 1차 파동 진행 (추세 홀딩)"
+                else:
+                    secret_tajeom = "🟢 [시크릿] 상승 추세 유지"
+            elif kalman_turned_red:
+                secret_tajeom = "📉 [시크릿] 하락 추세 전환 (전량 매도)"
+            else:
+                secret_tajeom = "📉 [시크릿] 노이즈 및 하락장 (관망)"
+                
+        except Exception as e:
+            print(f"Kalman Engine Error: {e}")
+            atr_14 = current_price * 0.03
+            is_kalman_uptrend = False
+            secret_tajeom = ""
+        # =====================================================================
         trading_value = current_price * today_vol
         high_prices_60 = high_prices[-60:] if len(high_prices) >= 60 else high_prices
         
@@ -890,16 +951,24 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if "돌파" in master_tajeom and is_after_1030 and not is_overnight_candidate:
             tajeom_multiplier -= 0.3 
 
-        # [수정 2] 고정 5%/-3% 폐기 -> 이평선 및 전고점 기반 다이내믹 가격 설정
-        if is_breakout_track: # 돌파 및 종베 타점
-            target_price = int(current_price * 1.10) # 위가 열려있으므로 +10% 기대
-            stop_loss = int(max(ma5, today_low)) # 5일선 혹은 당일 저가 이탈 시 칼손절
-        else: # 스윙 및 눌림목 타점
-            target_price = int(display_high_60d) if display_high_60d > current_price else int(current_price * 1.10) # 이전 고점 탈환 목표
-            stop_loss = int(min(ma20, current_price * 0.95)) # 20일선 생명선 이탈 시 손절
+        # 💡 [시크릿 이평 룰 적용] 고정 비율(5%/-3%)을 버리고 종목별 ATR(변동성) 맞춤형 가격 설정
+        if is_kalman_uptrend:
+            # 추세가 살아있으면 여유있게 위로 2ATR 기대 수익, 아래로 1ATR을 손절로 잡음
+            target_price = int(current_price + (atr_14 * 2.0)) 
+            stop_loss = int(current_price - (atr_14 * 1.0))
             
-        if stop_loss >= current_price: stop_loss = int(current_price * 0.96)
-        if target_price <= current_price: target_price = int(current_price * 1.05)
+            # [테스타의 무적 로직] 2차 파동 이상이면 손절가를 '추세 시작점(또는 매수가)'으로 강제 상향!
+            if "2차" in secret_tajeom or "3차" in secret_tajeom:
+                stop_loss = int(trend_start_price) 
+        else:
+            # 하락 추세에서는 20일선 등 타이트한 손절 유지
+            target_price = int(display_high_60d) if display_high_60d > current_price else int(current_price * 1.05)
+            stop_loss = int(min(ma20, current_price * 0.95))
+            if stop_loss >= current_price: stop_loss = int(current_price * 0.96)
+
+        # 💡 마스터 타점 텍스트에 시크릿 신호 결합 (스캐너 가독성 극대화)
+        if secret_tajeom and "관망" not in master_tajeom and "매수금지" not in master_tajeom:
+            master_tajeom = f"{master_tajeom} | {secret_tajeom}"
 
         # 👇👇👇 V11: 기계적 손익비 페널티 완전 삭제 (AI 전권 위임) 👇👇👇
         
