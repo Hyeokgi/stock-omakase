@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os, re, time, base64, warnings, datetime, requests, markdown, pdfkit, gspread, PIL.Image 
 from bs4 import BeautifulSoup  
 from oauth2client.service_account import ServiceAccountCredentials
@@ -50,10 +51,8 @@ def safe_generate_content(contents, is_fast=False):
     raise Exception("❌ 구글 서버 할당량 초과 또는 무응답으로 최종 실패")
 
 def parse_ai_json(text):
-    """제미나이가 반환한 JSON 문자열을 딕셔너리로 안전하게 파싱합니다."""
     try:
-        # 💡 마크다운 복사 오류 방지를 위한 안전한 문자열 치환
-        clean_text = text.replace('`'*3 + 'json', '').replace('`'*3, '').strip()
+        clean_text = text.replace('```json', '').replace('```', '').strip()
         return json.loads(clean_text)
     except Exception as e:
         print(f"JSON 파싱 에러 (정규식 대체 시도): {e}")
@@ -88,6 +87,31 @@ def get_vip_deep_dive_data(code, kis_token):
         return f"PER: {out.get('per', 'N/A')} / PBR: {out.get('pbr', 'N/A')}"
     except: return "데이터 수집 실패"
 
+# 💡 [V11.2] 접속로그 및 DB_중장기 정렬용 함수 추가
+def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
+    try:
+        sheet = doc.worksheet(sheet_name)
+        data = sheet.get_all_values()
+        if len(data) <= 2: return
+        
+        header = data[0]
+        rows = [r for r in data[1:] if len(r) > sort_col_idx and str(r[sort_col_idx]).strip()]
+        
+        def parse_date(val):
+            val = str(val).strip()
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y. %m. %d"):
+                try: return datetime.datetime.strptime(val, fmt)
+                except: continue
+            return val
+            
+        rows.sort(key=lambda x: parse_date(x[sort_col_idx]), reverse=True)
+        
+        sheet.batch_clear(['A2:Z'])
+        sheet.update(range_name="A2", values=[header] + rows, value_input_option="USER_ENTERED")
+        print(f"✅ [{sheet_name}] 최신순 정렬 및 청소 완료")
+    except Exception as e:
+        print(f"⚠️ [{sheet_name}] 정렬 실패: {e}")
+
 # ==========================================
 # 2. 구글 시트 연결 및 모드별 작동
 # ==========================================
@@ -99,6 +123,10 @@ try:
     db_sheet = doc.worksheet("DB_스캐너")
     db_rows = db_sheet.get_all_values()
     
+    # 💡 [V11.2] 시작 전 접속로그, DB_중장기 시트 정렬
+    cleanup_and_reorder(doc, "접속로그", 1)
+    cleanup_and_reorder(doc, "DB_중장기", 0)
+
     KIS_TOKEN = ""
     try:
         for row in doc.worksheet("⚙️설정").get_all_values():
@@ -113,8 +141,8 @@ try:
         for i in range(2, len(db_rows) + 1):
             if len(db_rows[i-1]) > 9:
                 db_sheet.update_cell(i, 10, "AI 브리핑 대기중")
-                db_sheet.update_cell(i, 15, "계산 대기")  # O열 (목표가)
-                db_sheet.update_cell(i, 16, "계산 대기")  # P열 (손절가)
+                db_sheet.update_cell(i, 15, "AI 데이터 계산중")  # O열 (목표가)
+                db_sheet.update_cell(i, 16, "AI 데이터 계산중")  # P열 (손절가)
         print("✅ 초기화 완료. 프로그램 종료.")
         exit(0)
 
@@ -122,7 +150,6 @@ try:
     if current_hour != 15:
         print(f"▶ [{current_hour}시 모드] 메인 리포트 시간이 아니므로, 대기 중인 종목의 브리핑 및 가격 산출을 진행합니다.")
         for i, row in enumerate(db_rows[1:], start=2):
-            # 💡 '대기중' 조건 삭제 -> '리포트 발송 완료'가 아닌 모든 종목 매번 새로 갱신!
             if len(row) > 9 and "리포트 발송 완료" not in str(row[9]):
                 stock_name = row[0] if len(row) > 0 else "알수없음"
                 print(f" - [{stock_name}] AI 전략 및 가격 산출 중...")
@@ -136,11 +163,9 @@ try:
                 ■ 당일 수급: {row[11] if len(row) > 11 else ''}
                 ■ 52주 고가: {row[12] if len(row) > 12 else ''}
                 ■ 테마: {row[5] if len(row) > 5 else ''}
-                ■ 파이썬 1차 계산 목표가: {row[14] if len(row) > 14 else ''}
-                ■ 파이썬 1차 계산 손절가: {row[15] if len(row) > 15 else ''}
                 
                 💡 [시간대별 실전 지침 및 AI 자율 가격 설정 룰 (현재 KST 시간: {current_hour}시)]
-                - [핵심: AI 전권 부여] 위 '파이썬 1차 계산 가격'은 단순 이평선 기반의 멍청한 수치이므로 철저히 무시해도 좋습니다. 당신은 대한민국 최고 수익률을 내는 실전 트레이더로서, 차트 매물대와 변동성을 직관적으로 파악해 최종 "target_price"와 "stop_loss"를 **독자적이고 공격적으로** 결정하십시오.
+                - [핵심: AI 전권 부여] 당신은 대한민국 최고 수익률을 내는 실전 트레이더로서, 차트 매물대와 변동성을 직관적으로 파악해 최종 "target_price"와 "stop_loss"를 독자적이고 공격적으로 결정하십시오.
                   1) 손절가: 잔파동에 털리지 않도록 현재가 대비 넉넉하게(-5% ~ -8% 수준의 주요 지지선) 잡으십시오. 
                   2) 목표가: 반드시 손절폭의 최소 2배 이상 수익이 나는 자리(+10% ~ +20% 이상의 뻥 뚫린 저항선)로 설정하십시오. 
                 - [시간 룰] 11시~13시(마의 구간): 가짜 돌파 확률이 높으므로 "오후장까지 관망하며 지지선 확인" 권고.
@@ -235,8 +260,7 @@ try:
     """
     
     result_text = safe_generate_content(pick_prompt).text
-    # 💡 마크다운 복사 오류 방지를 위한 안전한 문자열 치환
-    cleaned_text = result_text.replace('`'*3 + 'json', '').replace('`'*3, '').strip()
+    cleaned_text = result_text.replace('```json', '').replace('```', '').strip()
     picks_json = json.loads(cleaned_text)
     
     code_short = picks_json.get('short_term_code', '')
@@ -270,6 +294,7 @@ try:
         news = get_target_stock_news(best_cand['code'])
         sub_title_prefix = "매물대 진공 구간 돌파 및 단기 슈팅 공략" if st_type == "short" else "에너지 응축 후 플랫폼 탈출 스윙 전략"
 
+        # 💡 [에러 원천 차단] 💡 이모지를 [HYEOKS 핵심 모멘텀 요약] 텍스트로 치환했습니다.
         detail_prompt = f"""귀하는 대한민국 최상위 1% 실전 트레이더들을 위한 HYEOKS 리서치 센터의 수석 퀀트 애널리스트입니다.
 제공된 일봉 차트(Vision)와 데이터를 바탕으로 심층 리포트를 작성하십시오. 한 리포트 내에서 말투가 바뀌지 않도록 정중한 존댓말(하십시오체)로 통일하십시오.
 
@@ -281,11 +306,10 @@ try:
 
 [HYEOKS 딥리딩 절대 지침 - 명심하십시오]
 1. 분량 및 깊이: 귀하의 전문적인 통찰력을 발휘하여 충분히 길고 논리적으로 1.5~2페이지 분량이 나오도록 상세히 서술하십시오. 
-2. 🚨 [할루시네이션 및 가격 기준 엄수]: 반드시 위 [입력 데이터]에 제공된 ★확정 현재가({best_cand['curr_p']}원)를 기준으로 지지/저항을 계산하십시오.
-3. 🚨 [전고점 및 윗꼬리 판독 주의 (핵심)]: 당일 차트에서 길게 달린 '윗꼬리(당일 고점)'를 과거부터 이어져 온 구조적인 '전고점(저항선)'으로 착각하지 마십시오! 당일의 윗꼬리는 단기 차익 실현이나 악성 매물 소화의 흔적일 뿐입니다. 목표가(저항선)를 설정할 때는 단순히 뾰족한 당일 고점이 아니라, 과거 캔들(몸통)들이 무겁게 밀집되어 있는 진짜 '과거 매물대 하단'이나 '과거의 의미 있는 종가 고점'을 기준으로 현실적으로 설정하십시오.
-4. 실전 액션 플랜: 위 3번의 기준을 바탕으로 구체적인 '진입 타점'과 현실적이고 달성 가능한 '1차 목표가', '손절가'를 반드시 명시하십시오.
-5. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'X' if st_type=='short' else 'O'} 형식으로 출력하십시오.
-"""
+2. 🚨 [할루시네이션(거짓 정보) 엄격 금지]: 차트를 판독하여 지지/저항선을 제시할 때, 반드시 위 [입력 데이터]에 제공된 ★확정 현재가({best_cand['curr_p']}원)를 기준으로 상/하단 가격을 계산하십시오. 1차 진입가는 현재가 부근으로 설정하십시오.
+3. 실전 액션 플랜 강화: 구체적인 '진입 타점'과 명확한 '손절가'를 반드시 명시하십시오.
+4. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'X' if st_type=='short' else 'O'} 형식으로 출력하십시오.
+
 [출력 양식 (마크다운 유지)]
 <div class="broker-name">HYEOKS SECURITIES | {'SHORT-TERM' if st_type=='short' else 'MID-TERM'} STRATEGY</div>
 <div class="header">
@@ -294,7 +318,7 @@ try:
 </div>
 
 <div class="summary-box">
-<strong>💡 HYEOKS 핵심 모멘텀 요약</strong><br><br>
+<strong>[HYEOKS 핵심 모멘텀 요약]</strong><br><br>
 (기업이 무엇을 하는 회사인지 등 일반적인 개요는 절대 쓰지 마십시오. 오직 차트 타점, 수급, 지지/저항 라인에 근거한 상승 모멘텀만 60~70자 내외의 1문장으로 작성하십시오.)
 </div>
 
@@ -336,7 +360,8 @@ try:
         briefing_summary = "✅ [리포트 발송 완료] "
         summary_match = re.search(r'<div class="summary-box">(.*?)</div>', report_text, re.DOTALL)
         if summary_match:
-            clean_text = re.sub(r'<[^>]+>', '', summary_match.group(1)).replace("💡 HYEOKS 핵심 모멘텀 요약", "").strip()
+            # 💡 [이모지 변경 반영] 파싱 단계에서도 텍스트로 치환합니다.
+            clean_text = re.sub(r'<[^>]+>', '', summary_match.group(1)).replace("[HYEOKS 핵심 모멘텀 요약]", "").strip()
             briefing_summary += clean_text[:80] + "..." if len(clean_text) > 80 else clean_text
         else:
             briefing_summary += "텔레그램에서 상세 분석 리포트를 확인하십시오."
@@ -350,7 +375,6 @@ try:
             code = str(r[2]).replace("'", "").strip().zfill(6)
             stock_name = r[0] if len(r) > 0 else "알수없음"
 
-            # 1) 리포트 타겟 종목: 리포트의 목표가/손절가를 그대로 업데이트
             if best_short and code == best_short['code']:
                 print(f" - [{stock_name}] 리포트 정보 및 가격 시트에 업데이트 중...")
                 db_sheet.update_cell(i, 10, short_summary)
@@ -369,7 +393,6 @@ try:
                 time.sleep(3.5)
                 continue
             
-            # 2) 나머지 종목들은 다시 JSON 프롬프트로 글+숫자 동시 산출 (리포트 제외 전체)
             if "리포트 발송 완료" not in str(r[9]):
                 print(f" - [{stock_name}] AI 전략 및 가격 산출 중...")
                 prompt = f"""
@@ -382,11 +405,9 @@ try:
                 ■ 당일 수급: {r[11] if len(r) > 11 else ''}
                 ■ 52주 고가: {r[12] if len(r) > 12 else ''}
                 ■ 테마: {r[5] if len(r) > 5 else ''}
-                ■ 파이썬 1차 계산 목표가: {r[14] if len(r) > 14 else ''}
-                ■ 파이썬 1차 계산 손절가: {r[15] if len(r) > 15 else ''}
                 
                 💡 [시간대별 실전 지침 및 AI 자율 가격 설정 룰 (현재 KST 시간: {current_hour}시)]
-                - [핵심: AI 전권 부여] 위 '파이썬 1차 계산 가격'은 단순 이평선 기반의 멍청한 수치이므로 철저히 무시해도 좋습니다. 당신은 대한민국 최고 수익률을 내는 실전 트레이더로서, 차트 매물대와 변동성을 직관적으로 파악해 최종 "target_price"와 "stop_loss"를 **독자적이고 공격적으로** 결정하십시오.
+                - [핵심: AI 전권 부여] 당신은 대한민국 최고 수익률을 내는 실전 트레이더로서, 차트 매물대와 변동성을 직관적으로 파악해 최종 "target_price"와 "stop_loss"를 독자적이고 공격적으로 결정하십시오.
                   1) 손절가: 잔파동에 털리지 않도록 현재가 대비 넉넉하게(-5% ~ -8% 수준의 주요 지지선) 잡으십시오. 
                   2) 목표가: 반드시 손절폭의 최소 2배 이상 수익이 나는 자리(+10% ~ +20% 이상의 뻥 뚫린 저항선)로 설정하십시오. 
                 - [시간 룰] 11시~13시(마의 구간): 가짜 돌파 확률이 높으므로 "오후장까지 관망하며 지지선 확인" 권고.
