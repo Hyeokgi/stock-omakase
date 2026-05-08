@@ -187,15 +187,19 @@ try:
     for r in tech_data:
         if len(r) < 21: continue
         name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
-        curr_p, chg, score_str, tajeom = str(r[2]).strip(), str(r[3]).strip(), str(r[8]).strip(), str(r[9]).strip()
+        curr_p, chg, score_str, tajeom_raw = str(r[2]).strip(), str(r[3]).strip(), str(r[8]).strip(), str(r[9]).strip()
         prog = str(r[20]).strip()
         
         try: num_score = int(re.findall(r'-?\d+', score_str)[0])
         except: num_score = 0
         
-        if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|3년적자', tajeom): continue 
+        if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|3년적자', tajeom_raw): continue 
         
-        info = f"종목:{name}({code}) | 현재가:{curr_p}원({chg}) | 퀀트점수:{num_score}점 | 타점:{tajeom} | 수급:{prog}"
+        # 💡 [V11.1 방어막] AI가 파싱 에러를 내지 않도록, 타점 텍스트에서 ⚠️ 경고 꼬리표를 깔끔하게 잘라냅니다.
+        tajeom_clean = tajeom_raw.split('⚠️')[0].strip()
+        tajeom_clean = tajeom_clean.split('🎯')[0].strip()
+        
+        info = f"종목:{name}({code}) | 현재가:{curr_p}원({chg}) | 퀀트점수:{num_score}점 | 타점:{tajeom_clean} | 수급:{prog}"
         cands_list.append({'name': name, 'code': code, 'score': num_score, 'info': info, 'curr_p': int(curr_p.replace(',',''))})
 
     high_score_cands = [c for c in cands_list if c['score'] >= 30]
