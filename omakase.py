@@ -486,7 +486,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) >= 2 else today_vol
         yest_tv = prev_price * yest_vol 
         
-        # 🚀 [시크릿 이평 엔진] 칼만 필터(Kalman Filter) & ATR 파동 카운팅
         try:
             high_low = df_hist['high'] - df_hist['low']
             high_close = (df_hist['high'] - df_hist['close'].shift()).abs()
@@ -811,18 +810,19 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     breakout_days_ago = d
                     break
 
-        # ★[패치 1] 눌림목 종목 필터링 강화 (종목 압축)
+        # ★[패치 1] 눌림목 허들 초강화 (거래대금 200억 이상 제한)
         is_extreme_nulim = (
             is_recent_breakout and                               
             (current_price >= high_60d_calc * 0.95) and          
-            (vol_ratio_yest <= 45) and                           # ★강화: 60% -> 45% 이하
-            (vol_ratio_10d <= 80) and                            # ★강화: 100% -> 80% 이하
+            (vol_ratio_yest <= 45) and                           
+            (vol_ratio_10d <= 80) and                            
             (not is_today_yangbong or today_body_ratio <= 0.02) and 
             (not is_long_shadow) and
-            (trading_value >= 15_000_000_000)                    # ★신규: 당일 최소 150억 이상 (주말 가짜 차단)
+            (trading_value >= 20_000_000_000) # ★최소 거래대금 200억 이상
         )
         
-        is_ss_breakout = (trading_value >= 100_000_000_000) and (change_rate >= 0.04) and not is_long_shadow and is_near_high
+        # ★[패치 2] 박스권 탈출 허들 강화 (거래대금 300억 이상)
+        is_ss_breakout = (trading_value >= 30_000_000_000) and (change_rate >= 0.04) and not is_long_shadow and is_near_high
         
         now_kst_tajeom = datetime.datetime.now(KST)
         is_overnight_time = (now_kst_tajeom.hour >= 14) 
@@ -866,22 +866,20 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if acc_i_buy_eok >= 50: base_score += 15 
         elif acc_i_buy_eok >= 10: base_score += 5
 
-        # ★[패치 2] 진성대장 배지 기준 대폭 강화 (가짜 대장 휩쏘 차단)
+        # ★[패치 3] 진성대장 배지 초극악 난이도 (15% 이상, 거래대금 1000억, 고가대비 -2% 이내 마감)
         high_retention = current_price / today_high if today_high > 0 else 0
-        
-        if high_retention >= 0.97 and change_rate >= 0.06 and trading_value >= 30_000_000_000: 
-            base_score += 30  # 고가 대비 -3% 이내 마감 & 6% 이상 상승 & 300억 이상 (진짜 대장)
+        if high_retention >= 0.98 and change_rate >= 0.15 and trading_value >= 100_000_000_000: 
+            base_score += 40 
             master_tajeom = " 👑(진성대장)"
-        elif high_retention >= 0.93 and change_rate >= 0.03 and trading_value >= 15_000_000_000: 
-            base_score += 15  # 고가 대비 -7% 이내 마감 & 3% 이상 상승 (2등주 급)
-            master_tajeom = ""
+        elif high_retention >= 0.95 and change_rate >= 0.08 and trading_value >= 50_000_000_000: 
+            base_score += 20  
+            master_tajeom = " 🥈(준대장)"
         else:
             master_tajeom = ""
             
         if is_near_52w_high and "대량유입" in program_text:
             base_score += 20 
             
-        # ★[패치 3] 타점 계수 밸런싱 패치 (스윙/추세 가중치 증가, 스윙/눌림 가중치 소폭 하락)
         tajeom_multiplier = 0.0
         master_tajeom_base = "⏸️ [대기] 분석 중"
         
@@ -896,17 +894,18 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             tajeom_multiplier = 1.5  
         elif is_platform_breakout or is_ss_breakout:
             master_tajeom_base = "📦 [스윙/추세] 박스권 탈출"
-            tajeom_multiplier = 1.3  # 1.1 -> 1.3 으로 상향 (추세 강화)
+            tajeom_multiplier = 1.3  
         elif is_extreme_nulim or flag_days > 0:
             if current_price >= high_60d_calc * 0.95:
                 master_tajeom_base = "🎯 [스윙/눌림] 전고점 지지"
             else:
                 master_tajeom_base = "🎯 [스윙/눌림] 20일선 방어전"
-            tajeom_multiplier = 1.1  # 1.3 -> 1.1 으로 하향 (눌림 필터링)
+            tajeom_multiplier = 1.1  
         elif is_theme_daejang or is_theme_hubal:
             master_tajeom_base = "🚀 [당일/단타] 대장주 불기둥"
             tajeom_multiplier = 1.1  
-        elif "🌟" in signal or (change_rate >= 0.12 and trading_value >= 50_000_000_000):
+        # ★[패치 4] 수급 관심종목 허들 초강화 (프로그램 20억 유입 이상 OR 쌍끌이 필수)
+        elif ("🌟" in signal) or ((change_rate >= 0.12) and (trading_value >= 50_000_000_000) and (pg_amount_eok >= 20 or is_strong_dual_buy)):
             master_tajeom_base = "🌟 [관심/수급] 기준봉 포착"
             tajeom_multiplier = 0.9  
         else:
@@ -956,6 +955,11 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             master_tajeom += " 🔥(절대대장/면책)" 
             
         quant_score = int(max(0, base_score * tajeom_multiplier))
+        
+        # ★[패치 5] 최종 스코어 80점 미만은 강제 탈락 처리 (잡주 차단기)
+        if quant_score < 80 and not is_super_leader:
+            master_tajeom = "👀 [관망] 스코어 미달"
+            
         score_display = f"{quant_score}점 ({track_type})"
         
         is_hedge_theme = any(kw in my_theme_name for kw in ['방산', '방위산업', '해운', '조선', '석유', '가스', '전쟁', '사료', '원자재', '품절주', '식품'])
