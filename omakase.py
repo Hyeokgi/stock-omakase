@@ -1089,10 +1089,15 @@ def update_technical_data(df_theme, all_theme_map):
         for t_name in all_theme_map.keys(): target_names.add(t_name)
 
         # =====================================================================
-        # 💡 [V11.3 패치] 스캐너 종목 1/3 토막 현상 완벽 복구!
-        # '기업정보' 탭에 등록된 전체 종목을 스캐너 타겟 리스트에 강제 편입시킵니다.
-        for name in name_to_code.keys():
-            target_names.add(name)
+        # 💡 [V11.6 패치] 2800종목 과부하 방지 및 기존 풀(Pool) 복원
+        # '기업정보' 전체가 아닌, 기존에 우리가 관리하던 '주가데이터_보조'의 종목들만 타겟으로 삼습니다.
+        try:
+            helper_data = doc.worksheet("주가데이터_보조").get_all_values()
+            for row in helper_data[1:]:
+                if len(row) > 0 and str(row[0]).strip() and str(row[0]).strip() != "#REF!":
+                    target_names.add(str(row[0]).strip())
+        except Exception as e:
+            print(f"주가데이터_보조 탭 파싱 에러: {e}")
         # =====================================================================
 
         target_dict = {}
