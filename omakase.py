@@ -942,42 +942,52 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if is_near_52w_high and "대량유입" in program_text:
             base_score += 20 
             
-        # ★[패치 4] 타점 판독 우선순위 전면 개편 (시크릿 이평 전용 타점 신설)
+        # ★[패치 4] 타점 판독 우선순위 전면 개편 (논리적 버그 수정 및 시크릿 구출)
         tajeom_multiplier = 0.0
         master_tajeom_base = "⏸️ [대기] 분석 중"
         
         if is_fatal_drop:
             master_tajeom_base = "🚫 [제외] 상폐/재무위험"
             tajeom_multiplier = 0.0
+            
         elif is_overnight_candidate:
             if is_breakout_track and not is_overnight_pullback:
                 master_tajeom_base = "🌙 [종베] 신고가 돌파 대기"
             else:
                 master_tajeom_base = "🌙 [종베] 거래급감 눌림"
             tajeom_multiplier = 1.5  
+            
+        # 1순위: 확실한 당일 주도 단타 (6% 이상 상승 시 무조건 이쪽으로 흡수!)
         elif is_theme_daejang:
             master_tajeom_base = "🚀 [당일/단타] 대장주 불기둥"
             tajeom_multiplier = 1.3  
-        elif is_extreme_nulim or flag_days > 0:
+        elif is_theme_hubal:
+            master_tajeom_base = "🚀 [당일/단타] 테마 후발주"
+            tajeom_multiplier = 1.15
+            
+        # 2순위: 묵직한 추세 박스권 탈출 (5% 이상 상승)
+        elif is_platform_breakout or is_ss_breakout:
+            master_tajeom_base = "📦 [스윙/추세] 박스권 탈출"
+            tajeom_multiplier = 1.1  
+            
+        # 3순위: 스윙/눌림 (🔥핵심: 당일 6% 미만 상승으로 '조용할 때'만 눌림목으로 인정!)
+        elif (is_extreme_nulim or flag_days > 0) and (change_rate < 0.06):
             if current_price >= high_60d_calc * 0.95:
                 master_tajeom_base = "🎯 [스윙/눌림] 전고점 지지"
             else:
                 master_tajeom_base = "🎯 [스윙/눌림] 20일선 방어전"
             tajeom_multiplier = 1.2  
-        elif is_theme_hubal:
-            master_tajeom_base = "🚀 [당일/단타] 테마 후발주"
-            tajeom_multiplier = 1.15
-        elif is_platform_breakout or is_ss_breakout:
-            master_tajeom_base = "📦 [스윙/추세] 박스권 탈출"
-            tajeom_multiplier = 1.1  
-        # 💡 [핵심] 시크릿 이평 종목을 버리지 않고 전용 타점으로 구출!
+            
+        # 4순위: 시크릿 이평 1차 파동 및 추세 전환 (가중치 1.1로 대폭 상향하여 발굴 강화!)
         elif "1차" in secret_tajeom or "추세 전환" in secret_tajeom:
             master_tajeom_base = "🕵️ [관심/수급] 세력선 포착 (시크릿)"
-            tajeom_multiplier = 1.05
-        # 수급 기준을 대폭 낮춰서 더 많은 종목을 담도록 유도 (상승률 5%, 거래대금 200억)
+            tajeom_multiplier = 1.1
+            
+        # 5순위: 5% 이상 상승하며 외인/기관 수급이 강하게 붙은 기준봉
         elif ("🌟" in signal) or ((change_rate >= 0.05) and (trading_value >= 20_000_000_000) and (pg_amount_eok >= 10 or is_strong_dual_buy)):
             master_tajeom_base = "🌟 [관심/수급] 기준봉 포착"
             tajeom_multiplier = 0.9  
+            
         else:
             master_tajeom_base = "👀 [관망] 타점 미도달"
             tajeom_multiplier = 0.6  
@@ -1024,10 +1034,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             tajeom_multiplier = max(1.2, tajeom_multiplier) 
             master_tajeom += " 🔥(절대대장/면책)" 
             
-        # 기본 점수에 +10점을 보너스로 부여하여 전반적인 컷오프 통과율을 높임
+        # 기본 점수에 +10점을 보너스로 부여하여 관망으로 버려지던 수급주들을 구출
         quant_score = int(max(0, (base_score + 10) * tajeom_multiplier))
         
-        # ★[패치 6] 최종 컷오프 스코어 (25점 유지)
+        # ★[패치 5] 최종 컷오프 스코어 (25점 유지)
         if quant_score < 25 and not is_super_leader:
             master_tajeom = "👀 [관망] 스코어 미달"
             
