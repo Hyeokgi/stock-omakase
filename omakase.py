@@ -32,7 +32,7 @@ def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
         data = sheet.get_all_values()
         if len(data) <= 2: return
         
-        # 빈 줄 제어 및 날짜 파싱
+        header = data[0]
         rows = [r for r in data[1:] if len(r) > sort_col_idx and str(r[sort_col_idx]).strip()]
         
         def parse_date(val):
@@ -40,12 +40,13 @@ def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
             for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y. %m. %d"):
                 try: return datetime.datetime.strptime(val, fmt)
                 except: continue
-            return val
+            # 날짜 파싱이 안 되는 쓰레기 값은 1900년도로 처리해 맨 밑으로 밀어버림
+            return datetime.datetime(1900, 1, 1) 
             
         rows.sort(key=lambda x: parse_date(x[sort_col_idx]), reverse=True)
         
         sheet.batch_clear(['A2:Z'])
-        sheet.update(range_name="A2", values=rows, value_input_option="USER_ENTERED")
+        sheet.update(range_name="A2", values=[header] + rows, value_input_option="USER_ENTERED")
         print(f"✅ [{sheet_name}] 최신순 정렬 및 청소 완료")
     except Exception as e:
         print(f"⚠️ [{sheet_name}] 정렬 실패: {e}")
