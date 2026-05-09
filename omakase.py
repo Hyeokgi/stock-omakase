@@ -1070,6 +1070,13 @@ def update_technical_data(df_theme, all_theme_map):
             
         for t_name in all_theme_map.keys(): target_names.add(t_name)
 
+        # =====================================================================
+        # 💡 [V11.3 패치] 스캐너 종목 1/3 토막 현상 완벽 복구!
+        # '기업정보' 탭에 등록된 전체 종목을 스캐너 타겟 리스트에 강제 편입시킵니다.
+        for name in name_to_code.keys():
+            target_names.add(name)
+        # =====================================================================
+
         target_dict = {}
         for name in list(target_names):
             code = name_to_code.get(name) or search_code_from_naver(name)
