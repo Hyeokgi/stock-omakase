@@ -810,19 +810,20 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     breakout_days_ago = d
                     break
 
-        # ★[패치 1] 눌림목 허들 초강화 (거래대금 200억 이상 제한)
+        # ★[패치 1] 눌림목 허들 완화 (너무 빡빡한 거래량 조건 숨통 트기)
         is_extreme_nulim = (
             is_recent_breakout and                               
-            (current_price >= high_60d_calc * 0.95) and          
-            (vol_ratio_yest <= 45) and                           
-            (vol_ratio_10d <= 80) and                            
-            (not is_today_yangbong or today_body_ratio <= 0.02) and 
+            (current_price >= high_60d_calc * 0.90) and          # 95% -> 90% (조금 더 깊은 -10% 눌림까지 허용)
+            (vol_ratio_yest <= 70) and                           # 45% -> 70% 이하 (어제 대비 거래량 30%만 줄어도 통과)
+            (vol_ratio_10d <= 120) and                           # 80% -> 120% 이하 (평균 거래량 수준 허용)
+            (not is_today_yangbong or today_body_ratio <= 0.03) and 
             (not is_long_shadow) and
-            (trading_value >= 20_000_000_000) # ★최소 거래대금 200억 이상
+            (trading_value >= 15_000_000_000)                    # 200억 -> 150억 (중소형 주도주 눌림목 포착)
         )
         
-        # ★[패치 2] 박스권 탈출 허들 강화 (거래대금 300억 이상)
-        is_ss_breakout = (trading_value >= 30_000_000_000) and (change_rate >= 0.04) and not is_long_shadow and is_near_high
+        # ★[패치 2] 박스권 탈출 허들 강화 (너무 흔하게 잡히는 잡주 차단)
+        is_ss_breakout = (trading_value >= 60_000_000_000) and (change_rate >= 0.07) and not is_long_shadow and is_near_high
+        # 거래대금 300억 -> 600억 상향, 상승률 4% -> 7% 상향 (진짜 돈이 쏠린 강한 돌파만 인정)
         
         now_kst_tajeom = datetime.datetime.now(KST)
         is_overnight_time = (now_kst_tajeom.hour >= 14) 
@@ -866,12 +867,13 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if acc_i_buy_eok >= 50: base_score += 15 
         elif acc_i_buy_eok >= 10: base_score += 5
 
-        # ★[패치 3] 진성대장 배지 초극악 난이도 (15% 이상, 거래대금 1000억, 고가대비 -2% 이내 마감)
+        # ★[패치 3] 진성대장/준대장 배지 희소성 강화 (아무나 왕관을 쓰지 못하게)
         high_retention = current_price / today_high if today_high > 0 else 0
-        if high_retention >= 0.98 and change_rate >= 0.15 and trading_value >= 100_000_000_000: 
+        if high_retention >= 0.98 and change_rate >= 0.15 and trading_value >= 200_000_000_000 and is_theme_leader_raw: 
             base_score += 40 
             master_tajeom = " 👑(진성대장)"
-        elif high_retention >= 0.95 and change_rate >= 0.08 and trading_value >= 50_000_000_000: 
+        elif high_retention >= 0.96 and change_rate >= 0.10 and trading_value >= 100_000_000_000 and is_theme_leader_raw: 
+            # 8% -> 10% 상승, 500억 -> 1000억 거래대금, 고가유지 95% -> 96%, '테마 1등주' 필수 조건 추가
             base_score += 20  
             master_tajeom = " 🥈(준대장)"
         else:
