@@ -1051,6 +1051,8 @@ def update_technical_data(df_theme, all_theme_map):
             print(f"📊 코스피 실시간 등락률: {kospi_rate:.2f}% (해지 프리미엄 발동 대기)")
         
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
+        
+        # 💡 [V11.7 패치] 완벽한 중복 제거를 위한 Set 활용 및 공백 제거 강제
         target_names = set()
         
         try:
@@ -1072,7 +1074,7 @@ def update_technical_data(df_theme, all_theme_map):
             theme_rank_dict = {}
             theme_rank_tracker = {}
             for index, row in df_theme.iterrows():
-                t_rank, s_name, t_name = int(row['순위']), row['종목명'], row['테마명']
+                t_rank, s_name, t_name = int(row['순위']), str(row['종목명']).strip(), row['테마명']
                 if t_rank not in theme_rank_tracker: theme_rank_tracker[t_rank] = []
                 theme_rank_tracker[t_rank].append(s_name)
                 is_leader_in_this_theme = (len(theme_rank_tracker[t_rank]) == 1)
@@ -1084,13 +1086,12 @@ def update_technical_data(df_theme, all_theme_map):
                         theme_rank_dict[s_name]['theme_name'] = t_name
                         
             top_10_themes = df_theme[df_theme['순위'] <= 10]['종목명'].tolist()
-            for t in top_10_themes: target_names.add(t)
+            for t in top_10_themes: target_names.add(str(t).strip())
             
-        for t_name in all_theme_map.keys(): target_names.add(t_name)
+        for t_name in all_theme_map.keys(): target_names.add(str(t_name).strip())
 
         # =====================================================================
-        # 💡 [V11.6 패치] 2800종목 과부하 방지 및 기존 풀(Pool) 복원
-        # '기업정보' 전체가 아닌, 기존에 우리가 관리하던 '주가데이터_보조'의 종목들만 타겟으로 삼습니다.
+        # 💡 [V11.6 패치 유지] 주가데이터_보조 탭의 기존 종목 유지
         try:
             helper_data = doc.worksheet("주가데이터_보조").get_all_values()
             for row in helper_data[1:]:
@@ -1101,12 +1102,14 @@ def update_technical_data(df_theme, all_theme_map):
         # =====================================================================
 
         target_dict = {}
+        # 종목코드 매핑 시에도 고유한 종목코드 기준으로 다시 한번 필터링 (완벽한 중복 차단)
         for name in list(target_names):
             code = name_to_code.get(name) or search_code_from_naver(name)
-            if code: target_dict[name] = code
+            if code and code not in target_dict.values(): # 이미 등록된 코드는 무시
+                target_dict[name] = code
 
         results = []
-        print(f"⚡ {len(target_dict)}개 종목을 멀티프로세싱(Multi-Processing)으로 동시 타격합니다...")
+        print(f"⚡ {len(target_dict)}개 고유 종목을 멀티프로세싱(Multi-Processing)으로 동시 타격합니다...")
         
         # 스레드풀을 프로세스풀로 변경하여 연산 속도 극대화
         with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count() or 4) as executor:
