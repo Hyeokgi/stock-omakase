@@ -1090,17 +1090,7 @@ def update_technical_data(df_theme, all_theme_map):
             
         for t_name in all_theme_map.keys(): target_names.add(str(t_name).strip())
 
-        # =====================================================================
-        # 💡 [V11.6 패치 유지] 주가데이터_보조 탭의 기존 종목 유지
-        try:
-            helper_data = doc.worksheet("주가데이터_보조").get_all_values()
-            for row in helper_data[1:]:
-                if len(row) > 0 and str(row[0]).strip() and str(row[0]).strip() != "#REF!":
-                    target_names.add(str(row[0]).strip())
-        except Exception as e:
-            print(f"주가데이터_보조 탭 파싱 에러: {e}")
-        # =====================================================================
-
+        
         target_dict = {}
         # 종목코드 매핑 시에도 고유한 종목코드 기준으로 다시 한번 필터링 (완벽한 중복 차단)
         for name in list(target_names):
