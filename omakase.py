@@ -956,8 +956,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             
         quant_score = int(max(0, base_score * tajeom_multiplier))
         
-        # ★[패치 5] 최종 스코어 80점 미만은 강제 탈락 처리 (잡주 차단기)
-        if quant_score < 80 and not is_super_leader:
+        # ★[패치 5] 최종 스코어 25점 미만은 강제 탈락 처리 (휴장일 페널티 고려)
+        if quant_score < 25 and not is_super_leader:
             master_tajeom = "👀 [관망] 스코어 미달"
             
         score_display = f"{quant_score}점 ({track_type})"
@@ -1131,71 +1131,68 @@ def update_technical_data(df_theme, all_theme_map):
                         tajeom, ai_briefing, 스코어, 프로그램, 고가_52주, 기관누적수급, ai_target, ai_stop
                     ])
                     
-            if scanner_results:
-                scanner_results.sort(key=lambda x: int(str(x[10]).split('점')[0]), reverse=True)
-                
-                MAX_DISPLAY_COUNT = 20
-                top_20_results = scanner_results[:MAX_DISPLAY_COUNT]
-                top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results}
+            # 💡 [버그 픽스] 포착된 종목이 0개여도 과거 좀비를 지우기 위해 무조건 실행
+            scanner_results.sort(key=lambda x: int(str(x[10]).split('점')[0]), reverse=True)
+            
+            # ★최정예 15개로 압축
+            MAX_DISPLAY_COUNT = 15
+            top_20_results = scanner_results[:MAX_DISPLAY_COUNT]
+            top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results}
 
-                if not is_reset_time:
-                    for res in scanner_results:
-                        c_code = str(res[2]).replace("'", "").strip().zfill(6)
-                        if c_code not in top_20_codes and c_code in existing_data:
-                            top_20_results.append(res)
-                            top_20_codes.add(c_code)
-                            
-                    for c_code, data in existing_data.items():
-                        if "리포트 발송 완료" in data["briefing"] and c_code not in top_20_codes:
-                            top_20_results.append(data["raw_row"])
-                            top_20_codes.add(c_code)
+            if not is_reset_time:
+                # 오직 '리포트 발송 완료'라는 특별 VIP 도장을 받은 종목만 구출
+                for c_code, data in existing_data.items():
+                    if "리포트 발송 완료" in data["briefing"] and c_code not in top_20_codes:
+                        top_20_results.append(data["raw_row"])
+                        top_20_codes.add(c_code)
 
-                if is_reset_time:
-                    try:
-                        bt_sheet = doc.worksheet("백테스트_로그")
+            if is_reset_time:
+                try:
+                    bt_sheet = doc.worksheet("백테스트_로그")
+                    bt_data = bt_sheet.get_all_values()
+                    if len(bt_data) == 0 or bt_data[0][0] != "진입일":
+                        bt_sheet.clear()
+                        bt_sheet.append_row(["진입일", "종목명", "종목코드", "테마명", "진입가", "타점유형", "퀀트점수", "T+1수익률", "T+3수익률"])
                         bt_data = bt_sheet.get_all_values()
-                        if len(bt_data) == 0 or bt_data[0][0] != "진입일":
-                            bt_sheet.clear()
-                            bt_sheet.append_row(["진입일", "종목명", "종목코드", "테마명", "진입가", "타점유형", "퀀트점수", "T+1수익률", "T+3수익률"])
-                            bt_data = bt_sheet.get_all_values()
+                    
+                    today_date = datetime.datetime.now(KST).date()
+                    updated = False
+                    
+                    for i in range(1, len(bt_data)):
+                        row = bt_data[i]
+                        while len(row) < 9: row.append("") 
                         
-                        today_date = datetime.datetime.now(KST).date()
-                        updated = False
+                        try:
+                            entry_date = datetime.datetime.strptime(row[0], '%Y-%m-%d').date()
+                            days_elapsed = (today_date - entry_date).days
+                            
+                            needs_t1 = (days_elapsed >= 1 and row[7] == "")
+                            needs_t3 = (days_elapsed >= 3 and row[8] == "")
+                            
+                            if needs_t1 or needs_t3:
+                                t_code = str(row[2]).replace("'", "").zfill(6)
+                                entry_p = int(str(row[4]).replace(',', '').replace('원', ''))
+                                rt_res = requests.get(f"https://m.stock.naver.com/api/stock/{t_code}/basic", verify=False, timeout=3).json()
+                                curr_p = int(str(rt_res.get('closePrice', '0')).replace(',', ''))
+                                
+                                if curr_p > 0:
+                                    rtn = ((curr_p - entry_p) / entry_p) * 100
+                                    if needs_t1: row[7] = f"{rtn:.2f}%"
+                                    if needs_t3: row[8] = f"{rtn:.2f}%"
+                                    updated = True
+                        except: pass
                         
-                        for i in range(1, len(bt_data)):
-                            row = bt_data[i]
-                            while len(row) < 9: row.append("") 
-                            
-                            try:
-                                entry_date = datetime.datetime.strptime(row[0], '%Y-%m-%d').date()
-                                days_elapsed = (today_date - entry_date).days
-                                
-                                needs_t1 = (days_elapsed >= 1 and row[7] == "")
-                                needs_t3 = (days_elapsed >= 3 and row[8] == "")
-                                
-                                if needs_t1 or needs_t3:
-                                    t_code = str(row[2]).replace("'", "").zfill(6)
-                                    entry_p = int(str(row[4]).replace(',', '').replace('원', ''))
-                                    rt_res = requests.get(f"https://m.stock.naver.com/api/stock/{t_code}/basic", verify=False, timeout=3).json()
-                                    curr_p = int(str(rt_res.get('closePrice', '0')).replace(',', ''))
-                                    
-                                    if curr_p > 0:
-                                        rtn = ((curr_p - entry_p) / entry_p) * 100
-                                        if needs_t1: row[7] = f"{rtn:.2f}%"
-                                        if needs_t3: row[8] = f"{rtn:.2f}%"
-                                        updated = True
-                            except: pass
-                            
-                        if updated:
-                            bt_sheet.update(range_name="A1", values=bt_data, value_input_option="USER_ENTERED")
-                            print("✅ 아침 백테스트 로그 수익률 자동 갱신 완료!")
-                    except Exception as e:
-                        print(f"⚠️ 백테스트 업데이트 에러: {e}")
+                    if updated:
+                        bt_sheet.update(range_name="A1", values=bt_data, value_input_option="USER_ENTERED")
+                        print("✅ 아침 백테스트 로그 수익률 자동 갱신 완료!")
+                except Exception as e:
+                    print(f"⚠️ 백테스트 업데이트 에러: {e}")
 
-                db_scanner_sheet = doc.worksheet("DB_스캐너")
-                db_scanner_sheet.batch_clear(['A2:Z'])
+            db_scanner_sheet = doc.worksheet("DB_스캐너")
+            db_scanner_sheet.batch_clear(['A2:Z'])
+            if top_20_results: # 비어있지 않을 때만 쓰기 (비어있으면 clear만 됨)
                 db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
-                print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 (초기화시간:{is_reset_time})")
+            print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 (초기화시간:{is_reset_time})")
 
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
