@@ -24,7 +24,7 @@ if 2 <= now_kst_check.hour < 7:
     sys.exit(0)
 
 # ==========================================
-# 💡 [V11.2] 시트 자동 정렬 및 청소 함수 (오류 방지)
+# 💡 [V11.2] 시트 자동 정렬 및 청소 함수
 # ==========================================
 def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
     try:
@@ -40,7 +40,6 @@ def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
             for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y. %m. %d"):
                 try: return datetime.datetime.strptime(val, fmt)
                 except: continue
-            # 날짜 파싱이 안 되는 쓰레기 값은 1900년도로 처리해 맨 밑으로 밀어버림
             return datetime.datetime(1900, 1, 1) 
             
         rows.sort(key=lambda x: parse_date(x[sort_col_idx]), reverse=True)
@@ -96,16 +95,11 @@ KIS_TOKEN = get_kis_access_token()
 if KIS_TOKEN: print("✅ KIS 토큰 준비 완료!")
 else: print("⚠️ KIS 토큰 준비 실패")
 
-# 전역 세션 대신 로컬 세션 사용 (스레드 충돌 방지용)
-# session = requests.Session() 
-# session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
-
 STOPWORDS = ['코스피', '코스닥', '증시', '주식', '투자', '종목', '시장', '지수', '대형주', '중소형주', '외인', '기관', '개인', '외국인', '매수', '매도', '순매수', '순매도', '거래', '대금', '주가', '펀드', '사모', '상장', '상폐', '공모', '특징주', '테마', '테마주', '관련', '관련주', '수혜', '수혜주', '장세', '개장', '출발', '마감', '초반', '후반', '오전', '오후', '장중', '증권', '증권사', '운용', '자사', '괴리', '프리미어', '가치', '밸류', '공시', '병합', '분할', '상승', '하락', '급등', '급락', '강세', '약세', '폭락', '반등', '조정', '랠리', '위축', '냉각', '훈풍', '안도', '불안', '쇼크', '서프라이즈', '돌파', '경신', '연속', '최고', '최저', '신고가', '신저가', '최고치', '최저치', '최고가', '최저가', '급증', '급감', '확산', '진정', '완화', '악화', '개선', '회복', '최대', '사상', '역대', '최초', '최신', '규모', '수준', '가격', '목표가', '상향', '하향', '박살', '킬러', '대규모', '변동', '오픈', '호재', '연계', '대비', '경제', '금융', '기업', '정부', '자산', '머니', '한국', '미국', '국내', '글로벌', '뉴욕', '회장', '대표', '임원', '주주', '총회', '이유', '때문', '달러', '금리', '인상', '인하', '동결', '연준', '파월', '물가', '지표', '고용', '기름값', '주유소', '석유', '신용', '수익', '매출', '적자', '흑자', '배당', '지분', '인수', '합병', '사업', '추진', '공급', '계약', '체결', '실적', '발표', '이익', '반사이익', '현금', '자회사', '계열사', '지주사', '관계사', '기내식', '서비스', '오늘', '내일', '이번', '주간', '월간', '분기', '시간', '하루', '하루만', '올해', '내년', '지난해', '전일', '전주', '전월', '동기', '내달', '연말', '연초', '이날', '당일', '최근', '현재', '이후', '이전', '상반기', '하반기', '당분간', '예상', '전망', '기대', '우려', '경고', '목표', '분석', '평가', '결정', '검토', '참여', '진출', '포기', '중단', '재개', '완료', '시작', '종료', '영향', '타격', '피해', '직격탄', '부양', '지원', '규제', '단속', '강화', '철폐', '폐지', '유지', '보류', '달성', '기준', '행사', '이사', '의결', '개정', '취지', '적극', '개최', '진행', '예정', '상황', '필요', '대응', '마련', '운영', '관리', '적용', '이용', '사용', '활용', '확보', '제공', '구축', '기반', '중심', '노력', '계획', '정도', '경우', '이상', '이하', '가운데', '가장', '포함', '제외', '기대감', '우려감', '불확실성', '가능성', '움직임', '분위기', '흐름', '국면', '대목', '차원', '입장', '배경', '결과', '모습', '모멘텀', '현상', '차이', '비중', '비율', '단계', '목적', '대상', '조원', '억원', '만원', '천원', '전문', '현지', '사회', '생산자', '제도', '재고', '면제', '속보', '단독', '기자', '특파원', '앵커', '저작권', '무단', '전재', '재배포', '금지', '뉴스', '보도', '자료', '사진', '관계자', '주장', '설명', '강조', '위원회', '법안', '회의', '통과', '정책', '의원', '장관', '페이지', '주소', '입력', '방문', '삭제', '요청', '정확', '확인', '문의', '사항', '고객', '센터', '안내', '감사', '반대', '선임', '공개', '자본', '공개', '이란', '국민연금', '종전', '전쟁', '트럼프', '제안', '찬성', '대통령', '사내', '협상', '출시', '계좌', '중동', '상품', '체제', '변경', '투자증권', '성장', '시그널', '신규', '정치', '외교', '합의', '수출', '수입', '도입', '본격', '소식', '임박', '부각', '주도']
 AD_FILTER = ['펀드', '투어', '캠페인', '서비스', '최초', '강화', '고객', '연금', '마스터', '코리아', '정책', '개최', '박람회', '전시회', '프로모션', '할인', '기획전', '페스티벌', '출시', '협약', 'MOU', '체결', '선정', '어워드', '스마트픽', '팔자', '사자', '증가', '감소', '목표', '꺾인', '주석', '전망', '우려', '기대', '연내', '내달', '오늘', '내일', '돌파', '연속', '급락', '투자', '매수', '매도', '수익']
 THEME_BLACKLIST = ['코로나19', '메르스', '지카바이러스', '우한폐렴', '원숭이두창', '엠폭스', '아프리카돼지열병', '구제역', '광우병', '야놀자(Yanolja)', '리비안(RIVIAN)']
 
 def check_warning_market():
-    # 로컬 세션 사용
     local_session = requests.Session()
     try:
         url = "https://m.stock.naver.com/api/index/KOSDAQ/price?pageSize=20&page=1"
@@ -329,7 +323,6 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
     except Exception as e: 
         print(f"❌ 데이터 업데이트 에러: {e}")
 
-# [업데이트] 네이버 캘린더 파싱 및 필터링 함수 (서술형 뉴스/전망 기사 차단)
 def get_market_schedule():
     local_session = requests.Session()
     """네이버 금융 오늘의 증시 일정 수집 (순수 일정만 추출)"""
@@ -351,20 +344,15 @@ def get_market_schedule():
                 title = title_tag.find('a').text.strip()
                 clean_title = title.replace(" ", "").strip()
                 
-                # 1. 긍정 키워드: 반드시 포함되어야 하는 '일정' 관련 단어
                 include_kws = ['실적', '발표', '만기', '배당', '금통위', 'FOMC', '고용', '학회', '임상', '상장', '개막', '출시']
-                
-                # 2. [핵심] 부정 키워드: 기획 기사, 주간 전망, 서술형 뉴스를 걸러내는 단어
                 exclude_kws = [
-                    '주주총회', '주총', '공모', '청약', # 기존 제외
+                    '주주총회', '주총', '공모', '청약',
                     '전망', '주목', '대기', '반환점', '서프라이즈', '쇼크', 
                     '기대감', '우려', '물귀신', '박스권', '코스피', '코스닥', 
                     '증시', '마감', '시황', '특징주', '주간'
                 ]
                 
-                # 3. 필터링 로직: 긍정 키워드가 하나라도 있고, 부정 키워드는 하나도 없어야 함
                 if any(kw in title for kw in include_kws) and not any(ex_kw in title for ex_kw in exclude_kws):
-                    # 제목에 '[', ']' 대괄호나 '…' 같은 말줄임표가 포함되어 있으면 보통 기획 기사이므로 한 번 더 거름
                     if "증시 전망" not in title and "외환전망" not in title:
                         if clean_title not in seen_titles:
                             schedules.append([today_str, title, "📅 자동수집(당일)"])
@@ -375,7 +363,6 @@ def get_market_schedule():
         print(f"❌ 일정 수집 에러: {e}")
         return []
 
-# [업데이트] 주요일정 시트 자동 유지보수 함수 (스마트 포맷팅 + 과거 숨김 + 3개월 삭제)
 def manage_schedule_sheet(schedules):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -390,12 +377,9 @@ def manage_schedule_sheet(schedules):
         today = datetime.datetime.now(KST).date()
         three_months_ago = today - datetime.timedelta(days=90)
 
-        # 1. 포맷 정규화 및 3개월 이전 데이터 자동 폐기
         valid_rows = []
         for row in rows:
             if not row or not row[0]: continue
-            
-            # 기존 "2026. 3. 3" 같은 포맷을 "2026-03-03"으로 변환하여 파싱 시도
             raw_date = str(row[0]).strip().replace('.', '-').replace(' ', '').strip('-')
             try:
                 row_date = datetime.datetime.strptime(raw_date, '%Y-%m-%d').date()
@@ -405,30 +389,24 @@ def manage_schedule_sheet(schedules):
             except ValueError:
                 valid_rows.append(row)
 
-        # 2. [핵심] 시트 병합 시 띄어쓰기 무시하고 중복 2차 철통 방어
         existing_titles_clean = [str(r[1]).replace(" ", "").strip() for r in valid_rows if len(r) > 1 and r[0] == today.strftime('%Y-%m-%d')]
         
         for sch in schedules:
             clean_sch_title = str(sch[1]).replace(" ", "").strip()
             if clean_sch_title not in existing_titles_clean:
                 valid_rows.append(sch)
-                existing_titles_clean.append(clean_sch_title) # 방금 넣은 것도 바로 메모
+                existing_titles_clean.append(clean_sch_title)
 
-        # 3. 날짜 오름차순 정렬
         def sort_key(x):
             try: return datetime.datetime.strptime(x[0], '%Y-%m-%d').date()
             except: return datetime.date(2099, 12, 31)
         valid_rows.sort(key=sort_key)
 
-        # 4. 시트 덮어쓰기 (표준화된 포맷으로)
         sheet.batch_clear(['A2:C'])
         if valid_rows:
             sheet.update(range_name="A2", values=valid_rows, value_input_option="USER_ENTERED")
 
-        # 5. 과거 날짜 자동 숨김 처리 로직
         requests_list = []
-        
-        # 전체 행 숨김 해제 (초기화)
         requests_list.append({
             "updateDimensionProperties": {
                 "range": {"sheetId": sheet.id, "dimension": "ROWS", "startIndex": 1, "endIndex": len(valid_rows) + 1},
@@ -437,7 +415,6 @@ def manage_schedule_sheet(schedules):
             }
         })
 
-        # 과거 날짜 숨김 인덱스 계산
         hide_start = -1
         hide_end = -1
         for i, row in enumerate(valid_rows):
@@ -465,11 +442,9 @@ def manage_schedule_sheet(schedules):
     except Exception as e:
         print(f"❌ 주요일정 시트 관리 에러: {e}")
 
-# 멀티프로세싱을 위해 session 대신 local_session 사용하도록 함수 내부 수정
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate):
     local_session = requests.Session()
     try:
-        # 1. fchart 데이터 가져오기 (과거 차트 및 현재가 동시 수집)
         url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=250&requestType=0"
         res = local_session.get(url, verify=False, timeout=3)
         root = ET.fromstring(res.text)
@@ -483,7 +458,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             date_str = data[0]
             open_p, high_p, low_p, close_p, vol = int(data[1]), int(data[2]), int(data[3]), int(data[4]), int(data[5])
             
-            # [핵심 픽스] 네이버가 자정 이후 뱉어내는 '거래량 0'의 가짜(Dummy) 캔들 완벽 차단!
             if vol == 0: 
                 continue
             
@@ -499,39 +473,33 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             
         if len(history) < 2: return None
 
-        # 2. 확정된 지표 추출
         last_day = history[-1]
         open_price, today_high, today_low, current_price, today_vol = last_day['open'], last_day['high'], last_day['low'], last_day['close'], last_day['volume']
         
         df_hist = pd.DataFrame(history)
         
-        # [정확한 역산] 가짜 캔들이 제거되었으므로, -2번째 인덱스는 무조건 진짜 '전일 종가'입니다.
         prev_price = int(df_hist['close'].iloc[-2]) if len(df_hist) >= 2 else current_price
         yest_close = prev_price 
         
-        # 이제 등락률이 0.00%가 아닌, 진짜 시장의 등락률로 완벽하게 계산됩니다.
         change_rate = (current_price - prev_price) / prev_price if prev_price > 0 else 0.0
         
         yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) >= 2 else today_vol
         yest_tv = prev_price * yest_vol 
-# =====================================================================
+        
         # 🚀 [시크릿 이평 엔진] 칼만 필터(Kalman Filter) & ATR 파동 카운팅
-        # =====================================================================
         try:
-            # 1. ATR(Average True Range) 계산 (최근 14일 변동성 기준)
             high_low = df_hist['high'] - df_hist['low']
             high_close = (df_hist['high'] - df_hist['close'].shift()).abs()
             low_close = (df_hist['low'] - df_hist['close'].shift()).abs()
             tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
             atr_14 = tr.rolling(14).mean().iloc[-1]
-            if pd.isna(atr_14) or atr_14 == 0: atr_14 = current_price * 0.03 # 예외 처리
+            if pd.isna(atr_14) or atr_14 == 0: atr_14 = current_price * 0.03 
             
-            # 2. 1D 칼만 필터(Kalman Filter) 가격 평활화 (노이즈 제거)
             prices = df_hist['close'].values
             kalman_ma = []
             x_hat = prices[0]
             p = 1.0
-            Q, R = 1e-4, 1e-2  # 노이즈 필터링 계수
+            Q, R = 1e-4, 1e-2  
             for z in prices:
                 p_hat = p + Q
                 K = p_hat / (p_hat + R)
@@ -543,12 +511,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             prev_kalman = kalman_ma[-2] if len(kalman_ma) > 1 else curr_kalman
             pprev_kalman = kalman_ma[-3] if len(kalman_ma) > 2 else prev_kalman
             
-            # 3. 칼만 추세 판독 및 시크릿 신호 생성
             is_kalman_uptrend = curr_kalman > prev_kalman
             kalman_turned_green = (curr_kalman > prev_kalman) and (prev_kalman <= pprev_kalman)
             kalman_turned_red = (curr_kalman < prev_kalman) and (prev_kalman >= pprev_kalman)
             
-            # 4. ATR 파동 카운팅 (테스타 매매법 적용)
             trend_start_price = current_price
             for i in range(len(kalman_ma)-1, 1, -1):
                 if kalman_ma[i] <= kalman_ma[i-1]:
@@ -579,7 +545,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             atr_14 = current_price * 0.03
             is_kalman_uptrend = False
             secret_tajeom = ""
-        # =====================================================================
+
         trading_value = current_price * today_vol
         high_prices_60 = high_prices[-60:] if len(high_prices) >= 60 else high_prices
         
@@ -593,7 +559,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         surge_rate_20d = (current_price - min_20d) / min_20d if min_20d > 0 else 0
         is_high_altitude = surge_rate_20d >= 0.50 
         
-        # 250일(1년) 장기 대시세 피로도 체크 로직
         min_250d = int(df_hist['close'].min()) 
         surge_rate_250d = (current_price - min_250d) / min_250d if min_250d > 0 else 0
         is_mega_trend_exhausted = surge_rate_250d >= 2.0 
@@ -832,10 +797,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         if int(df_hist['volume'].iloc[j]) > anchor_vol * 0.45: is_holding = False; break
                     if is_holding: flag_days = d; break
 
-        # [HYEOKS 리빌딩 v3] '전고점 돌파 후 거래급감 눌림목' 로직 적용 (스텔스 대체)
         is_recent_breakout = False
         breakout_days_ago = 0
-        for d in range(1, 6): # 최근 5일 이내에 돌파했는지 확인
+        for d in range(1, 6):
             check_idx = -d
             if len(df_hist) >= abs(check_idx) + 1:
                 check_close = int(df_hist['close'].iloc[check_idx])
@@ -847,44 +811,42 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     breakout_days_ago = d
                     break
 
-        # 2. 거래급감 눌림목 조건 (종베 후보)
+        # ★[패치 1] 눌림목 종목 필터링 강화 (종목 압축)
         is_extreme_nulim = (
-            is_recent_breakout and                               # 최근 5일 내 전고점 돌파 이력이 있고
-            (current_price >= high_60d_calc * 0.95) and          # 현재가가 그 돌파했던 전고점을 훼손하지 않고 지지 중이며
-            (vol_ratio_yest <= 60) and                           # ★완화★ 전일 대비 거래량이 60% 이하로 급감 (종베 포착량 증가)
-            (vol_ratio_10d <= 100) and                           # ★완화★ 최근 10일 평균 거래량 이하 수준
-            (not is_today_yangbong or today_body_ratio <= 0.02) and # 오늘 쉬어가는 흐름
-            (not is_long_shadow)                                 # 윗꼬리를 달며 매물을 맞은 흔적이 없을 것
+            is_recent_breakout and                               
+            (current_price >= high_60d_calc * 0.95) and          
+            (vol_ratio_yest <= 45) and                           # ★강화: 60% -> 45% 이하
+            (vol_ratio_10d <= 80) and                            # ★강화: 100% -> 80% 이하
+            (not is_today_yangbong or today_body_ratio <= 0.02) and 
+            (not is_long_shadow) and
+            (trading_value >= 15_000_000_000)                    # ★신규: 당일 최소 150억 이상 (주말 가짜 차단)
         )
-       
-        # 1. 종가베팅 및 신고가 돌파 조건 계산 (완화됨)
+        
         is_ss_breakout = (trading_value >= 100_000_000_000) and (change_rate >= 0.04) and not is_long_shadow and is_near_high
         
         now_kst_tajeom = datetime.datetime.now(KST)
-        is_overnight_time = (now_kst_tajeom.hour >= 14) # ★확대★ 오후 2시부터 종베 후보를 띄워 직장인 준비 시간 확보
+        is_overnight_time = (now_kst_tajeom.hour >= 14) 
         
         is_overnight_breakout = (
-            (trading_value >= 50_000_000_000) and           # ★완화★ 1000억 -> 500억
-            (pg_amount_eok >= 10 or is_strong_dual_buy) and # ★완화★ 프로그램 20억 -> 10억
-            (acc_i_buy_eok >= 3) and                        # ★완화★ 기관누적매집 5억 -> 3억
-            (0.04 <= change_rate <= 0.28) and               # ★완화★ 6% 상승 -> 4% 상승
-            (current_price >= today_high * 0.95) and        # ★완화★ 최고가 대비 -4% 마감 -> -5% 마감
+            (trading_value >= 50_000_000_000) and            
+            (pg_amount_eok >= 10 or is_strong_dual_buy) and 
+            (acc_i_buy_eok >= 3) and                        
+            (0.04 <= change_rate <= 0.28) and               
+            (current_price >= today_high * 0.95) and        
             (is_near_high or is_near_52w_high) and          
             is_breakout_track and not is_long_shadow
         )
         
         is_overnight_pullback = (
             is_extreme_nulim and                            
-            (current_price >= ma5) and                      
-            (pg_amount_eok >= 5 or i_buy_today >= 50_000_000) # ★완화★ 쉬는 날에도 프로그램 5억 이상이면 통과
+            (current_price >= ma5) and                     
+            (pg_amount_eok >= 5 or i_buy_today >= 50_000_000) 
         )
 
         is_overnight_candidate = is_overnight_time and (is_overnight_breakout or is_overnight_pullback)
 
-        # 2. 🚨 100% 하드 드랍 (상장폐지 위험, 거래정지, 자본잠식 등 찐 리스크만)
         is_fatal_drop = is_junk or is_financial_risk
         
-        # 3. 베이스 모멘텀 스코어 산출 (수급, 거래량, 테마 강도의 기초 체력)
         base_score = 0
         if is_near_52w_high: base_score += 20
         elif current_price >= (high_60d_calc * 0.90): base_score += 15
@@ -904,21 +866,22 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if acc_i_buy_eok >= 50: base_score += 15 
         elif acc_i_buy_eok >= 10: base_score += 5
 
-        # [V9 패치] 진짜 대장주(선발주) 프리미엄 점수 산출
+        # ★[패치 2] 진성대장 배지 기준 대폭 강화 (가짜 대장 휩쏘 차단)
         high_retention = current_price / today_high if today_high > 0 else 0
-        if high_retention >= 0.97: 
-            base_score += 30  # 고가 대비 -3% 이내 마감 (최상위 대장 유지력)
+        
+        if high_retention >= 0.97 and change_rate >= 0.06 and trading_value >= 30_000_000_000: 
+            base_score += 30  # 고가 대비 -3% 이내 마감 & 6% 이상 상승 & 300억 이상 (진짜 대장)
             master_tajeom = " 👑(진성대장)"
-        elif high_retention >= 0.93: 
-            base_score += 15  # 고가 대비 -7% 이내 마감 (2등주 급)
+        elif high_retention >= 0.93 and change_rate >= 0.03 and trading_value >= 15_000_000_000: 
+            base_score += 15  # 고가 대비 -7% 이내 마감 & 3% 이상 상승 (2등주 급)
             master_tajeom = ""
         else:
             master_tajeom = ""
             
         if is_near_52w_high and "대량유입" in program_text:
-            base_score += 20  # 신고가 부근에서 수급 폭발 시 추가 가중치
+            base_score += 20 
             
-        # 4. 타점 계수 (Multiplier) 및 듀얼 배지 부여 (사용자 친화적 개편)
+        # ★[패치 3] 타점 계수 밸런싱 패치 (스윙/추세 가중치 증가, 스윙/눌림 가중치 소폭 하락)
         tajeom_multiplier = 0.0
         master_tajeom_base = "⏸️ [대기] 분석 중"
         
@@ -931,18 +894,18 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             else:
                 master_tajeom_base = "🌙 [종베] 거래급감 눌림"
             tajeom_multiplier = 1.5  
+        elif is_platform_breakout or is_ss_breakout:
+            master_tajeom_base = "📦 [스윙/추세] 박스권 탈출"
+            tajeom_multiplier = 1.3  # 1.1 -> 1.3 으로 상향 (추세 강화)
         elif is_extreme_nulim or flag_days > 0:
             if current_price >= high_60d_calc * 0.95:
                 master_tajeom_base = "🎯 [스윙/눌림] 전고점 지지"
             else:
                 master_tajeom_base = "🎯 [스윙/눌림] 20일선 방어전"
-            tajeom_multiplier = 1.3  
-        elif is_platform_breakout or is_ss_breakout:
-            master_tajeom_base = "📦 [스윙/추세] 박스권 탈출"
-            tajeom_multiplier = 1.1  
+            tajeom_multiplier = 1.1  # 1.3 -> 1.1 으로 하향 (눌림 필터링)
         elif is_theme_daejang or is_theme_hubal:
             master_tajeom_base = "🚀 [당일/단타] 대장주 불기둥"
-            tajeom_multiplier = 1.0  
+            tajeom_multiplier = 1.1  
         elif "🌟" in signal or (change_rate >= 0.12 and trading_value >= 50_000_000_000):
             master_tajeom_base = "🌟 [관심/수급] 기준봉 포착"
             tajeom_multiplier = 0.9  
@@ -952,50 +915,38 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             
         master_tajeom = master_tajeom_base + master_tajeom
 
-        # 5. 차트 훼손 및 리스크에 따른 감점 
         if not is_fatal_drop:
             if is_long_shadow or is_huge_gap:
-                master_tajeom += " ⚠️(윗꼬리/이격)" # 덮어쓰기 금지! 경고만 추가
-                tajeom_multiplier -= 0.3 # 페널티 완화
+                master_tajeom += " ⚠️(윗꼬리/이격)" 
+                tajeom_multiplier -= 0.3 
             
             if is_chronic_loss: tajeom_multiplier -= 0.3
             if is_high_altitude: tajeom_multiplier -= 0.2
             
-            # [수정 1] 시가총액 10조 이상 우량주(삼성전자 등)는 대시세 고점 페널티 면제
             if is_mega_trend_exhausted and market_cap < 100000:
                 tajeom_multiplier -= 0.3
                 master_tajeom += " ⚠️(대시세 고점)"
 
-        # 6. 오후장 휩쏘 방지 (오후 돌파는 계수 삭감)
-        # [버그 픽스] is_after_1030 변수 부활!
         now_kst_tajeom = datetime.datetime.now(KST)
         is_after_1030 = (now_kst_tajeom.hour * 100 + now_kst_tajeom.minute >= 1030)
         
         if "돌파" in master_tajeom and is_after_1030 and not is_overnight_candidate:
             tajeom_multiplier -= 0.3 
 
-        # 💡 [시크릿 이평 룰 적용] 고정 비율(5%/-3%)을 버리고 종목별 ATR(변동성) 맞춤형 가격 설정
         if is_kalman_uptrend:
-            # 추세가 살아있으면 여유있게 위로 2ATR 기대 수익, 아래로 1ATR을 손절로 잡음
             target_price = int(current_price + (atr_14 * 2.0)) 
             stop_loss = int(current_price - (atr_14 * 1.0))
             
-            # [테스타의 무적 로직] 2차 파동 이상이면 손절가를 '추세 시작점(또는 매수가)'으로 강제 상향!
             if "2차" in secret_tajeom or "3차" in secret_tajeom:
                 stop_loss = int(trend_start_price) 
         else:
-            # 하락 추세에서는 20일선 등 타이트한 손절 유지
             target_price = int(display_high_60d) if display_high_60d > current_price else int(current_price * 1.05)
             stop_loss = int(min(ma20, current_price * 0.95))
             if stop_loss >= current_price: stop_loss = int(current_price * 0.96)
 
-        # 💡 마스터 타점 텍스트에 시크릿 신호 결합 (스캐너 가독성 극대화)
         if secret_tajeom and "관망" not in master_tajeom and "매수금지" not in master_tajeom:
             master_tajeom = f"{master_tajeom} | {secret_tajeom}"
 
-        # 👇👇👇 V11: 기계적 손익비 페널티 완전 삭제 (AI 전권 위임) 👇👇👇
-        
-        # 1. 절대 대장주 조건: 당일 15% 이상 급등 & 거래대금 1000억 이상 & 수급 유입
         is_super_leader = (change_rate >= 0.15) and (trading_value >= 100_000_000_000) and ("대량유입" in program_text or "매수우위" in program_text)
         
         if is_super_leader:
@@ -1004,22 +955,15 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             tajeom_multiplier = max(1.2, tajeom_multiplier) 
             master_tajeom += " 🔥(절대대장/면책)" 
             
-        # 기존에 있던 else: (손익비 2.0 미만 감점 로직)을 통째로 삭제했습니다!
-        # 이제 기계는 얌전히 종목만 찾고, 실전 타점은 AI가 결정합니다.
-        # 👆👆👆 코드 교체 완료 👆👆👆
-
-        # 7. 최종 스코어 산출 
         quant_score = int(max(0, base_score * tajeom_multiplier))
         score_display = f"{quant_score}점 ({track_type})"
         
-        # 8. 시장 해지 프리미엄 추가 (하락장 방어)
         is_hedge_theme = any(kw in my_theme_name for kw in ['방산', '방위산업', '해운', '조선', '석유', '가스', '전쟁', '사료', '원자재', '품절주', '식품'])
         if is_hedge_theme and kospi_rate <= -0.5:
             hedge_premium = 5 + int((abs(kospi_rate) - 0.5) / 0.1) * 1 
             quant_score += hedge_premium
             master_tajeom += f" 🛡️(+{hedge_premium}점)"
 
-        # =====================================================================
         return [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", 
             int(ma5), int(ma20), vol_ratio_text, signal, 
@@ -1038,9 +982,8 @@ def update_technical_data(df_theme, all_theme_map):
         gc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope))
         doc = gc.open_by_url(SHEET_URL)
         
-        # [V11.2] 접속로그 및 DB_중장기 최신순 정렬 강제 집행
-        cleanup_and_reorder(doc, "접속로그", 1) # 2번째 열(시간) 기준
-        cleanup_and_reorder(doc, "DB_중장기", 0) # 1번째 열(날짜) 기준
+        cleanup_and_reorder(doc, "접속로그", 1) 
+        cleanup_and_reorder(doc, "DB_중장기", 0) 
 
         print("▶️ 기술적 지표 초고속 멀티프로세싱 판독 시작...")
         is_warning_market = check_warning_market()
@@ -1052,7 +995,6 @@ def update_technical_data(df_theme, all_theme_map):
         
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
         
-        # 💡 [V11.7 패치] 완벽한 중복 제거를 위한 Set 활용 및 공백 제거 강제
         target_names = set()
         
         try:
@@ -1092,18 +1034,14 @@ def update_technical_data(df_theme, all_theme_map):
 
         
         target_dict = {}
-        # 종목코드 매핑 시에도 고유한 종목코드 기준으로 다시 한번 필터링 (완벽한 중복 차단)
         for name in list(target_names):
             code = name_to_code.get(name) or search_code_from_naver(name)
-            if code and code not in target_dict.values(): # 이미 등록된 코드는 무시
+            if code and code not in target_dict.values():
                 target_dict[name] = code
 
         results = []
-        print(f"⚡ {len(target_dict)}개 고유 종목을 멀티프로세싱(Multi-Processing)으로 동시 타격합니다...")
+        print(f"⚡ {len(target_dict)}개 고유 종목을 30개의 스레드로 동시 타격합니다...")
         
-        print(f"⚡ {len(target_dict)}개 종목을 30개의 스레드로 동시 타격합니다...")
-        
-        # 다시 ThreadPoolExecutor로 복구하여 I/O 네트워크 대기열 병목 현상 해소
         with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
             future_to_name = {executor.submit(analyze_single_stock, name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate): name for name, code in target_dict.items()}
             for future in concurrent.futures.as_completed(future_to_name):
@@ -1113,7 +1051,6 @@ def update_technical_data(df_theme, all_theme_map):
         results.sort(key=lambda x: x[18], reverse=True) 
         
         if results:
-            # 💡 [V11 핵심] DB_스캐너에서 기존 AI 메모리 추출
             try: 
                 db_scanner_sheet = doc.worksheet("DB_스캐너")
                 existing_data = {}
@@ -1130,7 +1067,6 @@ def update_technical_data(df_theme, all_theme_map):
                             target = str(row[14]).strip()
                             stop = str(row[15]).strip()
                             
-                            # AI가 분석한 데이터가 있다면 백업 메모리에 영구 저장!
                             if "대기중" not in briefing and "계산중" not in target and "계산 대기" not in target:
                                 existing_data[saved_code] = {
                                     "briefing": briefing,
@@ -1144,7 +1080,6 @@ def update_technical_data(df_theme, all_theme_map):
                 now_time = datetime.datetime.now(KST)
                 is_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50)
             
-            # 💡 주가데이터_보조 덮어쓰기 (기계적 값 날리고 AI 값으로 락인)
             for r in results:
                 c_code = str(r[1]).replace("'", "").strip().zfill(6)
                 if c_code in existing_data:
@@ -1158,7 +1093,6 @@ def update_technical_data(df_theme, all_theme_map):
             helper_sheet.update(range_name="A2", values=results, value_input_option="USER_ENTERED")
             print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 업데이트 완료)")
             
-            # 💡 DB_스캐너 전송용 데이터 조립 (기계적 타점 배제)
             scanner_keywords = ["[종베]", "[스윙/눌림]", "[스윙/추세]", "[당일/단타]", "[관심/수급]"]
             
             scanner_results = []
@@ -1179,12 +1113,10 @@ def update_technical_data(df_theme, all_theme_map):
                     고가_52주 = r[21]
                     기관누적수급 = r[22]
                     
-                    # 💡 무조건 'AI 데이터 계산중'으로 초기화 (기계적 값 차단)
                     ai_briefing = "AI 브리핑 대기중"
                     ai_target = "AI 데이터 계산중"
                     ai_stop = "AI 데이터 계산중"
                     
-                    # AI 메모리가 있다면 불러와서 채움
                     if 종목코드 in existing_data:
                         ai_briefing = existing_data[종목코드]["briefing"]
                         ai_target = existing_data[종목코드]["target"]
@@ -1202,22 +1134,18 @@ def update_technical_data(df_theme, all_theme_map):
                 top_20_results = scanner_results[:MAX_DISPLAY_COUNT]
                 top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results}
 
-                # 💡 [V11 핵심] 20위 밖으로 밀려났더라도 AI 메모리가 있는 종목은 구출해서 스캐너에 유지!
                 if not is_reset_time:
-                    # 1) 현재 150위 안에 있는데 20위 밖으로 밀린 종목들 (최신 현재가 반영됨)
                     for res in scanner_results:
                         c_code = str(res[2]).replace("'", "").strip().zfill(6)
                         if c_code not in top_20_codes and c_code in existing_data:
                             top_20_results.append(res)
                             top_20_codes.add(c_code)
                             
-                    # 2) 150위 밖으로 아예 사라졌지만 '리포트 발송 완료'인 VIP 종목들 (과거 데이터로 보존)
                     for c_code, data in existing_data.items():
                         if "리포트 발송 완료" in data["briefing"] and c_code not in top_20_codes:
                             top_20_results.append(data["raw_row"])
                             top_20_codes.add(c_code)
 
-                # 3. 백테스트 자동 갱신 로직 (아침 리셋 시간에만 동작)
                 if is_reset_time:
                     try:
                         bt_sheet = doc.worksheet("백테스트_로그")
@@ -1268,7 +1196,6 @@ def update_technical_data(df_theme, all_theme_map):
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
 
-# 멀티프로세싱을 윈도우 환경에서 안전하게 실행하기 위한 진입점 보호
 if __name__ == "__main__":
     df_theme, is_market_closed, all_theme_map = get_real_money_themes()
     df_news, df_naver, df_main_news = get_news_keywords(), get_naver_search_ranking(), get_naver_main_news()
