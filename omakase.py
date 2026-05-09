@@ -95,39 +95,45 @@ KIS_TOKEN = get_kis_access_token()
 if KIS_TOKEN: print("✅ KIS 토큰 준비 완료!")
 else: print("⚠️ KIS 토큰 준비 실패")
 
-session = requests.Session()
-session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
+# 전역 세션 대신 로컬 세션 사용 (스레드 충돌 방지용)
+# session = requests.Session() 
+# session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
 
 STOPWORDS = ['코스피', '코스닥', '증시', '주식', '투자', '종목', '시장', '지수', '대형주', '중소형주', '외인', '기관', '개인', '외국인', '매수', '매도', '순매수', '순매도', '거래', '대금', '주가', '펀드', '사모', '상장', '상폐', '공모', '특징주', '테마', '테마주', '관련', '관련주', '수혜', '수혜주', '장세', '개장', '출발', '마감', '초반', '후반', '오전', '오후', '장중', '증권', '증권사', '운용', '자사', '괴리', '프리미어', '가치', '밸류', '공시', '병합', '분할', '상승', '하락', '급등', '급락', '강세', '약세', '폭락', '반등', '조정', '랠리', '위축', '냉각', '훈풍', '안도', '불안', '쇼크', '서프라이즈', '돌파', '경신', '연속', '최고', '최저', '신고가', '신저가', '최고치', '최저치', '최고가', '최저가', '급증', '급감', '확산', '진정', '완화', '악화', '개선', '회복', '최대', '사상', '역대', '최초', '최신', '규모', '수준', '가격', '목표가', '상향', '하향', '박살', '킬러', '대규모', '변동', '오픈', '호재', '연계', '대비', '경제', '금융', '기업', '정부', '자산', '머니', '한국', '미국', '국내', '글로벌', '뉴욕', '회장', '대표', '임원', '주주', '총회', '이유', '때문', '달러', '금리', '인상', '인하', '동결', '연준', '파월', '물가', '지표', '고용', '기름값', '주유소', '석유', '신용', '수익', '매출', '적자', '흑자', '배당', '지분', '인수', '합병', '사업', '추진', '공급', '계약', '체결', '실적', '발표', '이익', '반사이익', '현금', '자회사', '계열사', '지주사', '관계사', '기내식', '서비스', '오늘', '내일', '이번', '주간', '월간', '분기', '시간', '하루', '하루만', '올해', '내년', '지난해', '전일', '전주', '전월', '동기', '내달', '연말', '연초', '이날', '당일', '최근', '현재', '이후', '이전', '상반기', '하반기', '당분간', '예상', '전망', '기대', '우려', '경고', '목표', '분석', '평가', '결정', '검토', '참여', '진출', '포기', '중단', '재개', '완료', '시작', '종료', '영향', '타격', '피해', '직격탄', '부양', '지원', '규제', '단속', '강화', '철폐', '폐지', '유지', '보류', '달성', '기준', '행사', '이사', '의결', '개정', '취지', '적극', '개최', '진행', '예정', '상황', '필요', '대응', '마련', '운영', '관리', '적용', '이용', '사용', '활용', '확보', '제공', '구축', '기반', '중심', '노력', '계획', '정도', '경우', '이상', '이하', '가운데', '가장', '포함', '제외', '기대감', '우려감', '불확실성', '가능성', '움직임', '분위기', '흐름', '국면', '대목', '차원', '입장', '배경', '결과', '모습', '모멘텀', '현상', '차이', '비중', '비율', '단계', '목적', '대상', '조원', '억원', '만원', '천원', '전문', '현지', '사회', '생산자', '제도', '재고', '면제', '속보', '단독', '기자', '특파원', '앵커', '저작권', '무단', '전재', '재배포', '금지', '뉴스', '보도', '자료', '사진', '관계자', '주장', '설명', '강조', '위원회', '법안', '회의', '통과', '정책', '의원', '장관', '페이지', '주소', '입력', '방문', '삭제', '요청', '정확', '확인', '문의', '사항', '고객', '센터', '안내', '감사', '반대', '선임', '공개', '자본', '공개', '이란', '국민연금', '종전', '전쟁', '트럼프', '제안', '찬성', '대통령', '사내', '협상', '출시', '계좌', '중동', '상품', '체제', '변경', '투자증권', '성장', '시그널', '신규', '정치', '외교', '합의', '수출', '수입', '도입', '본격', '소식', '임박', '부각', '주도']
 AD_FILTER = ['펀드', '투어', '캠페인', '서비스', '최초', '강화', '고객', '연금', '마스터', '코리아', '정책', '개최', '박람회', '전시회', '프로모션', '할인', '기획전', '페스티벌', '출시', '협약', 'MOU', '체결', '선정', '어워드', '스마트픽', '팔자', '사자', '증가', '감소', '목표', '꺾인', '주석', '전망', '우려', '기대', '연내', '내달', '오늘', '내일', '돌파', '연속', '급락', '투자', '매수', '매도', '수익']
 THEME_BLACKLIST = ['코로나19', '메르스', '지카바이러스', '우한폐렴', '원숭이두창', '엠폭스', '아프리카돼지열병', '구제역', '광우병', '야놀자(Yanolja)', '리비안(RIVIAN)']
 
 def check_warning_market():
+    # 로컬 세션 사용
+    local_session = requests.Session()
     try:
         url = "https://m.stock.naver.com/api/index/KOSDAQ/price?pageSize=20&page=1"
-        res = session.get(url, verify=False, timeout=3).json()
+        res = local_session.get(url, verify=False, timeout=3).json()
         prices = [float(item['closePrice'].replace(',', '')) for item in res]
         if len(prices) == 20: return prices[0] < (sum(prices) / 20)
     except: pass
     return False
 
 def get_kospi_fluctuation_rate():
+    local_session = requests.Session()
     try:
-        res = session.get("https://m.stock.naver.com/api/index/KOSPI/basic", verify=False, timeout=3).json()
+        res = local_session.get("https://m.stock.naver.com/api/index/KOSPI/basic", verify=False, timeout=3).json()
         rate_str = res.get("fluctuationsRatio", "0")
         return float(str(rate_str).replace(',', ''))
     except:
         return 0.0
 
 def search_code_from_naver(stock_name):
+    local_session = requests.Session()
     try:
         url = f"https://m.stock.naver.com/api/search/all?keyword={stock_name}"
-        data = session.get(url).json()
+        data = local_session.get(url).json()
         if data.get('result') and data['result'].get('stocks'): return data['result']['stocks'][0]['itemCode']
     except: pass
     return None
 
 def get_news_keywords():
+    local_session = requests.Session()
     try:
         now_minute = datetime.datetime.now(KST).minute
         if not (30 <= now_minute < 40): return pd.DataFrame() 
@@ -135,7 +141,7 @@ def get_news_keywords():
         theme_phrases = []
         for page in range(1, 10):
             url = f"https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258&page={page}"
-            res = session.get(url, verify=False, timeout=5)
+            res = local_session.get(url, verify=False, timeout=5)
             soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
             for sub in soup.select('.articleSubject a'):
                 title_text = sub.get_text(strip=True)
@@ -158,8 +164,9 @@ def get_news_keywords():
     except Exception as e: return pd.DataFrame()
 
 def get_market_cap(code):
+    local_session = requests.Session()
     try:
-        res = session.get(f"https://finance.naver.com/item/main.naver?code={code}", verify=False, timeout=3)
+        res = local_session.get(f"https://finance.naver.com/item/main.naver?code={code}", verify=False, timeout=3)
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
         market_sum_tag = soup.find('em', id='_market_sum')
         if not market_sum_tag: return 999999 
@@ -171,12 +178,13 @@ def get_market_cap(code):
     except: return 999999 
 
 def get_real_money_themes():
+    local_session = requests.Session()
     try:
         now = datetime.datetime.now(KST)
         is_market_closed = now.hour < 9 or now.hour > 15 or (now.hour == 15 and now.minute >= 40)
         time_str = now.strftime('%H:%M')
         
-        res = session.get("https://finance.naver.com/sise/theme.naver", verify=False, timeout=5)
+        res = local_session.get("https://finance.naver.com/sise/theme.naver", verify=False, timeout=5)
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
         
         table = soup.find('table', {'class': 'type_1'})
@@ -190,7 +198,7 @@ def get_real_money_themes():
         print("▶️ 실시간 주도 테마 수집 시작 (군집성 필터 적용)...")
         for theme in themes:
             try:
-                soup = BeautifulSoup(session.get(theme['url'], verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
+                soup = BeautifulSoup(local_session.get(theme['url'], verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
                 stocks = []
                 type_5_table = soup.find('table', {'class': 'type_5'})
                 if not type_5_table: continue
@@ -249,8 +257,9 @@ def get_real_money_themes():
         return pd.DataFrame(), False, {}
 
 def get_naver_search_ranking():
+    local_session = requests.Session()
     try:
-        soup = BeautifulSoup(session.get("https://finance.naver.com/sise/lastsearch2.naver", verify=False).content, 'html.parser', from_encoding='euc-kr')
+        soup = BeautifulSoup(local_session.get("https://finance.naver.com/sise/lastsearch2.naver", verify=False).content, 'html.parser', from_encoding='euc-kr')
         data = []
         search_blacklist = ['삼성전자', 'SK하이닉스', '현대차', '기아', 'LG에너지솔루션', 'POSCO홀딩스', '셀트리온', 'NAVER', '카카오']
         table = soup.find('table', {'class': 'type_5'})
@@ -268,8 +277,9 @@ def get_naver_search_ranking():
     except: return pd.DataFrame()
 
 def get_naver_main_news():
+    local_session = requests.Session()
     try:
-        soup = BeautifulSoup(session.get("https://finance.naver.com/news/mainnews.naver", verify=False, timeout=5).content, 'html.parser', from_encoding='cp949')
+        soup = BeautifulSoup(local_session.get("https://finance.naver.com/news/mainnews.naver", verify=False, timeout=5).content, 'html.parser', from_encoding='cp949')
         news_list = []
         for dl in soup.find_all('dl'):
             subject_tag = dl.find(['dt', 'dd'], {'class': 'articleSubject'})
@@ -320,11 +330,12 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
 
 # [업데이트] 네이버 캘린더 파싱 및 필터링 함수 (서술형 뉴스/전망 기사 차단)
 def get_market_schedule():
+    local_session = requests.Session()
     """네이버 금융 오늘의 증시 일정 수집 (순수 일정만 추출)"""
     try:
         today_str = datetime.datetime.now(KST).strftime('%Y-%m-%d')
         url = "https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258"
-        res = session.get(url, verify=False, timeout=5)
+        res = local_session.get(url, verify=False, timeout=5)
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
         
         schedules = []
@@ -453,11 +464,13 @@ def manage_schedule_sheet(schedules):
     except Exception as e:
         print(f"❌ 주요일정 시트 관리 에러: {e}")
 
+# 멀티프로세싱을 위해 session 대신 local_session 사용하도록 함수 내부 수정
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate):
+    local_session = requests.Session()
     try:
         # 1. fchart 데이터 가져오기 (과거 차트 및 현재가 동시 수집)
         url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=250&requestType=0"
-        res = session.get(url, verify=False, timeout=3)
+        res = local_session.get(url, verify=False, timeout=3)
         root = ET.fromstring(res.text)
         
         history = []
@@ -485,7 +498,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             
         if len(history) < 2: return None
 
-        # 2. 확정된 지표 추출 (IP 차단을 유발하던 모바일 API 호출 100% 제거)
+        # 2. 확정된 지표 추출
         last_day = history[-1]
         open_price, today_high, today_low, current_price, today_vol = last_day['open'], last_day['high'], last_day['low'], last_day['close'], last_day['volume']
         
@@ -534,12 +547,11 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             kalman_turned_green = (curr_kalman > prev_kalman) and (prev_kalman <= pprev_kalman)
             kalman_turned_red = (curr_kalman < prev_kalman) and (prev_kalman >= pprev_kalman)
             
-            # 4. ATR 파동 카운팅 (테스타 매매법 완벽 이식)
-            # 기존 '20일 최저가' 룰을 버리고, '칼만이평이 초록색으로 턴한 시점'을 추세 시작가로 추적
+            # 4. ATR 파동 카운팅 (테스타 매매법 적용)
             trend_start_price = current_price
             for i in range(len(kalman_ma)-1, 1, -1):
-                if kalman_ma[i] <= kalman_ma[i-1]: # 과거로 거슬러 올라가 하락(빨강)이었던 지점을 만나면
-                    trend_start_price = prices[i]  # 그곳이 바로 이번 상승 추세의 시작점!
+                if kalman_ma[i] <= kalman_ma[i-1]:
+                    trend_start_price = prices[i] 
                     break
             
             price_climb = current_price - trend_start_price
@@ -599,7 +611,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         gap_ratio = (open_price - prev_price) / prev_price if prev_price > 0 else 0
         is_huge_gap = gap_ratio >= 0.04
         
-        risk_soup = BeautifulSoup(session.get(f"https://finance.naver.com/item/main.naver?code={code}", verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
+        risk_soup = BeautifulSoup(local_session.get(f"https://finance.naver.com/item/main.naver?code={code}", verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
         
         market_sum_tag = risk_soup.find('em', id='_market_sum')
         market_cap = 999999
@@ -650,7 +662,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         try:
             frgn_url = f"https://finance.naver.com/item/frgn.naver?code={code}"
-            frgn_res = session.get(frgn_url, verify=False, timeout=3)
+            frgn_res = local_session.get(frgn_url, verify=False, timeout=3)
             frgn_soup = BeautifulSoup(frgn_res.content, 'html.parser', from_encoding='euc-kr')
             rows = frgn_soup.select("table.type2 > tr")
             
@@ -895,44 +907,49 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         high_retention = current_price / today_high if today_high > 0 else 0
         if high_retention >= 0.97: 
             base_score += 30  # 고가 대비 -3% 이내 마감 (최상위 대장 유지력)
-            master_tajeom += " 👑(진성대장)"
+            master_tajeom = " 👑(진성대장)"
         elif high_retention >= 0.93: 
             base_score += 15  # 고가 대비 -7% 이내 마감 (2등주 급)
+            master_tajeom = ""
+        else:
+            master_tajeom = ""
             
         if is_near_52w_high and "대량유입" in program_text:
             base_score += 20  # 신고가 부근에서 수급 폭발 시 추가 가중치
             
         # 4. 타점 계수 (Multiplier) 및 듀얼 배지 부여 (사용자 친화적 개편)
         tajeom_multiplier = 0.0
-        master_tajeom = "⏸️ [대기] 분석 중"
+        master_tajeom_base = "⏸️ [대기] 분석 중"
         
         if is_fatal_drop:
-            master_tajeom = "🚫 [제외] 상폐/재무위험"
+            master_tajeom_base = "🚫 [제외] 상폐/재무위험"
             tajeom_multiplier = 0.0
         elif is_overnight_candidate:
             if is_breakout_track and not is_overnight_pullback:
-                master_tajeom = "🌙 [종베] 신고가 돌파 대기"
+                master_tajeom_base = "🌙 [종베] 신고가 돌파 대기"
             else:
-                master_tajeom = "🌙 [종베] 거래급감 눌림"
+                master_tajeom_base = "🌙 [종베] 거래급감 눌림"
             tajeom_multiplier = 1.5  
         elif is_extreme_nulim or flag_days > 0:
             if current_price >= high_60d_calc * 0.95:
-                master_tajeom = "🎯 [스윙/눌림] 전고점 지지"
+                master_tajeom_base = "🎯 [스윙/눌림] 전고점 지지"
             else:
-                master_tajeom = "🎯 [스윙/눌림] 20일선 방어전"
+                master_tajeom_base = "🎯 [스윙/눌림] 20일선 방어전"
             tajeom_multiplier = 1.3  
         elif is_platform_breakout or is_ss_breakout:
-            master_tajeom = "📦 [스윙/추세] 박스권 탈출"
+            master_tajeom_base = "📦 [스윙/추세] 박스권 탈출"
             tajeom_multiplier = 1.1  
         elif is_theme_daejang or is_theme_hubal:
-            master_tajeom = "🚀 [당일/단타] 대장주 불기둥"
+            master_tajeom_base = "🚀 [당일/단타] 대장주 불기둥"
             tajeom_multiplier = 1.0  
         elif "🌟" in signal or (change_rate >= 0.12 and trading_value >= 50_000_000_000):
-            master_tajeom = "🌟 [관심/수급] 기준봉 포착"
+            master_tajeom_base = "🌟 [관심/수급] 기준봉 포착"
             tajeom_multiplier = 0.9  
         else:
-            master_tajeom = "👀 [관망] 타점 미도달"
+            master_tajeom_base = "👀 [관망] 타점 미도달"
             tajeom_multiplier = 0.6  
+            
+        master_tajeom = master_tajeom_base + master_tajeom
 
         # 5. 차트 훼손 및 리스크에 따른 감점 
         if not is_fatal_drop:
@@ -1024,7 +1041,7 @@ def update_technical_data(df_theme, all_theme_map):
         cleanup_and_reorder(doc, "접속로그", 1) # 2번째 열(시간) 기준
         cleanup_and_reorder(doc, "DB_중장기", 0) # 1번째 열(날짜) 기준
 
-        print("▶️ 기술적 지표 초고속 멀티스레딩 판독 시작...")
+        print("▶️ 기술적 지표 초고속 멀티프로세싱 판독 시작...")
         is_warning_market = check_warning_market()
         if is_warning_market: print("⚠️ 코스닥 20일선 이탈(하락장) 감지!")
         
@@ -1083,8 +1100,10 @@ def update_technical_data(df_theme, all_theme_map):
             if code: target_dict[name] = code
 
         results = []
-        print(f"⚡ {len(target_dict)}개 종목을 30개의 스레드로 동시 타격합니다...")
-        with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
+        print(f"⚡ {len(target_dict)}개 종목을 멀티프로세싱(Multi-Processing)으로 동시 타격합니다...")
+        
+        # 스레드풀을 프로세스풀로 변경하여 연산 속도 극대화
+        with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count() or 4) as executor:
             future_to_name = {executor.submit(analyze_single_stock, name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate): name for name, code in target_dict.items()}
             for future in concurrent.futures.as_completed(future_to_name):
                 res = future.result()
@@ -1248,6 +1267,7 @@ def update_technical_data(df_theme, all_theme_map):
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
 
+# 멀티프로세싱을 윈도우 환경에서 안전하게 실행하기 위한 진입점 보호
 if __name__ == "__main__":
     df_theme, is_market_closed, all_theme_map = get_real_money_themes()
     df_news, df_naver, df_main_news = get_news_keywords(), get_naver_search_ranking(), get_naver_main_news()
