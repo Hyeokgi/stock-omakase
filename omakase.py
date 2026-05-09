@@ -1101,8 +1101,10 @@ def update_technical_data(df_theme, all_theme_map):
         results = []
         print(f"⚡ {len(target_dict)}개 고유 종목을 멀티프로세싱(Multi-Processing)으로 동시 타격합니다...")
         
-        # 스레드풀을 프로세스풀로 변경하여 연산 속도 극대화
-        with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count() or 4) as executor:
+        print(f"⚡ {len(target_dict)}개 종목을 30개의 스레드로 동시 타격합니다...")
+        
+        # 다시 ThreadPoolExecutor로 복구하여 I/O 네트워크 대기열 병목 현상 해소
+        with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
             future_to_name = {executor.submit(analyze_single_stock, name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate): name for name, code in target_dict.items()}
             for future in concurrent.futures.as_completed(future_to_name):
                 res = future.result()
