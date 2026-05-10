@@ -505,14 +505,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 x_hat = x_hat + K * (z - x_hat)
                 p = (1 - K) * p_hat
                 kalman_ma.append(x_hat)
-            kalman_ma2 = []
-            x2, p2 = kalman_ma[0], 1.0
-            for z in kalman_ma:
-                p2_hat = p2 + Q
-                K2 = p2_hat / (p2_hat + R * 3)  # R을 키워 더 느리게(안정적으로)
-                x2 = x2 + K2 * (z - x2)
-                p2 = (1 - K2) * p2_hat
-                kalman_ma2.append(x2)
+            
             curr_kalman = kalman_ma[-1]
             prev_kalman = kalman_ma[-2] if len(kalman_ma) > 1 else curr_kalman
             pprev_kalman = kalman_ma[-3] if len(kalman_ma) > 2 else prev_kalman
@@ -1132,7 +1125,7 @@ def update_technical_data(df_theme, all_theme_map):
                 target_dict[name] = code
 
         results = []
-        print(f"⚡ {len(target_dict)}개 고유 종목을 30개의 스레드로 동시 타격합니다...")
+        print(f"⚡ {len(target_dict)}개 고유 종목을 60개의 스레드로 동시 타격합니다...")
         
         with concurrent.futures.ThreadPoolExecutor(max_workers=60) as executor:
             future_to_name = {executor.submit(analyze_single_stock, name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate): name for name, code in target_dict.items()}
