@@ -1082,7 +1082,7 @@ def update_technical_data(df_theme, all_theme_map):
         
         target_names = set()
         
-        # 1. 대시보드(기존 관심 종목) 타겟팅 - 상위 100개로 제한!
+        # 1. 대시보드(기존 관심 종목) 타겟팅 - ★ 상위 100개로 제한!
         try:
             for row in doc.worksheet("대시보드").get_all_values()[4:104]:
                 if len(row) > 2 and str(row[2]).strip() and str(row[2]).strip() != "#REF!": 
@@ -1090,15 +1090,7 @@ def update_technical_data(df_theme, all_theme_map):
         except Exception:
             pass
 
-        # 2. 오늘 실시간 테마 주도주(df_theme) 타겟팅
-        if not df_theme.empty:
-            theme_rank_dict = {}
-            theme_rank_tracker = {}
-            for index, row in df_theme.iterrows():
-                if len(row) > 2 and str(row[2]).strip() and str(row[2]).strip() != "#REF!": 
-                    target_names.add(str(row[2]).strip())
-        except: pass
-
+        # 2. 오늘 실시간 테마 주도주(df_theme) 추가
         if not df_theme.empty:
             theme_rank_dict = {}
             theme_rank_tracker = {}
@@ -1214,7 +1206,6 @@ def update_technical_data(df_theme, all_theme_map):
                         tajeom, ai_briefing, 스코어, 프로그램, 고가_52주, 기관누적수급, ai_target, ai_stop
                     ])
                     
-            # 💡 [버그 픽스] 포착된 종목이 0개여도 과거 좀비를 지우기 위해 무조건 실행
             scanner_results.sort(key=lambda x: int(str(x[10]).split('점')[0]), reverse=True)
             
             # ★최정예 15개로 압축
@@ -1223,7 +1214,6 @@ def update_technical_data(df_theme, all_theme_map):
             top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results}
 
             if not is_reset_time:
-                # 오직 '리포트 발송 완료'라는 특별 VIP 도장을 받은 종목만 구출
                 for c_code, data in existing_data.items():
                     if "리포트 발송 완료" in data["briefing"] and c_code not in top_20_codes:
                         top_20_results.append(data["raw_row"])
@@ -1273,13 +1263,12 @@ def update_technical_data(df_theme, all_theme_map):
 
             db_scanner_sheet = doc.worksheet("DB_스캐너")
             db_scanner_sheet.batch_clear(['A2:Z'])
-            if top_20_results: # 비어있지 않을 때만 쓰기 (비어있으면 clear만 됨)
+            if top_20_results: 
                 db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
             print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 (초기화시간:{is_reset_time})")
 
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
-
 if __name__ == "__main__":
     df_theme, is_market_closed, all_theme_map = get_real_money_themes()
     df_news, df_naver, df_main_news = get_news_keywords(), get_naver_search_ranking(), get_naver_main_news()
