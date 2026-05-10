@@ -1089,15 +1089,21 @@ def update_technical_data(df_theme, all_theme_map):
         
         target_names = set()
         
-        # 1. 대시보드(기존 관심 종목) 타겟팅 - ★ 상위 100개로 제한!
         try:
-            for row in doc.worksheet("대시보드").get_all_values()[4:104]:
+            raw_data = doc.worksheet("수급_Raw").get_all_values()
+            for row in raw_data[1:]:
+                if len(row) >= 7:
+                    stock_name = str(row[-4]).strip()
+                    if stock_name and stock_name not in ["#REF!", "로딩중...", "데이터대기", "FALSE"]:
+                        target_names.add(stock_name)
+        except: pass
+
+        try:
+            for row in doc.worksheet("대시보드").get_all_values()[4:]:
                 if len(row) > 2 and str(row[2]).strip() and str(row[2]).strip() != "#REF!": 
                     target_names.add(str(row[2]).strip())
-        except Exception:
-            pass
+        except: pass
 
-        # 2. 오늘 실시간 테마 주도주(df_theme) 추가
         if not df_theme.empty:
             theme_rank_dict = {}
             theme_rank_tracker = {}
@@ -1126,9 +1132,9 @@ def update_technical_data(df_theme, all_theme_map):
                 target_dict[name] = code
 
         results = []
-        print(f"⚡ {len(target_dict)}개 고유 종목을 60개의 스레드로 동시 타격합니다...")
+        print(f"⚡ {len(target_dict)}개 고유 종목을 30개의 스레드로 동시 타격합니다...")
         
-        with concurrent.futures.ThreadPoolExecutor(max_workers=60) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
             future_to_name = {executor.submit(analyze_single_stock, name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate): name for name, code in target_dict.items()}
             for future in concurrent.futures.as_completed(future_to_name):
                 res = future.result()
@@ -1213,6 +1219,7 @@ def update_technical_data(df_theme, all_theme_map):
                         tajeom, ai_briefing, 스코어, 프로그램, 고가_52주, 기관누적수급, ai_target, ai_stop
                     ])
                     
+            # 💡 [버그 픽스] 포착된 종목이 0개여도 과거 좀비를 지우기 위해 무조건 실행
             scanner_results.sort(key=lambda x: int(str(x[10]).split('점')[0]), reverse=True)
             
             # ★최정예 15개로 압축
@@ -1221,6 +1228,7 @@ def update_technical_data(df_theme, all_theme_map):
             top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results}
 
             if not is_reset_time:
+                # 오직 '리포트 발송 완료'라는 특별 VIP 도장을 받은 종목만 구출
                 for c_code, data in existing_data.items():
                     if "리포트 발송 완료" in data["briefing"] and c_code not in top_20_codes:
                         top_20_results.append(data["raw_row"])
@@ -1270,12 +1278,13 @@ def update_technical_data(df_theme, all_theme_map):
 
             db_scanner_sheet = doc.worksheet("DB_스캐너")
             db_scanner_sheet.batch_clear(['A2:Z'])
-            if top_20_results: 
+            if top_20_results: # 비어있지 않을 때만 쓰기 (비어있으면 clear만 됨)
                 db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
             print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 (초기화시간:{is_reset_time})")
 
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
+
 if __name__ == "__main__":
     df_theme, is_market_closed, all_theme_map = get_real_money_themes()
     df_news, df_naver, df_main_news = get_news_keywords(), get_naver_search_ranking(), get_naver_main_news()
