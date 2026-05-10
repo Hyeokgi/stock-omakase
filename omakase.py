@@ -1081,18 +1081,19 @@ def update_technical_data(df_theme, all_theme_map):
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
         
         target_names = set()
-        
-        try:
-            raw_data = doc.worksheet("수급_Raw").get_all_values()
-            for row in raw_data[1:]:
-                if len(row) >= 7:
-                    stock_name = str(row[-4]).strip()
-                    if stock_name and stock_name not in ["#REF!", "로딩중...", "데이터대기", "FALSE"]:
-                        target_names.add(stock_name)
-        except: pass
 
+        # 1. 대시보드(기존 관심 종목) 타겟팅
         try:
             for row in doc.worksheet("대시보드").get_all_values()[4:]:
+                if len(row) > 2 and str(row[2]).strip() and str(row[2]).strip() != "#REF!": 
+                    target_names.add(str(row[2]).strip())
+        except: pass
+
+        # 2. 오늘 실시간 테마 주도주(df_theme) 타겟팅
+        if not df_theme.empty:
+            theme_rank_dict = {}
+            theme_rank_tracker = {}
+            for index, row in df_theme.iterrows():
                 if len(row) > 2 and str(row[2]).strip() and str(row[2]).strip() != "#REF!": 
                     target_names.add(str(row[2]).strip())
         except: pass
