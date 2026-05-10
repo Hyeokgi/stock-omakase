@@ -1081,13 +1081,14 @@ def update_technical_data(df_theme, all_theme_map):
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
         
         target_names = set()
-
-        # 1. 대시보드(기존 관심 종목) 타겟팅
+        
+        # 1. 대시보드(기존 관심 종목) 타겟팅 - 상위 100개로 제한!
         try:
-            for row in doc.worksheet("대시보드").get_all_values()[4:]:
+            for row in doc.worksheet("대시보드").get_all_values()[4:104]:
                 if len(row) > 2 and str(row[2]).strip() and str(row[2]).strip() != "#REF!": 
                     target_names.add(str(row[2]).strip())
-        except: pass
+        except Exception:
+            pass
 
         # 2. 오늘 실시간 테마 주도주(df_theme) 타겟팅
         if not df_theme.empty:
