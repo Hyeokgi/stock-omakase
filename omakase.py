@@ -964,7 +964,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 master_tajeom_base = "🌙 [종베] 거래급감 눌림"
             tajeom_multiplier = 1.5  
             
-        # 1순위: 확실한 당일 주도 단타 (6% 이상 상승 시 무조건 이쪽으로 흡수!)
+        # 1순위: 확실한 당일 주도 단타 
         elif is_theme_daejang:
             master_tajeom_base = "🚀 [당일/단타] 대장주 불기둥"
             tajeom_multiplier = 1.3  
@@ -972,23 +972,23 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             master_tajeom_base = "🚀 [당일/단타] 테마 후발주"
             tajeom_multiplier = 1.15
             
-        # 2순위: 묵직한 추세 박스권 탈출 (5% 이상 상승)
+        # 2순위: 묵직한 추세 박스권 탈출 (★가중치 상향: 1.1 -> 1.25)
         elif is_platform_breakout or is_ss_breakout:
             master_tajeom_base = "📦 [스윙/추세] 박스권 탈출"
-            tajeom_multiplier = 1.1  
+            tajeom_multiplier = 1.25  
             
-        # 3순위: 스윙/눌림 (🔥핵심: 당일 6% 미만 상승으로 '조용할 때'만 눌림목으로 인정!)
+        # 3순위: 스윙/눌림 (★가중치 상향: 1.2 -> 1.3)
         elif (is_extreme_nulim or flag_days > 0) and (change_rate < 0.06):
             if current_price >= high_60d_calc * 0.95:
                 master_tajeom_base = "🎯 [스윙/눌림] 전고점 지지"
             else:
                 master_tajeom_base = "🎯 [스윙/눌림] 20일선 방어전"
-            tajeom_multiplier = 1.2  
+            tajeom_multiplier = 1.3  
             
-        # 4순위: 시크릿 이평 1차 파동 및 추세 전환 (가중치 1.1로 대폭 상향하여 발굴 강화!)
+        # 4순위: 시크릿 이평 1차 파동 및 추세 전환 (★가중치 대폭 상향: 1.1 -> 1.35)
         elif "1차" in secret_tajeom or "추세 전환" in secret_tajeom:
             master_tajeom_base = "🕵️ [관심/수급] 세력선 포착 (시크릿)"
-            tajeom_multiplier = 1.1
+            tajeom_multiplier = 1.35
             
         # 5순위: 5% 이상 상승하며 외인/기관 수급이 강하게 붙은 기준봉
         elif ("🌟" in signal) or ((change_rate >= 0.05) and (trading_value >= 20_000_000_000) and (pg_amount_eok >= 10 or is_strong_dual_buy)):
@@ -1012,6 +1012,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if is_mega_trend_exhausted and market_cap < 100000:
                 tajeom_multiplier -= 0.3
                 master_tajeom += " ⚠️(대시세 고점)"
+                
+            # 💡 [핵심 패치] '3차 파동 도달' 종목은 최종 가중치에서 0.5를 깎아 스캐너 하위권으로 강제 강등!
+            if "3차 파동" in secret_tajeom:
+                tajeom_multiplier -= 0.5
 
         now_kst_tajeom = datetime.datetime.now(KST)
         is_after_1030 = (now_kst_tajeom.hour * 100 + now_kst_tajeom.minute >= 1030)
