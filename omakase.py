@@ -1226,8 +1226,8 @@ def update_technical_data(df_theme, all_theme_map):
             # 💡 [버그 픽스] 포착된 종목이 0개여도 과거 좀비를 지우기 위해 무조건 실행
             scanner_results.sort(key=lambda x: int(str(x[10]).split('점')[0]), reverse=True)
             
-            # ★최정예 25개로 압축
-            MAX_DISPLAY_COUNT = 25
+            # ★최정예 20개로 압축
+            MAX_DISPLAY_COUNT = 20
             top_20_results = scanner_results[:MAX_DISPLAY_COUNT]
             top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results}
 
