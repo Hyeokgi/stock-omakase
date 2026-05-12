@@ -164,13 +164,13 @@ def get_market_cap(code):
         res = local_session.get(f"https://finance.naver.com/item/main.naver?code={code}", verify=False, timeout=3)
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
         market_sum_tag = soup.find('em', id='_market_sum')
-        if not market_sum_tag: return 999999 
+        if not market_sum_tag: return 0  # 999999에서 0으로 수정
         market_sum_str = market_sum_tag.text.replace(',', '').replace('\t', '').replace('\n', '').strip()
         if '조' in market_sum_str:
             parts = market_sum_str.split('조')
             return int(parts[0].strip()) * 10000 + (int(parts[1].strip()) if len(parts)>1 and parts[1].strip() else 0)
         else: return int(market_sum_str)
-    except: return 999999 
+    except: return 0  # 999999에서 0으로 수정 
 
 def get_real_money_themes():
     local_session = requests.Session()
@@ -586,7 +586,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         risk_soup = BeautifulSoup(local_session.get(f"https://finance.naver.com/item/main.naver?code={code}", verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
         
         market_sum_tag = risk_soup.find('em', id='_market_sum')
-        market_cap = 999999
+        market_cap = 0
         if market_sum_tag:
             market_sum_str = market_sum_tag.text.replace(',', '').replace('\t', '').replace('\n', '').strip()
             if '조' in market_sum_str:
@@ -594,7 +594,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 market_cap = int(parts[0].strip()) * 10000 + (int(parts[1].strip()) if len(parts)>1 and parts[1].strip() else 0)
             else: market_cap = int(market_sum_str)
 
-        is_junk = bool(risk_soup.find('img', alt=re.compile('관리종목|환기종목|거래정지|투자위험')))
+        # 정규식에 '코넥스'를 추가하여 즉각 쳐냄
+        is_junk = bool(risk_soup.find('img', alt=re.compile('관리종목|환기종목|거래정지|투자위험|코넥스')))
         is_financial_risk, is_chronic_loss = False, False
         fin_table = risk_soup.find('table', {'class': 'tb_type1 tb_num tb_type1_ifrs'})
         if fin_table:
