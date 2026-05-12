@@ -633,10 +633,17 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         pg_amount_eok = 0.0 
 
         try:
+            # 1. User-Agent 헤더 추가 (봇 차단 우회)
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
             frgn_url = f"https://finance.naver.com/item/frgn.naver?code={code}"
-            frgn_res = local_session.get(frgn_url, verify=False, timeout=3)
+            # 2. headers 속성 포함하여 요청
+            frgn_res = local_session.get(frgn_url, headers=headers, verify=False, timeout=3)
             frgn_soup = BeautifulSoup(frgn_res.content, 'html.parser', from_encoding='euc-kr')
-            rows = frgn_soup.select("table.type2 > tr")
+            
+            # 3. '>' 기호를 빼고 띄어쓰기로 변경하여 유연하게 tr 태그 수집
+            rows = frgn_soup.select("table.type2 tr")
             
             valid_days = 0
             for r_tag in rows:
