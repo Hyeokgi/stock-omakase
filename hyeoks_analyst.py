@@ -150,10 +150,11 @@ try:
     if current_hour != 15:
         print(f"▶ [{current_hour}시 모드] 메인 리포트 시간이 아니므로, 대기 중인 종목의 브리핑 및 가격 산출을 진행합니다.")
         for i, row in enumerate(db_rows[1:], start=2):
-            # 👈 수석님 지시대로 '매번 새로 갱신'하도록 기존 로직 유지!
             if len(row) > 9 and "리포트 발송 완료" not in str(row[9]):  
                 stock_name = row[0] if len(row) > 0 else "알수없음"
                 print(f" - [{stock_name}] AI 전략 및 가격 산출 중...")
+                
+                # ★[개선] AI 거부권 및 동적 손절매 프롬프트 반영
                 prompt = f"""
                 당신은 천상계 트레이더의 수석 퀀트 애널리스트입니다.
                 [{sys_instruction}]
@@ -166,17 +167,12 @@ try:
                 ■ 테마: {row[5] if len(row) > 5 else ''}
                 ■ 🤖 [시스템 기준가]: 목표가 {row[14] if len(row) > 14 else ''} / 손절가 {row[15] if len(row) > 15 else ''}
                 
-                💡 [AI 가격 결정 가이드: '시스템 기준가'를 바탕으로 한 퀀트+직관 하이브리드]
-                1. '시스템 기준가'는 해당 종목의 일일 변동성(ATR)을 바탕으로 기계적으로 산출된 1:2 손익비의 수학적 뼈대입니다. 당신은 이 가격을 기초로 삼되, 기계적 비율에 얽매이지 마십시오.
-                2. 당신의 역할은 이 뼈대에 '시장의 맥락(테마의 강도, 타점 배지)'을 더해 최종 실전 가격(라운드 피겨 등)으로 튜닝하는 것입니다.
-                3. 능동적 튜닝 룰: 
-                   - 대장주이거나 '시크릿 1차 파동' 등 상승 에너지가 강한 자리라면, 목표가를 시스템 기준가보다 더 높게 뻗어보십시오.
-                   - 반대로 '윗꼬리'나 '이격 과다' 등 리스크가 있다면, 손절가를 시스템 기준가보다 타이트하게 올려 잡아 방어력을 높이십시오.
-                4. 트레이더의 관점에서 '진입할 가치가 있는 매력적인 손익비'를 최종적으로 도출해야 합니다.
+                💡 [AI 매매 보류(Veto) 및 가격 결정 가이드]
+                1. 거부권 행사: 제공된 데이터를 분석했을 때, 윗꼬리가 너무 길거나(리스크), 거래대금이 빈약하여 2차 상승 동력이 부족하다고 판단되면 억지로 매수 추천을 하지 마십시오.
+                   - 이 경우 briefing에 "⚠️ [매수 보류] 거래량 부족 및 저항 출회로 관망 권장"이라고 적고, target_price와 stop_loss는 0으로 처리하십시오.
+                2. 가격 튜닝: 시스템 기준가를 참고하되 기계적 비율에 얽매이지 마십시오. 대장주라면 목표가를 높게, 리스크가 있다면 손절가를 타이트하게(의미 있는 지지선 부근으로) 상향 조정하십시오.
                 
-                위 데이터를 바탕으로 현재 상황에 맞는 실전 대응 전략을 1~2문장(70자 내외)으로 매우 짧고 날카롭게 작성하십시오.
-                
-                반드시 아래의 엄격한 JSON 형식으로만 대답하십시오.
+                반드시 아래 JSON 형식으로만 대답하십시오.
                 {{
                     "briefing": "여기에 전략 요약 작성",
                     "target_price": 150000,
@@ -188,10 +184,11 @@ try:
                     parsed_data = parse_ai_json(res_text)
                     
                     briefing_text = parsed_data.get("briefing", "브리핑 생성 에러")
-                    if not briefing_text.startswith("✅"): briefing_text = f"✅ [간단 브리핑] {briefing_text}"
+                    if not briefing_text.startswith("✅") and not briefing_text.startswith("⚠️"): 
+                        briefing_text = f"✅ [간단 브리핑] {briefing_text}"
                     
-                    target_val = f"{int(parsed_data.get('target_price', 0)):,}원"
-                    stop_val = f"{int(parsed_data.get('stop_loss', 0)):,}원"
+                    target_val = f"{int(parsed_data.get('target_price', 0)):,}원" if parsed_data.get('target_price') else "관망"
+                    stop_val = f"{int(parsed_data.get('stop_loss', 0)):,}원" if parsed_data.get('stop_loss') else "관망"
                     
                     db_sheet.update_cell(i, 10, briefing_text)
                     db_sheet.update_cell(i, 15, target_val)
@@ -221,9 +218,8 @@ try:
         try: num_score = int(re.findall(r'-?\d+', score_str)[0])
         except: num_score = 0
         
-        if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|3년적자', tajeom_raw): continue 
+        if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|3년적자|스코어 미달', tajeom_raw): continue 
         
-        # 💡 [V11.1 방어막] AI가 파싱 에러를 내지 않도록, 타점 텍스트에서 ⚠️ 경고 꼬리표를 깔끔하게 잘라냅니다.
         tajeom_clean = tajeom_raw.split('⚠️')[0].strip()
         tajeom_clean = tajeom_clean.split('🎯')[0].strip()
         
@@ -249,14 +245,14 @@ try:
     아래는 HYEOKS 퀀트 점수가 검증된 최상위 150개 종목 리스트입니다.
     
     이 중에서 제미나이 2.5 모델의 직관과 종합적인 판단을 활용해 
-    최고의 단기 1종목, 스윙 1종목을 과감히 발굴해 내십시오.
+    최고의 단기 1종목, 스윙 1종목을 과감히 발굴해 내십시오. 만약 기준에 미달하여 살 종목이 없다고 판단되면 억지로 뽑지 마십시오.
 
     [종목 선정 절대 기준]
-    1. 단기 슈팅 공략주 (short_term_code): 당일 수급(프로그램 대량유입 등)이 몰리며 전고점 돌파를 목전에 둔 파괴력 있는 종목 1개. (퀀트 점수 최우선)
+    1. 단기 슈팅 공략주 (short_term_code): 당일 수급(프로그램 대량유입 등)이 몰리며 전고점 돌파를 목전에 둔 파괴력 있는 종목 1개. (적절한 종목이 없으면 "000000" 반환)
     
     2. 퀀트-시크릿 하이브리드 스윙주 (swing_code): 
-       - 🚨 '🔴 3차 파동 (전량 익절)' 등 과열 배지가 붙은 종목은 매수 1순위에서 절대 배제하십시오.
-       - 퀀트 점수가 상위권이면서, 반드시 마스터 타점에 '🟢 [시크릿] 1차 파동 진행' 또는 '🎯 [스윙/눌림]' 배지가 포함된 종목 중에서 가장 상승 여력(손익비)이 높은 1개를 선별하십시오.
+       - 🚨 '🔴 3차 파동 (전량 익절)' 등 과열 배지가 붙은 종목은 절대 배제하십시오.
+       - 퀀트 점수가 상위권이면서, 반드시 마스터 타점에 '🟢 [시크릿] 1차 파동 진행' 또는 '🎯 [스윙/눌림]' 배지가 포함된 종목 중 가장 상승 여력(손익비)이 높은 1개를 선별하십시오. (적절한 종목이 없으면 "000000" 반환)
 
     [상위 150개 종목 리스트]
     {pool_str}
@@ -276,8 +272,8 @@ try:
     code_short = picks_json.get('short_term_code', '')
     code_mid = picks_json.get('swing_code', '')
     
-    best_short = next((c for c in pool_150 if c['code'] == code_short), pool_150[0] if pool_150 else None)
-    best_mid = next((c for c in pool_150 if c['code'] == code_mid), pool_150[1] if len(pool_150)>1 else best_short)
+    best_short = next((c for c in pool_150 if c['code'] == code_short), None)
+    best_mid = next((c for c in pool_150 if c['code'] == code_mid), None)
 
     print(f"🔥 최종 발굴 완료 -> 단기: {best_short['name'] if best_short else '없음'} / 스윙: {best_mid['name'] if best_mid else '없음'}\n")
 
@@ -306,7 +302,7 @@ try:
         vip = get_vip_deep_dive_data(best_cand['code'], KIS_TOKEN)
         news = get_target_stock_news(best_cand['code'])
         
-        # 스윙(mid)인 경우 하이브리드 검증 로직 강제
+        # ★[개선] 동적 손익비 계산 지침 추가
         if st_type == "short":
             sub_title_prefix = "단기 슈팅 및 전고점 돌파 공략"
             strategy_instruction = """
@@ -318,8 +314,8 @@ try:
             strategy_instruction = """
             [스윙 주도주 퀀트-시크릿 교차 검증 지침]
             🚨 핵심 지시: 귀하는 소액(400만 원)을 빠르고 안전하게 불려야 하는 '엄격한 퀀트 게이트키퍼'입니다.
-            1. 퀀트 점수가 왜 높은지(펀더멘털, 수급 등) 설명하고, 이 종목의 현재 파동 위치(시크릿 1차 파동 또는 스윙/눌림 배지 기반)가 왜 안전한 타점인지 교차 검증하여 명확히 서술하십시오.
-            2. 2차 파동 진입 시 본절 스탑(매수가 손절) 설정 등 구체적인 리스크 관리 시나리오를 반드시 포함하십시오.
+            1. 퀀트 점수가 왜 높은지(펀더멘털, 수급 등) 설명하고, 이 종목의 현재 파동 위치가 왜 안전한 타점인지 교차 검증하여 명확히 서술하십시오.
+            2. 손절가 설정: 기계적 비율(%)이 아닌, 차트 상의 의미 있는 지지선(예: 시크릿 추세선 시작점, 20일선, 기준봉 시가)을 정확한 가격(원)으로 제시하십시오.
             """
 
         detail_prompt = f"""귀하는 대한민국 최상위 1% 실전 트레이더들을 위한 HYEOKS 리서치 센터의 수석 퀀트 애널리스트입니다.
@@ -336,7 +332,7 @@ try:
 [HYEOKS 딥리딩 절대 지침 - 명심하십시오]
 1. 분량 및 깊이: 귀하의 전문적인 통찰력을 발휘하여 충분히 길고 논리적으로 1.5~2페이지 분량이 나오도록 상세히 서술하십시오. 
 2. 🚨 [할루시네이션(거짓 정보) 엄격 금지]: 차트를 판독하여 지지/저항선을 제시할 때, 반드시 위 [입력 데이터]에 제공된 ★확정 현재가({best_cand['curr_p']}원)를 기준으로 상/하단 가격을 계산하십시오. 1차 진입가는 현재가 부근으로 설정하십시오.
-3. 실전 액션 플랜 강화: 구체적인 '진입 타점'과 명확한 '손절가'를 반드시 명시하십시오.
+3. 실전 액션 플랜 강화: 구체적인 '진입 타점'과 명확한 '손절가'를 반드시 명시하십시오. 손절폭 대비 기대 수익(목표가)이 최소 1.5배 이상 나오도록 설계하십시오.
 4. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'X' if st_type=='short' else 'O'} 형식으로 출력하십시오.
 
 [출력 양식 (마크다운 유지)]
@@ -389,7 +385,6 @@ try:
         briefing_summary = "✅ [리포트 발송 완료] "
         summary_match = re.search(r'<div class="summary-box">(.*?)</div>', report_text, re.DOTALL)
         if summary_match:
-            # 💡 [이모지 변경 반영] 파싱 단계에서도 텍스트로 치환합니다.
             clean_text = re.sub(r'<[^>]+>', '', summary_match.group(1)).replace("[HYEOKS 핵심 모멘텀 요약]", "").strip()
             briefing_summary += clean_text[:80] + "..." if len(clean_text) > 80 else clean_text
         else:
@@ -422,32 +417,28 @@ try:
                 time.sleep(3.5)
                 continue
             
-            # 👈 수석님 지시대로 기존 로직 유지
             if "리포트 발송 완료" not in str(r[9]):
                 print(f" - [{stock_name}] AI 전략 및 가격 산출 중...")
+                
+                # ★[개선] 나머지 스캐너 종목들도 Veto 및 동적 손절매 적용
                 prompt = f"""
                 당신은 천상계 트레이더의 수석 퀀트 애널리스트입니다.
                 [{sys_instruction}]
                 
                 ■ 종목명: {stock_name}
-                ■ 현재가: {r[3] if len(r) > 3 else ''}       # 👈 r 변수 오류 완벽 수정!
+                ■ 현재가: {r[3] if len(r) > 3 else ''}
                 ■ 타점 위치(배지): {r[8] if len(r) > 8 else ''}
                 ■ 당일 수급: {r[11] if len(r) > 11 else ''}
                 ■ 52주 고가: {r[12] if len(r) > 12 else ''}
                 ■ 테마: {r[5] if len(r) > 5 else ''}
                 ■ 🤖 [시스템 기준가]: 목표가 {r[14] if len(r) > 14 else ''} / 손절가 {r[15] if len(r) > 15 else ''}
                 
-                💡 [AI 가격 결정 가이드: '시스템 기준가'를 바탕으로 한 퀀트+직관 하이브리드]
-                1. '시스템 기준가'는 해당 종목의 일일 변동성(ATR)을 바탕으로 기계적으로 산출된 1:2 손익비의 수학적 뼈대입니다. 당신은 이 가격을 기초로 삼되, 기계적 비율에 얽매이지 마십시오.
-                2. 당신의 역할은 이 뼈대에 '시장의 맥락(테마의 강도, 타점 배지)'을 더해 최종 실전 가격(라운드 피겨 등)으로 튜닝하는 것입니다.
-                3. 능동적 튜닝 룰: 
-                   - 대장주이거나 '시크릿 1차 파동' 등 상승 에너지가 강한 자리라면, 목표가를 시스템 기준가보다 더 높게 뻗어보십시오.
-                   - 반대로 '윗꼬리'나 '이격 과다' 등 리스크가 있다면, 손절가를 시스템 기준가보다 타이트하게 올려 잡아 방어력을 높이십시오.
-                4. 트레이더의 관점에서 '진입할 가치가 있는 매력적인 손익비'를 최종적으로 도출해야 합니다.
+                💡 [AI 매매 보류(Veto) 및 가격 결정 가이드]
+                1. 거부권 행사: 윗꼬리가 길거나 거래대금이 부족하여 리스크가 크다고 판단되면, 억지로 목표가를 산출하지 마십시오.
+                   - 이 경우 briefing에 "⚠️ [매수 보류] 시장 관망 및 타점 미달"이라고 적고, target_price와 stop_loss는 0으로 처리하십시오.
+                2. 가격 튜닝: 시스템 기준가를 참고하되, 대장주는 목표가를 높게, 리스크가 있다면 손절가를 의미 있는 지지선 부근으로 타이트하게 설정하십시오.
                 
-                위 데이터를 바탕으로 현재 상황에 맞는 실전 대응 전략을 1~2문장(70자 내외)으로 매우 짧고 날카롭게 작성하십시오.
-                
-                반드시 아래의 엄격한 JSON 형식으로만 대답하십시오.
+                반드시 아래 JSON 형식으로만 대답하십시오.
                 {{
                     "briefing": "여기에 전략 요약 작성",
                     "target_price": 150000,
@@ -459,10 +450,11 @@ try:
                     parsed_data = parse_ai_json(res_text)
                     
                     briefing_text = parsed_data.get("briefing", "브리핑 생성 에러")
-                    if not briefing_text.startswith("✅"): briefing_text = f"✅ [간단 브리핑] {briefing_text}"
+                    if not briefing_text.startswith("✅") and not briefing_text.startswith("⚠️"): 
+                        briefing_text = f"✅ [간단 브리핑] {briefing_text}"
                     
-                    target_val = f"{int(parsed_data.get('target_price', 0)):,}원"
-                    stop_val = f"{int(parsed_data.get('stop_loss', 0)):,}원"
+                    target_val = f"{int(parsed_data.get('target_price', 0)):,}원" if parsed_data.get('target_price') else "관망"
+                    stop_val = f"{int(parsed_data.get('stop_loss', 0)):,}원" if parsed_data.get('stop_loss') else "관망"
                     
                     db_sheet.update_cell(i, 10, briefing_text)
                     db_sheet.update_cell(i, 15, target_val)
