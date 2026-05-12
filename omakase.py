@@ -927,7 +927,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 master_tajeom_base = "🎯 [스윙/눌림] 20일선 방어전"
             tajeom_multiplier = 1.3  
             
-        elif "1차" in secret_tajeom or "추세 전환" in secret_tajeom:
+        elif "1차" in secret_tajeom or "🟢 [시크릿] 추세 전환" in secret_tajeom:
             master_tajeom_base = "🕵️ [관심/수급] 세력선 포착 (시크릿)"
             tajeom_multiplier = 1.35
             
@@ -958,7 +958,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 tajeom_multiplier -= 0.3
                 master_tajeom += " ⚠️(대시세 고점)"
                 
-            if "3차 파동" in secret_tajeom:
+            if "3차 파동" in secret_tajeom or "하락 추세 전환" in secret_tajeom:
                 tajeom_multiplier -= 0.5
 
         now_kst_tajeom = datetime.datetime.now(KST)
