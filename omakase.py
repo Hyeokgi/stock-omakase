@@ -960,7 +960,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 master_tajeom += " ⚠️(대시세 고점)"
                 
             if "3차 파동" in secret_tajeom or "하락 추세 전환" in secret_tajeom:
-                tajeom_multiplier -= 0.5
+                tajeom_multiplier = 0.0  # 점수를 0점으로 만들어버림
+                master_tajeom = "👀 [관망] 3차 파동 고점 리스크" # 매혹적인 매수 배지 강제 삭제
 
         now_kst_tajeom = datetime.datetime.now(KST)
         is_after_1030 = (now_kst_tajeom.hour * 100 + now_kst_tajeom.minute >= 1030)
