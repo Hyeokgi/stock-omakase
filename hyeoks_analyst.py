@@ -37,18 +37,20 @@ def clean_emojis(text):
     for e in emojis: text = text.replace(e, '')
     return text.replace('  ', ' ').strip()
 
+# ★ [개선] 무료 버전 API (429 에러) 돌파를 위한 스마트 딜레이 적용
 def safe_generate_content(contents, is_fast=False):
     model_name = 'gemini-2.5-flash' if is_fast else 'gemini-2.5-pro'
-    for i in range(5): 
+    max_retries = 10  # 재시도 횟수 대폭 증가 (5 -> 10)
+    for i in range(max_retries): 
         try: 
             return client.models.generate_content(model=model_name, contents=contents)
         except Exception as e:
             if "503" in str(e) or "429" in str(e) or "quota" in str(e).lower():
-                wait_time = 10 * (i + 1)
-                print(f"⚠️ 구글 API 지연. {wait_time}초 대기 후 재시도...")
+                wait_time = 30 * (i + 1) # 30초, 60초, 90초... 분당 횟수 제한(RPM) 리셋을 기다림
+                print(f"⚠️ 구글 API 지연 감지(무료토큰). {wait_time}초 대기 후 재시도 중... ({i+1}/{max_retries})")
                 time.sleep(wait_time)
             else: raise e 
-    raise Exception("❌ 구글 서버 할당량 초과 또는 무응답으로 최종 실패")
+    raise Exception("❌ 구글 서버 10회 연속 무응답으로 최종 실패. 나중에 다시 시도하세요.")
 
 def parse_ai_json(text):
     try:
@@ -197,34 +199,26 @@ try:
 
     # 🟡 [모드 2] 오전장, 저녁장: 장중 신규 포착 종목 즉석 분석 및 공장 추가
     if current_hour != 15:
-        print(f"▶ [{current_hour}시 모드] 장중 신규 포착 종목(배치 대기) 브리핑 및 가격 산출을 진행합니다.")
+        print(f"▶ [{current_hour}시 모드] 장중 신규 포착 종목 실시간 분석 시작...")
         for i, row in enumerate(db_rows[1:], start=2):
             briefing_cell = str(row[9]).strip()
-            target_cell = str(row[14]).strip()
             
-            # 🔥 [핵심] 브리핑 공장에 없어서 '대기' 상태인 장중 신규 주도주만 핀셋 분석!
-            if "대기" in briefing_cell or "대기" in target_cell or "오류" in briefing_cell:  
+            # 🔥 [핵심 패치] 배치 분석이 안 되어 있어 '대기' 상태인 종목만 정밀 타격
+            if "대기" in briefing_cell or "오류" in briefing_cell or not briefing_cell:
                 stock_name = row[0] if len(row) > 0 else "알수없음"
                 code = str(row[2]).replace("'", "").strip().zfill(6)
-                print(f" - [{stock_name}] 장중 신규 포착! AI 전략 및 가격 산출 중...")
+                print(f" - [{stock_name}] 브리핑 공장에 없음! 제미나이 1.5 즉석 분석 가동...")
                 
-                curr_p = row[3] if len(row) > 3 else ''
-                tajeom_badge = row[8] if len(row) > 8 else ''
-                sugeup = row[11] if len(row) > 11 else ''
-                high_52 = row[12] if len(row) > 12 else ''
-                theme = row[5] if len(row) > 5 else ''
-                target_sys = row[14] if len(row) > 14 else ''
-                stop_sys = row[15] if len(row) > 15 else ''
-                
-                prompt = get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys)
+                prompt = get_ai_prompt_for_briefing(
+                    stock_name, row[3], row[8], row[11], row[12], row[5], row[14], row[15]
+                )
                 
                 try:
+                    # 💡 장중 빠른 대응을 위해 gemini-1.5-flash 사용 (무료 토큰 딜레이 방어막 통과)
                     res_text = safe_generate_content(prompt, is_fast=True).text
                     parsed_data = parse_ai_json(res_text)
                     
-                    briefing_text = parsed_data.get("briefing", "브리핑 생성 에러")
-                    if not briefing_text.startswith("✅") and not briefing_text.startswith("⚠️"): 
-                        briefing_text = f"✅ [장중 포착] {briefing_text}"
+                    b_text = f"✅ [장중 포착] {parsed_data.get('briefing', '전략 수립 완료')}"
                     
                     raw_target = str(parsed_data.get('target_price', '0')).replace(',', '').replace('원', '')
                     raw_stop = str(parsed_data.get('stop_loss', '0')).replace(',', '').replace('원', '')
@@ -232,18 +226,19 @@ try:
                     target_val = f"{int(raw_target):,}원" if raw_target.isdigit() and int(raw_target) > 0 else "관망"
                     stop_val = f"{int(raw_stop):,}원" if raw_stop.isdigit() and int(raw_stop) > 0 else "관망"
                     
-                    db_sheet.update_cell(i, 10, briefing_text)
+                    # 1. DB_스캐너 현재 셀 업데이트
+                    db_sheet.update_cell(i, 10, b_text)
                     db_sheet.update_cell(i, 15, target_val)
                     db_sheet.update_cell(i, 16, stop_val)
                     
-                    # 💡 [핵심] 분석 완료된 데이터를 브리핑 공장(브리핑_기록)에 추가하여 다음 스캐너 턴에서 땡겨쓸 수 있게 함!
-                    brief_sheet.append_row([f"'{code}", briefing_text, target_val, stop_val])
-                    print(f"   => 브리핑 공장에 신규 등록 완료!")
+                    # 2. 💡 브리핑 공장(브리핑_기록)에 데이터 추가 (다음 턴에서 땡겨쓸 수 있게!)
+                    brief_sheet.append_row([f"'{code}", b_text, target_val, stop_val])
+                    print(f"   => [{stock_name}] 분석 완료 및 브리핑 공장 입고 성공!")
                     
-                    time.sleep(3.5)
+                    time.sleep(3.0) # 혹시 모를 딜레이 방지
                 except Exception as e:
-                    print(f"[{stock_name}] 브리핑/가격 산출 에러 발생 (건너뜀): {e}")
-        print(f"🌅 {current_hour}시 장중 브리핑 업데이트 완료! 프로그램 종료.")
+                    print(f"[{stock_name}] 즉석 분석 중 오류: {e}")
+        print(f"🌅 {current_hour}시 실시간 브리핑 동기화 완료. 프로그램 종료.")
         exit(0)
 
     # 🔴 [모드 3] 15시 모드 (메인 리포트 생성 및 풀 코스)
@@ -481,9 +476,9 @@ try:
                     res_text = safe_generate_content(prompt, is_fast=True).text
                     parsed_data = parse_ai_json(res_text)
                     
-                    briefing_text = parsed_data.get("briefing", "브리핑 생성 에러")
-                    if not briefing_text.startswith("✅") and not briefing_text.startswith("⚠️"): 
-                        briefing_text = f"✅ [장중 포착] {briefing_text}"
+                    b_text = parsed_data.get("briefing", "브리핑 생성 에러")
+                    if not b_text.startswith("✅") and not b_text.startswith("⚠️"): 
+                        b_text = f"✅ [장중 포착] {b_text}"
                     
                     raw_target = str(parsed_data.get('target_price', '0')).replace(',', '').replace('원', '')
                     raw_stop = str(parsed_data.get('stop_loss', '0')).replace(',', '').replace('원', '')
@@ -491,12 +486,12 @@ try:
                     target_val = f"{int(raw_target):,}원" if raw_target.isdigit() and int(raw_target) > 0 else "관망"
                     stop_val = f"{int(raw_stop):,}원" if raw_stop.isdigit() and int(raw_stop) > 0 else "관망"
                     
-                    db_sheet.update_cell(i, 10, briefing_text)
+                    db_sheet.update_cell(i, 10, b_text)
                     db_sheet.update_cell(i, 15, target_val)
                     db_sheet.update_cell(i, 16, stop_val)
                     
                     # 브리핑 공장에 신규 등록
-                    brief_sheet.append_row([f"'{code}", briefing_text, target_val, stop_val])
+                    brief_sheet.append_row([f"'{code}", b_text, target_val, stop_val])
                     
                     time.sleep(3.5)
                 except Exception as e:
