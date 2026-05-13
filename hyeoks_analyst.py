@@ -27,9 +27,9 @@ current_hour = now_kst.hour
 
 print(f"🤖 [HYEOKS 리서치 센터] 봇 가동 (현재 KST {now_kst.strftime('%H:%M:%S')})")
 
-try: 
+try:
     client = genai.Client(api_key=GEMINI_API_KEY)
-except Exception as e: 
+except Exception as e:
     print(f"❌ API 초기화 실패: {e}"); exit(1)
 
 def clean_emojis(text):
@@ -41,15 +41,6 @@ def safe_generate_content(contents, is_fast=False):
     # 💡 is_fast=True 일 때(간단브리핑) 무료 버전인 1.5-flash를 사용하도록 변경
     model_name = 'gemini-1.5-flash' if is_fast else 'gemini-2.5-pro'
     for i in range(5): 
-        try: 
-            return client.models.generate_content(model=model_name, contents=contents)
-        except Exception as e:
-            if "503" in str(e) or "429" in str(e) or "quota" in str(e).lower():
-                wait_time = 10 * (i + 1)
-                print(f"⚠️ 구글 API 지연. {wait_time}초 대기 후 재시도...")
-                time.sleep(wait_time)
-            else: raise e 
-    raise Exception("❌ 구글 서버 할당량 초과 또는 무응답으로 최종 실패")
         try: 
             return client.models.generate_content(model=model_name, contents=contents)
         except Exception as e:
