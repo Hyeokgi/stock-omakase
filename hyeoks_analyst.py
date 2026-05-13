@@ -112,6 +112,52 @@ def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
         print(f"⚠️ [{sheet_name}] 정렬 실패: {e}")
 
 # ==========================================
+# 💡 [투트랙 프롬프트 생성 함수]
+# ==========================================
+def get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys):
+    is_seed = "🌱" in tajeom_badge or "모아가기" in tajeom_badge
+    sys_instruction = "기업의 일반적인 소개(무엇을 하는 회사인지 등)는 일절 금지. 차트 지표, 타점, 수급 데이터를 바탕으로 '현재 기술적 위치'와 '앞으로의 대응 전략'만을 60~70자 내외로 매우 짧고 날카롭게 작성할 것."
+    
+    if is_seed:
+        guide_text = """
+        💡 [AI 매매 보류(Veto) 및 가격 결정 가이드: 중장기 모아가기(Accumulation) 전략]
+        🚨 귀하는 쥬쥬총회식 '비중 조절 모아가기' 전략을 구사하는 퀀트 트레이더입니다.
+        1. 이 종목은 현재 고점 대비 조정을 받고 거래량이 마른 '씨앗(SEED)' 종목입니다. 시스템 기준가에 절대 얽매이지 마십시오.
+        2. 손절가 설정: -3% 같은 짧은 비율이 아니라, 차트 상의 아주 넉넉하고 의미 있는 하단 바운더리(예: 이전 거대한 기준봉의 시가, 60일선, 쌍바닥 최저점)를 유추하여 단단하게 설정하십시오.
+        3. 매수 전략: 한 번에 몰빵하는 것이 아니라 "현재가 부근 1차 매수 후, ~원 부근(손절가 위)에서 2차 분할 매수"하는 시나리오를 브리핑에 포함하십시오.
+        4. 거부권: 만약 조정을 가장한 '완전한 우하향 폭포수' 이탈 차트라고 판단되면 목표가/손절가를 0으로 처리하고 관망(Veto)을 지시하십시오.
+        """
+    else:
+        guide_text = """
+        💡 [AI 매매 보류(Veto) 및 가격 결정 가이드: 단기/스윙 히트앤런 전략]
+        1. 거부권 행사: 제공된 데이터를 분석했을 때, 윗꼬리가 너무 길거나(리스크), 거래대금이 빈약하여 단기 상승 동력이 부족하다고 판단되면 억지로 매수 추천을 하지 마십시오.
+           - 이 경우 briefing에 "⚠️ [매수 보류] 거래량 부족 및 저항 출회로 관망 권장"이라고 적고, target_price와 stop_loss는 0으로 처리하십시오.
+        2. 가격 튜닝: 시스템 기준가를 참고하되, 손익비가 최소 1.5배 이상 나오는 타이트한 타점을 제시하십시오.
+        """
+
+    return f"""
+    당신은 천상계 트레이더의 수석 퀀트 애널리스트입니다.
+    [{sys_instruction}]
+    
+    ■ 종목명: {stock_name}
+    ■ 현재가: {curr_p}
+    ■ 타점 위치(배지): {tajeom_badge}
+    ■ 당일 수급: {sugeup}
+    ■ 52주 고가: {high_52}
+    ■ 테마: {theme}
+    ■ 🤖 [시스템 임시 기준가]: 목표가 {target_sys} / 손절가 {stop_sys}
+    
+    {guide_text}
+    
+    반드시 아래 JSON 형식으로만 대답하십시오.
+    {{
+        "briefing": "여기에 전략 요약 작성",
+        "target_price": 150000,
+        "stop_loss": 135000
+    }}
+    """
+
+# ==========================================
 # 2. 구글 시트 연결 및 모드별 작동
 # ==========================================
 try:
@@ -125,13 +171,18 @@ try:
     cleanup_and_reorder(doc, "접속로그", 1)
     cleanup_and_reorder(doc, "DB_중장기", 0)
 
+    # 💡 브리핑 공장 시트 연결 (없으면 생성)
+    try:
+        brief_sheet = doc.worksheet("브리핑_기록")
+    except:
+        brief_sheet = doc.add_worksheet(title="브리핑_기록", rows="200", cols="5")
+        brief_sheet.append_row(["종목코드", "브리핑", "목표가", "손절가"])
+
     KIS_TOKEN = ""
     try:
         for row in doc.worksheet("⚙️설정").get_all_values():
             if len(row) >= 2 and row[0] == "KIS_TOKEN": KIS_TOKEN = row[1]; break
     except: pass
-
-    sys_instruction = "기업의 일반적인 소개(무엇을 하는 회사인지 등)는 일절 금지. 차트 지표, 타점, 수급 데이터를 바탕으로 '현재 기술적 위치'와 '앞으로의 대응 전략'만을 60~70자 내외로 매우 짧고 날카롭게 작성할 것."
 
     # 🟢 [모드 1] 아침 7시: 브리핑 및 목표가/손절가 완전 초기화
     if current_hour == 7:
@@ -144,56 +195,18 @@ try:
         print("✅ 초기화 완료. 프로그램 종료.")
         exit(0)
 
-    # 💡 [투트랙 프롬프트 생성 함수]
-    def get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys):
-        is_seed = "🌱" in tajeom_badge or "모아가기" in tajeom_badge
-        
-        if is_seed:
-            guide_text = """
-            💡 [AI 매매 보류(Veto) 및 가격 결정 가이드: 중장기 모아가기(Accumulation) 전략]
-            🚨 귀하는 쥬쥬총회식 '비중 조절 모아가기' 전략을 구사하는 퀀트 트레이더입니다.
-            1. 이 종목은 현재 고점 대비 조정을 받고 거래량이 마른 '씨앗(SEED)' 종목입니다. 시스템 기준가에 절대 얽매이지 마십시오.
-            2. 손절가 설정: -3% 같은 짧은 비율이 아니라, 차트 상의 아주 넉넉하고 의미 있는 하단 바운더리(예: 이전 거대한 기준봉의 시가, 60일선, 쌍바닥 최저점)를 유추하여 단단하게 설정하십시오.
-            3. 매수 전략: 한 번에 몰빵하는 것이 아니라 "현재가 부근 1차 매수 후, ~원 부근(손절가 위)에서 2차 분할 매수"하는 시나리오를 브리핑에 포함하십시오.
-            4. 거부권: 만약 조정을 가장한 '완전한 우하향 폭포수' 이탈 차트라고 판단되면 목표가/손절가를 0으로 처리하고 관망(Veto)을 지시하십시오.
-            """
-        else:
-            guide_text = """
-            💡 [AI 매매 보류(Veto) 및 가격 결정 가이드: 단기/스윙 히트앤런 전략]
-            1. 거부권 행사: 제공된 데이터를 분석했을 때, 윗꼬리가 너무 길거나(리스크), 거래대금이 빈약하여 단기 상승 동력이 부족하다고 판단되면 억지로 매수 추천을 하지 마십시오.
-               - 이 경우 briefing에 "⚠️ [매수 보류] 거래량 부족 및 저항 출회로 관망 권장"이라고 적고, target_price와 stop_loss는 0으로 처리하십시오.
-            2. 가격 튜닝: 시스템 기준가를 참고하되, 손익비가 최소 1.5배 이상 나오는 타이트한 타점을 제시하십시오.
-            """
-
-        return f"""
-        당신은 천상계 트레이더의 수석 퀀트 애널리스트입니다.
-        [{sys_instruction}]
-        
-        ■ 종목명: {stock_name}
-        ■ 현재가: {curr_p}
-        ■ 타점 위치(배지): {tajeom_badge}
-        ■ 당일 수급: {sugeup}
-        ■ 52주 고가: {high_52}
-        ■ 테마: {theme}
-        ■ 🤖 [시스템 임시 기준가]: 목표가 {target_sys} / 손절가 {stop_sys}
-        
-        {guide_text}
-        
-        반드시 아래 JSON 형식으로만 대답하십시오.
-        {{
-            "briefing": "여기에 전략 요약 작성",
-            "target_price": 150000,
-            "stop_loss": 135000
-        }}
-        """
-
-    # 🟡 [모드 2] 오전장, 저녁장: 간단 브리핑 + 목표가/손절가 산출 업데이트
+    # 🟡 [모드 2] 오전장, 저녁장: 장중 신규 포착 종목 즉석 분석 및 공장 추가
     if current_hour != 15:
-        print(f"▶ [{current_hour}시 모드] 메인 리포트 시간이 아니므로, 대기 중인 종목의 브리핑 및 가격 산출을 진행합니다.")
+        print(f"▶ [{current_hour}시 모드] 장중 신규 포착 종목(배치 대기) 브리핑 및 가격 산출을 진행합니다.")
         for i, row in enumerate(db_rows[1:], start=2):
-            if len(row) > 9 and "리포트 발송 완료" not in str(row[9]):  
+            briefing_cell = str(row[9]).strip()
+            target_cell = str(row[14]).strip()
+            
+            # 🔥 [핵심] 브리핑 공장에 없어서 '대기' 상태인 장중 신규 주도주만 핀셋 분석!
+            if "대기" in briefing_cell or "대기" in target_cell or "오류" in briefing_cell:  
                 stock_name = row[0] if len(row) > 0 else "알수없음"
-                print(f" - [{stock_name}] AI 전략 및 가격 산출 중...")
+                code = str(row[2]).replace("'", "").strip().zfill(6)
+                print(f" - [{stock_name}] 장중 신규 포착! AI 전략 및 가격 산출 중...")
                 
                 curr_p = row[3] if len(row) > 3 else ''
                 tajeom_badge = row[8] if len(row) > 8 else ''
@@ -211,18 +224,26 @@ try:
                     
                     briefing_text = parsed_data.get("briefing", "브리핑 생성 에러")
                     if not briefing_text.startswith("✅") and not briefing_text.startswith("⚠️"): 
-                        briefing_text = f"✅ [간단 브리핑] {briefing_text}"
+                        briefing_text = f"✅ [장중 포착] {briefing_text}"
                     
-                    target_val = f"{int(parsed_data.get('target_price', 0)):,}원" if parsed_data.get('target_price') else "관망"
-                    stop_val = f"{int(parsed_data.get('stop_loss', 0)):,}원" if parsed_data.get('stop_loss') else "관망"
+                    raw_target = str(parsed_data.get('target_price', '0')).replace(',', '').replace('원', '')
+                    raw_stop = str(parsed_data.get('stop_loss', '0')).replace(',', '').replace('원', '')
+                    
+                    target_val = f"{int(raw_target):,}원" if raw_target.isdigit() and int(raw_target) > 0 else "관망"
+                    stop_val = f"{int(raw_stop):,}원" if raw_stop.isdigit() and int(raw_stop) > 0 else "관망"
                     
                     db_sheet.update_cell(i, 10, briefing_text)
                     db_sheet.update_cell(i, 15, target_val)
                     db_sheet.update_cell(i, 16, stop_val)
+                    
+                    # 💡 [핵심] 분석 완료된 데이터를 브리핑 공장(브리핑_기록)에 추가하여 다음 스캐너 턴에서 땡겨쓸 수 있게 함!
+                    brief_sheet.append_row([f"'{code}", briefing_text, target_val, stop_val])
+                    print(f"   => 브리핑 공장에 신규 등록 완료!")
+                    
                     time.sleep(3.5)
                 except Exception as e:
                     print(f"[{stock_name}] 브리핑/가격 산출 에러 발생 (건너뜀): {e}")
-        print(f"🌅 {current_hour}시 전략 브리핑 완료! 프로그램 종료.")
+        print(f"🌅 {current_hour}시 장중 브리핑 업데이트 완료! 프로그램 종료.")
         exit(0)
 
     # 🔴 [모드 3] 15시 모드 (메인 리포트 생성 및 풀 코스)
@@ -240,7 +261,6 @@ try:
         name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
         curr_p, chg, score_str, tajeom_raw = str(r[2]).strip(), str(r[3]).strip(), str(r[8]).strip(), str(r[9]).strip()
         prog = str(r[20]).strip()
-        # ★[연동] omakase.py에서 넘겨준 SEED 태그 확인 (인덱스 25에 위치)
         seed_tag = str(r[25]).strip() if len(r) > 25 else "NORMAL"
         
         try: num_score = int(re.findall(r'-?\d+', score_str)[0])
@@ -324,7 +344,6 @@ try:
         vip = get_vip_deep_dive_data(best_cand['code'], KIS_TOKEN)
         news = get_target_stock_news(best_cand['code'])
         
-        # ★[개선] 투트랙 리포트 프롬프트 (단기 vs 중장기 모아가기)
         if st_type == "short":
             sub_title_prefix = "단기 슈팅 및 전고점 돌파 공략"
             strategy_instruction = """
@@ -441,13 +460,12 @@ try:
                 time.sleep(3.5)
                 continue
             
-            # 🔥 [여기가 핵심 패치 구간입니다] 🔥
+            # 15시 모드에서도 '대기' 상태인 녀석이 발견되면 분석 및 공장에 등록
             briefing_cell = str(r[9]).strip()
             target_cell = str(r[14]).strip()
             
-            # "대기중" 이거나 "오류"가 났을 때만 (즉, 분석이 아직 안 된 빈칸일 때만) AI를 호출합니다!
             if "대기" in briefing_cell or "대기" in target_cell or "오류" in briefing_cell:
-                print(f" - [{stock_name}] AI 신규 전략 및 가격 산출 중...")
+                print(f" - [{stock_name}] 장 마감 신규 포착! AI 전략 및 가격 산출 중...")
                 
                 curr_p = r[3] if len(r) > 3 else ''
                 tajeom_badge = r[8] if len(r) > 8 else ''
@@ -465,9 +483,8 @@ try:
                     
                     briefing_text = parsed_data.get("briefing", "브리핑 생성 에러")
                     if not briefing_text.startswith("✅") and not briefing_text.startswith("⚠️"): 
-                        briefing_text = f"✅ [간단 브리핑] {briefing_text}"
+                        briefing_text = f"✅ [장중 포착] {briefing_text}"
                     
-                    # 문자열에 문자가 섞여있어도 에러 안 나게 안전하게 정수화 시도
                     raw_target = str(parsed_data.get('target_price', '0')).replace(',', '').replace('원', '')
                     raw_stop = str(parsed_data.get('stop_loss', '0')).replace(',', '').replace('원', '')
                     
@@ -477,6 +494,10 @@ try:
                     db_sheet.update_cell(i, 10, briefing_text)
                     db_sheet.update_cell(i, 15, target_val)
                     db_sheet.update_cell(i, 16, stop_val)
+                    
+                    # 브리핑 공장에 신규 등록
+                    brief_sheet.append_row([f"'{code}", briefing_text, target_val, stop_val])
+                    
                     time.sleep(3.5)
                 except Exception as e:
                     print(f"[{stock_name}] 브리핑/가격 산출 에러 발생 (건너뜀): {e}")
@@ -516,7 +537,6 @@ try:
             if not p or p['code'] == "000000": continue
             idx = next((i for i, v in enumerate(new_rows) if v[0] == p['name']), -1)
             if idx != -1:
-                # 💡 [개선] 분할 매수 'O'인 종목(중장기)은 동일 종목 추천 시 물타기 적용
                 if p['split']:
                     total_amt = new_rows[idx][3] + 1000000
                     avg_p = int(total_amt / ((new_rows[idx][3]/new_rows[idx][2]) + (1000000/p['curr'])))
