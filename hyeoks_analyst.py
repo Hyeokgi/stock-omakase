@@ -441,8 +441,13 @@ try:
                 time.sleep(3.5)
                 continue
             
-            if "리포트 발송 완료" not in str(r[9]):
-                print(f" - [{stock_name}] AI 전략 및 가격 산출 중...")
+            # 🔥 [여기가 핵심 패치 구간입니다] 🔥
+            briefing_cell = str(r[9]).strip()
+            target_cell = str(r[14]).strip()
+            
+            # "대기중" 이거나 "오류"가 났을 때만 (즉, 분석이 아직 안 된 빈칸일 때만) AI를 호출합니다!
+            if "대기" in briefing_cell or "대기" in target_cell or "오류" in briefing_cell:
+                print(f" - [{stock_name}] AI 신규 전략 및 가격 산출 중...")
                 
                 curr_p = r[3] if len(r) > 3 else ''
                 tajeom_badge = r[8] if len(r) > 8 else ''
