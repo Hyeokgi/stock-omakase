@@ -33,7 +33,7 @@ except Exception as e:
     print(f"❌ API 초기화 실패: {e}"); exit(1)
 
 def clean_emojis(text):
-    emojis = ['🚨','💡','💎','🔥','📊','📈','📉','🎯','🛡️','⏰','⏸️','🐎','🌟','🔒','🔴','🔵','⚪','🟢','🟡','👑','⚡','🚀','👀','⏳','🔻','🔺','➖', '🛢️', '💵', '🇺🇸']
+    emojis = ['🚨','💡','💎','🔥','📊','📈','📉','🎯','🛡️','⏰','⏸️','🐎','🌟','🔒','🔴','🔵','⚪','🟢','🟡','👑','⚡','🚀','👀','⏳','🔻','🔺','➖', '🛢️', '💵', '🇺🇸', '🌱']
     for e in emojis: text = text.replace(e, '')
     return text.replace('  ', ' ').strip()
 
@@ -87,7 +87,6 @@ def get_vip_deep_dive_data(code, kis_token):
         return f"PER: {out.get('per', 'N/A')} / PBR: {out.get('pbr', 'N/A')}"
     except: return "데이터 수집 실패"
 
-# 💡 [V11.2] 접속로그 및 DB_중장기 정렬용 함수 추가
 def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
     try:
         sheet = doc.worksheet(sheet_name)
@@ -123,7 +122,6 @@ try:
     db_sheet = doc.worksheet("DB_스캐너")
     db_rows = db_sheet.get_all_values()
     
-    # 💡 [V11.2] 시작 전 접속로그, DB_중장기 시트 정렬
     cleanup_and_reorder(doc, "접속로그", 1)
     cleanup_and_reorder(doc, "DB_중장기", 0)
 
@@ -141,10 +139,53 @@ try:
         for i in range(2, len(db_rows) + 1):
             if len(db_rows[i-1]) > 9:
                 db_sheet.update_cell(i, 10, "AI 브리핑 대기중")
-                db_sheet.update_cell(i, 15, "AI 데이터 계산중")  # O열 (목표가)
-                db_sheet.update_cell(i, 16, "AI 데이터 계산중")  # P열 (손절가)
+                db_sheet.update_cell(i, 15, "AI 데이터 계산중")  
+                db_sheet.update_cell(i, 16, "AI 데이터 계산중")  
         print("✅ 초기화 완료. 프로그램 종료.")
         exit(0)
+
+    # 💡 [투트랙 프롬프트 생성 함수]
+    def get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys):
+        is_seed = "🌱" in tajeom_badge or "모아가기" in tajeom_badge
+        
+        if is_seed:
+            guide_text = """
+            💡 [AI 매매 보류(Veto) 및 가격 결정 가이드: 중장기 모아가기(Accumulation) 전략]
+            🚨 귀하는 쥬쥬총회식 '비중 조절 모아가기' 전략을 구사하는 퀀트 트레이더입니다.
+            1. 이 종목은 현재 고점 대비 조정을 받고 거래량이 마른 '씨앗(SEED)' 종목입니다. 시스템 기준가에 절대 얽매이지 마십시오.
+            2. 손절가 설정: -3% 같은 짧은 비율이 아니라, 차트 상의 아주 넉넉하고 의미 있는 하단 바운더리(예: 이전 거대한 기준봉의 시가, 60일선, 쌍바닥 최저점)를 유추하여 단단하게 설정하십시오.
+            3. 매수 전략: 한 번에 몰빵하는 것이 아니라 "현재가 부근 1차 매수 후, ~원 부근(손절가 위)에서 2차 분할 매수"하는 시나리오를 브리핑에 포함하십시오.
+            4. 거부권: 만약 조정을 가장한 '완전한 우하향 폭포수' 이탈 차트라고 판단되면 목표가/손절가를 0으로 처리하고 관망(Veto)을 지시하십시오.
+            """
+        else:
+            guide_text = """
+            💡 [AI 매매 보류(Veto) 및 가격 결정 가이드: 단기/스윙 히트앤런 전략]
+            1. 거부권 행사: 제공된 데이터를 분석했을 때, 윗꼬리가 너무 길거나(리스크), 거래대금이 빈약하여 단기 상승 동력이 부족하다고 판단되면 억지로 매수 추천을 하지 마십시오.
+               - 이 경우 briefing에 "⚠️ [매수 보류] 거래량 부족 및 저항 출회로 관망 권장"이라고 적고, target_price와 stop_loss는 0으로 처리하십시오.
+            2. 가격 튜닝: 시스템 기준가를 참고하되, 손익비가 최소 1.5배 이상 나오는 타이트한 타점을 제시하십시오.
+            """
+
+        return f"""
+        당신은 천상계 트레이더의 수석 퀀트 애널리스트입니다.
+        [{sys_instruction}]
+        
+        ■ 종목명: {stock_name}
+        ■ 현재가: {curr_p}
+        ■ 타점 위치(배지): {tajeom_badge}
+        ■ 당일 수급: {sugeup}
+        ■ 52주 고가: {high_52}
+        ■ 테마: {theme}
+        ■ 🤖 [시스템 임시 기준가]: 목표가 {target_sys} / 손절가 {stop_sys}
+        
+        {guide_text}
+        
+        반드시 아래 JSON 형식으로만 대답하십시오.
+        {{
+            "briefing": "여기에 전략 요약 작성",
+            "target_price": 150000,
+            "stop_loss": 135000
+        }}
+        """
 
     # 🟡 [모드 2] 오전장, 저녁장: 간단 브리핑 + 목표가/손절가 산출 업데이트
     if current_hour != 15:
@@ -154,31 +195,16 @@ try:
                 stock_name = row[0] if len(row) > 0 else "알수없음"
                 print(f" - [{stock_name}] AI 전략 및 가격 산출 중...")
                 
-                # ★[개선] AI 거부권 및 동적 손절매 프롬프트 반영
-                prompt = f"""
-                당신은 천상계 트레이더의 수석 퀀트 애널리스트입니다.
-                [{sys_instruction}]
+                curr_p = row[3] if len(row) > 3 else ''
+                tajeom_badge = row[8] if len(row) > 8 else ''
+                sugeup = row[11] if len(row) > 11 else ''
+                high_52 = row[12] if len(row) > 12 else ''
+                theme = row[5] if len(row) > 5 else ''
+                target_sys = row[14] if len(row) > 14 else ''
+                stop_sys = row[15] if len(row) > 15 else ''
                 
-                ■ 종목명: {stock_name}
-                ■ 현재가: {row[3] if len(row) > 3 else ''}
-                ■ 타점 위치(배지): {row[8] if len(row) > 8 else ''}
-                ■ 당일 수급: {row[11] if len(row) > 11 else ''}
-                ■ 52주 고가: {row[12] if len(row) > 12 else ''}
-                ■ 테마: {row[5] if len(row) > 5 else ''}
-                ■ 🤖 [시스템 기준가]: 목표가 {row[14] if len(row) > 14 else ''} / 손절가 {row[15] if len(row) > 15 else ''}
+                prompt = get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys)
                 
-                💡 [AI 매매 보류(Veto) 및 가격 결정 가이드]
-                1. 거부권 행사: 제공된 데이터를 분석했을 때, 윗꼬리가 너무 길거나(리스크), 거래대금이 빈약하여 2차 상승 동력이 부족하다고 판단되면 억지로 매수 추천을 하지 마십시오.
-                   - 이 경우 briefing에 "⚠️ [매수 보류] 거래량 부족 및 저항 출회로 관망 권장"이라고 적고, target_price와 stop_loss는 0으로 처리하십시오.
-                2. 가격 튜닝: 시스템 기준가를 참고하되 기계적 비율에 얽매이지 마십시오. 대장주라면 목표가를 높게, 리스크가 있다면 손절가를 타이트하게(의미 있는 지지선 부근으로) 상향 조정하십시오.
-                
-                반드시 아래 JSON 형식으로만 대답하십시오.
-                {{
-                    "briefing": "여기에 전략 요약 작성",
-                    "target_price": 150000,
-                    "stop_loss": 135000
-                }}
-                """
                 try:
                     res_text = safe_generate_content(prompt, is_fast=True).text
                     parsed_data = parse_ai_json(res_text)
@@ -214,6 +240,8 @@ try:
         name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
         curr_p, chg, score_str, tajeom_raw = str(r[2]).strip(), str(r[3]).strip(), str(r[8]).strip(), str(r[9]).strip()
         prog = str(r[20]).strip()
+        # ★[연동] omakase.py에서 넘겨준 SEED 태그 확인 (인덱스 25에 위치)
+        seed_tag = str(r[25]).strip() if len(r) > 25 else "NORMAL"
         
         try: num_score = int(re.findall(r'-?\d+', score_str)[0])
         except: num_score = 0
@@ -223,8 +251,8 @@ try:
         tajeom_clean = tajeom_raw.split('⚠️')[0].strip()
         tajeom_clean = tajeom_clean.split('🎯')[0].strip()
         
-        info = f"종목:{name}({code}) | 현재가:{curr_p}원({chg}) | 퀀트점수:{num_score}점 | 타점:{tajeom_clean} | 수급:{prog}"
-        cands_list.append({'name': name, 'code': code, 'score': num_score, 'info': info, 'curr_p': int(curr_p.replace(',',''))})
+        info = f"종목:{name}({code}) | 현재가:{curr_p}원({chg}) | 퀀트점수:{num_score}점 | 타점:{tajeom_clean} | 수급:{prog} | 유형:{seed_tag}"
+        cands_list.append({'name': name, 'code': code, 'score': num_score, 'info': info, 'curr_p': int(curr_p.replace(',','')), 'type': seed_tag})
 
     high_score_cands = [c for c in cands_list if c['score'] >= 30]
     
@@ -237,22 +265,19 @@ try:
 
     pool_str = "\n".join([c['info'] for c in pool_150])
 
-    # ==========================================
-    # 💡 [V11.5 하이브리드 로직] pick_prompt 업데이트
-    # ==========================================
     pick_prompt = f"""
     당신은 대한민국 최고의 주식 트레이더이자 HYEOKS 퀀트 분석가입니다.
     아래는 HYEOKS 퀀트 점수가 검증된 최상위 150개 종목 리스트입니다.
     
     이 중에서 제미나이 2.5 모델의 직관과 종합적인 판단을 활용해 
-    최고의 단기 1종목, 스윙 1종목을 과감히 발굴해 내십시오. 만약 기준에 미달하여 살 종목이 없다고 판단되면 억지로 뽑지 마십시오.
+    최고의 단기 1종목, 중장기 스윙 1종목을 과감히 발굴해 내십시오. 만약 기준에 미달하여 살 종목이 없다고 판단되면 억지로 뽑지 마십시오.
 
     [종목 선정 절대 기준]
-    1. 단기 슈팅 공략주 (short_term_code): 당일 수급(프로그램 대량유입 등)이 몰리며 전고점 돌파를 목전에 둔 파괴력 있는 종목 1개. (적절한 종목이 없으면 "000000" 반환)
+    1. 단기 슈팅 공략주 (short_term_code): 당일 수급(프로그램 대량유입 등)이 몰리며 '유형:NORMAL' 인 종목 중 전고점 돌파를 목전에 둔 파괴력 있는 종목 1개. (적절한 종목이 없으면 "000000" 반환)
     
-    2. 퀀트-시크릿 하이브리드 스윙주 (swing_code): 
+    2. 중장기 모아가기주 (swing_code): 
        - 🚨 '🔴 3차 파동 (전량 익절)' 등 과열 배지가 붙은 종목은 절대 배제하십시오.
-       - 퀀트 점수가 상위권이면서, 반드시 마스터 타점에 '🟢 [시크릿] 1차 파동 진행' 또는 '🎯 [스윙/눌림]' 배지가 포함된 종목 중 가장 상승 여력(손익비)이 높은 1개를 선별하십시오. (적절한 종목이 없으면 "000000" 반환)
+       - '유형:SEED' 인 종목 중 차트상 확실한 바닥 지지가 예상되고 거래량이 마른 최적의 1개를 선별하십시오. (적절한 종목이 없으면 NORMAL 종목 중 스윙 타점 종목으로 대체 가능)
 
     [상위 150개 종목 리스트]
     {pool_str}
@@ -293,29 +318,29 @@ try:
     
     market_summary = safe_generate_content(macro_prompt).text
 
-    # ==========================================
-    # 💡 [V11.5 하이브리드 로직] generate_deep_report 업데이트
-    # ==========================================
     def generate_deep_report(st_type, best_cand):
         if not best_cand: return "", None
         
         vip = get_vip_deep_dive_data(best_cand['code'], KIS_TOKEN)
         news = get_target_stock_news(best_cand['code'])
         
-        # ★[개선] 동적 손익비 계산 지침 추가
+        # ★[개선] 투트랙 리포트 프롬프트 (단기 vs 중장기 모아가기)
         if st_type == "short":
             sub_title_prefix = "단기 슈팅 및 전고점 돌파 공략"
             strategy_instruction = """
             [단기 슈팅 주도주 분석 지침]
             당일 쏠린 메이저 수급과 모멘텀을 바탕으로 전고점 돌파 여부 및 단기 저항선 돌파 시나리오를 작성하십시오.
+            2. 손절가 설정: 1.5배 이상의 손익비를 가지도록 의미있는 짧은 지지선을 숫자로 명시하십시오.
             """
         else:
-            sub_title_prefix = "퀀트-시크릿 하이브리드 스윙 전략"
-            strategy_instruction = """
-            [스윙 주도주 퀀트-시크릿 교차 검증 지침]
+            is_seed_type = "SEED" in best_cand['info']
+            sub_title_prefix = "중장기 바닥 모아가기 전략" if is_seed_type else "퀀트-시크릿 하이브리드 스윙 전략"
+            strategy_instruction = f"""
+            [{sub_title_prefix} 분석 지침]
             🚨 핵심 지시: 귀하는 소액(400만 원)을 빠르고 안전하게 불려야 하는 '엄격한 퀀트 게이트키퍼'입니다.
             1. 퀀트 점수가 왜 높은지(펀더멘털, 수급 등) 설명하고, 이 종목의 현재 파동 위치가 왜 안전한 타점인지 교차 검증하여 명확히 서술하십시오.
-            2. 손절가 설정: 기계적 비율(%)이 아닌, 차트 상의 의미 있는 지지선(예: 시크릿 추세선 시작점, 20일선, 기준봉 시가)을 정확한 가격(원)으로 제시하십시오.
+            2. 손절가 설정: 기계적 비율(%)이 아닌, 차트 상의 가장 거대한 기준봉의 시가나 쌍바닥 최저점 등 아주 넉넉하고 단단한 가격(원)을 제시하십시오.
+            3. 매수 전략: 한 번에 몰빵하지 않도록, 현재가 부근 1차 진입 후 하락 시 추가 매수하는 분할 매수 밴드(Band)를 조언에 포함하십시오.
             """
 
         detail_prompt = f"""귀하는 대한민국 최상위 1% 실전 트레이더들을 위한 HYEOKS 리서치 센터의 수석 퀀트 애널리스트입니다.
@@ -331,9 +356,8 @@ try:
 
 [HYEOKS 딥리딩 절대 지침 - 명심하십시오]
 1. 분량 및 깊이: 귀하의 전문적인 통찰력을 발휘하여 충분히 길고 논리적으로 1.5~2페이지 분량이 나오도록 상세히 서술하십시오. 
-2. 🚨 [할루시네이션(거짓 정보) 엄격 금지]: 차트를 판독하여 지지/저항선을 제시할 때, 반드시 위 [입력 데이터]에 제공된 ★확정 현재가({best_cand['curr_p']}원)를 기준으로 상/하단 가격을 계산하십시오. 1차 진입가는 현재가 부근으로 설정하십시오.
-3. 실전 액션 플랜 강화: 구체적인 '진입 타점'과 명확한 '손절가'를 반드시 명시하십시오. 손절폭 대비 기대 수익(목표가)이 최소 1.5배 이상 나오도록 설계하십시오.
-4. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'X' if st_type=='short' else 'O'} 형식으로 출력하십시오.
+2. 🚨 [할루시네이션(거짓 정보) 엄격 금지]: 차트를 판독하여 지지/저항선을 제시할 때, 반드시 위 [입력 데이터]에 제공된 ★확정 현재가({best_cand['curr_p']}원)를 기준으로 상/하단 가격을 논리적으로 계산하십시오.
+3. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'O' if st_type=='mid' else 'X'} 형식으로 숫자로만 출력하십시오.
 
 [출력 양식 (마크다운 유지)]
 <div class="broker-name">HYEOKS SECURITIES | {'SHORT-TERM' if st_type=='short' else 'MID-TERM'} STRATEGY</div>
@@ -344,13 +368,13 @@ try:
 
 <div class="summary-box">
 <strong>[HYEOKS 핵심 모멘텀 요약]</strong><br><br>
-(기업이 무엇을 하는 회사인지 등 일반적인 개요는 절대 쓰지 마십시오. 오직 차트 타점, 수급, 지지/저항 라인에 근거한 상승 모멘텀만 60~70자 내외의 1문장으로 작성하십시오.)
+(오직 차트 타점, 수급, 지지/저항 라인에 근거한 상승 모멘텀만 60~70자 내외의 1문장으로 요약하십시오.)
 </div>
 
 ## 1. 매크로 유동성 및 내러티브 고찰
 ## 2. 시각적 차트 판독 및 스마트머니 딥리딩
-## 3. 실전 타점 시나리오 및 리스크 관리 전략
-[DATA] 목표가:00000, 손절가:00000, 분할매수:{'X' if st_type=='short' else 'O'}
+## 3. 실전 타점 시나리오 및 분할 매수 전략
+[DATA] 목표가:00000, 손절가:00000, 분할매수:{'O' if st_type=='mid' else 'X'}
 """
         img_path = f"temp_{best_cand['code']}.png"
         try:
@@ -420,31 +444,16 @@ try:
             if "리포트 발송 완료" not in str(r[9]):
                 print(f" - [{stock_name}] AI 전략 및 가격 산출 중...")
                 
-                # ★[개선] 나머지 스캐너 종목들도 Veto 및 동적 손절매 적용
-                prompt = f"""
-                당신은 천상계 트레이더의 수석 퀀트 애널리스트입니다.
-                [{sys_instruction}]
+                curr_p = r[3] if len(r) > 3 else ''
+                tajeom_badge = r[8] if len(r) > 8 else ''
+                sugeup = r[11] if len(r) > 11 else ''
+                high_52 = r[12] if len(r) > 12 else ''
+                theme = r[5] if len(r) > 5 else ''
+                target_sys = r[14] if len(r) > 14 else ''
+                stop_sys = r[15] if len(r) > 15 else ''
                 
-                ■ 종목명: {stock_name}
-                ■ 현재가: {r[3] if len(r) > 3 else ''}
-                ■ 타점 위치(배지): {r[8] if len(r) > 8 else ''}
-                ■ 당일 수급: {r[11] if len(r) > 11 else ''}
-                ■ 52주 고가: {r[12] if len(r) > 12 else ''}
-                ■ 테마: {r[5] if len(r) > 5 else ''}
-                ■ 🤖 [시스템 기준가]: 목표가 {r[14] if len(r) > 14 else ''} / 손절가 {r[15] if len(r) > 15 else ''}
+                prompt = get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys)
                 
-                💡 [AI 매매 보류(Veto) 및 가격 결정 가이드]
-                1. 거부권 행사: 윗꼬리가 길거나 거래대금이 부족하여 리스크가 크다고 판단되면, 억지로 목표가를 산출하지 마십시오.
-                   - 이 경우 briefing에 "⚠️ [매수 보류] 시장 관망 및 타점 미달"이라고 적고, target_price와 stop_loss는 0으로 처리하십시오.
-                2. 가격 튜닝: 시스템 기준가를 참고하되, 대장주는 목표가를 높게, 리스크가 있다면 손절가를 의미 있는 지지선 부근으로 타이트하게 설정하십시오.
-                
-                반드시 아래 JSON 형식으로만 대답하십시오.
-                {{
-                    "briefing": "여기에 전략 요약 작성",
-                    "target_price": 150000,
-                    "stop_loss": 135000
-                }}
-                """
                 try:
                     res_text = safe_generate_content(prompt, is_fast=True).text
                     parsed_data = parse_ai_json(res_text)
@@ -453,8 +462,12 @@ try:
                     if not briefing_text.startswith("✅") and not briefing_text.startswith("⚠️"): 
                         briefing_text = f"✅ [간단 브리핑] {briefing_text}"
                     
-                    target_val = f"{int(parsed_data.get('target_price', 0)):,}원" if parsed_data.get('target_price') else "관망"
-                    stop_val = f"{int(parsed_data.get('stop_loss', 0)):,}원" if parsed_data.get('stop_loss') else "관망"
+                    # 문자열에 문자가 섞여있어도 에러 안 나게 안전하게 정수화 시도
+                    raw_target = str(parsed_data.get('target_price', '0')).replace(',', '').replace('원', '')
+                    raw_stop = str(parsed_data.get('stop_loss', '0')).replace(',', '').replace('원', '')
+                    
+                    target_val = f"{int(raw_target):,}원" if raw_target.isdigit() and int(raw_target) > 0 else "관망"
+                    stop_val = f"{int(raw_stop):,}원" if raw_stop.isdigit() and int(raw_stop) > 0 else "관망"
                     
                     db_sheet.update_cell(i, 10, briefing_text)
                     db_sheet.update_cell(i, 15, target_val)
@@ -498,6 +511,7 @@ try:
             if not p or p['code'] == "000000": continue
             idx = next((i for i, v in enumerate(new_rows) if v[0] == p['name']), -1)
             if idx != -1:
+                # 💡 [개선] 분할 매수 'O'인 종목(중장기)은 동일 종목 추천 시 물타기 적용
                 if p['split']:
                     total_amt = new_rows[idx][3] + 1000000
                     avg_p = int(total_amt / ((new_rows[idx][3]/new_rows[idx][2]) + (1000000/p['curr'])))
