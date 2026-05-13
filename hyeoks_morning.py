@@ -4,9 +4,10 @@ from google import genai
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import urllib3
-# 👇 [추가할 부분] 소켓 모듈을 불러와서 전역 타임아웃을 강제로 설정합니다.
+
+# 👇 [추가된 부분] 구글 시트 API 등이 먹통일 때 영원히 멈추는 것을 방지합니다.
 import socket
-socket.setdefaulttimeout(30) # 구글 시트 등 모든 통신이 30초 이상 지연되면 강제로 끊고 에러를 뱉음
+socket.setdefaulttimeout(30) 
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -366,7 +367,7 @@ if __name__ == "__main__":
     now_obj = datetime.datetime.now(KST)
     
     # 💡 [분기] 새벽 6시면 일괄 브리핑 생성(Batch), 그 외 시간이면 텔레그램 시황 발송
-    if True: # now_obj.hour == 6 대신 True로 변경
+    if now_obj.hour == 6:
         batch_generate_briefings()
     else:
         print("🚀 HYEOKS 능동형 모닝 브리핑 시스템 가동 시작...")
