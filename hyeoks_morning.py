@@ -4,6 +4,9 @@ from google import genai
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import urllib3
+# 👇 [추가할 부분] 소켓 모듈을 불러와서 전역 타임아웃을 강제로 설정합니다.
+import socket
+socket.setdefaulttimeout(30) # 구글 시트 등 모든 통신이 30초 이상 지연되면 강제로 끊고 에러를 뱉음
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
