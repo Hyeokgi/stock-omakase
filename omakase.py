@@ -22,9 +22,6 @@ if 2 <= now_kst_check.hour < 7:
     print(f"🌙 현재 시간({now_kst_check.strftime('%H:%M')}): 시스템을 휴식 모드로 전환합니다. (02시~07시)")
     sys.exit(0)
 
-# ==========================================
-# 💡 시트 자동 정렬 및 청소 함수
-# ==========================================
 def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
     try:
         sheet = doc.worksheet(sheet_name)
@@ -49,9 +46,6 @@ def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
     except Exception as e:
         print(f"⚠️ [{sheet_name}] 정렬 실패: {e}")
 
-# ==========================================
-# 💡 한국투자증권 API 인증 엔진
-# ==========================================
 KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
 KIS_URL_BASE = "https://openapi.koreainvestment.com:9443"
@@ -450,7 +444,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         
         history = []
         high_prices = []
-        low_prices = [] # 추가: 중장기 쌍바닥 분석용
+        low_prices = []
         items = root.findall(".//item")
         
         for item in items:
@@ -561,18 +555,17 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         display_high_60d = max(high_prices_60) if len(high_prices_60) > 0 else today_high
         display_high_250d = max(high_prices) if len(high_prices) > 0 else today_high
         
-        # ★ [개선] 쥬쥬총회식 중장기 모아가기 변수 계산
         recent_20d_min = int(df_hist['low'].tail(20).min())
         recent_60d_min = int(df_hist['low'].tail(60).min())
-        is_double_bottom = (current_price <= recent_20d_min * 1.05) and (recent_20d_min >= recent_60d_min * 0.95) # 쌍바닥 근접 여부
+        is_double_bottom = (current_price <= recent_20d_min * 1.05) and (recent_20d_min >= recent_60d_min * 0.95) 
         
         surge_rate_60d_top = (current_price - high_60d_calc) / high_60d_calc if high_60d_calc > 0 else 0
-        is_deep_correction = surge_rate_60d_top <= -0.15 # 고점 대비 -15% 이상 가격 조정
+        is_deep_correction = surge_rate_60d_top <= -0.15 
         
         min_250d = int(df_hist['close'].min()) 
         surge_rate_250d = (current_price - min_250d) / min_250d if min_250d > 0 else 0
         is_mega_trend_exhausted = surge_rate_250d >= 2.0 
-        is_true_history_leader = 0.5 <= surge_rate_250d < 2.0 # 바닥 대비 적당히 올랐던 진짜 대장주 이력
+        is_true_history_leader = 0.5 <= surge_rate_250d < 2.0 
         
         body_top = max(current_price, open_price)
         body_bottom = min(current_price, open_price)
@@ -702,7 +695,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         ma5 = int(df_hist['close'].tail(5).mean()) if len(df_hist) >= 5 else current_price
         ma20 = int(df_hist['close'].tail(20).mean()) if len(df_hist) >= 20 else current_price
-        ma60 = int(df_hist['close'].tail(60).mean()) if len(df_hist) >= 60 else current_price # 60일선 추가
+        ma60 = int(df_hist['close'].tail(60).mean()) if len(df_hist) >= 60 else current_price 
         std20 = df_hist['close'].tail(20).std(ddof=0) if len(df_hist) >= 20 else 0
         disp_20 = (current_price / ma20) * 100 if ma20 > 0 else 100
         disp_text = f"{disp_20:.1f}%"
@@ -715,7 +708,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         vol_ratio_10d = (today_vol / avg_vol_10) * 100 if avg_vol_10 > 0 else 0
         vol_ratio_yest = (today_vol / yest_vol) * 100 if yest_vol > 0 else 0
         
-        # ★ [개선] 중장기 모아가기용 '거자름(거래량 씨가 마름)' 조건
         is_volume_dead = (vol_ratio_yest <= 60) and (vol_ratio_10d <= 60)
 
         is_upper_limit = change_rate >= 0.295
@@ -746,7 +738,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         is_platform_breakout = (box_ratio <= 0.15) and (vol_ratio_10d >= 300) and (current_price > ma20) and is_today_yangbong and (trading_value >= min_breakout_tv)
 
-        # ★ [개선] 중장기 모아가기 1차 필터링
         is_accumulation_cand = False
         if is_true_history_leader and is_deep_correction and is_volume_dead and not is_long_shadow and not is_financial_risk:
             if (abs(current_price - ma20)/ma20 < 0.03) or (abs(current_price - ma60)/ma60 < 0.03) or is_double_bottom:
@@ -859,15 +850,12 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_overnight_candidate = is_overnight_time and (is_overnight_breakout or is_overnight_pullback)
         is_fatal_drop = is_junk or is_financial_risk
         
-        # ★ [개선] 역발상 퀀트 채점 (이중 채점표)
         base_score = 0
         if is_accumulation_cand:
-            # Track 2: 중장기 모아가기 우대 점수
-            base_score += 40 # 기본 커트라인 프리패스 보장
+            base_score += 40 
             if is_double_bottom: base_score += 15
             if "매수우위" in program_text or acc_i_buy_eok >= 10: base_score += 10
         else:
-            # Track 1: 기존 단기/돌파 점수
             if is_near_52w_high: base_score += 20
             elif current_price >= (high_60d_calc * 0.90): base_score += 15
             elif current_price >= (high_60d_calc * 0.85): base_score += 5
@@ -904,7 +892,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             master_tajeom_base = "🚫 [제외] 상폐/재무위험"
             tajeom_multiplier = 0.0
         
-        # ★ [개선] 새로운 모아가기 배지 신설 및 최상위 부여
         elif is_accumulation_cand:
             master_tajeom_base = "🌱 [중장기/모아가기] 지지선 방어 및 거래량 바닥"
             tajeom_multiplier = 1.4
@@ -1005,7 +992,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             quant_score += hedge_premium
             master_tajeom += f" 🛡️(+{hedge_premium}점)"
 
-        # ★ [마커] 쿼터제 처리를 위한 태그 추가 (종목 반환 데이터 마지막에 삽입)
         is_seed_tag = "SEED" if is_accumulation_cand else "NORMAL"
 
         return [
@@ -1133,7 +1119,6 @@ def update_technical_data(df_theme, all_theme_map):
             try: helper_sheet = doc.worksheet("주가데이터_보조")
             except: helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="24")
             
-            # 주가데이터_보조 시트 업데이트 시 SEED 태그(r[25])는 제외하고 기록
             helper_sheet.batch_clear(['A2:Z'])
             helper_sheet_data = [r[:25] for r in results]
             helper_sheet.update(range_name="A2", values=helper_sheet_data, value_input_option="USER_ENTERED")
@@ -1141,10 +1126,16 @@ def update_technical_data(df_theme, all_theme_map):
             
             scanner_keywords = ["[종베]", "[스윙/눌림]", "[스윙/추세]", "[당일/단타]", "[관심/수급]", "[중장기/모아가기]"]
             
-            # ★ [개선] 쿼터제 적용을 위한 분리 배열
             normal_cands = []
             seed_cands = []
             
+            # 💡 [핵심] 새벽에 구워둔 브리핑 DB 가져오기
+            try:
+                brief_db = doc.worksheet("브리핑_기록").get_all_values()
+                brief_map = {str(row[0]).replace("'", "").zfill(6): {"brief": row[1], "target": row[2], "stop": row[3]} for row in brief_db[1:] if len(row) >= 4}
+            except:
+                brief_map = {}
+
             for r in results:
                 tajeom = r[9]
                 if any(kw in tajeom for kw in scanner_keywords):
@@ -1161,16 +1152,17 @@ def update_technical_data(df_theme, all_theme_map):
                     프로그램 = r[20]
                     고가_52주 = r[21]
                     기관누적수급 = r[22]
-                    is_seed_tag = r[25] # SEED 여부 추출
+                    is_seed_tag = r[25] 
                     
-                    ai_briefing = "AI 브리핑 대기중"
-                    ai_target = "AI 데이터 계산중"
-                    ai_stop = "AI 데이터 계산중"
-                    
-                    if 종목코드 in existing_data:
-                        ai_briefing = existing_data[종목코드]["briefing"]
-                        ai_target = existing_data[종목코드]["target"]
-                        ai_stop = existing_data[종목코드]["stop"]
+                    # 💡 [땡겨 쓰기] 브리핑 맵에 있으면 가져오고, 없으면 대기 처리 (장중 AI 호출 X)
+                    if 종목코드 in brief_map:
+                        ai_briefing = brief_map[종목코드]["brief"]
+                        ai_target = brief_map[종목코드]["target"]
+                        ai_stop = brief_map[종목코드]["stop"]
+                    else:
+                        ai_briefing = "⏳ 장중 신규 진입 (배치 대기)"
+                        ai_target = "계산 대기"
+                        ai_stop = "계산 대기"
                         
                     row_data = [
                         하이퍼링크, 시장구분, f"'{종목코드}", 현재가, 등락률, 테마명, AI신호, 거래량비율, 
@@ -1180,11 +1172,9 @@ def update_technical_data(df_theme, all_theme_map):
                     if is_seed_tag == "SEED": seed_cands.append(row_data)
                     else: normal_cands.append(row_data)
                     
-            # 각각 스코어 순으로 정렬
             normal_cands.sort(key=lambda x: int(str(x[10]).split('점')[0]), reverse=True)
             seed_cands.sort(key=lambda x: int(str(x[10]).split('점')[0]), reverse=True)
             
-            # ★ [개선] 쿼터제 조립 (총 20개 = SEED 최대 5개 + NORMAL 나머지)
             MAX_DISPLAY_COUNT = 20
             MAX_SEED_COUNT = 5
             
@@ -1193,7 +1183,6 @@ def update_technical_data(df_theme, all_theme_map):
             final_normal = normal_cands[:needed_normal]
             
             top_20_results = final_seed + final_normal
-            # 섞은 후 다시 최종 스코어 순으로 전체 정렬하여 보기 좋게 배치
             top_20_results.sort(key=lambda x: int(str(x[10]).split('점')[0]), reverse=True)
             
             top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results}
@@ -1253,7 +1242,7 @@ def update_technical_data(df_theme, all_theme_map):
             db_scanner_sheet.batch_clear(['A2:Z'])
             if top_20_results: 
                 db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
-            print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 (단기/스윙 및 중장기 모아가기 쿼터제 적용 완료)")
+            print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 (배치 브리핑 땡겨쓰기 적용)")
 
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
