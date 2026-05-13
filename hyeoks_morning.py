@@ -348,7 +348,7 @@ if __name__ == "__main__":
     now_obj = datetime.datetime.now(KST)
     
     # 💡 [분기] 새벽 6시면 일괄 브리핑 생성(Batch), 그 외 시간이면 텔레그램 시황 발송
-    if now_obj.hour == 6:
+    if True:
         batch_generate_briefings()
     else:
         print("🚀 HYEOKS 능동형 모닝 브리핑 시스템 가동 시작...")
