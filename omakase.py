@@ -1185,9 +1185,14 @@ def update_technical_data(df_theme, all_theme_map):
                 try:
                     bt_sheet = doc.worksheet("백테스트_로그")
                     bt_data = bt_sheet.get_all_values()
-                    if len(bt_data) == 0 or bt_data[0][0] != "진입일":
-                        bt_sheet.clear()
+                    
+                    # 💡 [핵심 패치] 시트가 완전히 비어있을 때만 헤더를 추가하고, 기존 데이터를 .clear()로 절대 날리지 않음!
+                    if len(bt_data) == 0:
                         bt_sheet.append_row(["진입일", "종목명", "종목코드", "테마명", "진입가", "타점유형", "퀀트점수", "T+1수익률", "T+3수익률"])
+                        bt_data = bt_sheet.get_all_values()
+                    elif "진입" not in str(bt_data[0][0]).replace(" ", ""):
+                        # 사용자가 실수로 첫 줄(헤더)을 지웠더라도, 데이터는 살리고 맨 위에 헤더만 다시 끼워 넣음
+                        bt_sheet.insert_row(["진입일", "종목명", "종목코드", "테마명", "진입가", "타점유형", "퀀트점수", "T+1수익률", "T+3수익률"], index=1)
                         bt_data = bt_sheet.get_all_values()
                     
                     today_date = datetime.datetime.now(KST).date()
