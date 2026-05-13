@@ -94,7 +94,6 @@ def get_yesterday_korean_context():
         gcp_creds_str = os.environ.get("GCP_CREDENTIALS")
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         
-        # GitHub Actions 환경과 로컬 환경 호환
         if gcp_creds_str and len(gcp_creds_str.strip()) > 10:
             creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(gcp_creds_str), scope)
         else:
@@ -116,7 +115,6 @@ def get_yesterday_korean_context():
                 if len(row) >= 3: name_to_code[str(row[0]).strip()] = str(row[2]).strip().zfill(6)
         except: pass
 
-        # 💡 [V8.1] 시트의 전체 종목을 스캔
         scanner_data = doc.worksheet("주가데이터_보조").get_all_values()[1:]
 
     except Exception as e: return f"🚨 파싱 오류: {e}"
@@ -130,13 +128,11 @@ def get_yesterday_korean_context():
             current_price, score_str, tajeom = str(r[2]).strip(), str(r[8]).strip(), str(r[9]).strip()
             theme, vol_status, program_text = str(r[19]).strip(), str(r[18]).strip(), str(r[20]).strip()
             
-            # 필터 1: 쓰레기 데이터 및 악성 타점 원천 차단
             if name == "시장관망" or "000000" in code_str: continue
             if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|적자', tajeom): continue
             if "저항 출회" in str(r[14]) or "윗꼬리" in tajeom: continue
             if "관망" in tajeom and "관심" not in tajeom: continue
 
-            # 필터 2: 퀀트 점수 추출 및 하한선 적용
             try: num_score = int(re.search(r'(-?\d+)점', score_str).group(1)) if re.search(r'(-?\d+)점', score_str) else 0
             except: num_score = 0
             
@@ -157,11 +153,9 @@ def get_yesterday_korean_context():
     if not valid_candidates:
         return "🚨 [전일 기준 부합 종목 부재]\n시스템의 엄격한 'HYEOKS 퀀트 총합 스코어(최소 35점 이상)' 및 '적자 기업 제외' 필터를 통과한 주도주가 없습니다. 무리한 매매를 지양하고 시장 관망을 유지하십시오."
 
-    # 💡 [V8.1 핵심] 점수 기준으로 내림차순 정렬하여 AI에게 'Top 10 마스터 풀'을 제공
     valid_candidates.sort(key=lambda x: x['num_score'], reverse=True)
 
     picks_info = []
-    # 최대 10개까지만 리스트업하여 AI가 능동적으로 '선택'하게 함
     for cand in valid_candidates[:10]:
         code = name_to_code.get(cand['name']) or search_code_from_naver(cand['name'])
         vip_data = "VIP 데이터 확인불가"
@@ -187,7 +181,6 @@ def generate_morning_briefing(market_data, news_data, kor_context, liquidity_dat
    ▫️ (억지로 특정 종목을 추천하거나 지어내지 마십시오.)
 """
     else:
-        # 💡 [V8.1 핵심] AI에게 단순 정리역할이 아닌 '최적 종목 능동 선정(Active Selection)' 권한 부여
         stock_prompt_instruction = """
    [파트 2: 당일 주도주 능동 선정 및 심층 분석 (파란색 뱃지)]
    🚨 (핵심 지시: 귀하에게 제공된 '[어제 포착된 퀀트 필터 통과 후보 풀]'을 면밀히 분석하십시오. 단순 나열이 절대 아닙니다! 
@@ -244,30 +237,143 @@ def generate_morning_briefing(market_data, news_data, kor_context, liquidity_dat
             else: raise e
     raise Exception("서버 응답 불가")
 
+# ==========================================
+# 💡 [신규] 새벽 6시 일괄 브리핑 굽기 (Batch Process)
+# ==========================================
+def parse_ai_json(text):
+    try:
+        clean_text = text.replace('```json', '').replace('```', '').strip()
+        return json.loads(clean_text)
+    except:
+        try:
+            t_match = re.search(r'"target_price"\s*:\s*(\d+)', text)
+            s_match = re.search(r'"stop_loss"\s*:\s*(\d+)', text)
+            b_match = re.search(r'"briefing"\s*:\s*"([^"]+)"', text)
+            return {
+                "briefing": b_match.group(1) if b_match else "분석 결과 텍스트 오류",
+                "target_price": int(t_match.group(1)) if t_match else 0,
+                "stop_loss": int(s_match.group(1)) if s_match else 0
+            }
+        except:
+            return {"briefing": "응답 오류", "target_price": 0, "stop_loss": 0}
+
+def batch_generate_briefings():
+    print("🌅 [새벽 6시 배치] 전 종목 AI 브리핑 일괄 굽기 시작 (gemini-2.5-flash)...")
+    try:
+        gcp_creds_str = os.environ.get("GCP_CREDENTIALS")
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        if gcp_creds_str and len(gcp_creds_str.strip()) > 10:
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(gcp_creds_str), scope)
+        else:
+            creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
+            
+        client_g = gspread.authorize(creds)
+        doc = client_g.open_by_url(SHEET_URL)
+        helper_sheet = doc.worksheet("주가데이터_보조")
+        
+        try: brief_db_sheet = doc.worksheet("브리핑_기록")
+        except: brief_db_sheet = doc.add_worksheet(title="브리핑_기록", rows="200", cols="5")
+        
+        tech_data = helper_sheet.get_all_values()[1:]
+        cands_list = []
+        
+        for r in tech_data:
+            if len(r) < 21: continue
+            name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
+            curr_p, tajeom_raw = str(r[2]).strip(), str(r[9]).strip()
+            seed_tag = str(r[25]).strip() if len(r) > 25 else "NORMAL"
+            
+            if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|3년적자|스코어 미달|관망', tajeom_raw): continue 
+            tajeom_clean = tajeom_raw.split('⚠️')[0].strip().split('🎯')[0].strip()
+            
+            cands_list.append({
+                'name': name, 'code': code, 'curr_p': curr_p, 'tajeom': tajeom_clean, 'type': seed_tag
+            })
+
+        client_gemini = genai.Client(api_key=GEMINI_API_KEY)
+        results_to_save = [["종목코드", "브리핑", "목표가", "손절가"]]
+        
+        print(f"총 {len(cands_list)}개 타점 유효 종목 브리핑 생성 시작...")
+        
+        for cand in cands_list:
+            print(f" - [{cand['name']}] 브리핑 굽는 중...")
+            
+            if cand['type'] == "SEED":
+                guide_text = "중장기 모아가기 전략. 차트상 60일선, 기준봉 시가, 쌍바닥 등 의미있는 넉넉한 하단 지지선을 '손절가'로 명확한 가격(원)으로 제시하고, 하락시 2차 분할매수 시나리오를 제시하라."
+            else:
+                guide_text = "단기 스윙 전략. 손익비 1.5배 이상의 타이트한 '목표가'와 '손절가'를 명확한 가격(원)으로 제시하라."
+                
+            prompt = f"""
+            당신은 수석 퀀트 애널리스트입니다. 기업 소개는 생략하고 기술적 위치와 차트 대응 전략만 60자 내외로 매우 짧게 요약하세요.
+            ■ 종목명: {cand['name']} 
+            ■ 현재가: {cand['curr_p']}원 
+            ■ 타점배지: {cand['tajeom']}
+            💡 가이드: {guide_text}
+            
+            반드시 아래 JSON 형식으로만 대답하십시오. (target_price와 stop_loss는 숫자만 입력)
+            {{
+                "briefing": "전략 요약",
+                "target_price": 150000,
+                "stop_loss": 135000
+            }}
+            """
+            
+            try:
+                res = client_gemini.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+                data = parse_ai_json(res.text)
+                
+                b_text = data.get('briefing', '분석 완료')
+                if not b_text.startswith("✅"): b_text = f"✅ [간단 브리핑] {b_text}"
+                
+                t_price = f"{int(data.get('target_price', 0)):,}원" if data.get('target_price') else "관망"
+                s_price = f"{int(data.get('stop_loss', 0)):,}원" if data.get('stop_loss') else "관망"
+                
+                results_to_save.append([f"'{cand['code']}", b_text, t_price, s_price])
+                time.sleep(2) 
+            except Exception as e:
+                print(f"   에러: {e}")
+                results_to_save.append([f"'{cand['code']}", "⚠️ 분석 오류", "0", "0"])
+
+        brief_db_sheet.clear()
+        brief_db_sheet.update(range_name="A1", values=results_to_save, value_input_option="USER_ENTERED")
+        print("🌅 새벽 6시 배치 브리핑 굽기 완료! (브리핑_기록 시트 저장 완료)")
+    
+    except Exception as e:
+        print(f"❌ 배치 작업 에러: {e}")
+
+# ==========================================
+# 메인 실행 트리거
+# ==========================================
 if __name__ == "__main__":
-    print("🚀 HYEOKS 능동형 모닝 브리핑 시스템 가동 시작...")
-    liquidity_data = get_global_liquidity_data()
-    market_data, news_data = get_us_market_summary()
-    kor_context = get_yesterday_korean_context()
+    now_obj = datetime.datetime.now(KST)
     
-    if "실패" in market_data or "에러" in kor_context or "에러" in liquidity_data:
-        final_msg = f"🚨 [HYEOKS 시스템 경고] 모닝 데이터 수집 에러\n\n[에러 내용]\n- 유동성(FRED): {liquidity_data}\n- 뉴스 수집: {market_data}\n- 한국장: {kor_context}\n\n※ 문제를 수정해주세요."
+    # 💡 [분기] 새벽 6시면 일괄 브리핑 생성(Batch), 그 외 시간이면 텔레그램 시황 발송
+    if now_obj.hour == 6:
+        batch_generate_briefings()
     else:
-        briefing_text = generate_morning_briefing(market_data, news_data, kor_context, liquidity_data)
-        today_str = datetime.datetime.now(KST).strftime('%Y년 %m월 %d일')
-        final_briefing = f"🌅 [HYEOKS 모닝 브리핑] - {today_str}\n\n{briefing_text}"
-    
-    print("📲 텔레그램 발송 중...")
-    clean_briefing = final_briefing.replace('**', '')       
-    clean_briefing = clean_briefing.replace('### ', '▶️ ')  
-    clean_briefing = clean_briefing.replace('## ', '▶️ ')   
-    clean_briefing = re.sub(r'<([^>]+)>', r'[\1]', clean_briefing)
-    
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {'chat_id': TELEGRAM_CHAT_ID, 'text': clean_briefing}
-    
-    response = requests.post(url, data=payload)
-    if response.status_code == 200: print("✅ 텔레그램 발송 성공! 모든 프로세스 완료!")
-    else:
-        print(f"❌ 텔레그램 발송 실패! (상태 코드: {response.status_code})")
-        requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID, 'text': final_briefing})
+        print("🚀 HYEOKS 능동형 모닝 브리핑 시스템 가동 시작...")
+        liquidity_data = get_global_liquidity_data()
+        market_data, news_data = get_us_market_summary()
+        kor_context = get_yesterday_korean_context()
+        
+        if "실패" in market_data or "에러" in kor_context or "에러" in liquidity_data:
+            final_msg = f"🚨 [HYEOKS 시스템 경고] 모닝 데이터 수집 에러\n\n[에러 내용]\n- 유동성(FRED): {liquidity_data}\n- 뉴스 수집: {market_data}\n- 한국장: {kor_context}\n\n※ 문제를 수정해주세요."
+        else:
+            briefing_text = generate_morning_briefing(market_data, news_data, kor_context, liquidity_data)
+            today_str = datetime.datetime.now(KST).strftime('%Y년 %m월 %d일')
+            final_briefing = f"🌅 [HYEOKS 모닝 브리핑] - {today_str}\n\n{briefing_text}"
+        
+        print("📲 텔레그램 발송 중...")
+        clean_briefing = final_briefing.replace('**', '')       
+        clean_briefing = clean_briefing.replace('### ', '▶️ ')  
+        clean_briefing = clean_briefing.replace('## ', '▶️ ')   
+        clean_briefing = re.sub(r'<([^>]+)>', r'[\1]', clean_briefing)
+        
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = {'chat_id': TELEGRAM_CHAT_ID, 'text': clean_briefing}
+        
+        response = requests.post(url, data=payload)
+        if response.status_code == 200: print("✅ 텔레그램 발송 성공! 모든 프로세스 완료!")
+        else:
+            print(f"❌ 텔레그램 발송 실패! (상태 코드: {response.status_code})")
+            requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID, 'text': final_briefing})
