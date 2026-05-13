@@ -283,7 +283,8 @@ def batch_generate_briefings():
             curr_p, tajeom_raw = str(r[2]).strip(), str(r[9]).strip()
             seed_tag = str(r[25]).strip() if len(r) > 25 else "NORMAL"
             
-            if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|3년적자|스코어 미달|관망', tajeom_raw): continue 
+            # 🚨 필터 대폭 개방: '관망'이 포함되어 있어도 150위 안이면 무조건 굽도록 조건 완화
+            if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|3년적자', tajeom_raw): continue 
             tajeom_clean = tajeom_raw.split('⚠️')[0].strip().split('🎯')[0].strip()
             
             cands_list.append({
@@ -318,22 +319,36 @@ def batch_generate_briefings():
             }}
             """
             
-            try:
-                res = client_gemini.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-                data = parse_ai_json(res.text)
-                
-                b_text = data.get('briefing', '분석 완료')
-                if not b_text.startswith("✅"): b_text = f"✅ [간단 브리핑] {b_text}"
-                
-                t_price = f"{int(data.get('target_price', 0)):,}원" if data.get('target_price') else "관망"
-                s_price = f"{int(data.get('stop_loss', 0)):,}원" if data.get('stop_loss') else "관망"
-                
-                results_to_save.append([f"'{cand['code']}", b_text, t_price, s_price])
-                time.sleep(2) 
-            except Exception as e:
-                print(f"   에러: {e}")
-                results_to_save.append([f"'{cand['code']}", "⚠️ 분석 오류", "0", "0"])
+            # 🔥 [무료버전 429 돌파 로직] 최대 10번 재시도, 실패 시 30초~90초 대기
+            success = False
+            for retry in range(10):
+                try:
+                    res = client_gemini.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+                    data = parse_ai_json(res.text)
+                    
+                    b_text = data.get('briefing', '분석 완료')
+                    if not b_text.startswith("✅"): b_text = f"✅ [간단 브리핑] {b_text}"
+                    
+                    t_price = f"{int(data.get('target_price', 0)):,}원" if data.get('target_price') else "관망"
+                    s_price = f"{int(data.get('stop_loss', 0)):,}원" if data.get('stop_loss') else "관망"
+                    
+                    results_to_save.append([f"'{cand['code']}", b_text, t_price, s_price])
+                    success = True
+                    time.sleep(2) # 기본 딜레이 (분당 15회 요청 제한 방어)
+                    break
+                except Exception as e:
+                    if "503" in str(e) or "429" in str(e) or "quota" in str(e).lower():
+                        wait_time = 30 * (retry + 1)
+                        print(f"   ⚠️ 구글 서버 지연 감지. {wait_time}초 대기 후 재시도... ({retry+1}/10)")
+                        time.sleep(wait_time)
+                    else:
+                        print(f"   에러: {e}")
+                        break
+            
+            if not success:
+                results_to_save.append([f"'{cand['code']}", "⚠️ 분석 일시 오류", "0", "0"])
 
+        # 시트 덮어쓰기
         brief_db_sheet.clear()
         brief_db_sheet.update(range_name="A1", values=results_to_save, value_input_option="USER_ENTERED")
         print("🌅 새벽 6시 배치 브리핑 굽기 완료! (브리핑_기록 시트 저장 완료)")
@@ -348,7 +363,7 @@ if __name__ == "__main__":
     now_obj = datetime.datetime.now(KST)
     
     # 💡 [분기] 새벽 6시면 일괄 브리핑 생성(Batch), 그 외 시간이면 텔레그램 시황 발송
-    if True:
+    if now_obj.hour == 6:
         batch_generate_briefings()
     else:
         print("🚀 HYEOKS 능동형 모닝 브리핑 시스템 가동 시작...")
