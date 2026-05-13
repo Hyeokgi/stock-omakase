@@ -38,8 +38,8 @@ def clean_emojis(text):
     return text.replace('  ', ' ').strip()
 
 def safe_generate_content(contents, is_fast=False):
-    # 💡 is_fast=True 일 때(간단브리핑) 무료 버전인 1.5-flash를 사용하도록 변경
-    model_name = 'gemini-1.5-flash' if is_fast else 'gemini-2.5-pro'
+    # 💡 메인은 기존대로 2.5-pro 유지! 간단 브리핑(is_fast=True)만 1.5-flash-latest 사용
+    model_name = 'gemini-1.5-flash-latest' if is_fast else 'gemini-2.5-pro'
     for i in range(5): 
         try: 
             return client.models.generate_content(model=model_name, contents=contents)
