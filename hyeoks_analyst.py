@@ -38,8 +38,8 @@ def clean_emojis(text):
     return text.replace('  ', ' ').strip()
 
 def safe_generate_content(contents, is_fast=False):
-    # 💡 메인은 기존대로 2.5-pro 유지! 간단 브리핑(is_fast=True)만 1.5-flash-latest 사용
-    model_name = 'gemini-1.5-flash-latest' if is_fast else 'gemini-2.5-pro'
+    # 💡 트레이더님의 원래 설정대로 완벽하게 원상 복구 (2.5-flash / 2.5-pro)
+    model_name = 'gemini-2.5-flash' if is_fast else 'gemini-2.5-pro'
     for i in range(5): 
         try: 
             return client.models.generate_content(model=model_name, contents=contents)
@@ -89,6 +89,7 @@ def get_vip_deep_dive_data(code, kis_token):
     except: return "데이터 수집 실패"
 
 def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
+    # 💡 이 부분은 시트 내 글자 섞임으로 인한 정렬 에러를 막아주는 유용한 패치이므로 유지합니다.
     try:
         sheet = doc.worksheet(sheet_name)
         data = sheet.get_all_values()
@@ -102,7 +103,8 @@ def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
             for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y. %m. %d"):
                 try: return datetime.datetime.strptime(val, fmt)
                 except: continue
-            return val
+            # 날짜 형식이 아닌 글자가 있으면 아주 옛날 날짜로 처리해 에러 차단
+            return datetime.datetime(1970, 1, 1)
             
         rows.sort(key=lambda x: parse_date(x[sort_col_idx]), reverse=True)
         
