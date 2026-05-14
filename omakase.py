@@ -452,8 +452,10 @@ def manage_schedule_sheet(schedules):
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate):
     local_session = requests.Session()
     try:
-        url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=250&requestType=0"
-        res = local_session.get(url, verify=False, timeout=3)
+        # 💡 타임스탬프와 스마트폰 위장 헤더로 캐시를 완벽히 뚫어냅니다.
+        headers = {'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36'}
+        url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=250&requestType=0&_={int(time.time() * 1000)}"
+        res = local_session.get(url, headers=headers, verify=False, timeout=3)
         root = ET.fromstring(res.text)
         
         history = []
@@ -595,8 +597,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         gap_ratio = (open_price - prev_price) / prev_price if prev_price > 0 else 0
         is_huge_gap = gap_ratio >= 0.04
         
-        risk_soup = BeautifulSoup(local_session.get(f"https://finance.naver.com/item/main.naver?code={code}", verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
-        
+        risk_soup = BeautifulSoup(local_session.get(f"https://finance.naver.com/item/main.naver?code={code}&_={int(time.time() * 1000)}", headers=headers, verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
         market_sum_tag = risk_soup.find('em', id='_market_sum')
         market_cap = 0
         if market_sum_tag:
@@ -647,7 +648,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             }
-            frgn_url = f"https://finance.naver.com/item/frgn.naver?code={code}"
+            frgn_url = f"https://finance.naver.com/item/frgn.naver?code={code}&_={int(time.time() * 1000)}"
             frgn_res = local_session.get(frgn_url, headers=headers, verify=False, timeout=3)
             frgn_soup = BeautifulSoup(frgn_res.content, 'html.parser', from_encoding='euc-kr')
             
