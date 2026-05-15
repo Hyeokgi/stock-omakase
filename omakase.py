@@ -22,9 +22,6 @@ if 2 <= now_kst_check.hour < 7:
     print(f"🌙 현재 시간({now_kst_check.strftime('%H:%M')}): 시스템을 휴식 모드로 전환합니다. (02시~07시)")
     sys.exit(0)
 
-# ==========================================
-# 💡 시트 자동 정렬 및 청소 함수
-# ==========================================
 def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
     try:
         sheet = doc.worksheet(sheet_name)
@@ -49,9 +46,6 @@ def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
     except Exception as e:
         print(f"⚠️ [{sheet_name}] 정렬 실패: {e}")
 
-# ==========================================
-# 💡 날짜 통일 및 잡주 실적 제거 필터
-# ==========================================
 def normalize_date_format(date_str, current_year="2026"):
     m = re.search(r'(?:(\d{4})[.\-\s년]+)?(\d{1,2})[.\-\s월]+(\d{1,2})', str(date_str))
     if m:
@@ -72,9 +66,6 @@ def is_mega_cap_or_not_earnings(title):
         return True
     return False
 
-# ==========================================
-# 💡 한국투자증권 API 인증 엔진
-# ==========================================
 KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
 KIS_URL_BASE = "https://openapi.koreainvestment.com:9443"
@@ -348,7 +339,6 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
 
 def get_market_schedule():
     local_session = requests.Session()
-    """네이버 금융 오늘의 증시 일정 수집 (순수 일정만 추출 + 잡주 실적 제거 + 날짜 폼 통일)"""
     try:
         today_str = datetime.datetime.now(KST).strftime('%Y-%m-%d')
         url = "https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258"
@@ -367,7 +357,6 @@ def get_market_schedule():
                 title = title_tag.find('a').text.strip()
                 clean_title = title.replace(" ", "").strip()
                 
-                # 💡 [추가됨] 1. 초거대기업이 아닌 잡주 실적발표면 여기서 바로 컷!
                 if not is_mega_cap_or_not_earnings(title):
                     continue
                 
@@ -382,7 +371,6 @@ def get_market_schedule():
                 if any(kw in title for kw in include_kws) and not any(ex_kw in title for ex_kw in exclude_kws):
                     if "증시 전망" not in title and "외환전망" not in title:
                         if clean_title not in seen_titles:
-                            # 💡 [추가됨] 2. 당일 수집된 일정도 무조건 YYYY-MM-DD 형식으로 포맷팅
                             clean_date = normalize_date_format(today_str)
                             schedules.append([clean_date, title, "📅 자동수집(당일)"])
                             seen_titles.add(clean_title)
@@ -474,9 +462,11 @@ def manage_schedule_sheet(schedules):
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db):
     local_session = requests.Session()
     try:
-        req_headers = {'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36'}
+        # 💡 [해결] 데스크톱용 헤더로 통일하여 모바일 리다이렉션으로 인한 HTML 파싱 누락(0, FALSE) 완벽 방지
+        desktop_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+        
         url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=250&requestType=0&_={int(time.time() * 1000)}"
-        res = local_session.get(url, headers=req_headers, verify=False, timeout=3)
+        res = local_session.get(url, headers=desktop_headers, verify=False, timeout=3)
         root = ET.fromstring(res.text)
         
         history = []
@@ -567,7 +557,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 if price_climb >= atr_14 * 3.0:
                     secret_tajeom = "🔴 [시크릿] 3차 파동 도달 (전량 익절)"
                 elif price_climb >= atr_14 * 2.0:
-                    secret_tajeom = "🟡 [시크릿] 2차 파동 진행 (본절 스탑 상향)"
+                    secret_tajeom = "🟡 [시크릿] 2 파동 진행 (본절 스탑 상향)"
                 elif price_climb >= atr_14 * 1.0:
                     secret_tajeom = "🟢 [시크릿] 1차 파동 진행 (추세 홀딩)"
                 else:
@@ -627,7 +617,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             is_chronic_loss = static_info['is_chronic_loss']
         else:
             risk_url = f"https://finance.naver.com/item/main.naver?code={code}&_={int(time.time() * 1000)}"
-            risk_soup = BeautifulSoup(local_session.get(risk_url, headers=req_headers, verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
+            risk_soup = BeautifulSoup(local_session.get(risk_url, headers=desktop_headers, verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
             
             market_sum_tag = risk_soup.find('em', id='_market_sum')
             market_cap = 0
@@ -664,7 +654,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 if len(op_profits) == 3 and all(p < 0 for p in op_profits): is_chronic_loss = True
             
             needs_static_update = True
-            static_info_to_save = [code, market_cap, str(is_junk), str(is_financial_risk), str(is_chronic_loss)]
+            # 💡 [해결] 구글 시트가 005930을 5930으로 바꿔버리지 않도록 f"'{code}" (홑따옴표 추가) 적용 완료
+            static_info_to_save = [f"'{code}", market_cap, str(is_junk), str(is_financial_risk), str(is_chronic_loss)]
 
         is_strong_dual_buy = False 
         is_weak_dual_buy = False   
@@ -679,9 +670,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         pg_amount_eok = 0.0 
 
         try:
-            frgn_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
             frgn_url = f"https://finance.naver.com/item/frgn.naver?code={code}&_={int(time.time() * 1000)}"
-            frgn_res = local_session.get(frgn_url, headers=frgn_headers, verify=False, timeout=3)
+            frgn_res = local_session.get(frgn_url, headers=desktop_headers, verify=False, timeout=3)
             frgn_soup = BeautifulSoup(frgn_res.content, 'html.parser', from_encoding='euc-kr')
             
             rows = frgn_soup.select("table.type2 tr")
@@ -1086,7 +1076,7 @@ def update_technical_data(df_theme, all_theme_map):
         
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
         
-        # 💡 [캐싱 로직 보강] 수동 실행 시 무조건 탭 생성 및 강제 초기화 작동
+        # 💡 [캐싱 로직] 수동 실행 시 무조건 탭 생성 및 강제 초기화 작동
         try: 
             static_sheet = doc.worksheet("DB_정적데이터")
         except: 
@@ -1095,7 +1085,6 @@ def update_technical_data(df_theme, all_theme_map):
             static_sheet.append_row(["종목코드", "시가총액", "관리종목", "재무위험", "만성적자"])
             
         now_time = datetime.datetime.now(KST)
-        # 테스트를 위해 강제 초기화 트리거 발동 (기존 데이터가 없거나 5개 이하면 무조건 초기화)
         is_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50) or len(static_sheet.get_all_values()) <= 5
         static_db = {}
         
@@ -1106,24 +1095,44 @@ def update_technical_data(df_theme, all_theme_map):
             try:
                 for row in static_sheet.get_all_values()[1:]:
                     if len(row) >= 5:
-                        static_db[row[0]] = {'market_cap': int(row[1]), 'is_junk': row[2] == 'True', 'is_fin_risk': row[3] == 'True', 'is_chronic_loss': row[4] == 'True'}
+                        code_key = str(row[0]).replace("'", "").strip().zfill(6)
+                        static_db[code_key] = {
+                            'market_cap': int(row[1]) if str(row[1]).isdigit() else 0, 
+                            'is_junk': row[2] == 'True', 
+                            'is_fin_risk': row[3] == 'True', 
+                            'is_chronic_loss': row[4] == 'True'
+                        }
             except: pass
 
-        # 💡 [과거 테마 로직 보강] '수급_Raw', '수급_실시간', 'DB_스캐너' 모든 탭을 뒤져서 과거 테마 100% 수집
+        theme_rank_dict = {} 
+        if not df_theme.empty:
+            theme_rank_tracker = {}
+            for index, row in df_theme.iterrows():
+                t_rank, s_name, t_name = int(row['순위']), str(row['종목명']).strip(), row['테마명']
+                if t_rank not in theme_rank_tracker: theme_rank_tracker[t_rank] = []
+                theme_rank_tracker[t_rank].append(s_name)
+                is_leader_in_this_theme = (len(theme_rank_tracker[t_rank]) == 1)
+                
+                if s_name not in theme_rank_dict: theme_rank_dict[s_name] = {'theme_rank': t_rank, 'is_leader': is_leader_in_this_theme, 'theme_name': t_name}
+                else:
+                    if is_leader_in_this_theme:
+                        theme_rank_dict[s_name]['is_leader'] = True
+                        theme_rank_dict[s_name]['theme_name'] = t_name
+
+        # 💡 [과거 테마 로직 완벽 보강] 수급_Raw 탭의 정확한 헤더 인덱스로 매칭
         past_theme_map = {}
         try:
             today_str = datetime.datetime.now(KST).strftime('%Y-%m-%d')
             three_months_ago = datetime.datetime.now(KST) - datetime.timedelta(days=90)
             
-            # 수급 탭들에서 수집
             for sheet_name in ["수급_Raw", "수급_실시간"]:
                 try:
                     raw_data = doc.worksheet(sheet_name).get_all_values()
                     if len(raw_data) > 1:
                         header = raw_data[0]
                         date_idx = header.index('날짜') if '날짜' in header else 0
-                        theme_idx = header.index('테마명') if '테마명' in header else 3
-                        name_idx = header.index('종목명') if '종목명' in header else 4
+                        theme_idx = header.index('테마명') if '테마명' in header else 2
+                        name_idx = header.index('종목명') if '종목명' in header else 3
                         for row in raw_data[1:]:
                             if len(row) > max(date_idx, theme_idx, name_idx):
                                 r_date_str = str(row[date_idx]).strip()
@@ -1136,12 +1145,15 @@ def update_technical_data(df_theme, all_theme_map):
                                     except: pass
                 except: pass
             
-            # DB_스캐너 탭에서도 과거에 스캔되었던 테마 수집
             try:
                 scanner_data = doc.worksheet("DB_스캐너").get_all_values()
                 for row in scanner_data[1:]:
                     if len(row) > 5 and row[5]:
-                        s_name = str(row[0]).split('", "')[1].replace('")', '').strip() if 'HYPERLINK' in str(row[0]) else str(row[0]).strip()
+                        if 'HYPERLINK' in str(row[0]):
+                            m = re.search(r', "([^"]+)"\)', str(row[0]))
+                            s_name = m.group(1) if m else str(row[0])
+                        else:
+                            s_name = str(row[0]).strip()
                         t_name = str(row[5]).replace("🆕[당일]", "").replace("🕰️[과거]", "").strip()
                         if s_name and t_name and t_name != "개별주/기타" and s_name not in past_theme_map:
                             past_theme_map[s_name] = t_name
@@ -1165,22 +1177,7 @@ def update_technical_data(df_theme, all_theme_map):
                     target_names.add(str(row[2]).strip())
         except: pass
 
-        theme_rank_dict = {} 
-        
         if not df_theme.empty:
-            theme_rank_tracker = {}
-            for index, row in df_theme.iterrows():
-                t_rank, s_name, t_name = int(row['순위']), str(row['종목명']).strip(), row['테마명']
-                if t_rank not in theme_rank_tracker: theme_rank_tracker[t_rank] = []
-                theme_rank_tracker[t_rank].append(s_name)
-                is_leader_in_this_theme = (len(theme_rank_tracker[t_rank]) == 1)
-                
-                if s_name not in theme_rank_dict: theme_rank_dict[s_name] = {'theme_rank': t_rank, 'is_leader': is_leader_in_this_theme, 'theme_name': t_name}
-                else:
-                    if is_leader_in_this_theme:
-                        theme_rank_dict[s_name]['is_leader'] = True
-                        theme_rank_dict[s_name]['theme_name'] = t_name
-                        
             top_10_themes = df_theme[df_theme['순위'] <= 10]['종목명'].tolist()
             for t in top_10_themes: target_names.add(str(t).strip())
             
@@ -1385,7 +1382,7 @@ if __name__ == "__main__":
             already_posted = any(today_str in str(row[0]) for row in posted_data[:5] if row)
             
             if not already_posted:
-                GOOGLE_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbxyuSEjPmg8rZPjLlG-YKck07QYxm মেরামত/exec"
+                GOOGLE_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbxyuSEjPmg8rZPjLlG-YKck07QYxmZm0HtxvWAumvV2zp7RRpVaKDo6D-CiQ6pLqKFm/exec"
                 print("⏳ 아직 오늘 리포트가 없습니다! 구글에 바통을 넘깁니다...")
                 response = requests.post(GOOGLE_WEBHOOK_URL, timeout=30)
                 if response.status_code == 200: print("✅ 바통 터치 성공!")
