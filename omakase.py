@@ -462,7 +462,6 @@ def manage_schedule_sheet(schedules):
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db):
     local_session = requests.Session()
     try:
-        # 💡 [PC 헤더 적용]
         desktop_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
         
         url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=250&requestType=0&_={int(time.time() * 1000)}"
@@ -616,7 +615,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             is_financial_risk = static_info['is_fin_risk']
             is_chronic_loss = static_info['is_chronic_loss']
         else:
-            # 💡 [해결] PC 헤더 사용 및 종목명(name) 추가
             risk_url = f"https://finance.naver.com/item/main.naver?code={code}&_={int(time.time() * 1000)}"
             risk_soup = BeautifulSoup(local_session.get(risk_url, headers=desktop_headers, verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
             
@@ -655,7 +653,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 if len(op_profits) == 3 and all(p < 0 for p in op_profits): is_chronic_loss = True
             
             needs_static_update = True
-            # 💡 [수정] 종목명(name)을 추가하여 가독성 확보
             static_info_to_save = [f"'{code}", name, market_cap, str(is_junk), str(is_financial_risk), str(is_chronic_loss)]
 
         is_strong_dual_buy = False 
@@ -1082,7 +1079,6 @@ def update_technical_data(df_theme, all_theme_map):
         except: 
             print("🚀 [초기 1회] DB_정적데이터 탭을 생성합니다...")
             static_sheet = doc.add_worksheet(title="DB_정적데이터", rows="1000", cols="6")
-            # 💡 [해결] 종목명 열 추가
             static_sheet.append_row(["종목코드", "종목명", "시가총액", "관리종목", "재무위험", "만성적자"])
             
         now_time = datetime.datetime.now(KST)
@@ -1098,7 +1094,6 @@ def update_technical_data(df_theme, all_theme_map):
                     if len(row) >= 6:
                         code_key = str(row[0]).replace("'", "").strip().zfill(6)
                         static_db[code_key] = {
-                            # 💡 [해결] 인덱스 변경 (종목명이 끼어들었으므로 1칸씩 밀림)
                             'market_cap': int(row[2]) if str(row[2]).isdigit() else 0, 
                             'is_junk': row[3] == 'True', 
                             'is_fin_risk': row[4] == 'True', 
@@ -1123,32 +1118,37 @@ def update_technical_data(df_theme, all_theme_map):
 
         past_theme_map = {}
         try:
-            today_str = datetime.datetime.now(KST).strftime('%Y-%m-%d')
-            three_months_ago = datetime.datetime.now(KST) - datetime.timedelta(days=90)
+            today_date = datetime.datetime.now(KST).date()
+            three_months_ago = today_date - datetime.timedelta(days=90)
             
-            # 💡 [해결] 구글 시트 실제 인덱스에 맞게 강제 하드코딩
             for sheet_name in ["수급_Raw", "수급_실시간"]:
                 try:
                     raw_data = doc.worksheet(sheet_name).get_all_values()
-                    for row in raw_data[1:]:
-                        if len(row) >= 5:
-                            r_date_str = str(row[0]).strip()
-                            t_name = str(row[2]).strip()
-                            s_name = str(row[3]).strip()
-                            if r_date_str != today_str and s_name not in past_theme_map:
-                                try:
-                                    if datetime.datetime.strptime(r_date_str, '%Y-%m-%d') >= three_months_ago:
-                                        past_theme_map[s_name] = t_name
-                                except: pass
+                    if len(raw_data) > 1:
+                        header = raw_data[0]
+                        date_idx = header.index('날짜') if '날짜' in header else 0
+                        theme_idx = header.index('테마명') if '테마명' in header else 2
+                        name_idx = header.index('종목명') if '종목명' in header else 3
+                        for row in raw_data[1:]:
+                            if len(row) > max(date_idx, theme_idx, name_idx):
+                                r_date_str = str(row[date_idx]).strip()
+                                s_name = str(row[name_idx]).strip()
+                                t_name = str(row[theme_idx]).strip()
+                                if s_name and t_name and t_name != "개별주/기타":
+                                    try:
+                                        row_date = datetime.datetime.strptime(r_date_str, '%Y-%m-%d').date()
+                                        if row_date != today_date and row_date >= three_months_ago:
+                                            if s_name not in past_theme_map:
+                                                past_theme_map[s_name] = t_name
+                                    except: pass
                 except: pass
             
             try:
                 scanner_data = doc.worksheet("DB_스캐너").get_all_values()
                 for row in scanner_data[1:]:
                     if len(row) > 5 and row[5]:
-                        # 하이퍼링크 정규식으로 순수 종목명 추출
                         m = re.search(r', "([^"]+)"\)', str(row[0]))
-                        s_name = m.group(1) if m else str(row[0])
+                        s_name = m.group(1) if m else str(row[0]).strip()
                         t_name = str(row[5]).replace("🆕[당일]", "").replace("🕰️[과거]", "").strip()
                         if s_name and t_name and t_name != "개별주/기타" and s_name not in past_theme_map:
                             past_theme_map[s_name] = t_name
