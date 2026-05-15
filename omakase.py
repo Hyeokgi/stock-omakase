@@ -329,7 +329,7 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
 
 def get_market_schedule():
     local_session = requests.Session()
-    """네이버 금융 오늘의 증시 일정 수집 (순수 일정만 추출)"""
+    """네이버 금융 오늘의 증시 일정 수집 (순수 일정만 추출 + 잡주 실적 제거 + 날짜 폼 통일)"""
     try:
         today_str = datetime.datetime.now(KST).strftime('%Y-%m-%d')
         url = "https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258"
@@ -348,6 +348,10 @@ def get_market_schedule():
                 title = title_tag.find('a').text.strip()
                 clean_title = title.replace(" ", "").strip()
                 
+                # 💡 [추가됨] 1. 초거대기업이 아닌 잡주 실적발표면 여기서 바로 컷!
+                if not is_mega_cap_or_not_earnings(title):
+                    continue
+                
                 include_kws = ['실적', '발표', '만기', '배당', '금통위', 'FOMC', '고용', '학회', '임상', '상장', '개막', '출시']
                 exclude_kws = [
                     '주주총회', '주총', '공모', '청약',
@@ -359,14 +363,15 @@ def get_market_schedule():
                 if any(kw in title for kw in include_kws) and not any(ex_kw in title for ex_kw in exclude_kws):
                     if "증시 전망" not in title and "외환전망" not in title:
                         if clean_title not in seen_titles:
-                            schedules.append([today_str, title, "📅 자동수집(당일)"])
+                            # 💡 [추가됨] 2. 당일 수집된 일정도 무조건 YYYY-MM-DD 형식으로 포맷팅 (today_str 사용)
+                            clean_date = normalize_date_format(today_str)
+                            schedules.append([clean_date, title, "📅 자동수집(당일)"])
                             seen_titles.add(clean_title)
         
         return schedules
     except Exception as e:
         print(f"❌ 일정 수집 에러: {e}")
         return []
-
 def manage_schedule_sheet(schedules):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -445,7 +450,32 @@ def manage_schedule_sheet(schedules):
 
     except Exception as e:
         print(f"❌ 주요일정 시트 관리 에러: {e}")
+# 💡 1. 날짜 형식을 무조건 YYYY-MM-DD로 통일하는 강력한 함수
+def normalize_date_format(date_str, current_year="2026"):
+    # "2026. 5. 15", "2026.05.15", "05/15" 등 온갖 변태적인 형식을 잡아냅니다.
+    m = re.search(r'(?:(\d{4})[.\-\s년]+)?(\d{1,2})[.\-\s월]+(\d{1,2})', str(date_str))
+    if m:
+        year = m.group(1) if m.group(1) else current_year
+        month = int(m.group(2))
+        day = int(m.group(3))
+        return f"{year}-{month:02d}-{day:02d}"
+    return str(date_str).strip()
 
+# 💡 2. 시장을 움직이는 '초거대기업' 제외, 자잘한 중소형주 실적발표 원천 차단 함수
+def is_mega_cap_or_not_earnings(title):
+    # 기사 제목에 '실적', '매출', '영업익' 등의 단어가 없으면 일반 일정이므로 통과 (True)
+    if not any(kw in title for kw in ['실적', '영업익', '영업이익', '매출', '흑자', '적자', '어닝']):
+        return True
+    
+    # 만약 실적 관련 단어가 있다면? "시장을 멱살 잡고 캐리하는 초거대기업"인지 검사
+    mega_caps = [
+        '삼성전자', 'SK하이닉스', '현대차', '기아', 'LG에너지솔루션', '네이버', '카카오', '셀트리온',
+        '엔비디아', 'NVIDIA', '애플', '테슬라', '마이크로소프트', 'MS', '구글', '알파벳', '아마존', '메타'
+    ]
+    if any(cap in title for cap in mega_caps):
+        return True # 초거대기업의 실적발표는 시장 매크로이므로 통과 (True)
+        
+    return False # 넵튠, 크레버스 같은 중소형주 실적은 스팸이므로 차단 (False)
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate):
     local_session = requests.Session()
     try:
