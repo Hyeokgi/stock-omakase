@@ -812,22 +812,30 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         is_danta_range = min_danta_rate <= change_rate < 0.295
         
+        # 👉 [수정됨] 당일 테마 여부를 먼저 완벽히 검사하고, 없을 때만 과거 테마를 찾도록 락(Lock)을 겁니다.
+        has_today_theme = False
+        
         if name in theme_rank_dict:
             my_theme_name = "🆕[당일] " + theme_rank_dict[name]['theme_name']
             is_theme_leader_raw = theme_rank_dict[name]['is_leader']
             has_theme = True
+            has_today_theme = True
         elif name in all_theme_map:
             my_theme_name = "🆕[당일] " + all_theme_map[name]['theme_name']
             is_theme_leader_raw = all_theme_map[name]['is_leader']
             has_theme = True
-        elif name in past_theme_map:
-            my_theme_name = "🕰️[과거] " + past_theme_map[name]
-            is_theme_leader_raw = False
-            has_theme = False  
-        else:
-            my_theme_name = "개별주/기타"
-            is_theme_leader_raw = False
-            has_theme = False
+            has_today_theme = True
+            
+        # 당일 테마가 없을 경우에만 과거 테마 맵핑
+        if not has_today_theme:
+            if name in past_theme_map:
+                my_theme_name = "🕰️[과거] " + past_theme_map[name]
+                is_theme_leader_raw = False
+                has_theme = False  
+            else:
+                my_theme_name = "개별주/기타"
+                is_theme_leader_raw = False
+                has_theme = False
         
         is_true_theme_leader = is_theme_leader_raw and (trading_value >= min_breakout_tv)
         is_theme_daejang = is_true_theme_leader and is_danta_range and not (is_junk or is_financial_risk)
