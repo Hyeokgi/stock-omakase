@@ -1126,7 +1126,17 @@ def update_technical_data(df_theme, all_theme_map):
 
         past_theme_map = {}
         try:
-            today_date = datetime.datetime.now(KST).date()
+            # 💡 [핵심 수정] 달력상의 오늘이 아니라, 수급_실시간 시트의 가장 최신 날짜를 '당일'로 취급합니다!
+            try:
+                realtime_data = doc.worksheet("수급_실시간").get_all_values()
+                if len(realtime_data) > 1:
+                    latest_date_str = str(realtime_data[1][0]).strip() # 두번째 줄(데이터 첫 줄)의 날짜
+                    today_date = datetime.datetime.strptime(latest_date_str, '%Y-%m-%d').date()
+                else:
+                    today_date = datetime.datetime.now(KST).date()
+            except:
+                today_date = datetime.datetime.now(KST).date()
+                
             three_months_ago = today_date - datetime.timedelta(days=90)
             
             for sheet_name in ["수급_Raw", "수급_실시간"]:
