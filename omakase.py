@@ -1166,11 +1166,6 @@ def update_technical_data(df_theme, all_theme_map):
                         target_names.add(stock_name)
         except: pass
 
-        try:
-            for row in doc.worksheet("대시보드").get_all_values()[4:]:
-                if len(row) > 2 and str(row[2]).strip() and str(row[2]).strip() != "#REF!": 
-                    target_names.add(str(row[2]).strip())
-        except: pass
 
         if not df_theme.empty:
             top_10_themes = df_theme[df_theme['순위'] <= 10]['종목명'].tolist()
