@@ -812,7 +812,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         is_danta_range = min_danta_rate <= change_rate < 0.295
         
-        # 👉 [수정됨] 당일 테마 여부를 먼저 완벽히 검사하고, 없을 때만 과거 테마를 찾도록 락(Lock)을 겁니다.
         has_today_theme = False
         
         if name in theme_rank_dict:
@@ -826,7 +825,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             has_theme = True
             has_today_theme = True
             
-        # 당일 테마가 없을 경우에만 과거 테마 맵핑
         if not has_today_theme:
             if name in past_theme_map:
                 my_theme_name = "🕰️[과거] " + past_theme_map[name]
@@ -1109,34 +1107,51 @@ def update_technical_data(df_theme, all_theme_map):
                         }
             except: pass
 
+        # 💡 [핵심 버그 픽스] 주말이라 당일 테마가 비어있으면, 수급_실시간 탭을 읽어 당일 테마를 복구!
         theme_rank_dict = {} 
-        if not df_theme.empty:
-            theme_rank_tracker = {}
-            for index, row in df_theme.iterrows():
-                t_rank, s_name, t_name = int(row['순위']), str(row['종목명']).strip(), row['테마명']
-                if t_rank not in theme_rank_tracker: theme_rank_tracker[t_rank] = []
-                theme_rank_tracker[t_rank].append(s_name)
-                is_leader_in_this_theme = (len(theme_rank_tracker[t_rank]) == 1)
+        
+        try:
+            realtime_data = doc.worksheet("수급_실시간").get_all_values()
+            if len(realtime_data) > 1:
+                header = realtime_data[0]
+                date_idx = header.index('날짜') if '날짜' in header else 0
+                rank_idx = header.index('순위') if '순위' in header else 2
+                theme_idx = header.index('테마명') if '테마명' in header else 3
+                name_idx = header.index('종목명') if '종목명' in header else 4
                 
-                if s_name not in theme_rank_dict: theme_rank_dict[s_name] = {'theme_rank': t_rank, 'is_leader': is_leader_in_this_theme, 'theme_name': t_name}
-                else:
-                    if is_leader_in_this_theme:
-                        theme_rank_dict[s_name]['is_leader'] = True
-                        theme_rank_dict[s_name]['theme_name'] = t_name
+                latest_date_str = str(realtime_data[1][date_idx]).strip()
+                today_date = datetime.datetime.strptime(latest_date_str, '%Y-%m-%d').date()
+                
+                theme_rank_tracker = {}
+                for row in realtime_data[1:]:
+                    if len(row) > max(date_idx, rank_idx, theme_idx, name_idx):
+                        if str(row[date_idx]).strip() == latest_date_str:
+                            try: t_rank = int(row[rank_idx])
+                            except: continue
+                            t_name = str(row[theme_idx]).strip()
+                            s_name = str(row[name_idx]).strip()
+                            
+                            if t_rank not in theme_rank_tracker:
+                                theme_rank_tracker[t_rank] = []
+                            theme_rank_tracker[t_rank].append(s_name)
+                            
+                            theme_rank_dict[s_name] = {'theme_rank': t_rank, 'theme_name': t_name, 'is_leader': False}
+                            all_theme_map[s_name] = {'theme_name': t_name, 'is_leader': False}
+                
+                for s_name, info in theme_rank_dict.items():
+                    t_rank = info['theme_rank']
+                    is_leader = (theme_rank_tracker[t_rank][0] == s_name)
+                    theme_rank_dict[s_name]['is_leader'] = is_leader
+                    all_theme_map[s_name]['is_leader'] = is_leader
+            else:
+                today_date = datetime.datetime.now(KST).date()
+        except Exception as e:
+            print(f"⚠️ 실시간 데이터 로드 에러: {e}")
+            today_date = datetime.datetime.now(KST).date()
 
+        # 과거 테마 로드
         past_theme_map = {}
         try:
-            # 💡 [핵심 수정] 달력상의 오늘이 아니라, 수급_실시간 시트의 가장 최신 날짜를 '당일'로 취급합니다!
-            try:
-                realtime_data = doc.worksheet("수급_실시간").get_all_values()
-                if len(realtime_data) > 1:
-                    latest_date_str = str(realtime_data[1][0]).strip() # 두번째 줄(데이터 첫 줄)의 날짜
-                    today_date = datetime.datetime.strptime(latest_date_str, '%Y-%m-%d').date()
-                else:
-                    today_date = datetime.datetime.now(KST).date()
-            except:
-                today_date = datetime.datetime.now(KST).date()
-                
             three_months_ago = today_date - datetime.timedelta(days=90)
             
             for sheet_name in ["수급_Raw", "수급_실시간"]:
@@ -1145,8 +1160,8 @@ def update_technical_data(df_theme, all_theme_map):
                     if len(raw_data) > 1:
                         header = raw_data[0]
                         date_idx = header.index('날짜') if '날짜' in header else 0
-                        theme_idx = header.index('테마명') if '테마명' in header else 2
-                        name_idx = header.index('종목명') if '종목명' in header else 3
+                        theme_idx = header.index('테마명') if '테마명' in header else (2 if sheet_name=="수급_Raw" else 3)
+                        name_idx = header.index('종목명') if '종목명' in header else (3 if sheet_name=="수급_Raw" else 4)
                         for row in raw_data[1:]:
                             if len(row) > max(date_idx, theme_idx, name_idx):
                                 r_date_str = str(row[date_idx]).strip()
@@ -1155,21 +1170,27 @@ def update_technical_data(df_theme, all_theme_map):
                                 if s_name and t_name and t_name != "개별주/기타":
                                     try:
                                         row_date = datetime.datetime.strptime(r_date_str, '%Y-%m-%d').date()
+                                        # 최신 날짜(당일)가 아닌 종목들만 과거 테마로 편입
                                         if row_date != today_date and row_date >= three_months_ago:
                                             if s_name not in past_theme_map:
                                                 past_theme_map[s_name] = t_name
                                     except: pass
                 except: pass
             
+            # DB_스캐너에서 수집
             try:
                 scanner_data = doc.worksheet("DB_스캐너").get_all_values()
                 for row in scanner_data[1:]:
                     if len(row) > 5 and row[5]:
-                        m = re.search(r', "([^"]+)"\)', str(row[0]))
-                        s_name = m.group(1) if m else str(row[0]).strip()
+                        if 'HYPERLINK' in str(row[0]):
+                            m = re.search(r', "([^"]+)"\)', str(row[0]))
+                            s_name = m.group(1) if m else str(row[0])
+                        else:
+                            s_name = str(row[0]).strip()
                         t_name = str(row[5]).replace("🆕[당일]", "").replace("🕰️[과거]", "").strip()
                         if s_name and t_name and t_name != "개별주/기타" and s_name not in past_theme_map:
-                            past_theme_map[s_name] = t_name
+                            if s_name not in theme_rank_dict:  # 당일 테마 덮어쓰기 방지
+                                past_theme_map[s_name] = t_name
             except: pass
         except Exception as e: print(f"⚠️ 과거 테마 맵핑 에러: {e}")
         
@@ -1183,7 +1204,6 @@ def update_technical_data(df_theme, all_theme_map):
                     if stock_name and stock_name not in ["#REF!", "로딩중...", "데이터대기", "FALSE"]:
                         target_names.add(stock_name)
         except: pass
-
 
         if not df_theme.empty:
             top_10_themes = df_theme[df_theme['순위'] <= 10]['종목명'].tolist()
@@ -1326,7 +1346,7 @@ def update_technical_data(df_theme, all_theme_map):
                         bt_sheet.insert_row(["진입일", "종목명", "종목코드", "테마명", "진입가", "타점유형", "퀀트점수", "T+1수익률", "T+3수익률"], index=1)
                         bt_data = bt_sheet.get_all_values()
                     
-                    today_date = datetime.datetime.now(KST).date()
+                    today_date_bt = datetime.datetime.now(KST).date()
                     updated = False
                     
                     for i in range(1, len(bt_data)):
@@ -1335,7 +1355,7 @@ def update_technical_data(df_theme, all_theme_map):
                         
                         try:
                             entry_date = datetime.datetime.strptime(row[0], '%Y-%m-%d').date()
-                            days_elapsed = (today_date - entry_date).days
+                            days_elapsed = (today_date_bt - entry_date).days
                             
                             needs_t1 = (days_elapsed >= 1 and row[7] == "")
                             needs_t3 = (days_elapsed >= 3 and row[8] == "")
