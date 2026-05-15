@@ -382,7 +382,7 @@ def get_market_schedule():
                 if any(kw in title for kw in include_kws) and not any(ex_kw in title for ex_kw in exclude_kws):
                     if "증시 전망" not in title and "외환전망" not in title:
                         if clean_title not in seen_titles:
-                            # 💡 [추가됨] 2. 당일 수집된 일정도 무조건 YYYY-MM-DD 형식으로 포맷팅 (today_str 사용)
+                            # 💡 [추가됨] 2. 당일 수집된 일정도 무조건 YYYY-MM-DD 형식으로 포맷팅
                             clean_date = normalize_date_format(today_str)
                             schedules.append([clean_date, title, "📅 자동수집(당일)"])
                             seen_titles.add(clean_title)
@@ -474,7 +474,6 @@ def manage_schedule_sheet(schedules):
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db):
     local_session = requests.Session()
     try:
-        # 💡 [캐시 무력화 및 헤더 추가] 네이버 API 실시간 주가 갱신 보장
         req_headers = {'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36'}
         url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=250&requestType=0&_={int(time.time() * 1000)}"
         res = local_session.get(url, headers=req_headers, verify=False, timeout=3)
@@ -593,7 +592,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         display_high_60d = max(high_prices_60) if len(high_prices_60) > 0 else today_high
         display_high_250d = max(high_prices) if len(high_prices) > 0 else today_high
         
-        # ★ [개선] 쥬쥬총회식 중장기 모아가기 변수 계산
         recent_20d_min = int(df_hist['low'].tail(20).min())
         recent_60d_min = int(df_hist['low'].tail(60).min())
         is_double_bottom = (current_price <= recent_20d_min * 1.05) and (recent_20d_min >= recent_60d_min * 0.95) 
@@ -619,7 +617,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         gap_ratio = (open_price - prev_price) / prev_price if prev_price > 0 else 0
         is_huge_gap = gap_ratio >= 0.04
         
-        # 💡 [정적 데이터 캐시 적용] 매 10분마다 600번의 main.naver 스크래핑을 방지하여 속도 비약적 향상
         static_info = static_db.get(code)
         needs_static_update = False
         
@@ -629,7 +626,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             is_financial_risk = static_info['is_fin_risk']
             is_chronic_loss = static_info['is_chronic_loss']
         else:
-            # 캐시에 없으면 딱 한 번만 긁어옴
             risk_url = f"https://finance.naver.com/item/main.naver?code={code}&_={int(time.time() * 1000)}"
             risk_soup = BeautifulSoup(local_session.get(risk_url, headers=req_headers, verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
             
@@ -683,7 +679,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         pg_amount_eok = 0.0 
 
         try:
-            # 💡 [캐시 무력화 추가]
             frgn_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
             frgn_url = f"https://finance.naver.com/item/frgn.naver?code={code}&_={int(time.time() * 1000)}"
             frgn_res = local_session.get(frgn_url, headers=frgn_headers, verify=False, timeout=3)
@@ -829,7 +824,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         is_danta_range = min_danta_rate <= change_rate < 0.295
         
-        # 💡 [과거 테마 추적 로직 추가] 당일 주도주, 과거 주도주, 개별주 완벽 분리
         if name in theme_rank_dict:
             my_theme_name = "🆕[당일] " + theme_rank_dict[name]['theme_name']
             is_theme_leader_raw = theme_rank_dict[name]['is_leader']
@@ -841,7 +835,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         elif name in past_theme_map:
             my_theme_name = "🕰️[과거] " + past_theme_map[name]
             is_theme_leader_raw = False
-            has_theme = False  # 과거 테마는 스코어링시 개별주 로직을 타도록 False 유지
+            has_theme = False  
         else:
             my_theme_name = "개별주/기타"
             is_theme_leader_raw = False
@@ -1092,17 +1086,21 @@ def update_technical_data(df_theme, all_theme_map):
         
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
         
-        # 💡 [캐싱 로직 추가] DB_정적데이터 로드
-        try: static_sheet = doc.worksheet("DB_정적데이터")
+        # 💡 [캐싱 로직 보강] 수동 실행 시 무조건 탭 생성 및 강제 초기화 작동
+        try: 
+            static_sheet = doc.worksheet("DB_정적데이터")
         except: 
+            print("🚀 [초기 1회] DB_정적데이터 탭을 생성합니다...")
             static_sheet = doc.add_worksheet(title="DB_정적데이터", rows="1000", cols="5")
             static_sheet.append_row(["종목코드", "시가총액", "관리종목", "재무위험", "만성적자"])
             
         now_time = datetime.datetime.now(KST)
-        is_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50)
+        # 테스트를 위해 강제 초기화 트리거 발동 (기존 데이터가 없거나 5개 이하면 무조건 초기화)
+        is_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50) or len(static_sheet.get_all_values()) <= 5
         static_db = {}
         
         if is_reset_time:
+            print("🔄 정적 데이터(시가총액 등) 캐시를 초기화하고 새로 수집합니다.")
             static_sheet.batch_clear(['A2:E'])
         else:
             try:
@@ -1111,27 +1109,43 @@ def update_technical_data(df_theme, all_theme_map):
                         static_db[row[0]] = {'market_cap': int(row[1]), 'is_junk': row[2] == 'True', 'is_fin_risk': row[3] == 'True', 'is_chronic_loss': row[4] == 'True'}
             except: pass
 
-        # 💡 [테마 추적 추가] 3개월치 과거 테마 로드
+        # 💡 [과거 테마 로직 보강] '수급_Raw', '수급_실시간', 'DB_스캐너' 모든 탭을 뒤져서 과거 테마 100% 수집
         past_theme_map = {}
         try:
-            raw_data = doc.worksheet("수급_Raw").get_all_values()
             today_str = datetime.datetime.now(KST).strftime('%Y-%m-%d')
             three_months_ago = datetime.datetime.now(KST) - datetime.timedelta(days=90)
-            if len(raw_data) > 1:
-                header = raw_data[0]
-                date_idx = header.index('날짜') if '날짜' in header else 0
-                theme_idx = header.index('테마명') if '테마명' in header else 3
-                name_idx = header.index('종목명') if '종목명' in header else 4
-                for row in raw_data[1:]:
-                    if len(row) > max(date_idx, theme_idx, name_idx):
-                        r_date_str = str(row[date_idx]).strip()
-                        s_name = str(row[name_idx]).strip()
-                        t_name = str(row[theme_idx]).strip()
-                        if r_date_str != today_str and s_name not in past_theme_map:
-                            try:
-                                if datetime.datetime.strptime(r_date_str, '%Y-%m-%d') >= three_months_ago:
-                                    past_theme_map[s_name] = t_name
-                            except: pass
+            
+            # 수급 탭들에서 수집
+            for sheet_name in ["수급_Raw", "수급_실시간"]:
+                try:
+                    raw_data = doc.worksheet(sheet_name).get_all_values()
+                    if len(raw_data) > 1:
+                        header = raw_data[0]
+                        date_idx = header.index('날짜') if '날짜' in header else 0
+                        theme_idx = header.index('테마명') if '테마명' in header else 3
+                        name_idx = header.index('종목명') if '종목명' in header else 4
+                        for row in raw_data[1:]:
+                            if len(row) > max(date_idx, theme_idx, name_idx):
+                                r_date_str = str(row[date_idx]).strip()
+                                s_name = str(row[name_idx]).strip()
+                                t_name = str(row[theme_idx]).strip()
+                                if r_date_str != today_str and s_name not in past_theme_map:
+                                    try:
+                                        if datetime.datetime.strptime(r_date_str, '%Y-%m-%d') >= three_months_ago:
+                                            past_theme_map[s_name] = t_name
+                                    except: pass
+                except: pass
+            
+            # DB_스캐너 탭에서도 과거에 스캔되었던 테마 수집
+            try:
+                scanner_data = doc.worksheet("DB_스캐너").get_all_values()
+                for row in scanner_data[1:]:
+                    if len(row) > 5 and row[5]:
+                        s_name = str(row[0]).split('", "')[1].replace('")', '').strip() if 'HYPERLINK' in str(row[0]) else str(row[0]).strip()
+                        t_name = str(row[5]).replace("🆕[당일]", "").replace("🕰️[과거]", "").strip()
+                        if s_name and t_name and t_name != "개별주/기타" and s_name not in past_theme_map:
+                            past_theme_map[s_name] = t_name
+            except: pass
         except Exception as e: print(f"⚠️ 과거 테마 맵핑 에러: {e}")
         
         target_names = set()
@@ -1151,8 +1165,9 @@ def update_technical_data(df_theme, all_theme_map):
                     target_names.add(str(row[2]).strip())
         except: pass
 
+        theme_rank_dict = {} 
+        
         if not df_theme.empty:
-            theme_rank_dict = {}
             theme_rank_tracker = {}
             for index, row in df_theme.iterrows():
                 t_rank, s_name, t_name = int(row['순위']), str(row['종목명']).strip(), row['테마명']
@@ -1370,7 +1385,7 @@ if __name__ == "__main__":
             already_posted = any(today_str in str(row[0]) for row in posted_data[:5] if row)
             
             if not already_posted:
-                GOOGLE_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbxyuSEjPmg8rZPjLlG-YKck07QYxmZm0HtxvWAumvV2zp7RRpVaKDo6D-CiQ6pLqKFm/exec"
+                GOOGLE_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbxyuSEjPmg8rZPjLlG-YKck07QYxm মেরামত/exec"
                 print("⏳ 아직 오늘 리포트가 없습니다! 구글에 바통을 넘깁니다...")
                 response = requests.post(GOOGLE_WEBHOOK_URL, timeout=30)
                 if response.status_code == 200: print("✅ 바통 터치 성공!")
