@@ -462,7 +462,7 @@ def manage_schedule_sheet(schedules):
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db):
     local_session = requests.Session()
     try:
-        # 💡 [해결] 데스크톱용 헤더로 통일하여 모바일 리다이렉션으로 인한 HTML 파싱 누락(0, FALSE) 완벽 방지
+        # 💡 [PC 헤더 적용]
         desktop_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
         
         url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=250&requestType=0&_={int(time.time() * 1000)}"
@@ -557,7 +557,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 if price_climb >= atr_14 * 3.0:
                     secret_tajeom = "🔴 [시크릿] 3차 파동 도달 (전량 익절)"
                 elif price_climb >= atr_14 * 2.0:
-                    secret_tajeom = "🟡 [시크릿] 2 파동 진행 (본절 스탑 상향)"
+                    secret_tajeom = "🟡 [시크릿] 2차 파동 진행 (본절 스탑 상향)"
                 elif price_climb >= atr_14 * 1.0:
                     secret_tajeom = "🟢 [시크릿] 1차 파동 진행 (추세 홀딩)"
                 else:
@@ -616,6 +616,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             is_financial_risk = static_info['is_fin_risk']
             is_chronic_loss = static_info['is_chronic_loss']
         else:
+            # 💡 [해결] PC 헤더 사용 및 종목명(name) 추가
             risk_url = f"https://finance.naver.com/item/main.naver?code={code}&_={int(time.time() * 1000)}"
             risk_soup = BeautifulSoup(local_session.get(risk_url, headers=desktop_headers, verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
             
@@ -654,8 +655,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 if len(op_profits) == 3 and all(p < 0 for p in op_profits): is_chronic_loss = True
             
             needs_static_update = True
-            # 💡 [해결] 구글 시트가 005930을 5930으로 바꿔버리지 않도록 f"'{code}" (홑따옴표 추가) 적용 완료
-            static_info_to_save = [f"'{code}", market_cap, str(is_junk), str(is_financial_risk), str(is_chronic_loss)]
+            # 💡 [수정] 종목명(name)을 추가하여 가독성 확보
+            static_info_to_save = [f"'{code}", name, market_cap, str(is_junk), str(is_financial_risk), str(is_chronic_loss)]
 
         is_strong_dual_buy = False 
         is_weak_dual_buy = False   
@@ -1076,13 +1077,13 @@ def update_technical_data(df_theme, all_theme_map):
         
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
         
-        # 💡 [캐싱 로직] 수동 실행 시 무조건 탭 생성 및 강제 초기화 작동
         try: 
             static_sheet = doc.worksheet("DB_정적데이터")
         except: 
             print("🚀 [초기 1회] DB_정적데이터 탭을 생성합니다...")
-            static_sheet = doc.add_worksheet(title="DB_정적데이터", rows="1000", cols="5")
-            static_sheet.append_row(["종목코드", "시가총액", "관리종목", "재무위험", "만성적자"])
+            static_sheet = doc.add_worksheet(title="DB_정적데이터", rows="1000", cols="6")
+            # 💡 [해결] 종목명 열 추가
+            static_sheet.append_row(["종목코드", "종목명", "시가총액", "관리종목", "재무위험", "만성적자"])
             
         now_time = datetime.datetime.now(KST)
         is_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50) or len(static_sheet.get_all_values()) <= 5
@@ -1090,17 +1091,18 @@ def update_technical_data(df_theme, all_theme_map):
         
         if is_reset_time:
             print("🔄 정적 데이터(시가총액 등) 캐시를 초기화하고 새로 수집합니다.")
-            static_sheet.batch_clear(['A2:E'])
+            static_sheet.batch_clear(['A2:F'])
         else:
             try:
                 for row in static_sheet.get_all_values()[1:]:
-                    if len(row) >= 5:
+                    if len(row) >= 6:
                         code_key = str(row[0]).replace("'", "").strip().zfill(6)
                         static_db[code_key] = {
-                            'market_cap': int(row[1]) if str(row[1]).isdigit() else 0, 
-                            'is_junk': row[2] == 'True', 
-                            'is_fin_risk': row[3] == 'True', 
-                            'is_chronic_loss': row[4] == 'True'
+                            # 💡 [해결] 인덱스 변경 (종목명이 끼어들었으므로 1칸씩 밀림)
+                            'market_cap': int(row[2]) if str(row[2]).isdigit() else 0, 
+                            'is_junk': row[3] == 'True', 
+                            'is_fin_risk': row[4] == 'True', 
+                            'is_chronic_loss': row[5] == 'True'
                         }
             except: pass
 
@@ -1119,41 +1121,34 @@ def update_technical_data(df_theme, all_theme_map):
                         theme_rank_dict[s_name]['is_leader'] = True
                         theme_rank_dict[s_name]['theme_name'] = t_name
 
-        # 💡 [과거 테마 로직 완벽 보강] 수급_Raw 탭의 정확한 헤더 인덱스로 매칭
         past_theme_map = {}
         try:
             today_str = datetime.datetime.now(KST).strftime('%Y-%m-%d')
             three_months_ago = datetime.datetime.now(KST) - datetime.timedelta(days=90)
             
+            # 💡 [해결] 구글 시트 실제 인덱스에 맞게 강제 하드코딩
             for sheet_name in ["수급_Raw", "수급_실시간"]:
                 try:
                     raw_data = doc.worksheet(sheet_name).get_all_values()
-                    if len(raw_data) > 1:
-                        header = raw_data[0]
-                        date_idx = header.index('날짜') if '날짜' in header else 0
-                        theme_idx = header.index('테마명') if '테마명' in header else 2
-                        name_idx = header.index('종목명') if '종목명' in header else 3
-                        for row in raw_data[1:]:
-                            if len(row) > max(date_idx, theme_idx, name_idx):
-                                r_date_str = str(row[date_idx]).strip()
-                                s_name = str(row[name_idx]).strip()
-                                t_name = str(row[theme_idx]).strip()
-                                if r_date_str != today_str and s_name not in past_theme_map:
-                                    try:
-                                        if datetime.datetime.strptime(r_date_str, '%Y-%m-%d') >= three_months_ago:
-                                            past_theme_map[s_name] = t_name
-                                    except: pass
+                    for row in raw_data[1:]:
+                        if len(row) >= 5:
+                            r_date_str = str(row[0]).strip()
+                            t_name = str(row[2]).strip()
+                            s_name = str(row[3]).strip()
+                            if r_date_str != today_str and s_name not in past_theme_map:
+                                try:
+                                    if datetime.datetime.strptime(r_date_str, '%Y-%m-%d') >= three_months_ago:
+                                        past_theme_map[s_name] = t_name
+                                except: pass
                 except: pass
             
             try:
                 scanner_data = doc.worksheet("DB_스캐너").get_all_values()
                 for row in scanner_data[1:]:
                     if len(row) > 5 and row[5]:
-                        if 'HYPERLINK' in str(row[0]):
-                            m = re.search(r', "([^"]+)"\)', str(row[0]))
-                            s_name = m.group(1) if m else str(row[0])
-                        else:
-                            s_name = str(row[0]).strip()
+                        # 하이퍼링크 정규식으로 순수 종목명 추출
+                        m = re.search(r', "([^"]+)"\)', str(row[0]))
+                        s_name = m.group(1) if m else str(row[0])
                         t_name = str(row[5]).replace("🆕[당일]", "").replace("🕰️[과거]", "").strip()
                         if s_name and t_name and t_name != "개별주/기타" and s_name not in past_theme_map:
                             past_theme_map[s_name] = t_name
