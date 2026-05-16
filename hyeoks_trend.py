@@ -163,15 +163,23 @@ def main():
     if new_results:
         print(f"\n💾 구글 시트에 {len(new_results)}개의 중장기 전략을 저장합니다...")
         
-        # 헤더가 없으면 생성
-        if len(existing_records) == 0:
-            headers = ["분석일자", "섹터/테마명", "핵심 상승 논리", "Top Pick 1", "Top Pick 2", "추세추종 진입 전략", "리포트 출처(파일명)"]
-            db_trend_sheet.append_row(headers)
-            
-        for row in new_results:
-            db_trend_sheet.append_row(row)
-            
-        print("✅ DB_중장기 시트 업데이트 완료!")
+        # 💡 [핵심 패치] 헤더 고정 및 중간에 낀 빈 줄, 찌꺼기 완벽 제거
+        headers = ["분석일자", "섹터/테마명", "핵심 상승 논리", "Top Pick 1", "Top Pick 2", "추세추종 진입 전략", "리포트 출처(파일명)"]
+        
+        # 기존 데이터에서 헤더("분석일자")와 내용이 없는 빈 줄을 필터링하여 순수 데이터만 추출
+        old_data = [row for row in existing_records if len(row) > 0 and str(row[0]).strip() != "분석일자"]
+        
+        # 💡 최신 분석 결과(new_results)를 위로 올리고 기존 데이터를 밑으로 병합
+        combined_data = new_results + old_data
+        
+        # 💡 날짜(A열) 기준으로 내림차순(최신순) 강제 정렬
+        combined_data.sort(key=lambda x: str(x[0]).strip(), reverse=True)
+        
+        # 시트의 A1~Z까지 전체를 백지화 시킨 후, 헤더와 함께 1번만에 고속 덮어쓰기
+        db_trend_sheet.batch_clear(['A1:Z'])
+        db_trend_sheet.update(range_name="A1", values=[headers] + combined_data, value_input_option="USER_ENTERED")
+        
+        print("✅ DB_중장기 시트 최상단 업데이트 및 정렬 완료!")
     else:
         print("✅ 새롭게 추가할 중장기 리포트가 없습니다.")
 
