@@ -177,14 +177,26 @@ def get_news_keywords():
     except Exception as e: return pd.DataFrame()
 
 def get_market_cap(code):
+    # ✅ [최적화] 모바일 JSON API 사용 + 억/조 단위 문자열 파싱 정상화
     local_session = requests.Session()
     headers = {'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36'}
     try:
         url = f"https://m.stock.naver.com/api/stock/{code}/basic?_={int(time.time() * 1000)}"
-        res = local_session.get(url, headers=headers, verify=False, timeout=3).json()
-        market_val_eok = int(res.get('marketValue', 0))
-        return market_val_eok
-    except: return 0  
+        res = local_session.get(url, headers=headers, verify=False, timeout=2).json()
+        val_str = str(res.get('marketValue', '') or '').replace(',', '').strip()
+        if not val_str: return 0
+        # "1조 2345억" 또는 "2345억" 형태 파싱
+        if '조' in val_str:
+            parts = val_str.split('조')
+            jo = int(re.sub(r'[^0-9]', '', parts[0]) or 0) * 10000
+            eok = int(re.sub(r'[^0-9]', '', parts[1]) or 0) if len(parts) > 1 else 0
+            return jo + eok
+        elif '억' in val_str:
+            return int(re.sub(r'[^0-9]', '', val_str) or 0)
+        else:
+            # 숫자만 있는 경우 (단위: 억)
+            return int(re.sub(r'[^0-9]', '', val_str) or 0)
+    except: return 0
 
 def get_real_money_themes():
     local_session = requests.Session()
