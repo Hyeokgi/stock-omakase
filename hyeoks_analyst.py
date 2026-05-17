@@ -38,20 +38,18 @@ def clean_emojis(text):
     return text.replace('  ', ' ').strip()
 
 def safe_generate_content(contents, is_fast=False):
-    # 💡 간단 브리핑(is_fast=True) → gemini-2.5-flash (빠르고 저렴)
-    # 💡 메인 리포트(is_fast=False) → gemini-2.5-pro (최고 품질)
+    # 💡 트레이더님의 원래 설정대로 완벽하게 원상 복구 (2.5-flash / 2.5-pro)
     model_name = 'gemini-2.5-flash' if is_fast else 'gemini-2.5-pro'
     for i in range(5): 
         try: 
             return client.models.generate_content(model=model_name, contents=contents)
         except Exception as e:
-            err_str = str(e)
-            if "503" in err_str or "429" in err_str or "quota" in err_str.lower():
-                wait_time = 15 * (i + 1)
-                print(f"⚠️ [{model_name}] API 지연 (시도 {i+1}/5). {wait_time}초 대기 후 재시도...")
+            if "503" in str(e) or "429" in str(e) or "quota" in str(e).lower():
+                wait_time = 10 * (i + 1)
+                print(f"⚠️ 구글 API 지연. {wait_time}초 대기 후 재시도...")
                 time.sleep(wait_time)
             else: raise e 
-    raise Exception(f"❌ [{model_name}] 할당량 초과 또는 무응답으로 최종 실패")
+    raise Exception("❌ 구글 서버 할당량 초과 또는 무응답으로 최종 실패")
 
 def parse_ai_json(text):
     try:
@@ -141,12 +139,16 @@ try:
     # 🟢 [모드 1] 아침 7시: 브리핑 및 목표가/손절가 완전 초기화
     if current_hour == 7:
         print("▶ [오전 7시 모드] DB_스캐너 데이터를 'AI 브리핑 대기중' 및 '계산 대기'로 초기화합니다.")
+        # ✅ [최적화] update_cell 개별 호출 → batch_update 1회 호출로 변경 (60회 → 1회)
+        updates = []
         for i in range(2, len(db_rows) + 1):
             if len(db_rows[i-1]) > 9:
-                db_sheet.update_cell(i, 10, "AI 브리핑 대기중")
-                db_sheet.update_cell(i, 15, "AI 데이터 계산중")  
-                db_sheet.update_cell(i, 16, "AI 데이터 계산중")  
-        print("✅ 초기화 완료. 프로그램 종료.")
+                updates.append({'range': f'J{i}', 'values': [['AI 브리핑 대기중']]})
+                updates.append({'range': f'O{i}', 'values': [['AI 데이터 계산중']]})
+                updates.append({'range': f'P{i}', 'values': [['AI 데이터 계산중']]})
+        if updates:
+            db_sheet.batch_update(updates)
+        print(f"✅ {len(updates) // 3}개 종목 초기화 완료 (batch_update 1회). 프로그램 종료.")
         exit(0)
 
     # 💡 [투트랙 프롬프트 생성 함수]
