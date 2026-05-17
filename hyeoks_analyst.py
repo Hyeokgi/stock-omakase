@@ -38,18 +38,26 @@ def clean_emojis(text):
     return text.replace('  ', ' ').strip()
 
 def safe_generate_content(contents, is_fast=False):
-    # 💡 트레이더님의 원래 설정대로 완벽하게 원상 복구 (2.5-flash / 2.5-pro)
-    model_name = 'gemini-2.5-flash' if is_fast else 'gemini-2.5-pro'
+    # 💡 간단 브리핑(is_fast=True) → gemini-1.5-flash (무료 티어, 토큰 절약)
+    # 💡 메인 리포트(is_fast=False) → gemini-2.5-pro (최고 품질 유지)
+    model_name = 'gemini-1.5-flash' if is_fast else 'gemini-2.5-pro'
     for i in range(5): 
         try: 
             return client.models.generate_content(model=model_name, contents=contents)
         except Exception as e:
-            if "503" in str(e) or "429" in str(e) or "quota" in str(e).lower():
-                wait_time = 10 * (i + 1)
-                print(f"⚠️ 구글 API 지연. {wait_time}초 대기 후 재시도...")
+            err_str = str(e)
+            # 429(할당량 초과) / 503(서버 과부하) → 대기 후 재시도
+            if "503" in err_str or "429" in err_str or "quota" in err_str.lower():
+                wait_time = 15 * (i + 1)
+                print(f"⚠️ [{model_name}] API 지연 (시도 {i+1}/5). {wait_time}초 대기 후 재시도...")
                 time.sleep(wait_time)
+            # 모델 미지원 오류 → 안전하게 flash로 폴백
+            elif "not found" in err_str.lower() or "404" in err_str:
+                fallback = 'gemini-1.5-flash' if not is_fast else 'gemini-1.5-flash-latest'
+                print(f"⚠️ 모델 [{model_name}] 미지원. [{fallback}]로 폴백합니다...")
+                return client.models.generate_content(model=fallback, contents=contents)
             else: raise e 
-    raise Exception("❌ 구글 서버 할당량 초과 또는 무응답으로 최종 실패")
+    raise Exception(f"❌ [{model_name}] 할당량 초과 또는 무응답으로 최종 실패")
 
 def parse_ai_json(text):
     try:
