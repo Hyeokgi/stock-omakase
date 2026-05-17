@@ -38,9 +38,9 @@ def clean_emojis(text):
     return text.replace('  ', ' ').strip()
 
 def safe_generate_content(contents, is_fast=False):
-    # 💡 간단 브리핑(is_fast=True) → gemini-2.0-flash (2.5-flash 대비 토큰 절약)
-    # 💡 메인 리포트(is_fast=False) → gemini-2.5-pro (최고 품질 유지)
-    model_name = 'gemini-2.0-flash' if is_fast else 'gemini-2.5-pro'
+    # 💡 간단 브리핑(is_fast=True) → gemini-2.5-flash (빠르고 저렴)
+    # 💡 메인 리포트(is_fast=False) → gemini-2.5-pro (최고 품질)
+    model_name = 'gemini-2.5-flash' if is_fast else 'gemini-2.5-pro'
     for i in range(5): 
         try: 
             return client.models.generate_content(model=model_name, contents=contents)
@@ -50,10 +50,6 @@ def safe_generate_content(contents, is_fast=False):
                 wait_time = 15 * (i + 1)
                 print(f"⚠️ [{model_name}] API 지연 (시도 {i+1}/5). {wait_time}초 대기 후 재시도...")
                 time.sleep(wait_time)
-            elif "not found" in err_str.lower() or "404" in err_str:
-                fallback = 'gemini-2.5-flash'
-                print(f"⚠️ 모델 [{model_name}] 미지원. [{fallback}]로 폴백합니다...")
-                return client.models.generate_content(model=fallback, contents=contents)
             else: raise e 
     raise Exception(f"❌ [{model_name}] 할당량 초과 또는 무응답으로 최종 실패")
 
