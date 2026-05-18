@@ -237,9 +237,6 @@ def generate_morning_briefing(market_data, news_data, kor_context, liquidity_dat
             else: raise e
     raise Exception("서버 응답 불가")
 
-# ==========================================
-# 💡 [신규] 새벽 6시 일괄 브리핑 굽기 (Batch Process)
-# ==========================================
 def parse_ai_json(text):
     try:
         clean_text = text.replace('```json', '').replace('```', '').strip()
@@ -347,33 +344,36 @@ def batch_generate_briefings():
 if __name__ == "__main__":
     now_obj = datetime.datetime.now(KST)
     
-    # 💡 [분기] 새벽 6시면 일괄 브리핑 생성(Batch), 그 외 시간이면 텔레그램 시황 발송
-    if True:
+    # 💡 [구조 수정] 새벽 6시 대에는 시트용 종목 브리핑을 일괄적으로 먼저 구운 뒤, 텔레그램 발송까지 물 흐르듯 이어집니다.
+    if now_obj.hour == 6:
         batch_generate_briefings()
+        
+    # 배치 작업 완료 후 (혹은 6시 외의 정기 호출 시간대) 텔레그램 모닝 시황 발송 시스템 가동
+    print("🚀 HYEOKS 능동형 모닝 브리핑 시스템 가동 시작...")
+    liquidity_data = get_global_liquidity_data()
+    market_data, news_data = get_us_market_summary()
+    kor_context = get_yesterday_korean_context()
+    
+    # 💡 [안정성 보완] 데이터 수집 실패 시 구조적 예외 처리가 튕기지 않도록 단일화 처리
+    if "실패" in market_data or "에러" in kor_context or "에러" in liquidity_data:
+        final_briefing = f"🚨 [HYEOKS 시스템 경고] 모닝 데이터 수집 에러\n\n[에러 내용]\n- 유동성(FRED): {liquidity_data}\n- 뉴스 수집: {market_data}\n- 한국장: {kor_context}\n\n※ 문제를 수정해주세요."
     else:
-        print("🚀 HYEOKS 능동형 모닝 브리핑 시스템 가동 시작...")
-        liquidity_data = get_global_liquidity_data()
-        market_data, news_data = get_us_market_summary()
-        kor_context = get_yesterday_korean_context()
-        
-        if "실패" in market_data or "에러" in kor_context or "에러" in liquidity_data:
-            final_msg = f"🚨 [HYEOKS 시스템 경고] 모닝 데이터 수집 에러\n\n[에러 내용]\n- 유동성(FRED): {liquidity_data}\n- 뉴스 수집: {market_data}\n- 한국장: {kor_context}\n\n※ 문제를 수정해주세요."
-        else:
-            briefing_text = generate_morning_briefing(market_data, news_data, kor_context, liquidity_data)
-            today_str = datetime.datetime.now(KST).strftime('%Y년 %m월 %d일')
-            final_briefing = f"🌅 [HYEOKS 모닝 브리핑] - {today_str}\n\n{briefing_text}"
-        
-        print("📲 텔레그램 발송 중...")
-        clean_briefing = final_briefing.replace('**', '')       
-        clean_briefing = clean_briefing.replace('### ', '▶️ ')  
-        clean_briefing = clean_briefing.replace('## ', '▶️ ')   
-        clean_briefing = re.sub(r'<([^>]+)>', r'[\1]', clean_briefing)
-        
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {'chat_id': TELEGRAM_CHAT_ID, 'text': clean_briefing}
-        
-        response = requests.post(url, data=payload)
-        if response.status_code == 200: print("✅ 텔레그램 발송 성공! 모든 프로세스 완료!")
-        else:
-            print(f"❌ 텔레그램 발송 실패! (상태 코드: {response.status_code})")
-            requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID, 'text': final_briefing})
+        briefing_text = generate_morning_briefing(market_data, news_data, kor_context, liquidity_data)
+        today_str = now_obj.strftime('%Y년 %m월 %d일')
+        final_briefing = f"🌅 [HYEOKS 모닝 브리핑] - {today_str}\n\n{briefing_text}"
+    
+    print("📲 텔레그램 발송 중...")
+    clean_briefing = final_briefing.replace('**', '')       
+    clean_briefing = clean_briefing.replace('### ', '▶️ ')  
+    clean_briefing = clean_briefing.replace('## ', '▶️ ')   
+    clean_briefing = re.sub(r'<([^>]+)>', r'[\1]', clean_briefing)
+    
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {'chat_id': TELEGRAM_CHAT_ID, 'text': clean_briefing}
+    
+    response = requests.post(url, data=payload)
+    if response.status_code == 200: 
+        print("✅ 텔레그램 발송 성공! 모든 프로세스 완료!")
+    else:
+        print(f"❌ 텔레그램 발송 실패! (상태 코드: {response.status_code})")
+        requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID, 'text': final_briefing})
