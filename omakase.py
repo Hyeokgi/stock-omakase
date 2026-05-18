@@ -331,13 +331,15 @@ def get_naver_main_news():
     except: return pd.DataFrame()
 
 def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_closed):
-    # ✅ [순정 롤백] 에러가 나더라도 무조건 시트 업데이트를 진행하던 오리지널 로직
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         doc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)).open_by_url(SHEET_URL)
         
+        # 1. 수급_실시간 / 수급_Raw 업데이트
         if not df_theme.empty:
-            sheet = doc.worksheet("수급_Raw" if is_market_closed else "수급_실시간")
+            sheet_name = "수급_Raw" if is_market_closed else "수급_실시간"
+            sheet = doc.worksheet(sheet_name)
+            
             if is_market_closed:
                 today_str = df_theme.iloc[0]['날짜'] 
                 all_data = sheet.get_all_values()
@@ -349,12 +351,16 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
             else:
                 sheet.batch_clear(['A2:Z']) 
                 sheet.update(range_name="A2", values=df_theme.values.tolist(), value_input_option="USER_ENTERED")
-                
-        for df, sheet_name in [(df_news, "뉴스_키워드"), (df_naver, "네이버_검색상위"), (df_main_news, "네이버_주요뉴스")]:
+        else:
+            print("⚠️ 수집된 테마 데이터가 없어 구글 시트 업데이트를 건너뜁니다.")
+            
+        # 2. 뉴스 및 검색 상위 업데이트
+        for df, target_sheet_name in [(df_news, "뉴스_키워드"), (df_naver, "네이버_검색상위"), (df_main_news, "네이버_주요뉴스")]:
             if not df.empty:
-                sheet = doc.worksheet(sheet_name)
+                sheet = doc.worksheet(target_sheet_name)
                 sheet.batch_clear(['A2:Z'])
                 sheet.update(range_name="A2", values=df.values.tolist(), value_input_option="USER_ENTERED")
+
     except Exception as e: 
         print(f"❌ 데이터 업데이트 에러: {e}")
         else:
