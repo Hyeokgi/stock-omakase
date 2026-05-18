@@ -179,7 +179,6 @@ def get_news_keywords():
     except Exception as e: return pd.DataFrame()
 
 def get_market_cap(code):
-    # ✅ [순정 롤백] 가장 안정적이었던 PC 버전 HTML 파싱으로 복구
     local_session = requests.Session()
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     try:
@@ -202,9 +201,8 @@ def get_market_cap(code):
         return 0
 
 def get_real_money_themes():
-    # ✅ [순정 롤백] 꼬여있던 로직을 제거한 오리지널 테마 수집 로직
     local_session = requests.Session()
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
     try:
         now = datetime.datetime.now(KST)
         is_market_closed = now.hour < 9 or now.hour > 15 or (now.hour == 15 and now.minute >= 40)
@@ -215,6 +213,7 @@ def get_real_money_themes():
         
         table = soup.find('table', {'class': 'type_1'})
         if not table:
+            print("⚠️ 네이버 테마 페이지 테이블(type_1)을 찾을 수 없습니다.")
             return pd.DataFrame(), is_market_closed, {}
 
         raw_themes = [{'name': a.text.strip(), 'url': "https://finance.naver.com" + a['href']} for tds in [tr.find_all('td') for tr in table.find_all('tr')] if len(tds) > 1 for a in [tds[0].find('a')] if a]
@@ -236,8 +235,7 @@ def get_real_money_themes():
                             s_name = tds[0].find('a').text.strip()
                             s_code = f"'{tds[0].find('a')['href'].split('code=')[-1]}"
                             
-                            # 과거 안정적으로 돌았던 4, 8번 인덱스 원상복구
-                            rate_str, val_str = tds[4].text.strip(), tds[8].text.strip()
+                            rate_str, val_str = tds[3].text.strip(), tds[7].text.strip()
                             if '%' not in rate_str or '-' in rate_str or '0.00' in rate_str: continue
                             
                             rate_num = float(rate_str.replace('%', '').replace('+', '').replace(',', '').strip())
@@ -253,7 +251,9 @@ def get_real_money_themes():
                     theme_data_list.append({'theme_name': theme['name'], 'stocks': stocks_rate})
             except: continue
             
-        if not theme_data_list: return pd.DataFrame(), is_market_closed, {}
+        if not theme_data_list: 
+            print("⚠️ 조건을 만족하는 테마 종목이 하나도 없습니다. (시가총액/등락률 필터 확인)")
+            return pd.DataFrame(), is_market_closed, {}
         
         grouped_themes = {}
         for t_data in theme_data_list: grouped_themes.setdefault(t_data['stocks'][0]['code'], []).append(t_data)
@@ -282,9 +282,12 @@ def get_real_money_themes():
             if len(final_themes) >= 10: break
                 
         final_rows = [{'날짜': now.strftime('%Y-%m-%d'), **({'시간': time_str} if not is_market_closed else {}), '순위': rank, '테마명': t_data['theme_name'], '종목명': s['name'], '종목코드': s['code'], '등락률(%)': s['rate'], '거래대금(억원)': int(s['value']/100)} for rank, t_data in enumerate(final_themes, 1) for s in t_data['stocks']]
+        
         return pd.DataFrame(final_rows), is_market_closed, all_theme_map
     except Exception as e:
+        print(f"❌ 테마 수집 에러: {e}")
         return pd.DataFrame(), False, {}
+
 def get_naver_search_ranking():
     local_session = requests.Session()
     try:
@@ -336,20 +339,21 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
         doc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)).open_by_url(SHEET_URL)
         
         if not df_theme.empty:
-            sheet_name = "수급_Raw" if is_market_closed else "수급_실시간"
-            sheet = doc.worksheet(sheet_name)
-            
+            sheet_rt = doc.worksheet("수급_실시간")
+            sheet_rt.batch_clear(['A2:Z']) 
+            sheet_rt.update(range_name="A2", values=df_theme.values.tolist(), value_input_option="USER_ENTERED")
+            print(f"✅ [수급_실시간] 시트 업데이트 완료")
+
             if is_market_closed:
+                sheet_raw = doc.worksheet("수급_Raw")
                 today_str = df_theme.iloc[0]['날짜'] 
-                all_data = sheet.get_all_values()
+                all_data = sheet_raw.get_all_values()
                 combined_data = df_theme.values.tolist() + [row for row in all_data[1:] if len(row) > 0 and row[0] != today_str]
                 combined_data.sort(key=lambda x: int(x[1]) if str(x[1]).isdigit() else 999)
                 combined_data.sort(key=lambda x: x[0], reverse=True)
-                sheet.batch_clear(['A2:Z'])
-                sheet.update(range_name="A2", values=combined_data, value_input_option="USER_ENTERED")
-            else:
-                sheet.batch_clear(['A2:Z']) 
-                sheet.update(range_name="A2", values=df_theme.values.tolist(), value_input_option="USER_ENTERED")
+                sheet_raw.batch_clear(['A2:Z'])
+                sheet_raw.update(range_name="A2", values=combined_data, value_input_option="USER_ENTERED")
+                print(f"✅ [수급_Raw] 시트 누적 기록 완료")
         else:
             print("⚠️ 수집된 테마 데이터가 없어 구글 시트 업데이트를 건너뜁니다.")
             
@@ -361,19 +365,6 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
 
     except Exception as e: 
         print(f"❌ 데이터 업데이트 에러: {e}")
-        else:
-            print("⚠️ 수집된 테마 데이터가 없어 구글 시트 업데이트를 건너뜁니다.")
-                
-        # 뉴스 및 검색어 업데이트
-        for df, sheet_name in [(df_news, "뉴스_키워드"), (df_naver, "네이버_검색상위"), (df_main_news, "네이버_주요뉴스")]:
-            if not df.empty:
-                try:
-                    sheet = doc.worksheet(sheet_name)
-                    sheet.batch_clear(['A2:Z'])
-                    sheet.update(range_name="A2", values=df.values.tolist(), value_input_option="USER_ENTERED")
-                except Exception as e: print(f"❌ [{sheet_name}] 업데이트 에러: {e}")
-    except Exception as e: 
-        print(f"❌ 구글 시트 인증/전체 업데이트 에러: {e}")
 
 def get_market_schedule():
     local_session = requests.Session()
@@ -1145,7 +1136,6 @@ def update_technical_data(df_theme, all_theme_map):
                         }
             except: pass
 
-        # 💡 [핵심 버그 픽스] 주말이라 당일 테마가 비어있으면, 수급_실시간 탭을 읽어 당일 테마를 복구!
         theme_rank_dict = {} 
         
         try:
@@ -1187,7 +1177,6 @@ def update_technical_data(df_theme, all_theme_map):
             print(f"⚠️ 실시간 데이터 로드 에러: {e}")
             today_date = datetime.datetime.now(KST).date()
 
-        # 과거 테마 로드
         past_theme_map = {}
         try:
             three_months_ago = today_date - datetime.timedelta(days=90)
@@ -1208,14 +1197,12 @@ def update_technical_data(df_theme, all_theme_map):
                                 if s_name and t_name and t_name != "개별주/기타":
                                     try:
                                         row_date = datetime.datetime.strptime(r_date_str, '%Y-%m-%d').date()
-                                        # 최신 날짜(당일)가 아닌 종목들만 과거 테마로 편입
                                         if row_date != today_date and row_date >= three_months_ago:
                                             if s_name not in past_theme_map:
                                                 past_theme_map[s_name] = t_name
                                     except: pass
                 except: pass
             
-            # DB_스캐너에서 수집
             try:
                 scanner_data = doc.worksheet("DB_스캐너").get_all_values()
                 for row in scanner_data[1:]:
@@ -1227,7 +1214,7 @@ def update_technical_data(df_theme, all_theme_map):
                             s_name = str(row[0]).strip()
                         t_name = str(row[5]).replace("🆕[당일]", "").replace("🕰️[과거]", "").strip()
                         if s_name and t_name and t_name != "개별주/기타" and s_name not in past_theme_map:
-                            if s_name not in theme_rank_dict:  # 당일 테마 덮어쓰기 방지
+                            if s_name not in theme_rank_dict: 
                                 past_theme_map[s_name] = t_name
             except: pass
         except Exception as e: print(f"⚠️ 과거 테마 맵핑 에러: {e}")
