@@ -336,7 +336,9 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
         doc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)).open_by_url(SHEET_URL)
         
         if not df_theme.empty:
-            sheet = doc.worksheet("수급_Raw" if is_market_closed else "수급_실시간")
+            sheet_name = "수급_Raw" if is_market_closed else "수급_실시간"
+            sheet = doc.worksheet(sheet_name)
+            
             if is_market_closed:
                 today_str = df_theme.iloc[0]['날짜'] 
                 all_data = sheet.get_all_values()
@@ -348,13 +350,15 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
             else:
                 sheet.batch_clear(['A2:Z']) 
                 sheet.update(range_name="A2", values=df_theme.values.tolist(), value_input_option="USER_ENTERED")
-                
-        for df, sheet_name in [(df_news, "뉴스_키워드"), (df_naver, "네이버_검색상위"), (df_main_news, "네이버_주요뉴스")]:
+        else:
+            print("⚠️ 수집된 테마 데이터가 없어 구글 시트 업데이트를 건너뜁니다.")
+            
+        for df, target_sheet_name in [(df_news, "뉴스_키워드"), (df_naver, "네이버_검색상위"), (df_main_news, "네이버_주요뉴스")]:
             if not df.empty:
-                sheet = doc.worksheet(sheet_name)
+                sheet = doc.worksheet(target_sheet_name)
                 sheet.batch_clear(['A2:Z'])
                 sheet.update(range_name="A2", values=df.values.tolist(), value_input_option="USER_ENTERED")
-                
+
     except Exception as e: 
         print(f"❌ 데이터 업데이트 에러: {e}")
         else:
