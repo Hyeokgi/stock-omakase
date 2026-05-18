@@ -177,26 +177,28 @@ def get_news_keywords():
     except Exception as e: return pd.DataFrame()
 
 def get_market_cap(code):
-    # ✅ [최적화] 모바일 JSON API 사용 + 억/조 단위 문자열 파싱 정상화
+    # ✅ [원상복구] 모바일 API 변수 오류로 인해, 가장 안정적인 PC 버전 HTML 파싱으로 롤백
     local_session = requests.Session()
-    headers = {'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     try:
-        url = f"https://m.stock.naver.com/api/stock/{code}/basic?_={int(time.time() * 1000)}"
-        res = local_session.get(url, headers=headers, verify=False, timeout=2).json()
-        val_str = str(res.get('marketValue', '') or '').replace(',', '').strip()
-        if not val_str: return 0
-        # "1조 2345억" 또는 "2345억" 형태 파싱
-        if '조' in val_str:
-            parts = val_str.split('조')
-            jo = int(re.sub(r'[^0-9]', '', parts[0]) or 0) * 10000
-            eok = int(re.sub(r'[^0-9]', '', parts[1]) or 0) if len(parts) > 1 else 0
+        url = f"https://finance.naver.com/item/main.naver?code={code}"
+        res = local_session.get(url, headers=headers, verify=False, timeout=3)
+        soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
+        
+        market_sum_tag = soup.find('em', id='_market_sum')
+        if not market_sum_tag: 
+            return 0
+            
+        market_sum_str = market_sum_tag.text.replace(',', '').replace('\t', '').replace('\n', '').strip()
+        if '조' in market_sum_str:
+            parts = market_sum_str.split('조')
+            jo = int(parts[0].strip()) * 10000
+            eok = int(parts[1].strip()) if len(parts) > 1 and parts[1].strip() else 0
             return jo + eok
-        elif '억' in val_str:
-            return int(re.sub(r'[^0-9]', '', val_str) or 0)
         else:
-            # 숫자만 있는 경우 (단위: 억)
-            return int(re.sub(r'[^0-9]', '', val_str) or 0)
-    except: return 0
+            return int(market_sum_str)
+    except: 
+        return 0
 
 def get_real_money_themes():
     local_session = requests.Session()
