@@ -205,11 +205,7 @@ def get_real_money_themes():
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
     try:
         now = datetime.datetime.now(KST)
-        
-        # ✅ [핵심 1] '수급_실시간'을 오후 8시(시간외 단일가 포함)까지 항상 최신으로 갱신하도록 허들 연장!
-        # 이제 20시(저녁 8시) 이전까지는 is_market_closed가 False로 유지되어 무조건 실시간 시트를 덮어씁니다.
         is_market_closed = now.hour < 9 or now.hour >= 20 
-        
         time_str = now.strftime('%H:%M')
         
         res = local_session.get("https://finance.naver.com/sise/theme.naver", headers=headers, verify=False, timeout=5)
@@ -217,6 +213,7 @@ def get_real_money_themes():
         
         table = soup.find('table', {'class': 'type_1'})
         if not table:
+            print("⚠️ 네이버 테마 페이지 테이블(type_1)을 찾을 수 없습니다.")
             return pd.DataFrame(), is_market_closed, {}
 
         raw_themes = [{'name': a.text.strip(), 'url': "https://finance.naver.com" + a['href']} for tds in [tr.find_all('td') for tr in table.find_all('tr')] if len(tds) > 1 for a in [tds[0].find('a')] if a]
@@ -254,7 +251,9 @@ def get_real_money_themes():
                     theme_data_list.append({'theme_name': theme['name'], 'stocks': stocks_rate})
             except: continue
             
-        if not theme_data_list: return pd.DataFrame(), is_market_closed, {}
+        if not theme_data_list: 
+            print("⚠️ 조건을 만족하는 테마 종목이 하나도 없습니다. (시가총액/등락률 필터 확인)")
+            return pd.DataFrame(), is_market_closed, {}
         
         grouped_themes = {}
         for t_data in theme_data_list: grouped_themes.setdefault(t_data['stocks'][0]['code'], []).append(t_data)
@@ -282,7 +281,6 @@ def get_real_money_themes():
                 final_themes.append(m_data)
             if len(final_themes) >= 10: break
                 
-        # ✅ [핵심 2] 무조건 '시간' 열을 포함하여 8열 구조로 생성
         final_rows = [{'날짜': now.strftime('%Y-%m-%d'), '시간': time_str, '순위': rank, '테마명': t_data['theme_name'], '종목명': s['name'], '종목코드': s['code'], '등락률(%)': s['rate'], '거래대금(억원)': int(s['value']/100)} for rank, t_data in enumerate(final_themes, 1) for s in t_data['stocks']]
         return pd.DataFrame(final_rows), is_market_closed, all_theme_map
     except Exception as e:
@@ -340,7 +338,6 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
         doc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)).open_by_url(SHEET_URL)
         
         if not df_theme.empty:
-            # ✅ [핵심 3] 시간외 거래까지 고려하여 '수급_실시간' 시트는 무조건 덮어쓰도록 구조 단순화
             try:
                 sheet_rt = doc.worksheet("수급_실시간")
                 sheet_rt.batch_clear(['A2:Z']) 
@@ -354,7 +351,6 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
                     today_str = df_theme.iloc[0]['날짜'] 
                     all_data = sheet_raw.get_all_values()
                     
-                    # '시간' 열을 제거하여 수급_Raw 시트의 7열 포맷에 맞춤
                     df_raw = df_theme.drop(columns=['시간'])
                     
                     combined_data = df_raw.values.tolist() + [row for row in all_data[1:] if len(row) > 0 and row[0] != today_str]
@@ -592,7 +588,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             
             secret_tajeom = ""
             if kalman_turned_green:
-                secret_tajeom = "🟢 [시크릿] 추세 전환 (1차 매수 타점)"
+                secret_tajeom = "🟢 [시크릿] 추 추세 전환 (1차 매수 타점)"
             elif is_kalman_uptrend:
                 if price_climb >= atr_14 * 3.0:
                     secret_tajeom = "🔴 [시크릿] 3차 파동 도달 (전량 익절)"
