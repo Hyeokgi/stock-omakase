@@ -281,6 +281,40 @@ def get_real_money_themes():
                 final_themes.append(m_data)
             if len(final_themes) >= 10: break
                 
+        # ✅ [수정] 장 마감 여부와 상관없이 무조건 '시간' 열을 포함하여 8열 구조로 생성
+        final_rows = [{'날짜': now.strftime('%Y-%m-%d'), '시간': time_str, '순위': rank, '테마명': t_data['theme_name'], '종목명': s['name'], '종목코드': s['code'], '등락률(%)': s['rate'], '거래대금(억원)': int(s['value']/100)} for rank, t_data in enumerate(final_themes, 1) for s in t_data['stocks']]
+        
+        return pd.DataFrame(final_rows), is_market_closed, all_theme_map
+    except Exception as e:
+        print(f"❌ 테마 수집 에러: {e}")
+        return pd.DataFrame(), False, {}
+        
+        grouped_themes = {}
+        for t_data in theme_data_list: grouped_themes.setdefault(t_data['stocks'][0]['code'], []).append(t_data)
+            
+        merged_themes = []
+        for top_code, t_list in grouped_themes.items():
+            theme_names = list(dict.fromkeys(t['theme_name'] for t in t_list))
+            merged_name = " / ".join(theme_names) + f" (대장: {t_list[0]['stocks'][0]['name']})" if len(theme_names) > 1 else theme_names[0]
+            unique_stocks = {s['code']: s for t in t_list for s in t['stocks']}
+            merged_stocks_val = sorted(unique_stocks.values(), key=lambda x: x['value'], reverse=True)[:5]
+            merged_stocks_rate = sorted(merged_stocks_val, key=lambda x: x['rate'], reverse=True)
+            merged_themes.append({'theme_name': merged_name, 'theme_sum': sum(s['value'] for s in merged_stocks_val), 'stocks': merged_stocks_rate})
+            
+        merged_themes = sorted(merged_themes, key=lambda x: x['theme_sum'], reverse=True)
+        
+        all_theme_map = {}
+        for m_data in merged_themes:
+            for idx, s in enumerate(m_data['stocks']):
+                if s['name'] not in all_theme_map:
+                    all_theme_map[s['name']] = {'theme_name': m_data['theme_name'], 'is_leader': (idx == 0)}
+
+        final_themes = []
+        for m_data in merged_themes:
+            if not any(len(set(s['code'] for s in m_data['stocks']).intersection(set(s['code'] for s in f_data['stocks']))) >= 2 for f_data in final_themes):
+                final_themes.append(m_data)
+            if len(final_themes) >= 10: break
+                
         final_rows = [{'날짜': now.strftime('%Y-%m-%d'), **({'시간': time_str} if not is_market_closed else {}), '순위': rank, '테마명': t_data['theme_name'], '종목명': s['name'], '종목코드': s['code'], '등락률(%)': s['rate'], '거래대금(억원)': int(s['value']/100)} for rank, t_data in enumerate(final_themes, 1) for s in t_data['stocks']]
         
         return pd.DataFrame(final_rows), is_market_closed, all_theme_map
@@ -339,32 +373,44 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
         doc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)).open_by_url(SHEET_URL)
         
         if not df_theme.empty:
-            sheet_rt = doc.worksheet("수급_실시간")
-            sheet_rt.batch_clear(['A2:Z']) 
-            sheet_rt.update(range_name="A2", values=df_theme.values.tolist(), value_input_option="USER_ENTERED")
-            print(f"✅ [수급_실시간] 시트 업데이트 완료")
+            # 1. 수급_실시간 무조건 업데이트 (항상 8열 유지)
+            try:
+                sheet_rt = doc.worksheet("수급_실시간")
+                sheet_rt.batch_clear(['A2:Z']) 
+                sheet_rt.update(range_name="A2", values=df_theme.values.tolist(), value_input_option="USER_ENTERED")
+                print("✅ [수급_실시간] 탭 갱신 완료 (장마감 후 수동 갱신 포함)")
+            except Exception as e: print(f"❌ [수급_실시간] 탭 업데이트 실패: {e}")
 
+            # 2. 수급_Raw 업데이트 (장 마감시에만, '시간' 컬럼 제거하여 7열로 기록)
             if is_market_closed:
-                sheet_raw = doc.worksheet("수급_Raw")
-                today_str = df_theme.iloc[0]['날짜'] 
-                all_data = sheet_raw.get_all_values()
-                combined_data = df_theme.values.tolist() + [row for row in all_data[1:] if len(row) > 0 and row[0] != today_str]
-                combined_data.sort(key=lambda x: int(x[1]) if str(x[1]).isdigit() else 999)
-                combined_data.sort(key=lambda x: x[0], reverse=True)
-                sheet_raw.batch_clear(['A2:Z'])
-                sheet_raw.update(range_name="A2", values=combined_data, value_input_option="USER_ENTERED")
-                print(f"✅ [수급_Raw] 시트 누적 기록 완료")
+                try:
+                    sheet_raw = doc.worksheet("수급_Raw")
+                    today_str = df_theme.iloc[0]['날짜'] 
+                    all_data = sheet_raw.get_all_values()
+                    
+                    # '시간' 컬럼을 빼서 기존 수급_Raw 양식에 맞춤
+                    df_raw = df_theme.drop(columns=['시간'])
+                    
+                    combined_data = df_raw.values.tolist() + [row for row in all_data[1:] if len(row) > 0 and row[0] != today_str]
+                    combined_data.sort(key=lambda x: int(x[1]) if str(x[1]).isdigit() else 999)
+                    combined_data.sort(key=lambda x: x[0], reverse=True)
+                    sheet_raw.batch_clear(['A2:Z'])
+                    sheet_raw.update(range_name="A2", values=combined_data, value_input_option="USER_ENTERED")
+                    print("✅ [수급_Raw] 탭 누적 기록 완료")
+                except Exception as e: print(f"❌ [수급_Raw] 탭 업데이트 실패: {e}")
         else:
             print("⚠️ 수집된 테마 데이터가 없어 구글 시트 업데이트를 건너뜁니다.")
             
         for df, target_sheet_name in [(df_news, "뉴스_키워드"), (df_naver, "네이버_검색상위"), (df_main_news, "네이버_주요뉴스")]:
             if not df.empty:
-                sheet = doc.worksheet(target_sheet_name)
-                sheet.batch_clear(['A2:Z'])
-                sheet.update(range_name="A2", values=df.values.tolist(), value_input_option="USER_ENTERED")
+                try:
+                    sheet = doc.worksheet(target_sheet_name)
+                    sheet.batch_clear(['A2:Z'])
+                    sheet.update(range_name="A2", values=df.values.tolist(), value_input_option="USER_ENTERED")
+                except Exception as e: print(f"❌ [{target_sheet_name}] 업데이트 에러: {e}")
 
     except Exception as e: 
-        print(f"❌ 데이터 업데이트 에러: {e}")
+        print(f"❌ 구글 API 전체 업데이트 에러: {e}")
 
 def get_market_schedule():
     local_session = requests.Session()
