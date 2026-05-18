@@ -177,42 +177,34 @@ def get_news_keywords():
     except Exception as e: return pd.DataFrame()
 
 def get_market_cap(code):
-    # ✅ [원상복구] 모바일 API 변수 오류로 인해, 가장 안정적인 PC 버전 HTML 파싱으로 롤백
+    # ✅ [버그수정] marketValue는 "1조 2,345" 같은 문자열 → 억 단위 정수로 변환
+    # GAS 코드와 동일한 파싱 로직 적용
     local_session = requests.Session()
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36'}
     try:
-        url = f"https://finance.naver.com/item/main.naver?code={code}"
-        res = local_session.get(url, headers=headers, verify=False, timeout=3)
-        soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
-        
-        market_sum_tag = soup.find('em', id='_market_sum')
-        if not market_sum_tag: 
-            return 0
-            
-        market_sum_str = market_sum_tag.text.replace(',', '').replace('\t', '').replace('\n', '').strip()
-        if '조' in market_sum_str:
-            parts = market_sum_str.split('조')
-            jo = int(parts[0].strip()) * 10000
-            eok = int(parts[1].strip()) if len(parts) > 1 and parts[1].strip() else 0
+        url = f"https://m.stock.naver.com/api/stock/{code}/basic?_={int(time.time() * 1000)}"
+        res = local_session.get(url, headers=headers, verify=False, timeout=2).json()
+        val_str = str(res.get('marketValue', '') or '').replace(',', '').strip()
+        if not val_str: return 0
+        # "1조 2345" 형태 → 조 단위 * 10000 + 나머지(억)
+        if '조' in val_str:
+            parts = val_str.split('조')
+            jo = int(re.sub(r'[^0-9]', '', parts[0]) or 0) * 10000
+            eok = int(re.sub(r'[^0-9]', '', parts[1]) or 0) if len(parts) > 1 and parts[1].strip() else 0
             return jo + eok
         else:
-            return int(market_sum_str)
-    except: 
-        return 0
+            # "2345" 형태 → 그대로 억 단위
+            return int(re.sub(r'[^0-9]', '', val_str) or 0)
+    except: return 0
 
 def get_real_money_themes():
     local_session = requests.Session()
-    # ✅ [핵심 추가] 네이버의 봇 차단을 우회하기 위한 강력한 PC 브라우저 헤더 장착
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    }
     try:
         now = datetime.datetime.now(KST)
         is_market_closed = now.hour < 9 or now.hour > 15 or (now.hour == 15 and now.minute >= 40)
         time_str = now.strftime('%H:%M')
         
-        # ✅ headers=headers 추가
-        res = local_session.get("https://finance.naver.com/sise/theme.naver", headers=headers, verify=False, timeout=5)
+        res = local_session.get("https://finance.naver.com/sise/theme.naver", verify=False, timeout=5)
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
         
         table = soup.find('table', {'class': 'type_1'})
@@ -226,8 +218,7 @@ def get_real_money_themes():
         print("▶️ 실시간 주도 테마 수집 시작 (군집성 필터 적용)...")
         for theme in themes:
             try:
-                # ✅ headers=headers 추가
-                soup = BeautifulSoup(local_session.get(theme['url'], headers=headers, verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
+                soup = BeautifulSoup(local_session.get(theme['url'], verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
                 stocks = []
                 type_5_table = soup.find('table', {'class': 'type_5'})
                 if not type_5_table: continue
@@ -238,14 +229,10 @@ def get_real_money_themes():
                         try:
                             s_name = tds[0].find('a').text.strip()
                             s_code = f"'{tds[0].find('a')['href'].split('code=')[-1]}"
-                            
-                            # ✅ [버그 수정 완료] 등락률은 tds[3], 거래대금은 tds[7]
-                            rate_str, val_str = tds[3].text.strip(), tds[7].text.strip()
+                            rate_str, val_str = tds[4].text.strip(), tds[8].text.strip()
                             if '%' not in rate_str or '-' in rate_str or '0.00' in rate_str: continue
-                            
                             rate_num = float(rate_str.replace('%', '').replace('+', '').replace(',', '').strip())
                             val_num = int(val_str.replace(',', '').strip())
-                            
                             if rate_num >= TARGET_PERCENT and val_num > 0 and get_market_cap(s_code.replace("'", "")) >= 1000:
                                 stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
                         except: continue
@@ -287,7 +274,6 @@ def get_real_money_themes():
         final_rows = [{'날짜': now.strftime('%Y-%m-%d'), **({'시간': time_str} if not is_market_closed else {}), '순위': rank, '테마명': t_data['theme_name'], '종목명': s['name'], '종목코드': s['code'], '등락률(%)': s['rate'], '거래대금(억원)': int(s['value']/100)} for rank, t_data in enumerate(final_themes, 1) for s in t_data['stocks']]
         return pd.DataFrame(final_rows), is_market_closed, all_theme_map
     except Exception as e:
-        print(f"❌ 테마 수집 에러: {e}")
         return pd.DataFrame(), False, {}
 
 def get_naver_search_ranking():
