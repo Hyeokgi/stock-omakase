@@ -38,7 +38,6 @@ def clean_emojis(text):
     return text.replace('  ', ' ').strip()
 
 def safe_generate_content(contents, is_fast=False):
-    # 💡 트레이더님의 원래 설정대로 완벽하게 원상 복구 (2.5-flash / 2.5-pro)
     model_name = 'gemini-2.5-flash' if is_fast else 'gemini-2.5-pro'
     for i in range(5): 
         try: 
@@ -89,7 +88,6 @@ def get_vip_deep_dive_data(code, kis_token):
     except: return "데이터 수집 실패"
 
 def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
-    # 💡 이 부분은 시트 내 글자 섞임으로 인한 정렬 에러를 막아주는 유용한 패치이므로 유지합니다.
     try:
         sheet = doc.worksheet(sheet_name)
         data = sheet.get_all_values()
@@ -103,7 +101,6 @@ def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
             for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y. %m. %d"):
                 try: return datetime.datetime.strptime(val, fmt)
                 except: continue
-            # 날짜 형식이 아닌 글자가 있으면 아주 옛날 날짜로 처리해 에러 차단
             return datetime.datetime(1970, 1, 1)
             
         rows.sort(key=lambda x: parse_date(x[sort_col_idx]), reverse=True)
@@ -134,12 +131,15 @@ try:
             if len(row) >= 2 and row[0] == "KIS_TOKEN": KIS_TOKEN = row[1]; break
     except: pass
 
+    # 💡 [하락장 여부 판별 추가] 시트의 코스닥 상태 확인
+    market_summary_data = doc.worksheet("시장요약").get_all_values()
+    korean_market_status = clean_emojis(market_summary_data[1][8]) if len(market_summary_data) > 1 and len(market_summary_data[1]) > 8 else "확인불가"
+    is_warning_market = "하락" in korean_market_status or "이탈" in korean_market_status
+
     sys_instruction = "기업의 일반적인 소개(무엇을 하는 회사인지 등)는 일절 금지. 차트 지표, 타점, 수급 데이터를 바탕으로 '현재 기술적 위치'와 '앞으로의 대응 전략'만을 60~70자 내외로 매우 짧고 날카롭게 작성할 것."
 
-    # 🟢 [모드 1] 아침 7시: 브리핑 및 목표가/손절가 완전 초기화
     if current_hour == 7:
         print("▶ [오전 7시 모드] DB_스캐너 데이터를 'AI 브리핑 대기중' 및 '계산 대기'로 초기화합니다.")
-        # ✅ [최적화] update_cell 개별 호출 → batch_update 1회 호출로 변경 (60회 → 1회)
         updates = []
         for i in range(2, len(db_rows) + 1):
             if len(db_rows[i-1]) > 9:
@@ -151,29 +151,32 @@ try:
         print(f"✅ {len(updates) // 3}개 종목 초기화 완료 (batch_update 1회). 프로그램 종료.")
         exit(0)
 
-    # 💡 [투트랙 프롬프트 생성 함수]
-    def get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys):
+    def get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys, is_warning_market):
         is_seed = "🌱" in tajeom_badge or "모아가기" in tajeom_badge
+        market_context = "🚨 현재 시장은 변동성이 큰 하락/횡보장입니다. 안정성을 최우선으로 고려하십시오." if is_warning_market else "현재 시장은 정상적인 스윙/돌파가 가능한 장세입니다."
         
         if is_seed:
-            guide_text = """
+            guide_text = f"""
             💡 [AI 매매 보류(Veto) 및 가격 결정 가이드: 중장기 모아가기(Accumulation) 전략]
-            🚨 귀하는 쥬쥬총회식 '비중 조절 모아가기' 전략을 구사하는 퀀트 트레이더입니다.
-            1. 이 종목은 현재 고점 대비 조정을 받고 거래량이 마른 '씨앗(SEED)' 종목입니다. 시스템 기준가에 절대 얽매이지 마십시오.
-            2. 손절가 설정: -3% 같은 짧은 비율이 아니라, 차트 상의 아주 넉넉하고 의미 있는 하단 바운더리(예: 이전 거대한 기준봉의 시가, 60일선, 쌍바닥 최저점)를 유추하여 단단하게 설정하십시오.
+            {market_context}
+            🚨 귀하는 세계 최고의 월스트리트 퀀트 애널리스트 집단입니다. 
+            1. 이 종목은 현재 고점 대비 조정을 받고 거래량이 마른 '씨앗(SEED)' 종목입니다. 시스템 기준가에 얽매이지 마십시오.
+            2. 손절가 설정: -3% 같은 짧은 비율이 아니라, 차트 상의 아주 넉넉하고 의미 있는 하단 바운더리(예: 이전 거대한 기준봉의 시가, 60일선, 쌍바닥 최저점)를 유추하여 단단하게 설정하십시오. 하락장일수록 지지선을 보수적으로(깊게) 잡으십시오.
             3. 매수 전략: 한 번에 몰빵하는 것이 아니라 "현재가 부근 1차 매수 후, ~원 부근(손절가 위)에서 2차 분할 매수"하는 시나리오를 브리핑에 포함하십시오.
-            4. 거부권: 만약 조정을 가장한 '완전한 우하향 폭포수' 이탈 차트라고 판단되면 목표가/손절가를 0으로 처리하고 관망(Veto)을 지시하십시오.
+            4. 2중 검토(Chain of Thought): 이 종목이 정말 모아갈 가치가 있는지 두 번 생각하십시오. 만약 조정을 가장한 '완전한 우하향 폭포수' 이탈 차트라고 판단되면 목표가/손절가를 0으로 처리하고 관망(Veto)을 지시하십시오.
             """
         else:
-            guide_text = """
+            guide_text = f"""
             💡 [AI 매매 보류(Veto) 및 가격 결정 가이드: 단기/스윙 히트앤런 전략]
-            1. 거부권 행사: 제공된 데이터를 분석했을 때, 윗꼬리가 너무 길거나(리스크), 거래대금이 빈약하여 단기 상승 동력이 부족하다고 판단되면 억지로 매수 추천을 하지 마십시오.
-               - 이 경우 briefing에 "⚠️ [매수 보류] 거래량 부족 및 저항 출회로 관망 권장"이라고 적고, target_price와 stop_loss는 0으로 처리하십시오.
-            2. 가격 튜닝: 시스템 기준가를 참고하되, 손익비가 최소 1.5배 이상 나오는 타이트한 타점을 제시하십시오.
+            {market_context}
+            🚨 귀하는 세계 최고의 월스트리트 퀀트 애널리스트 집단입니다. 
+            1. 2중 검토(Chain of Thought) 거부권 행사: 제공된 데이터를 분석했을 때, 하락장에서 단기 모멘텀이 빠르게 소멸할 위험이 있거나, 윗꼬리가 너무 길거나(리스크), 거래대금이 빈약하여 상승 동력이 부족하다고 판단되면 억지로 매수 추천을 하지 마십시오.
+               - 이 경우 briefing에 "⚠️ [매수 보류] {market_context} 단기 상승 동력 부족 및 리스크 과다로 관망 권장"이라고 적고, target_price와 stop_loss는 0으로 처리하십시오.
+            2. 가격 튜닝: 시스템 기준가를 참고하되, 하락장일 경우 손절을 매우 타이트하게(짧게) 잡고, 익절(목표가) 역시 짧게 끊어치는 보수적인 타점을 제시하십시오.
             """
 
         return f"""
-        당신은 천상계 트레이더의 수석 퀀트 애널리스트입니다.
+        당신은 세계 최고의 헤지펀드를 이끄는 수석 퀀트 애널리스트입니다.
         [{sys_instruction}]
         
         ■ 종목명: {stock_name}
@@ -194,7 +197,6 @@ try:
         }}
         """
 
-    # 🟡 [모드 2] 오전장, 저녁장: 간단 브리핑 + 목표가/손절가 산출 업데이트
     if current_hour != 15:
         print(f"▶ [{current_hour}시 모드] 메인 리포트 시간이 아니므로, 대기 중인 종목의 브리핑 및 가격 산출을 진행합니다.")
         for i, row in enumerate(db_rows[1:], start=2):
@@ -210,7 +212,7 @@ try:
                 target_sys = row[14] if len(row) > 14 else ''
                 stop_sys = row[15] if len(row) > 15 else ''
                 
-                prompt = get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys)
+                prompt = get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys, is_warning_market)
                 
                 try:
                     res_text = safe_generate_content(prompt, is_fast=True).text
@@ -247,7 +249,6 @@ try:
         name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
         curr_p, chg, score_str, tajeom_raw = str(r[2]).strip(), str(r[3]).strip(), str(r[8]).strip(), str(r[9]).strip()
         prog = str(r[20]).strip()
-        # ★[연동] omakase.py에서 넘겨준 SEED 태그 확인 (인덱스 25에 위치)
         seed_tag = str(r[25]).strip() if len(r) > 25 else "NORMAL"
         
         try: num_score = int(re.findall(r'-?\d+', score_str)[0])
@@ -273,11 +274,13 @@ try:
     pool_str = "\n".join([c['info'] for c in pool_150])
 
     pick_prompt = f"""
-    당신은 대한민국 최고의 주식 트레이더이자 HYEOKS 퀀트 분석가입니다.
+    당신은 세계 최고의 애널리스트 집단이 검증하는 HYEOKS 퀀트 분석가입니다.
     아래는 HYEOKS 퀀트 점수가 검증된 최상위 150개 종목 리스트입니다.
+    현재 시장 국면은 {'하락장' if is_warning_market else '상승/보합장'}입니다.
     
     이 중에서 제미나이 2.5 모델의 직관과 종합적인 판단을 활용해 
-    최고의 단기 1종목, 중장기 스윙 1종목을 과감히 발굴해 내십시오. 만약 기준에 미달하여 살 종목이 없다고 판단되면 억지로 뽑지 마십시오.
+    최고의 단기 1종목, 중장기 스윙 1종목을 2중 검토(Chain of Thought)를 거쳐 엄선하십시오. 
+    🚨 하락장이라면 안정성이 100% 보장되지 않는 단기 종목은 억지로 뽑지 마십시오("000000" 반환).
 
     [종목 선정 절대 기준]
     1. 단기 슈팅 공략주 (short_term_code): 당일 수급(프로그램 대량유입 등)이 몰리며 '유형:NORMAL' 인 종목 중 전고점 돌파를 목전에 둔 파괴력 있는 종목 1개. (적절한 종목이 없으면 "000000" 반환)
@@ -314,10 +317,10 @@ try:
     # ==========================================
     print("▶ [2단계] 딥리딩 분석 및 PDF 리포트 본문 생성 (약 3~5분 소요)...")
     today_korean = datetime.datetime.now(KST).strftime('%Y년 %m월 %d일')
-    status_txt = "코스피/코스닥 지지 (공격적 운영 가능)" 
+    status_txt = "코스닥 20일선 이탈 (보수적 운영 및 방어적 매매 요망)" if is_warning_market else "코스피/코스닥 지지 (공격적 운영 가능)" 
 
     macro_prompt = f"""귀하는 HYEOKS 리서치 센터의 수석 퀀트 애널리스트입니다.
-아래 데이터를 바탕으로 '오늘의 시황 및 매크로 브리핑'을 1페이지 분량으로 상세히 작성하십시오. 정중한 존댓말(하십시오체)을 사용하십시오.
+아래 데이터를 바탕으로 '오늘의 시황 및 매크로 브리핑'을 1페이지 분량으로 세계 최고 수준의 통찰력을 담아 상세히 작성하십시오. 정중한 존댓말(하십시오체)을 사용하십시오.
 작성일: {today_korean}
 매크로: 나스닥 {nasdaq}, 환율 {exchange}, 국내증시 {status_txt}
 뉴스 키워드: {news_keywords}
@@ -325,19 +328,19 @@ try:
     
     market_summary = safe_generate_content(macro_prompt).text
 
-    def generate_deep_report(st_type, best_cand):
+    def generate_deep_report(st_type, best_cand, is_warning_market):
         if not best_cand: return "", None
         
         vip = get_vip_deep_dive_data(best_cand['code'], KIS_TOKEN)
         news = get_target_stock_news(best_cand['code'])
+        market_context = "하락장" if is_warning_market else "상승장"
         
-        # ★[개선] 투트랙 리포트 프롬프트 (단기 vs 중장기 모아가기)
         if st_type == "short":
             sub_title_prefix = "단기 슈팅 및 전고점 돌파 공략"
-            strategy_instruction = """
+            strategy_instruction = f"""
             [단기 슈팅 주도주 분석 지침]
-            당일 쏠린 메이저 수급과 모멘텀을 바탕으로 전고점 돌파 여부 및 단기 저항선 돌파 시나리오를 작성하십시오.
-            2. 손절가 설정: 1.5배 이상의 손익비를 가지도록 의미있는 짧은 지지선을 숫자로 명시하십시오.
+            1. 당일 쏠린 메이저 수급과 모멘텀을 바탕으로 전고점 돌파 여부 및 단기 저항선 돌파 시나리오를 논리적으로 작성하십시오.
+            2. 손절가 설정: 현재 시장은 {market_context}입니다. 1.5배 이상의 손익비를 가지도록 의미있는 짧은 지지선(손절가)을 매우 타이트하게 숫자로 명시하십시오. 하락장이라면 변동성에 대비한 리스크 관리를 철저히 강조하십시오.
             """
         else:
             is_seed_type = "SEED" in best_cand['info']
@@ -345,12 +348,12 @@ try:
             strategy_instruction = f"""
             [{sub_title_prefix} 분석 지침]
             🚨 핵심 지시: 귀하는 소액(400만 원)을 빠르고 안전하게 불려야 하는 '엄격한 퀀트 게이트키퍼'입니다.
-            1. 퀀트 점수가 왜 높은지(펀더멘털, 수급 등) 설명하고, 이 종목의 현재 파동 위치가 왜 안전한 타점인지 교차 검증하여 명확히 서술하십시오.
-            2. 손절가 설정: 기계적 비율(%)이 아닌, 차트 상의 가장 거대한 기준봉의 시가나 쌍바닥 최저점 등 아주 넉넉하고 단단한 가격(원)을 제시하십시오.
+            1. 퀀트 점수가 왜 높은지(펀더멘털, 수급 등) 설명하고, 이 종목의 현재 파동 위치가 왜 안전한 타점인지 2번 교차 검증(Chain of Thought)하여 명확히 서술하십시오.
+            2. 손절가 설정: 현재 시장은 {market_context}입니다. 기계적 비율(%)이 아닌, 차트 상의 가장 거대한 기준봉의 시가나 쌍바닥 최저점 등 시장 하락 시에도 버틸 수 있는 아주 넉넉하고 단단한 가격(원)을 제시하십시오.
             3. 매수 전략: 한 번에 몰빵하지 않도록, 현재가 부근 1차 진입 후 하락 시 추가 매수하는 분할 매수 밴드(Band)를 조언에 포함하십시오.
             """
 
-        detail_prompt = f"""귀하는 대한민국 최상위 1% 실전 트레이더들을 위한 HYEOKS 리서치 센터의 수석 퀀트 애널리스트입니다.
+        detail_prompt = f"""귀하는 세계 최고의 헤지펀드를 이끄는 수석 퀀트 애널리스트입니다.
 제공된 일봉 차트(Vision)와 데이터를 바탕으로 심층 리포트를 작성하십시오. 한 리포트 내에서 말투가 바뀌지 않도록 정중한 존댓말(하십시오체)로 통일하십시오.
 
 [입력 데이터]
@@ -362,7 +365,7 @@ try:
 {strategy_instruction}
 
 [HYEOKS 딥리딩 절대 지침 - 명심하십시오]
-1. 분량 및 깊이: 귀하의 전문적인 통찰력을 발휘하여 충분히 길고 논리적으로 1.5~2페이지 분량이 나오도록 상세히 서술하십시오. 
+1. 분량 및 깊이: 귀하의 세계 최고 수준의 통찰력을 발휘하여 충분히 길고 논리적으로 1.5~2페이지 분량이 나오도록 상세히 서술하십시오. 
 2. 🚨 [할루시네이션(거짓 정보) 엄격 금지]: 차트를 판독하여 지지/저항선을 제시할 때, 반드시 위 [입력 데이터]에 제공된 ★확정 현재가({best_cand['curr_p']}원)를 기준으로 상/하단 가격을 논리적으로 계산하십시오.
 3. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'O' if st_type=='mid' else 'X'} 형식으로 숫자로만 출력하십시오.
 
@@ -378,9 +381,9 @@ try:
 (오직 차트 타점, 수급, 지지/저항 라인에 근거한 상승 모멘텀만 60~70자 내외의 1문장으로 요약하십시오.)
 </div>
 
-## 1. 매크로 유동성 및 내러티브 고찰
+## 1. 매크로 환경 및 내러티브 고찰
 ## 2. 시각적 차트 판독 및 스마트머니 딥리딩
-## 3. 실전 타점 시나리오 및 분할 매수 전략
+## 3. 실전 타점 시나리오 및 방어적 리스크 관리 전략
 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'O' if st_type=='mid' else 'X'}
 """
         img_path = f"temp_{best_cand['code']}.png"
@@ -400,9 +403,9 @@ try:
             
         return report_txt, pick_data
 
-    report_short, pick_short = generate_deep_report("short", best_short)
+    report_short, pick_short = generate_deep_report("short", best_short, is_warning_market)
     if best_short: time.sleep(15)
-    report_mid, pick_mid = generate_deep_report("mid", best_mid)
+    report_mid, pick_mid = generate_deep_report("mid", best_mid, is_warning_market)
 
 
     # ==========================================
@@ -459,7 +462,7 @@ try:
                 target_sys = r[14] if len(r) > 14 else ''
                 stop_sys = r[15] if len(r) > 15 else ''
                 
-                prompt = get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys)
+                prompt = get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys, is_warning_market)
                 
                 try:
                     res_text = safe_generate_content(prompt, is_fast=True).text
@@ -469,7 +472,6 @@ try:
                     if not briefing_text.startswith("✅") and not briefing_text.startswith("⚠️"): 
                         briefing_text = f"✅ [간단 브리핑] {briefing_text}"
                     
-                    # 문자열에 문자가 섞여있어도 에러 안 나게 안전하게 정수화 시도
                     raw_target = str(parsed_data.get('target_price', '0')).replace(',', '').replace('원', '')
                     raw_stop = str(parsed_data.get('stop_loss', '0')).replace(',', '').replace('원', '')
                     
@@ -518,7 +520,6 @@ try:
             if not p or p['code'] == "000000": continue
             idx = next((i for i, v in enumerate(new_rows) if v[0] == p['name']), -1)
             if idx != -1:
-                # 💡 [개선] 분할 매수 'O'인 종목(중장기)은 동일 종목 추천 시 물타기 적용
                 if p['split']:
                     total_amt = new_rows[idx][3] + 1000000
                     avg_p = int(total_amt / ((new_rows[idx][3]/new_rows[idx][2]) + (1000000/p['curr'])))
@@ -585,9 +586,7 @@ try:
         
         if not already_logged:
             log_rows = []
-            # 오늘 스코어 상위 5개 종목을 기록
             for cand in pool_150[:5]:
-                # info 텍스트에서 데이터 정규식 추출
                 tajeom_match = re.search(r'타점:(.*?)\|', cand['info'])
                 tajeom_str = tajeom_match.group(1).strip() if tajeom_match else "분석대기"
                 
@@ -599,7 +598,7 @@ try:
                     f"{cand['curr_p']:,}원", 
                     tajeom_str, 
                     f"{cand['score']}점", 
-                    "", "" # T+1, T+3 자리는 비워둠 (omakase.py가 채울 예정)
+                    "", ""
                 ])
             
             bt_sheet.append_rows(log_rows, value_input_option="USER_ENTERED")
