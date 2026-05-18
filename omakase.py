@@ -178,7 +178,6 @@ def get_news_keywords():
         return pd.DataFrame([[now_str, rank, word, count] for rank, (word, count) in enumerate(top_10, 1)], columns=['업데이트시간', '순위', '키워드', '언급횟수'])
     except Exception as e: return pd.DataFrame()
 
-# 💡 [조 단위 예외 완벽 대응] '조' 단위를 숫자로 변환해주는 안전한 시가총액 파싱 함수
 def get_market_cap(code):
     local_session = requests.Session()
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
@@ -193,7 +192,7 @@ def get_market_cap(code):
             if '조' in text:
                 parts = text.split('조')
                 jo = int(parts[0].replace(',', '').strip())
-                eok = int(parts[1].replace(',', '').strip()) if parts[1].strip() else 0
+                eok = int(parts[1].replace(',', '').strip()) if len(parts) > 1 and parts[1].strip() else 0
                 return jo * 10000 + eok
             else:
                 return int(text.replace(',', '').strip())
@@ -201,7 +200,6 @@ def get_market_cap(code):
         pass
     return 0
 
-# 💡 [동적 인덱싱 적용] 컬럼 위치를 실시간으로 자동 감지하여 100% 매칭하는 메인 수집 함수
 def get_real_money_themes():
     local_session = requests.Session()
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
@@ -230,7 +228,6 @@ def get_real_money_themes():
                 type_5_table = soup.find('table', {'class': 'type_5'})
                 if not type_5_table: continue
                 
-                # 💡 상단 제목 컬럼을 파싱하여 인덱스를 실시간 자동 추출 (네이버 컬럼 변경 영구 방어)
                 thead = type_5_table.find('thead')
                 if thead:
                     headers_text = [th.text.strip() for th in thead.find_all('th')]
@@ -240,7 +237,7 @@ def get_real_money_themes():
                         val_idx = headers_text.index('거래대금')
                         cap_idx = headers_text.index('시가총액')
                     except ValueError:
-                        name_idx, rate_idx, val_idx, cap_idx = 0, 4, 6, 7  # 예외 타임아웃 방지 기본값 세팅
+                        name_idx, rate_idx, val_idx, cap_idx = 0, 4, 6, 7  
                 else:
                     name_idx, rate_idx, val_idx, cap_idx = 0, 4, 6, 7
 
@@ -262,7 +259,6 @@ def get_real_money_themes():
                             rate_num = float(rate_str.replace('%', '').replace('+', '').replace(',', '').strip())
                             val_num = int(val_str.replace(',', '').strip())
                             
-                            # 💡 테마창 내부의 시가총액(억원) 데이터를 그대로 활용하여 대폭 속도 향상
                             cap_clean = cap_str.replace(',', '').strip()
                             market_cap_num = int(cap_clean) if cap_clean.isdigit() else get_market_cap(s_code.replace("'", ""))
                             
@@ -317,7 +313,8 @@ def get_naver_search_ranking():
     try:
         soup = BeautifulSoup(local_session.get("https://finance.naver.com/sise/lastsearch2.naver", verify=False).content, 'html.parser', from_encoding='euc-kr')
         data = []
-        search_blacklist = ['삼성전자', 'SK하이닉스', '현대차', '기아', 'LG에너지솔루션', 'POSCO홀딩스', '셀트리온', 'NAVER', '카카오']
+        # 💡 [복구] 삼성전자, 하이닉스, 현대차 등 대형주 검색상위 랭킹 필터링 해제 (다시 분석에 포함)
+        search_blacklist = [] 
         table = soup.find('table', {'class': 'type_5'})
         if not table: return pd.DataFrame()
         for row in table.find_all('tr'):
@@ -419,6 +416,7 @@ def get_market_schedule():
                 title = title_tag.find('a').text.strip()
                 clean_title = title.replace(" ", "").strip()
                 
+                # 💡 [복구] 대형주 스케줄 예외 필터링 조건문은 그대로 살리되, 위 랭킹 수집에서 대형주를 켰으므로 작동 흐름은 유지.
                 if not is_mega_cap_or_not_earnings(title):
                     continue
                 
@@ -521,7 +519,16 @@ def manage_schedule_sheet(schedules):
     except Exception as e:
         print(f"❌ 주요일정 시트 관리 에러: {e}")
 
+# 💡 [중요 변경] 멀티프로세스 환경에서 글로벌 쿼터 제한을 두기 위해 클래스/딕셔너리 기반 카운터 대신 상태 객체를 활용
+class ScannerState:
+    def __init__(self):
+        self.super_leader_count = 0
+        self.platform_leader_count = 0
+
+global_state = ScannerState()
+
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db):
+    global global_state
     local_session = requests.Session()
     try:
         desktop_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
@@ -661,11 +668,19 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         real_body = body_top - body_bottom
         
         upper_shadow_ratio = upper_shadow / current_price if current_price > 0 else 0
-        is_long_shadow = (upper_shadow_ratio >= 0.05) or (upper_shadow_ratio >= 0.025 and upper_shadow > real_body * 1.5)
+        
+        # 💡 [하락장 윗꼬리 필터 세분화] 하락장일 때는 윗꼬리 기준을 훨씬 더 보수적이고 깐깐하게 적용
+        if is_warning_market:
+            is_long_shadow = (upper_shadow_ratio >= 0.035) or (upper_shadow_ratio >= 0.02 and upper_shadow > real_body * 1.2)
+        else:
+            is_long_shadow = (upper_shadow_ratio >= 0.05) or (upper_shadow_ratio >= 0.025 and upper_shadow > real_body * 1.5)
+            
         shadow_text = "⚠️ [캔들] 저항 출회" if is_long_shadow else ("👑 [캔들] 몸통 마감" if upper_shadow_ratio <= 0.015 else "🟡 [캔들] 일반형")
         
         is_today_yangbong = current_price >= open_price
         gap_ratio = (open_price - prev_price) / prev_price if prev_price > 0 else 0
+        
+        # 💡 시가 갭 필터는 유지 (이격 과다 방지)
         is_huge_gap = gap_ratio >= 0.04
         
         static_info = static_db.get(code)
@@ -1040,11 +1055,12 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         master_tajeom = master_tajeom_base + master_tajeom
 
         if not is_fatal_drop:
+            # 💡 [하락장 게이트키퍼 1] 윗꼬리 저항 엄격화 (시가 갭은 현행 유지)
             if is_long_shadow or is_huge_gap:
                 master_tajeom += " ⚠️(윗꼬리/이격)" 
-                if is_warning_market:
+                if is_warning_market and is_long_shadow:
                     tajeom_multiplier = 0.0
-                    master_tajeom = "👀 [관망] 하락장 윗꼬리 리스크"
+                    master_tajeom = "👀 [관망] 하락장 윗꼬리 리스크 과다"
                 else:
                     tajeom_multiplier -= 0.3 
             
@@ -1062,8 +1078,26 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         now_kst_tajeom = datetime.datetime.now(KST)
         is_after_1030 = (now_kst_tajeom.hour * 100 + now_kst_tajeom.minute >= 1030)
         
-        if "돌파" in master_tajeom and is_after_1030 and not is_overnight_candidate:
-            tajeom_multiplier -= 0.3 
+        # 💡 [하락장 게이트키퍼 2] 하락장 돌파형 타점 가중치 페널티 적용
+        if "돌파" in master_tajeom or "불기둥" in master_tajeom or "박스권 탈출" in master_tajeom:
+            if is_after_1030 and not is_overnight_candidate:
+                tajeom_multiplier -= 0.3 
+            
+            if is_warning_market:
+                # 단 1개씩 대장주(절대대장)에게는 페널티 면제 혜택을 주기 위해 상태 객체 카운터 사용
+                is_penalized = True
+                if "진성대장" in master_tajeom or "절대대장" in master_tajeom:
+                    if global_state.super_leader_count == 0:
+                        global_state.super_leader_count += 1
+                        is_penalized = False
+                elif "박스권 탈출" in master_tajeom:
+                    if global_state.platform_leader_count == 0:
+                        global_state.platform_leader_count += 1
+                        is_penalized = False
+                        
+                if is_penalized:
+                    tajeom_multiplier *= 0.5  # 하락장 돌파 페널티 강하게 적용
+                    master_tajeom += " 🛡️(하락장 돌파 페널티)"
 
         if is_kalman_uptrend:
             target_price = int(current_price + (atr_14 * 2.0)) 
@@ -1088,6 +1122,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             
         quant_score = int(max(0, (base_score + 10) * tajeom_multiplier))
         
+        # 💡 [하락장 게이트키퍼 3] 하락장 컷오프는 40점으로 (일반장 25점)
         cutoff_score = 40 if is_warning_market else 25
         if quant_score < cutoff_score and not is_super_leader:
             master_tajeom = f"👀 [관망] 스코어 미달 (기준:{cutoff_score}점)"
@@ -1440,6 +1475,10 @@ def update_technical_data(df_theme, all_theme_map):
         print(f"❌ 전체 업데이트 에러: {e}")
 
 if __name__ == "__main__":
+    # 💡 하락장 상태 객체 카운터 리셋
+    global_state.super_leader_count = 0
+    global_state.platform_leader_count = 0
+    
     df_theme, is_market_closed, all_theme_map = get_real_money_themes()
     df_news, df_naver, df_main_news = get_news_keywords(), get_naver_search_ranking(), get_naver_main_news()
     update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_closed)
