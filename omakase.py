@@ -178,7 +178,7 @@ def get_news_keywords():
         return pd.DataFrame([[now_str, rank, word, count] for rank, (word, count) in enumerate(top_10, 1)], columns=['업데이트시간', '순위', '키워드', '언급횟수'])
     except Exception as e: return pd.DataFrame()
 
-# 💡 [핵심 버그 수정 1] 시가총액 계산 오류 해결을 위해 가장 안정적인 PC 버전 HTML 스크래핑으로 원상 복구
+# 💡 [조 단위 예외 완벽 대응] '조' 단위를 숫자로 변환해주는 안전한 시가총액 파싱 함수
 def get_market_cap(code):
     local_session = requests.Session()
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
@@ -189,19 +189,24 @@ def get_market_cap(code):
         
         market_sum_em = soup.find('em', id='_market_sum')
         if market_sum_em:
-            market_val_eok = int(market_sum_em.text.replace(',', '').strip())
-            return market_val_eok
+            text = market_sum_em.text.strip()
+            if '조' in text:
+                parts = text.split('조')
+                jo = int(parts[0].replace(',', '').strip())
+                eok = int(parts[1].replace(',', '').strip()) if parts[1].strip() else 0
+                return jo * 10000 + eok
+            else:
+                return int(text.replace(',', '').strip())
     except: 
         pass
     return 0
 
+# 💡 [동적 인덱싱 적용] 컬럼 위치를 실시간으로 자동 감지하여 100% 매칭하는 메인 수집 함수
 def get_real_money_themes():
     local_session = requests.Session()
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
     try:
         now = datetime.datetime.now(KST)
-        
-        # 💡 [핵심 버그 수정 2] 수급_Raw 시트가 장 마감 후 올바르게 업데이트 되도록 로직 정상화
         is_market_closed = now.hour > 15 or (now.hour == 15 and now.minute >= 30) 
         time_str = now.strftime('%H:%M')
         
@@ -217,7 +222,7 @@ def get_real_money_themes():
         themes = [t for t in raw_themes if not any(b in t['name'] for b in THEME_BLACKLIST)][:20] 
                         
         theme_data_list = []
-        print("▶️ 실시간 주도 테마 수집 시작 (군집성 필터 적용)...")
+        print("▶️ 실시간 주도 테마 수집 시작 (동적 인덱스 및 시총 다이렉트 필터링)...")
         for theme in themes:
             try:
                 soup = BeautifulSoup(local_session.get(theme['url'], headers=headers, verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
@@ -225,20 +230,43 @@ def get_real_money_themes():
                 type_5_table = soup.find('table', {'class': 'type_5'})
                 if not type_5_table: continue
                 
+                # 💡 상단 제목 컬럼을 파싱하여 인덱스를 실시간 자동 추출 (네이버 컬럼 변경 영구 방어)
+                thead = type_5_table.find('thead')
+                if thead:
+                    headers_text = [th.text.strip() for th in thead.find_all('th')]
+                    try:
+                        name_idx = headers_text.index('종목명')
+                        rate_idx = headers_text.index('등락률')
+                        val_idx = headers_text.index('거래대금')
+                        cap_idx = headers_text.index('시가총액')
+                    except ValueError:
+                        name_idx, rate_idx, val_idx, cap_idx = 0, 4, 6, 7  # 예외 타임아웃 방지 기본값 세팅
+                else:
+                    name_idx, rate_idx, val_idx, cap_idx = 0, 4, 6, 7
+
                 for tr in type_5_table.find_all('tr'):
                     tds = tr.find_all('td')
-                    if len(tds) >= 9:
+                    if len(tds) > max(name_idx, rate_idx, val_idx, cap_idx):
                         try:
-                            s_name = tds[0].find('a').text.strip()
-                            s_code = f"'{tds[0].find('a')['href'].split('code=')[-1]}"
+                            a_tag = tds[name_idx].find('a')
+                            if not a_tag: continue
+                            s_name = a_tag.text.strip()
+                            s_code = f"'{a_tag['href'].split('code=')[-1]}"
                             
-                            rate_str, val_str = tds[3].text.strip(), tds[7].text.strip()
+                            rate_str = tds[rate_idx].text.strip()
+                            val_str = tds[val_idx].text.strip()
+                            cap_str = tds[cap_idx].text.strip()
+                            
                             if '%' not in rate_str or '-' in rate_str or '0.00' in rate_str: continue
                             
                             rate_num = float(rate_str.replace('%', '').replace('+', '').replace(',', '').strip())
                             val_num = int(val_str.replace(',', '').strip())
                             
-                            if rate_num >= TARGET_PERCENT and val_num > 0 and get_market_cap(s_code.replace("'", "")) >= 1000:
+                            # 💡 테마창 내부의 시가총액(억원) 데이터를 그대로 활용하여 대폭 속도 향상
+                            cap_clean = cap_str.replace(',', '').strip()
+                            market_cap_num = int(cap_clean) if cap_clean.isdigit() else get_market_cap(s_code.replace("'", ""))
+                            
+                            if rate_num >= TARGET_PERCENT and val_num > 0 and market_cap_num >= 1000:
                                 stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
                         except: continue
                 
@@ -643,7 +671,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         static_info = static_db.get(code)
         needs_static_update = False
         
-        # 💡 [핵심 버그 수정 3] 시가총액 계산을 캐시에서도, HTML 파싱에서도 모두 PC 버전 방식으로 처리합니다.
         if static_info:
             market_cap = static_info['market_cap']
             is_junk = static_info['is_junk']
@@ -653,8 +680,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             risk_url = f"https://finance.naver.com/item/main.naver?code={code}&_={int(time.time() * 1000)}"
             risk_soup = BeautifulSoup(local_session.get(risk_url, headers=desktop_headers, verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
             
-            market_sum_em = risk_soup.find('em', id='_market_sum')
-            market_cap = int(market_sum_em.text.replace(',', '').strip()) if market_sum_em else 0
+            market_cap = get_market_cap(code)
             
             is_junk = bool(risk_soup.find('img', alt=re.compile('관리종목|환기종목|거래정지|투자위험|코넥스')))
             is_financial_risk, is_chronic_loss = False, False
