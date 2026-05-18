@@ -178,25 +178,15 @@ def get_news_keywords():
         return pd.DataFrame([[now_str, rank, word, count] for rank, (word, count) in enumerate(top_10, 1)], columns=['업데이트시간', '순위', '키워드', '언급횟수'])
     except Exception as e: return pd.DataFrame()
 
+# 💡 [핵심 버그 수정] 시가총액 계산을 수석님께서 칭찬하셨던 가장 안정적인 네이버 모바일 API로 완벽히 롤백했습니다.
 def get_market_cap(code):
     local_session = requests.Session()
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36'}
     try:
-        url = f"https://finance.naver.com/item/main.naver?code={code}"
-        res = local_session.get(url, headers=headers, verify=False, timeout=3)
-        soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
-        
-        market_sum_tag = soup.find('em', id='_market_sum')
-        if not market_sum_tag: return 0
-            
-        market_sum_str = market_sum_tag.text.replace(',', '').replace('\t', '').replace('\n', '').strip()
-        if '조' in market_sum_str:
-            parts = market_sum_str.split('조')
-            jo = int(parts[0].strip()) * 10000
-            eok = int(parts[1].strip()) if len(parts) > 1 and parts[1].strip() else 0
-            return jo + eok
-        else:
-            return int(market_sum_str)
+        url = f"https://m.stock.naver.com/api/stock/{code}/basic?_={int(time.time() * 1000)}"
+        res = local_session.get(url, headers=headers, verify=False, timeout=3).json()
+        market_val_eok = int(res.get('marketValue', 0))
+        return market_val_eok
     except: 
         return 0
 
@@ -205,6 +195,8 @@ def get_real_money_themes():
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
     try:
         now = datetime.datetime.now(KST)
+        
+        # 💡 [요청 반영] 오후 8시 전까지는 수동으로 돌려도 '수급_실시간' 시트를 계속 갱신합니다.
         is_market_closed = now.hour < 9 or now.hour >= 20 
         time_str = now.strftime('%H:%M')
         
@@ -241,6 +233,7 @@ def get_real_money_themes():
                             rate_num = float(rate_str.replace('%', '').replace('+', '').replace(',', '').strip())
                             val_num = int(val_str.replace(',', '').strip())
                             
+                            # 💡 롤백된 get_market_cap 덕분에 시총 1000억 필터가 다시 정상 작동합니다!
                             if rate_num >= TARGET_PERCENT and val_num > 0 and get_market_cap(s_code.replace("'", "")) >= 1000:
                                 stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
                         except: continue
@@ -281,6 +274,7 @@ def get_real_money_themes():
                 final_themes.append(m_data)
             if len(final_themes) >= 10: break
                 
+        # 💡 [핵심] '시간' 열을 포함하여 항상 8개의 컬럼 생성
         final_rows = [{'날짜': now.strftime('%Y-%m-%d'), '시간': time_str, '순위': rank, '테마명': t_data['theme_name'], '종목명': s['name'], '종목코드': s['code'], '등락률(%)': s['rate'], '거래대금(억원)': int(s['value']/100)} for rank, t_data in enumerate(final_themes, 1) for s in t_data['stocks']]
         return pd.DataFrame(final_rows), is_market_closed, all_theme_map
     except Exception as e:
@@ -338,6 +332,7 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
         doc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)).open_by_url(SHEET_URL)
         
         if not df_theme.empty:
+            # 💡 [핵심] 수급_실시간은 데이터가 1줄이라도 있으면 언제든 무조건 덮어씁니다.
             try:
                 sheet_rt = doc.worksheet("수급_실시간")
                 sheet_rt.batch_clear(['A2:Z']) 
@@ -351,6 +346,7 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
                     today_str = df_theme.iloc[0]['날짜'] 
                     all_data = sheet_raw.get_all_values()
                     
+                    # 수급_Raw 기록 시에만 '시간' 열을 제거하여 7열 유지
                     df_raw = df_theme.drop(columns=['시간'])
                     
                     combined_data = df_raw.values.tolist() + [row for row in all_data[1:] if len(row) > 0 and row[0] != today_str]
@@ -588,7 +584,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             
             secret_tajeom = ""
             if kalman_turned_green:
-                secret_tajeom = "🟢 [시크릿] 추 추세 전환 (1차 매수 타점)"
+                secret_tajeom = "🟢 [시크릿] 추세 전환 (1차 매수 타점)"
             elif is_kalman_uptrend:
                 if price_climb >= atr_14 * 3.0:
                     secret_tajeom = "🔴 [시크릿] 3차 파동 도달 (전량 익절)"
@@ -655,15 +651,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             risk_url = f"https://finance.naver.com/item/main.naver?code={code}&_={int(time.time() * 1000)}"
             risk_soup = BeautifulSoup(local_session.get(risk_url, headers=desktop_headers, verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
             
-            market_sum_tag = risk_soup.find('em', id='_market_sum')
-            market_cap = 0
-            if market_sum_tag:
-                market_sum_str = market_sum_tag.text.replace(',', '').replace('\t', '').replace('\n', '').strip()
-                if '조' in market_sum_str:
-                    parts = market_sum_str.split('조')
-                    market_cap = int(parts[0].strip()) * 10000 + (int(parts[1].strip()) if len(parts)>1 and parts[1].strip() else 0)
-                else: market_cap = int(market_sum_str)
-
+            market_cap = get_market_cap(code) # 💡 [수정] 무조건 모바일 API로 시장 캡 확보 (0원 에러 방지)
+            
             is_junk = bool(risk_soup.find('img', alt=re.compile('관리종목|환기종목|거래정지|투자위험|코넥스')))
             is_financial_risk, is_chronic_loss = False, False
             fin_table = risk_soup.find('table', {'class': 'tb_type1 tb_num tb_type1_ifrs'})
