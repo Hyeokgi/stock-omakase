@@ -354,6 +354,7 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
                 sheet = doc.worksheet(sheet_name)
                 sheet.batch_clear(['A2:Z'])
                 sheet.update(range_name="A2", values=df.values.tolist(), value_input_option="USER_ENTERED")
+                
     except Exception as e: 
         print(f"❌ 데이터 업데이트 에러: {e}")
         else:
