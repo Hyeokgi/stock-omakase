@@ -230,7 +230,7 @@ def get_real_money_themes():
                         try:
                             s_name = tds[0].find('a').text.strip()
                             s_code = f"'{tds[0].find('a')['href'].split('code=')[-1]}"
-                            rate_str, val_str = tds[4].text.strip(), tds[8].text.strip()
+                            rate_str, val_str = tds[3].text.strip(), tds[7].text.strip()
                             if '%' not in rate_str or '-' in rate_str or '0.00' in rate_str: continue
                             rate_num = float(rate_str.replace('%', '').replace('+', '').replace(',', '').strip())
                             val_num = int(val_str.replace(',', '').strip())
