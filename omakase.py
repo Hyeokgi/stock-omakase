@@ -138,10 +138,12 @@ def get_kospi_fluctuation_rate():
 
 def search_code_from_naver(stock_name):
     local_session = requests.Session()
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     try:
         url = f"https://m.stock.naver.com/api/search/all?keyword={stock_name}"
-        data = local_session.get(url).json()
-        if data.get('result') and data['result'].get('stocks'): return data['result']['stocks'][0]['itemCode']
+        data = local_session.get(url, headers=headers, timeout=3).json()
+        if data.get('result') and data['result'].get('stocks'): 
+            return data['result']['stocks'][0]['itemCode']
     except: pass
     return None
 
@@ -178,22 +180,39 @@ def get_news_keywords():
 
 def get_market_cap(code):
     local_session = requests.Session()
-    headers = {'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     try:
-        url = f"https://m.stock.naver.com/api/stock/{code}/basic?_={int(time.time() * 1000)}"
-        res = local_session.get(url, headers=headers, verify=False, timeout=3).json()
-        market_val_eok = int(res.get('marketValue', 0))
-        return market_val_eok
-    except: return 0  
+        url = f"https://finance.naver.com/item/main.naver?code={code}"
+        res = local_session.get(url, headers=headers, verify=False, timeout=3)
+        soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
+        
+        market_sum_tag = soup.find('em', id='_market_sum')
+        if not market_sum_tag: return 0
+            
+        market_sum_str = market_sum_tag.text.replace(',', '').replace('\t', '').replace('\n', '').strip()
+        if '조' in market_sum_str:
+            parts = market_sum_str.split('조')
+            jo = int(parts[0].strip()) * 10000
+            eok = int(parts[1].strip()) if len(parts) > 1 and parts[1].strip() else 0
+            return jo + eok
+        else:
+            return int(market_sum_str)
+    except: 
+        return 0
 
 def get_real_money_themes():
     local_session = requests.Session()
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
     try:
         now = datetime.datetime.now(KST)
-        is_market_closed = now.hour < 9 or now.hour > 15 or (now.hour == 15 and now.minute >= 40)
+        
+        # ✅ [핵심 1] '수급_실시간'을 오후 8시(시간외 단일가 포함)까지 항상 최신으로 갱신하도록 허들 연장!
+        # 이제 20시(저녁 8시) 이전까지는 is_market_closed가 False로 유지되어 무조건 실시간 시트를 덮어씁니다.
+        is_market_closed = now.hour < 9 or now.hour >= 20 
+        
         time_str = now.strftime('%H:%M')
         
-        res = local_session.get("https://finance.naver.com/sise/theme.naver", verify=False, timeout=5)
+        res = local_session.get("https://finance.naver.com/sise/theme.naver", headers=headers, verify=False, timeout=5)
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
         
         table = soup.find('table', {'class': 'type_1'})
@@ -207,7 +226,7 @@ def get_real_money_themes():
         print("▶️ 실시간 주도 테마 수집 시작 (군집성 필터 적용)...")
         for theme in themes:
             try:
-                soup = BeautifulSoup(local_session.get(theme['url'], verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
+                soup = BeautifulSoup(local_session.get(theme['url'], headers=headers, verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
                 stocks = []
                 type_5_table = soup.find('table', {'class': 'type_5'})
                 if not type_5_table: continue
@@ -218,10 +237,13 @@ def get_real_money_themes():
                         try:
                             s_name = tds[0].find('a').text.strip()
                             s_code = f"'{tds[0].find('a')['href'].split('code=')[-1]}"
-                            rate_str, val_str = tds[4].text.strip(), tds[8].text.strip()
+                            
+                            rate_str, val_str = tds[3].text.strip(), tds[7].text.strip()
                             if '%' not in rate_str or '-' in rate_str or '0.00' in rate_str: continue
+                            
                             rate_num = float(rate_str.replace('%', '').replace('+', '').replace(',', '').strip())
                             val_num = int(val_str.replace(',', '').strip())
+                            
                             if rate_num >= TARGET_PERCENT and val_num > 0 and get_market_cap(s_code.replace("'", "")) >= 1000:
                                 stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
                         except: continue
@@ -260,9 +282,11 @@ def get_real_money_themes():
                 final_themes.append(m_data)
             if len(final_themes) >= 10: break
                 
-        final_rows = [{'날짜': now.strftime('%Y-%m-%d'), **({'시간': time_str} if not is_market_closed else {}), '순위': rank, '테마명': t_data['theme_name'], '종목명': s['name'], '종목코드': s['code'], '등락률(%)': s['rate'], '거래대금(억원)': int(s['value']/100)} for rank, t_data in enumerate(final_themes, 1) for s in t_data['stocks']]
+        # ✅ [핵심 2] 무조건 '시간' 열을 포함하여 8열 구조로 생성
+        final_rows = [{'날짜': now.strftime('%Y-%m-%d'), '시간': time_str, '순위': rank, '테마명': t_data['theme_name'], '종목명': s['name'], '종목코드': s['code'], '등락률(%)': s['rate'], '거래대금(억원)': int(s['value']/100)} for rank, t_data in enumerate(final_themes, 1) for s in t_data['stocks']]
         return pd.DataFrame(final_rows), is_market_closed, all_theme_map
     except Exception as e:
+        print(f"❌ 테마 수집 에러: {e}")
         return pd.DataFrame(), False, {}
 
 def get_naver_search_ranking():
@@ -316,26 +340,43 @@ def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_clo
         doc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)).open_by_url(SHEET_URL)
         
         if not df_theme.empty:
-            sheet = doc.worksheet("수급_Raw" if is_market_closed else "수급_실시간")
+            # ✅ [핵심 3] 시간외 거래까지 고려하여 '수급_실시간' 시트는 무조건 덮어쓰도록 구조 단순화
+            try:
+                sheet_rt = doc.worksheet("수급_실시간")
+                sheet_rt.batch_clear(['A2:Z']) 
+                sheet_rt.update(range_name="A2", values=df_theme.values.tolist(), value_input_option="USER_ENTERED")
+                print("✅ [수급_실시간] 시트 갱신 완료")
+            except Exception as e: print(f"❌ [수급_실시간] 업데이트 실패: {e}")
+
             if is_market_closed:
-                today_str = df_theme.iloc[0]['날짜'] 
-                all_data = sheet.get_all_values()
-                combined_data = df_theme.values.tolist() + [row for row in all_data[1:] if len(row) > 0 and row[0] != today_str]
-                combined_data.sort(key=lambda x: int(x[1]) if str(x[1]).isdigit() else 999)
-                combined_data.sort(key=lambda x: x[0], reverse=True)
-                sheet.batch_clear(['A2:Z'])
-                sheet.update(range_name="A2", values=combined_data, value_input_option="USER_ENTERED")
-            else:
-                sheet.batch_clear(['A2:Z']) 
-                sheet.update(range_name="A2", values=df_theme.values.tolist(), value_input_option="USER_ENTERED")
-                
-        for df, sheet_name in [(df_news, "뉴스_키워드"), (df_naver, "네이버_검색상위"), (df_main_news, "네이버_주요뉴스")]:
+                try:
+                    sheet_raw = doc.worksheet("수급_Raw")
+                    today_str = df_theme.iloc[0]['날짜'] 
+                    all_data = sheet_raw.get_all_values()
+                    
+                    # '시간' 열을 제거하여 수급_Raw 시트의 7열 포맷에 맞춤
+                    df_raw = df_theme.drop(columns=['시간'])
+                    
+                    combined_data = df_raw.values.tolist() + [row for row in all_data[1:] if len(row) > 0 and row[0] != today_str]
+                    combined_data.sort(key=lambda x: int(x[1]) if str(x[1]).isdigit() else 999)
+                    combined_data.sort(key=lambda x: x[0], reverse=True)
+                    sheet_raw.batch_clear(['A2:Z'])
+                    sheet_raw.update(range_name="A2", values=combined_data, value_input_option="USER_ENTERED")
+                    print("✅ [수급_Raw] 누적 기록 완료")
+                except Exception as e: print(f"❌ [수급_Raw] 누적 기록 실패: {e}")
+        else:
+            print("⚠️ 수집된 테마 데이터가 없어 구글 시트 업데이트를 건너뜁니다.")
+            
+        for df, target_sheet_name in [(df_news, "뉴스_키워드"), (df_naver, "네이버_검색상위"), (df_main_news, "네이버_주요뉴스")]:
             if not df.empty:
-                sheet = doc.worksheet(sheet_name)
-                sheet.batch_clear(['A2:Z'])
-                sheet.update(range_name="A2", values=df.values.tolist(), value_input_option="USER_ENTERED")
+                try:
+                    sheet = doc.worksheet(target_sheet_name)
+                    sheet.batch_clear(['A2:Z'])
+                    sheet.update(range_name="A2", values=df.values.tolist(), value_input_option="USER_ENTERED")
+                except Exception as e: print(f"❌ [{target_sheet_name}] 업데이트 에러: {e}")
+
     except Exception as e: 
-        print(f"❌ 데이터 업데이트 에러: {e}")
+        print(f"❌ 구글 시트 전체 업데이트 에러: {e}")
 
 def get_market_schedule():
     local_session = requests.Session()
@@ -1107,7 +1148,6 @@ def update_technical_data(df_theme, all_theme_map):
                         }
             except: pass
 
-        # 💡 [핵심 버그 픽스] 주말이라 당일 테마가 비어있으면, 수급_실시간 탭을 읽어 당일 테마를 복구!
         theme_rank_dict = {} 
         
         try:
@@ -1149,7 +1189,6 @@ def update_technical_data(df_theme, all_theme_map):
             print(f"⚠️ 실시간 데이터 로드 에러: {e}")
             today_date = datetime.datetime.now(KST).date()
 
-        # 과거 테마 로드
         past_theme_map = {}
         try:
             three_months_ago = today_date - datetime.timedelta(days=90)
@@ -1170,14 +1209,12 @@ def update_technical_data(df_theme, all_theme_map):
                                 if s_name and t_name and t_name != "개별주/기타":
                                     try:
                                         row_date = datetime.datetime.strptime(r_date_str, '%Y-%m-%d').date()
-                                        # 최신 날짜(당일)가 아닌 종목들만 과거 테마로 편입
                                         if row_date != today_date and row_date >= three_months_ago:
                                             if s_name not in past_theme_map:
                                                 past_theme_map[s_name] = t_name
                                     except: pass
                 except: pass
             
-            # DB_스캐너에서 수집
             try:
                 scanner_data = doc.worksheet("DB_스캐너").get_all_values()
                 for row in scanner_data[1:]:
@@ -1189,7 +1226,7 @@ def update_technical_data(df_theme, all_theme_map):
                             s_name = str(row[0]).strip()
                         t_name = str(row[5]).replace("🆕[당일]", "").replace("🕰️[과거]", "").strip()
                         if s_name and t_name and t_name != "개별주/기타" and s_name not in past_theme_map:
-                            if s_name not in theme_rank_dict:  # 당일 테마 덮어쓰기 방지
+                            if s_name not in theme_rank_dict: 
                                 past_theme_map[s_name] = t_name
             except: pass
         except Exception as e: print(f"⚠️ 과거 테마 맵핑 에러: {e}")
