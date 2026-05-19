@@ -1187,8 +1187,10 @@ def update_technical_data(df_theme, all_theme_map):
                 for row in static_sheet.get_all_values()[1:]:
                     if len(row) >= 6:
                         code_key = str(row[0]).replace("'", "").strip().zfill(6)
+                        cap_clean = re.sub(r'[^0-9]', '', str(row[2])) 
+                        
                         static_db[code_key] = {
-                            'market_cap': int(row[2]) if str(row[2]).isdigit() else 0, 
+                            'market_cap': int(cap_clean) if cap_clean else 0, 
                             'is_junk': row[3] == 'True', 
                             'is_fin_risk': row[4] == 'True', 
                             'is_chronic_loss': row[5] == 'True'
