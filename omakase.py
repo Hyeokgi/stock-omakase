@@ -313,7 +313,6 @@ def get_naver_search_ranking():
     try:
         soup = BeautifulSoup(local_session.get("https://finance.naver.com/sise/lastsearch2.naver", verify=False).content, 'html.parser', from_encoding='euc-kr')
         data = []
-        # 💡 [복구] 삼성전자, 하이닉스, 현대차 등 대형주 검색상위 랭킹 필터링 해제 (다시 분석에 포함)
         search_blacklist = [] 
         table = soup.find('table', {'class': 'type_5'})
         if not table: return pd.DataFrame()
@@ -416,7 +415,6 @@ def get_market_schedule():
                 title = title_tag.find('a').text.strip()
                 clean_title = title.replace(" ", "").strip()
                 
-                # 💡 [복구] 대형주 스케줄 예외 필터링 조건문은 그대로 살리되, 위 랭킹 수집에서 대형주를 켰으므로 작동 흐름은 유지.
                 if not is_mega_cap_or_not_earnings(title):
                     continue
                 
@@ -519,7 +517,6 @@ def manage_schedule_sheet(schedules):
     except Exception as e:
         print(f"❌ 주요일정 시트 관리 에러: {e}")
 
-# 💡 [중요 변경] 멀티프로세스 환경에서 글로벌 쿼터 제한을 두기 위해 클래스/딕셔너리 기반 카운터 대신 상태 객체를 활용
 class ScannerState:
     def __init__(self):
         self.super_leader_count = 0
@@ -573,6 +570,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         
         change_rate = (current_price - prev_price) / prev_price if prev_price > 0 else 0.0
         
+        # 💡 [핵심 수정 1] 상한가 여부 판단 로직
+        is_upper_limit = change_rate >= 0.295
+
         yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) >= 2 else today_vol
         
         try:
@@ -669,7 +669,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         
         upper_shadow_ratio = upper_shadow / current_price if current_price > 0 else 0
         
-        # 💡 [하락장 윗꼬리 필터 세분화] 하락장일 때는 윗꼬리 기준을 훨씬 더 보수적이고 깐깐하게 적용
         if is_warning_market:
             is_long_shadow = (upper_shadow_ratio >= 0.035) or (upper_shadow_ratio >= 0.02 and upper_shadow > real_body * 1.2)
         else:
@@ -679,8 +678,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         
         is_today_yangbong = current_price >= open_price
         gap_ratio = (open_price - prev_price) / prev_price if prev_price > 0 else 0
-        
-        # 💡 시가 갭 필터는 유지 (이격 과다 방지)
         is_huge_gap = gap_ratio >= 0.04
         
         static_info = static_db.get(code)
@@ -829,7 +826,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         
         is_volume_dead = (vol_ratio_yest <= 60) and (vol_ratio_10d <= 60)
 
-        is_upper_limit = change_rate >= 0.295
         if is_upper_limit and today_vol > 0:
             vol_ratio_10d = max(vol_ratio_10d, 500)
             vol_ratio_yest = max(vol_ratio_yest, 500)
@@ -859,7 +855,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         is_accumulation_cand = False
         if is_true_history_leader and is_deep_correction and is_volume_dead and not is_long_shadow and not is_financial_risk:
-            if (abs(current_price - ma20)/ma20 < 0.03) or (abs(current_price - ma60)/ma60 < 0.03) or is_double_bottom:
+            # 💡 [핵심 수정 2] 상한가 종목은 모아가기 후보에서 원천 배제
+            if not is_upper_limit and ((abs(current_price - ma20)/ma20 < 0.03) or (abs(current_price - ma60)/ma60 < 0.03) or is_double_bottom):
                 is_accumulation_cand = True
 
         if is_junk: signal = "🚨 매매제한 (관리/주의)"
@@ -1019,9 +1016,13 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         tajeom_multiplier = 0.0
         master_tajeom_base = "⏸️ [대기] 분석 중"
         
+        # 💡 [핵심 수정 3] 상한가 종목의 마스터 타점 최우선 덮어쓰기 로직
         if is_fatal_drop:
             master_tajeom_base = "🚫 [제외] 상폐/재무위험"
             tajeom_multiplier = 0.0
+        elif is_upper_limit:
+            master_tajeom_base = "🚀 [당일/단타] 대장주 불기둥 (상한가 안착/추격금지)"
+            tajeom_multiplier = 1.3
         elif is_accumulation_cand:
             master_tajeom_base = "🌱 [중장기/모아가기] 지지선 방어 및 거래량 바닥"
             tajeom_multiplier = 1.4
@@ -1055,7 +1056,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         master_tajeom = master_tajeom_base + master_tajeom
 
         if not is_fatal_drop:
-            # 💡 [하락장 게이트키퍼 1] 윗꼬리 저항 엄격화 (시가 갭은 현행 유지)
             if is_long_shadow or is_huge_gap:
                 master_tajeom += " ⚠️(윗꼬리/이격)" 
                 if is_warning_market and is_long_shadow:
@@ -1078,13 +1078,11 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         now_kst_tajeom = datetime.datetime.now(KST)
         is_after_1030 = (now_kst_tajeom.hour * 100 + now_kst_tajeom.minute >= 1030)
         
-        # 💡 [하락장 게이트키퍼 2] 하락장 돌파형 타점 가중치 페널티 적용
         if "돌파" in master_tajeom or "불기둥" in master_tajeom or "박스권 탈출" in master_tajeom:
             if is_after_1030 and not is_overnight_candidate:
                 tajeom_multiplier -= 0.3 
             
             if is_warning_market:
-                # 단 1개씩 대장주(절대대장)에게는 페널티 면제 혜택을 주기 위해 상태 객체 카운터 사용
                 is_penalized = True
                 if "진성대장" in master_tajeom or "절대대장" in master_tajeom:
                     if global_state.super_leader_count == 0:
@@ -1096,7 +1094,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         is_penalized = False
                         
                 if is_penalized:
-                    tajeom_multiplier *= 0.5  # 하락장 돌파 페널티 강하게 적용
+                    tajeom_multiplier *= 0.5  
                     master_tajeom += " 🛡️(하락장 돌파 페널티)"
 
         if is_kalman_uptrend:
@@ -1109,7 +1107,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             stop_loss = int(min(ma20, current_price * 0.95))
             if stop_loss >= current_price: stop_loss = int(current_price * 0.96)
 
-        if secret_tajeom and "관망" not in master_tajeom and "매수금지" not in master_tajeom:
+        # 💡 [핵심 수정 4] 상한가 종목에는 시크릿 타점(칼만 노이즈) 병합 금지
+        if secret_tajeom and "관망" not in master_tajeom and "매수금지" not in master_tajeom and not is_upper_limit:
             master_tajeom = f"{master_tajeom} | {secret_tajeom}"
 
         is_super_leader = (change_rate >= 0.15) and (trading_value >= 100_000_000_000) and ("대량유입" in program_text or "매수우위" in program_text)
@@ -1122,7 +1121,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             
         quant_score = int(max(0, (base_score + 10) * tajeom_multiplier))
         
-        # 💡 [하락장 게이트키퍼 3] 하락장 컷오프는 40점으로 (일반장 25점)
         cutoff_score = 40 if is_warning_market else 25
         if quant_score < cutoff_score and not is_super_leader:
             master_tajeom = f"👀 [관망] 스코어 미달 (기준:{cutoff_score}점)"
@@ -1475,7 +1473,6 @@ def update_technical_data(df_theme, all_theme_map):
         print(f"❌ 전체 업데이트 에러: {e}")
 
 if __name__ == "__main__":
-    # 💡 하락장 상태 객체 카운터 리셋
     global_state.super_leader_count = 0
     global_state.platform_leader_count = 0
     
