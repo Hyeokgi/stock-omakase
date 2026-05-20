@@ -669,20 +669,51 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         
         upper_shadow_ratio = upper_shadow / current_price if current_price > 0 else 0
         
+        # 기존 윗꼬리 판독 로직
         if is_warning_market:
             is_long_shadow = (upper_shadow_ratio >= 0.035) or (upper_shadow_ratio >= 0.02 and upper_shadow > real_body * 1.2)
         else:
             is_long_shadow = (upper_shadow_ratio >= 0.05) or (upper_shadow_ratio >= 0.025 and upper_shadow > real_body * 1.5)
             
-        shadow_text = "⚠️ [캔들] 저항 출회" if is_long_shadow else ("👑 [캔들] 몸통 마감" if upper_shadow_ratio <= 0.015 else "🟡 [캔들] 일반형")
-        
+        # 💡 [신규 이식] 바닥권 윗꼬리(매집봉) 면제 로직
+        is_bottom_accumulation_shadow = False
+        if is_long_shadow and is_today_yangbong and surge_rate_20d <= 0.15 and vol_ratio_yest >= 200:
+            is_long_shadow = False # 페널티 면제
+            is_bottom_accumulation_shadow = True
+
+        if is_bottom_accumulation_shadow: shadow_text = "🌱 [캔들] 바닥권 매집봉"
+        elif is_long_shadow: shadow_text = "⚠️ [캔들] 저항 출회"
+        elif upper_shadow_ratio <= 0.015: shadow_text = "👑 [캔들] 몸통 마감"
+        else: shadow_text = "🟡 [캔들] 일반형"
         is_today_yangbong = current_price >= open_price
         gap_ratio = (open_price - prev_price) / prev_price if prev_price > 0 else 0
         is_huge_gap = gap_ratio >= 0.04
         
         static_info = static_db.get(code)
         needs_static_update = False
-        
+        # 💡 [신규 이식] 장도지향 패턴 판독기
+        is_jang_do_ji_yang = False
+        if len(df_hist) >= 3:
+            day_minus_2 = df_hist.iloc[-3]
+            day_minus_1 = df_hist.iloc[-2]
+            
+            # D-2: 장대음봉 (종가가 시가대비 -4% 이상 하락)
+            cond1_big_yin = (day_minus_2['close'] - day_minus_2['open']) / day_minus_2['open'] <= -0.04
+            
+            # D-1: 도지 캔들 (몸통이 1.5% 이내로 매우 얇음)
+            body_m1 = abs(day_minus_1['close'] - day_minus_1['open']) / day_minus_1['open']
+            cond2_doji = body_m1 <= 0.015
+            
+            # D-0(오늘): 양봉이면서 도지의 고가를 돌파
+            cond3_yang = is_today_yangbong and current_price > day_minus_1['high']
+            
+            if cond1_big_yin and cond2_doji and cond3_yang:
+                is_jang_do_ji_yang = True
+
+        # 이후 마스터 타점 로직 부분에 아래 내용 추가
+        if is_jang_do_ji_yang:
+            master_tajeom_base = "⭐ [패턴] 장도지향 (투매 후 반등)"
+            tajeom_multiplier = 1.4  # 높은 가중치 부여
         if static_info:
             market_cap = static_info['market_cap']
             is_junk = static_info['is_junk']
