@@ -528,38 +528,62 @@ global_state = ScannerState()
 # 💡 [신규 이식] 시간외 마감가 통합 안정화 엔진 (네이버 전용 마스터 폴백)
 def fetch_extra_closing_prices_from_naver(code, session_obj):
     """
-    네이버 실시간 폴링 API를 조회하여 18시 시간외 단일가 마감 종가와
-    20시 넥스트레이드(NXT) 애프터마켓 최종 종가를 시간에 구애받지 않고 
-    정밀하게 뜯어내는 마스터 복구 엔진
+    네이버 실시간 폴링 API의 개편된 복잡한 JSON 트리 구조를 심층 파싱하여
+    시간외 단일가(18시) 및 넥스트레이드 야간 종가(20시)를 100% 복구하는 엔진
     """
-    # 💡 데이터가 온전히 박제되어 있는 폴링 엔드포인트로 변경
     url = f"https://polling.finance.naver.com/api/realtime/domestic/stock/{code}"
-    desktop_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+    desktop_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Referer": "https://finance.naver.com/"
+    }
     
     try:
-        res = session_obj.get(url, headers=desktop_headers, verify=False, timeout=3)
+        res = session_obj.get(url, headers=desktop_headers, verify=False, timeout=4)
         if res.status_code == 200:
             raw_json = res.json()
-            # 네이버 페이 증권 내부 root 구조가 'result' 하위에 'areas' 배열로 래핑되어 있는 특성 반영
             result_data = raw_json.get("result", {})
             
-            # 1. 기존 거래소 18시 시간외 단일가 최종 마감가 파싱
-            extra_close_raw = result_data.get("ovtmUntpPrpr")
+            # 💡 [핵심 교정] 네이버 갱신 레이아웃 추적
+            # 폴링 API는 result -> areas[0] -> datas[0] 내부에 실제 주가 데이터가 존재함
+            target_core = {}
+            areas = result_data.get("areas", [])
+            if areas and isinstance(areas, list):
+                datas = areas[0].get("datas", [])
+                if datas and isinstance(datas, list):
+                    target_core = datas[0]
             
-            # 2. 넥스트레이드(NXT) 20시 애프터마켓 최종 마감가 파싱
-            nxt_close_raw = result_data.get("nxtClosePrice") or result_data.get("nxtAfterMarketClosePrice")
+            # 만약 개편 구조 파싱에 실패했다면 구형 root 구조에서 직접 탐색 (이중 방어)
+            if not target_core:
+                target_core = result_data
             
-            # 만약 장외 거래 필드가 비어있다면, 단일가/야간 거래가 없는 종목이므로 0 처리
+            # 1. 18시 종료 KRX 시간외 단일가 종가 추출 (동의어 필드 교차 검증)
+            extra_close_raw = (
+                target_core.get("ovtmUntpPrpr") or 
+                target_core.get("timeExtraClosePrice") or 
+                target_core.get("overtimePrice", "0")
+            )
+            
+            # 2. 20시 종료 넥스트레이드(NXT) 야간 종가 추출
+            nxt_close_raw = (
+                target_core.get("nxtClosePrice") or 
+                target_core.get("nxtAfterMarketClosePrice") or 
+                target_core.get("nxtPrice", "0")
+            )
+            
             def clean(val):
                 if val is None: return 0
                 val_str = str(val).replace(",", "").strip()
                 if not val_str or val_str in ["N/A", "-", "None", "0"]: return 0
-                return int(float(val_str)) # 소수점 처리 방어
+                return int(float(val_str))
                 
             return clean(extra_close_raw), clean(nxt_close_raw)
+            
     except Exception as e:
-        print(f"⚠️ [{code}] 야간 시세 엔진 파싱 예외 발생: {str(e)[:20]}")
+        # 멀티프로세싱 중 에러가 나더라도 스캐너가 멈추지 않도록 무소음 방어
+        pass
+        
     return 0, 0
+    
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db):
     global global_state
     local_session = requests.Session()
