@@ -317,7 +317,7 @@ def get_naver_search_ranking():
         table = soup.find('table', {'class': 'type_5'})
         if not table: return pd.DataFrame()
         for row in table.find_all('tr'):
-            tds = row.find_all('tr')
+            
             tds = row.find_all('td')
             if len(tds) >= 6 and tds[0].text.strip().isdigit(): 
                 name = tds[1].find('a').text.strip()
