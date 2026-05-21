@@ -528,32 +528,38 @@ global_state = ScannerState()
 # 💡 [신규 이식] 시간외 마감가 통합 안정화 엔진 (네이버 전용 마스터 폴백)
 def fetch_extra_closing_prices_from_naver(code, session_obj):
     """
-    네이버 모바일 API 주소에서 실시간/마감 후 관계없이 
-    KRX 시간외 단일가 종가(18시) 및 NXT 야간 종가(20시) 데이터를 
-    언제 호출해도 정밀 추출해내는 방어용 서브 엔진
+    네이버 실시간 폴링 API를 조회하여 18시 시간외 단일가 마감 종가와
+    20시 넥스트레이드(NXT) 애프터마켓 최종 종가를 시간에 구애받지 않고 
+    정밀하게 뜯어내는 마스터 복구 엔진
     """
-    url = f"https://m.stock.naver.com/api/stock/{code}/basic"
+    # 💡 데이터가 온전히 박제되어 있는 폴링 엔드포인트로 변경
+    url = f"https://polling.finance.naver.com/api/realtime/domestic/stock/{code}"
     desktop_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+    
     try:
         res = session_obj.get(url, headers=desktop_headers, verify=False, timeout=3)
         if res.status_code == 200:
-            data = res.json()
+            raw_json = res.json()
+            # 네이버 페이 증권 내부 root 구조가 'result' 하위에 'areas' 배열로 래핑되어 있는 특성 반영
+            result_data = raw_json.get("result", {})
             
-            # 1. 18시 종료 KRX 시간외 단일가 추출 (네이버 내부 변경 키 교차 검증)
-            extra_close_raw = data.get("timeExtraClosePrice") or data.get("ovtmUntpPrpr", "0")
+            # 1. 기존 거래소 18시 시간외 단일가 최종 마감가 파싱
+            extra_close_raw = result_data.get("ovtmUntpPrpr")
             
-            # 2. 20시 종료 넥스트레이드(NXT) 야간 종가 추출 
-            nxt_close_raw = data.get("nxtClosePrice") or data.get("nxtAfterMarketClosePrice", "0")
+            # 2. 넥스트레이드(NXT) 20시 애프터마켓 최종 마감가 파싱
+            nxt_close_raw = result_data.get("nxtClosePrice") or result_data.get("nxtAfterMarketClosePrice")
             
+            # 만약 장외 거래 필드가 비어있다면, 단일가/야간 거래가 없는 종목이므로 0 처리
             def clean(val):
-                if not val or val in ["N/A", "-", "None", "0"]: return 0
-                return int(str(val).replace(",", ""))
+                if val is None: return 0
+                val_str = str(val).replace(",", "").strip()
+                if not val_str or val_str in ["N/A", "-", "None", "0"]: return 0
+                return int(float(val_str)) # 소수점 처리 방어
                 
             return clean(extra_close_raw), clean(nxt_close_raw)
-    except:
-        pass
+    except Exception as e:
+        print(f"⚠️ [{code}] 야간 시세 엔진 파싱 예외 발생: {str(e)[:20]}")
     return 0, 0
-
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db):
     global global_state
     local_session = requests.Session()
