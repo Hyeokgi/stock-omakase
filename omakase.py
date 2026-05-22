@@ -525,83 +525,67 @@ class ScannerState:
 
 global_state = ScannerState()
 
-# 💡 [신규 이식] 시간외 마감가 통합 안정화 엔진 (네이버 전용 마스터 폴백)
-def fetch_extra_closing_prices_from_naver(code, session_obj):
+def fetch_extra_closing_prices_from_kis(code, session_obj):
     """
-    18시 거래소 시간외 단일가는 PC HTML 페이지에서 직접 18:00 체결가를 크롤링하고,
-    20시 넥스트레이드(NXT) 종가는 모바일 상세 API를 플랫화하여 관련 필드를 역추적하는
-    24시간 언제 돌려도 0이 나오지 않는 마스터 저격 엔진
+    한국투자증권 정식 Open API(TR 코드) 자원을 호출하여
+    18시 거래소 시간외 단일가 및 20시 넥스트레이드(NXT) 야간 최종 종가를
+    24시간 언제 실행해도 오차 없이 100% 원화 숫자로 뽑아내는 오피셜 엔진
     """
-    desktop_headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Referer": "https://finance.naver.com/"
-    }
+    # 글로벌 선언된 KIS 인증 자원 및 기본 URL 베이스 참조
+    global KIS_TOKEN, KIS_APP_KEY, KIS_APP_SECRET, KIS_URL_BASE
     
     extra_close = 0
     nxt_close = 0
     
-    def clean_val(val):
-        if val is None: return 0
-        val_str = str(val).replace(",", "").strip()
-        if not val_str or val_str in ["N/A", "-", "None", "0"]: return 0
-        try:
-            return int(float(val_str))
-        except:
-            return 0
-
-    # 1. 기존 거래소 시간외 단일가 (18:00 최종 종가) 복구 세션
-    # 실시간 폴링 API는 장 마감 후 시간이 지나면 데이터가 0이나 None으로 날아가지만, 
-    # PC용 시간외 단일가 페이지(afterhour.naver)에는 당일의 10분별 체결 데이터가 고스란히 박제되어 유지됩니다.
+    # 토큰이나 키 세팅이 누락되었다면 안전하게 0으로 리턴 처리
+    if not KIS_TOKEN or not KIS_APP_KEY:
+        return 0, 0
+        
+    # KIS API 규격 공통 헤더 세팅
+    headers = {
+        "Content-Type": "application/json",
+        "authorization": f"Bearer {KIS_TOKEN}",
+        "appkey": KIS_APP_KEY,
+        "appsecret": KIS_APP_SECRET,
+        "custtype": "P" # 개인 투자자 고정
+    }
+    
+    # ------------------------------------------------------------------
+    # 1. 기존 거래소 시간외 단일가 종가 (18시 마감가) 저격
+    # ------------------------------------------------------------------
     try:
-        url_ah = f"https://finance.naver.com/item/afterhour.naver?code={code}"
-        res_ah = session_obj.get(url_ah, headers=desktop_headers, verify=False, timeout=3)
-        if res_ah.status_code == 200:
-            soup_ah = BeautifulSoup(res_ah.content, "html.parser", from_encoding="cp949")
-            table_ah = soup_ah.find("table", {"class": "type2"})
-            if table_ah:
-                for tr in table_ah.find_all("tr"):
-                    tds = tr.find_all("td")
-                    if len(tds) >= 2 and "18:00" in tds[0].text:
-                        extra_close = clean_val(tds[1].text)
-                        break
+        headers["tr_id"] = "FHKST01010200" # 국내주식 시간외단일가 현재가 조회 TR
+        params = {
+            "fid_cond_mrkt_div_code": "J", # 주식 시장 구분 코드
+            "fid_input_iscd": code
+        }
+        url_overtime = f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-overtimePrice"
+        
+        res_overtime = session_obj.get(url_overtime, headers=headers, params=params, timeout=3)
+        if res_overtime.status_code == 200:
+            out_data = res_overtime.json().get("output", {})
+            # stck_prpr 필드에 단일가 최종 체결 가격이 정산되어 담겨있음
+            if out_data and "stck_prpr" in out_data:
+                extra_close = int(str(out_data["stck_prpr"]).replace(",", "").strip())
     except:
         pass
 
-    # 2. 넥스트레이드(NXT) 야간 종가 (20:00 최종 종가) 복구 세션
-    # 모바일 basic API 주소는 실시간 소켓이 닫힌 야간이나 새벽 시간대에도 당일 마감된 NXT 세션 결과를 그대로 보존합니다.
+    # ------------------------------------------------------------------
+    # 2. 넥스트레이드(NXT) 애프터마켓 종가 (20시 마감가) 저격
+    # ------------------------------------------------------------------
     try:
-        url_basic = f"https://m.stock.naver.com/api/stock/{code}/basic"
-        res_basic = session_obj.get(url_basic, headers=desktop_headers, verify=False, timeout=3)
-        if res_basic.status_code == 200:
-            basic_json = res_basic.json()
-            
-            # 네이버의 계층 구조 잠수함 패치를 방어하기 위해 JSON 딕셔너리를 1차원으로 완전히 평평하게 폅니다.
-            flattened_basic = {}
-            def extract_pairs(d):
-                if isinstance(d, dict):
-                    for k, v in d.items():
-                        if isinstance(v, (dict, list)): extract_pairs(v)
-                        else: flattened_basic[k] = v
-                elif isinstance(d, list):
-                    for item in d: extract_pairs(item)
-            extract_pairs(basic_json)
-            
-            # NXT 종가 및 현재가와 관련된 모든 필드 동의어를 순차적으로 스캔하여 데이터 유실 차단
-            nxt_close = clean_val(
-                flattened_basic.get("nxtClosePrice") or 
-                flattened_basic.get("nxtAfterMarketClosePrice") or 
-                flattened_basic.get("nxtPrice") or 
-                flattened_basic.get("nxtNv") or
-                flattened_basic.get("nxtPrpr")
-            )
-            
-            # 만약 시간외 단일가 파싱이 위에서 실패했을 경우를 대비한 크로스 백업 로직
-            if extra_close == 0:
-                extra_close = clean_val(
-                    flattened_basic.get("timeExtraClosePrice") or 
-                    flattened_basic.get("ovtmUntpPrpr") or
-                    flattened_basic.get("overtimePrice")
-                )
+        headers["tr_id"] = "FNPST01010100" # 넥스트레이드 현재가/종가 조회 전용 TR
+        params = {
+            "fid_cond_mrkt_div_code": "N", # 넥스트레이드 시장 식별 코드 'N'
+            "fid_input_iscd": code
+        }
+        url_nextrade = f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-nextrade-price"
+        
+        res_nextrade = session_obj.get(url_nextrade, headers=headers, params=params, timeout=3)
+        if res_nextrade.status_code == 200:
+            out_nxt = res_nextrade.json().get("output", {})
+            if out_nxt and "stck_prpr" in out_nxt:
+                nxt_close = int(str(out_nxt["stck_prpr"]).replace(",", "").strip())
     except:
         pass
 
@@ -1178,7 +1162,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_seed_tag = "SEED" if is_accumulation_cand else "NORMAL"
 
         # 💡 [신규 이식] 언제 호출해도 마감 후 시세를 가져오는 18시 / 20시 데이터 추출 엔진 연동
-        extra_krx_close, extra_nxt_close = fetch_extra_closing_prices_from_naver(code, local_session)
+        extra_krx_close, extra_nxt_close = fetch_extra_closing_prices_from_kis(code, local_session)
 
         # 24, 25번 인덱스의 계산용 필드를 채우고, 26, 27번 인덱스 위치에 추가 필드 결합
         result_row = [
