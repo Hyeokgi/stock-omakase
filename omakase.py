@@ -530,13 +530,8 @@ global_state = ScannerState()
 
 def fetch_extra_closing_prices_from_kis(code, session_obj):
     global KIS_TOKEN
-    if not KIS_TOKEN or not KIS_APP_KEY: return 0, 0
-    if res_overtime.status_code == 200:
-            out_data = res_overtime.json().get("output", {})
-            print(f"DEBUG {code} overtime: {out_data}") # <--- 이 줄을 추가하세요
-            if out_data and "stck_prpr" in out_data:
-                extra_close = int(str(out_data["stck_prpr"]).replace(",", "").strip())
-                
+    if not KIS_TOKEN: return 0, 0
+    
     headers = {
         "Content-Type": "application/json",
         "authorization": f"Bearer {KIS_TOKEN}",
@@ -545,29 +540,43 @@ def fetch_extra_closing_prices_from_kis(code, session_obj):
         "custtype": "P"
     }
     
-    # 1. 18시 종료 KRX 시간외 단일가 종가 조회
+    def find_key(data, key):
+        """JSON 데이터 내에서 키를 재귀적으로 탐색"""
+        if isinstance(data, dict):
+            if key in data: return data[key]
+            for v in data.values():
+                res = find_key(v, key)
+                if res: return res
+        elif isinstance(data, list):
+            for item in data:
+                res = find_key(item, key)
+                if res: return res
+        return None
+
     extra_close = 0
     try:
         headers["tr_id"] = "FHKST01010200"
         params = {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}
         res = session_obj.get(f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-overtimePrice", headers=headers, params=params, timeout=3)
         if res.status_code == 200:
-            out = res.json().get("output", {})
-            if out and "stck_prpr" in out:
-                extra_close = int(str(out["stck_prpr"]).replace(",", "").strip())
-    except: pass
+            # 💡 [핵심] JSON 전체 구조에서 'stck_prpr' 키를 찾음
+            data = res.json()
+            val = find_key(data, "stck_prpr")
+            if val: extra_close = int(str(val).replace(",", "").strip())
+    except Exception as e: 
+        print(f"DEBUG: KRX조회실패 {code} {e}")
 
-    # 2. 20시 종료 넥스트레이드(NXT) 조회
     nxt_close = 0
     try:
         headers["tr_id"] = "FNPST01010100"
         params = {"fid_cond_mrkt_div_code": "N", "fid_input_iscd": code}
         res = session_obj.get(f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-nextrade-price", headers=headers, params=params, timeout=3)
         if res.status_code == 200:
-            out = res.json().get("output", {})
-            if out and "stck_prpr" in out:
-                nxt_close = int(str(out["stck_prpr"]).replace(",", "").strip())
-    except: pass
+            data = res.json()
+            val = find_key(data, "stck_prpr")
+            if val: nxt_close = int(str(val).replace(",", "").strip())
+    except Exception as e:
+        print(f"DEBUG: NXT조회실패 {code} {e}")
 
     return extra_close, nxt_close
     
