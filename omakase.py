@@ -17,6 +17,10 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ
 TARGET_PERCENT = 3.0
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
+KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
+KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
+KIS_URL_BASE = "https://openapi.koreainvestment.com:9443"
+
 now_kst_check = datetime.datetime.now(KST)
 if 2 <= now_kst_check.hour < 7:
     print(f"🌙 현재 시간({now_kst_check.strftime('%H:%M')}): 시스템을 휴식 모드로 전환합니다. (02시~07시)")
@@ -526,14 +530,9 @@ class ScannerState:
 global_state = ScannerState()
 
 def fetch_extra_closing_prices_from_kis(code, session_obj):
-    """
-    한투 정식 API를 이용해 시간외 및 넥스트레이드 종가를 조회합니다.
-    """
-    global KIS_TOKEN, KIS_APP_KEY, KIS_APP_SECRET, KIS_URL_BASE
+    global KIS_TOKEN
+    if not KIS_TOKEN or not KIS_APP_KEY: return 0, 0
     
-    if not KIS_TOKEN or not KIS_APP_KEY:
-        return 0, 0
-        
     headers = {
         "Content-Type": "application/json",
         "authorization": f"Bearer {KIS_TOKEN}",
@@ -542,13 +541,12 @@ def fetch_extra_closing_prices_from_kis(code, session_obj):
         "custtype": "P"
     }
     
-    # 1. 18시 종료 KRX 시간외 단일가 조회
+    # 1. 18시 종료 KRX 시간외 단일가 종가 조회
     extra_close = 0
     try:
-        headers["tr_id"] = "FHKST01010200" 
+        headers["tr_id"] = "FHKST01010200"
         params = {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}
-        url = f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-overtimePrice"
-        res = session_obj.get(url, headers=headers, params=params, timeout=3)
+        res = session_obj.get(f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-overtimePrice", headers=headers, params=params, timeout=3)
         if res.status_code == 200:
             out = res.json().get("output", {})
             if out and "stck_prpr" in out:
@@ -558,10 +556,9 @@ def fetch_extra_closing_prices_from_kis(code, session_obj):
     # 2. 20시 종료 넥스트레이드(NXT) 조회
     nxt_close = 0
     try:
-        headers["tr_id"] = "FNPST01010100" 
+        headers["tr_id"] = "FNPST01010100"
         params = {"fid_cond_mrkt_div_code": "N", "fid_input_iscd": code}
-        url = f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-nextrade-price"
-        res = session_obj.get(url, headers=headers, params=params, timeout=3)
+        res = session_obj.get(f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-nextrade-price", headers=headers, params=params, timeout=3)
         if res.status_code == 200:
             out = res.json().get("output", {})
             if out and "stck_prpr" in out:
@@ -571,13 +568,12 @@ def fetch_extra_closing_prices_from_kis(code, session_obj):
     return extra_close, nxt_close
     
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db):
-    global global_state
     local_session = requests.Session()
     try:
         desktop_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
         
-        url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=250&requestType=0&_={int(time.time() * 1000)}"
-        res = local_session.get(url, headers=desktop_headers, verify=False, timeout=3)
+        url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=250&requestType=0"
+        res = local_session.get(url, verify=False, timeout=3)
         root = ET.fromstring(res.text)
         
         history = []
@@ -1141,7 +1137,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_seed_tag = "SEED" if is_accumulation_cand else "NORMAL"
 
         # 💡 [신규 이식] 언제 호출해도 마감 후 시세를 가져오는 18시 / 20시 데이터 추출 엔진 연동
-        extra_krx_close, extra_nxt_close = fetch_extra_closing_prices_from_kis(code, local_session)
+        extra_krx, extra_nxt = fetch_extra_closing_prices_from_kis(code.replace("'", ""), local_session)
 
         # 24, 25번 인덱스의 계산용 필드를 채우고, 26, 27번 인덱스 위치에 추가 필드 결합
         result_row = [
@@ -1154,8 +1150,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             extra_krx_close, extra_nxt_close     # 💡 [신규] 26(시간외단일가), 27(NXT종가) 데이터 탑재 완료
         ]
         
-        return result_row, (static_info_to_save if needs_static_update else None)
-        
+        return result_row, None
     except Exception as e:
         return None, None
 
