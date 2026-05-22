@@ -531,7 +531,12 @@ global_state = ScannerState()
 def fetch_extra_closing_prices_from_kis(code, session_obj):
     global KIS_TOKEN
     if not KIS_TOKEN or not KIS_APP_KEY: return 0, 0
-    
+    if res_overtime.status_code == 200:
+            out_data = res_overtime.json().get("output", {})
+            print(f"DEBUG {code} overtime: {out_data}") # <--- 이 줄을 추가하세요
+            if out_data and "stck_prpr" in out_data:
+                extra_close = int(str(out_data["stck_prpr"]).replace(",", "").strip())
+                
     headers = {
         "Content-Type": "application/json",
         "authorization": f"Bearer {KIS_TOKEN}",
