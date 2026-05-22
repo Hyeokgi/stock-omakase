@@ -16,7 +16,6 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit"
 TARGET_PERCENT = 3.0
 KST = datetime.timezone(datetime.timedelta(hours=9))
-
 KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
 KIS_URL_BASE = "https://openapi.koreainvestment.com:9443"
@@ -1138,7 +1137,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         # 💡 [신규 이식] 언제 호출해도 마감 후 시세를 가져오는 18시 / 20시 데이터 추출 엔진 연동
         extra_krx, extra_nxt = fetch_extra_closing_prices_from_kis(code.replace("'", ""), local_session)
-
         # 24, 25번 인덱스의 계산용 필드를 채우고, 26, 27번 인덱스 위치에 추가 필드 결합
         result_row = [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", 
@@ -1147,11 +1145,11 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, my_theme_name,
             program_text, int(display_high_250d), f"{int(acc_i_buy_eok)}억",
             target_price, stop_loss, is_seed_tag, # 23, 24, 25번째 열 데이터 정형화 완성
-            extra_krx_close, extra_nxt_close     # 💡 [신규] 26(시간외단일가), 27(NXT종가) 데이터 탑재 완료
+            extra_krx, extra_nxt     # 💡 [신규] 26(시간외단일가), 27(NXT종가) 데이터 탑재 완료
         ]
         
         return result_row, None
-    except Exception as e:
+    except:
         return None, None
 
 def update_technical_data(df_theme, all_theme_map):
