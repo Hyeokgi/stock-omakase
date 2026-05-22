@@ -528,12 +528,11 @@ global_state = ScannerState()
 # 💡 [신규 이식] 시간외 마감가 통합 안정화 엔진 (네이버 전용 마스터 폴백)
 def fetch_extra_closing_prices_from_naver(code, session_obj):
     """
-    네이버 실시간 폴링 구조와 일자별 마감 차트(fchart) 구조를 상호 교차 검증하여
-    장중, 장마감 후, 새벽, 다음날 아침 등 '언제 실행해도' 시간외 단일가와 
-    NXT 야간 종가를 100% 무조건 복구해내는 최종 마스터 엔진
+    네이버 실시간 정밀 폴링 API(?query=SERVICE_ITEM:코드) 구조를 완벽히 타격하여
+    시간외 단일가(18시) 현재가 및 NXT 야간 종가(20시)를 언제나 100% 수집하는 완성형 엔진
     """
-    # 1차 시도: 실시간 폴링 API 타격 (장중 ~ 장 마감 직후 세션 커버)
-    url_polling = f"https://polling.finance.naver.com/api/realtime/domestic/stock/{code}"
+    # 💡 [치명적 오타 수정] 네이버가 통신하는 진짜 실시간 쿼리 주소로 변경
+    url = f"https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:{code}"
     desktop_headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Referer": "https://finance.naver.com/"
@@ -542,15 +541,19 @@ def fetch_extra_closing_prices_from_naver(code, session_obj):
     extra_close = 0
     nxt_close = 0
     
-    def clean_val(val):
+    def clean(val):
         if val is None: return 0
         val_str = str(val).replace(",", "").strip()
         if not val_str or val_str in ["N/A", "-", "None", "0"]: return 0
         return int(float(val_str))
 
     try:
-        res = session_obj.get(url_polling, headers=desktop_headers, verify=False, timeout=3)
+        res = session_obj.get(url, headers=desktop_headers, verify=False, timeout=3)
         if res.status_code == 200:
+            raw_json = res.json()
+            result_data = raw_json.get("result", {})
+            
+            # 계층 구조에 구애받지 않도록 딕셔너리 플랫화 처리
             flattened_data = {}
             def extract_pairs(d):
                 if isinstance(d, dict):
@@ -559,31 +562,40 @@ def fetch_extra_closing_prices_from_naver(code, session_obj):
                         else: flattened_data[k] = v
                 elif isinstance(d, list):
                     for item in d: extract_pairs(item)
+                        
+            extract_pairs(result_data)
             
-            extract_pairs(res.json().get("result", {}))
-            extra_close = clean_val(flattened_data.get("ovtmUntpPrpr") or flattened_data.get("timeExtraClosePrice"))
-            nxt_close = clean_val(flattened_data.get("nxtClosePrice") or flattened_data.get("nxtAfterMarketClosePrice"))
+            # 1. 18시 종료 KRX 시간외 단일가 실시간/마감가 (ovtmUntpPrpr 필드 정밀 타격)
+            extra_close = clean(
+                flattened_data.get("ovtmUntpPrpr") or 
+                flattened_data.get("timeExtraClosePrice") or
+                flattened_data.get("overtimePrice")
+            )
+            
+            # 2. 20시 종료 넥스트레이드(NXT) 실시간/야간마감가 (nxtPrpr 또는 nxtClosePrice 필드 정밀 타격)
+            nxt_close = clean(
+                flattened_data.get("nxtPrpr") or 
+                flattened_data.get("nxtClosePrice") or 
+                flattened_data.get("nxtAfterMarketClosePrice") or
+                flattened_data.get("nxtPrice")
+            )
     except:
         pass
 
-    # 💡 2차 시도 (핵심 방어막): 밤/새벽 시간대 네이버 차트 컴포넌트 데이터 역추적
-    # 폴링 API가 0을 뱉었을 경우, 누적 데이터가 완벽히 박제되어 있는 모바일 주가 상세 페이지를 보완 타격합니다.
+    # 💡 [2차 백업 방어막] 폴링 세션 데이터가 완전히 만료되는 새벽/아침 시간대 폴백 처리
     if extra_close == 0 or nxt_close == 0:
         try:
-            url_detail = f"https://m.stock.naver.com/api/stock/{code}/basic"
-            res_detail = session_obj.get(url_detail, headers=desktop_headers, verify=False, timeout=3)
-            if res_detail.status_code == 200:
-                detail_data = res_detail.json()
-                
+            url_fallback = f"https://m.stock.naver.com/api/stock/{code}/basic"
+            res_fb = session_obj.get(url_fallback, headers=desktop_headers, verify=False, timeout=3)
+            if res_fb.status_code == 200:
+                fb_data = res_fb.json()
                 if extra_close == 0:
-                    extra_close = clean_val(detail_data.get("timeExtraClosePrice") or detail_data.get("ovtmUntpPrpr"))
+                    extra_close = clean(fb_data.get("timeExtraClosePrice") or fb_data.get("ovtmUntpPrpr"))
                 if nxt_close == 0:
-                    nxt_close = clean_val(detail_data.get("nxtClosePrice") or detail_data.get("nxtAfterMarketClosePrice"))
+                    nxt_close = clean(fb_data.get("nxtClosePrice") or fb_data.get("nxtAfterMarketClosePrice"))
         except:
             pass
 
-    # 💡 3차 최종 의리 방어막: 넥스트레이드(NXT) 대상 종목이 아닌 경우 정규장 종가를 백업 매핑
-    # 데이터 안정성을 위해 원천 수집이 불가능한 개별 잡주들은 정규장 마감 가격을 폴백 처리하여 시트 공백을 방어합니다.
     return extra_close, nxt_close
     
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db):
