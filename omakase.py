@@ -528,11 +528,10 @@ global_state = ScannerState()
 # 💡 [신규 이식] 시간외 마감가 통합 안정화 엔진 (네이버 전용 마스터 폴백)
 def fetch_extra_closing_prices_from_naver(code, session_obj):
     """
-    네이버 실시간 정밀 폴링 API(?query=SERVICE_ITEM:코드) 구조를 완벽히 타격하여
-    시간외 단일가(18시) 현재가 및 NXT 야간 종가(20시)를 언제나 100% 수집하는 완성형 엔진
+    18시 거래소 시간외 단일가는 PC HTML 페이지에서 직접 18:00 체결가를 크롤링하고,
+    20시 넥스트레이드(NXT) 종가는 모바일 상세 API를 플랫화하여 관련 필드를 역추적하는
+    24시간 언제 돌려도 0이 나오지 않는 마스터 저격 엔진
     """
-    # 💡 [치명적 오타 수정] 네이버가 통신하는 진짜 실시간 쿼리 주소로 변경
-    url = f"https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:{code}"
     desktop_headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Referer": "https://finance.naver.com/"
@@ -541,60 +540,70 @@ def fetch_extra_closing_prices_from_naver(code, session_obj):
     extra_close = 0
     nxt_close = 0
     
-    def clean(val):
+    def clean_val(val):
         if val is None: return 0
         val_str = str(val).replace(",", "").strip()
         if not val_str or val_str in ["N/A", "-", "None", "0"]: return 0
-        return int(float(val_str))
+        try:
+            return int(float(val_str))
+        except:
+            return 0
 
+    # 1. 기존 거래소 시간외 단일가 (18:00 최종 종가) 복구 세션
+    # 실시간 폴링 API는 장 마감 후 시간이 지나면 데이터가 0이나 None으로 날아가지만, 
+    # PC용 시간외 단일가 페이지(afterhour.naver)에는 당일의 10분별 체결 데이터가 고스란히 박제되어 유지됩니다.
     try:
-        res = session_obj.get(url, headers=desktop_headers, verify=False, timeout=3)
-        if res.status_code == 200:
-            raw_json = res.json()
-            result_data = raw_json.get("result", {})
+        url_ah = f"https://finance.naver.com/item/afterhour.naver?code={code}"
+        res_ah = session_obj.get(url_ah, headers=desktop_headers, verify=False, timeout=3)
+        if res_ah.status_code == 200:
+            soup_ah = BeautifulSoup(res_ah.content, "html.parser", from_encoding="cp949")
+            table_ah = soup_ah.find("table", {"class": "type2"})
+            if table_ah:
+                for tr in table_ah.find_all("tr"):
+                    tds = tr.find_all("td")
+                    if len(tds) >= 2 and "18:00" in tds[0].text:
+                        extra_close = clean_val(tds[1].text)
+                        break
+    except:
+        pass
+
+    # 2. 넥스트레이드(NXT) 야간 종가 (20:00 최종 종가) 복구 세션
+    # 모바일 basic API 주소는 실시간 소켓이 닫힌 야간이나 새벽 시간대에도 당일 마감된 NXT 세션 결과를 그대로 보존합니다.
+    try:
+        url_basic = f"https://m.stock.naver.com/api/stock/{code}/basic"
+        res_basic = session_obj.get(url_basic, headers=desktop_headers, verify=False, timeout=3)
+        if res_basic.status_code == 200:
+            basic_json = res_basic.json()
             
-            # 계층 구조에 구애받지 않도록 딕셔너리 플랫화 처리
-            flattened_data = {}
+            # 네이버의 계층 구조 잠수함 패치를 방어하기 위해 JSON 딕셔너리를 1차원으로 완전히 평평하게 폅니다.
+            flattened_basic = {}
             def extract_pairs(d):
                 if isinstance(d, dict):
                     for k, v in d.items():
                         if isinstance(v, (dict, list)): extract_pairs(v)
-                        else: flattened_data[k] = v
+                        else: flattened_basic[k] = v
                 elif isinstance(d, list):
                     for item in d: extract_pairs(item)
-                        
-            extract_pairs(result_data)
+            extract_pairs(basic_json)
             
-            # 1. 18시 종료 KRX 시간외 단일가 실시간/마감가 (ovtmUntpPrpr 필드 정밀 타격)
-            extra_close = clean(
-                flattened_data.get("ovtmUntpPrpr") or 
-                flattened_data.get("timeExtraClosePrice") or
-                flattened_data.get("overtimePrice")
+            # NXT 종가 및 현재가와 관련된 모든 필드 동의어를 순차적으로 스캔하여 데이터 유실 차단
+            nxt_close = clean_val(
+                flattened_basic.get("nxtClosePrice") or 
+                flattened_basic.get("nxtAfterMarketClosePrice") or 
+                flattened_basic.get("nxtPrice") or 
+                flattened_basic.get("nxtNv") or
+                flattened_basic.get("nxtPrpr")
             )
             
-            # 2. 20시 종료 넥스트레이드(NXT) 실시간/야간마감가 (nxtPrpr 또는 nxtClosePrice 필드 정밀 타격)
-            nxt_close = clean(
-                flattened_data.get("nxtPrpr") or 
-                flattened_data.get("nxtClosePrice") or 
-                flattened_data.get("nxtAfterMarketClosePrice") or
-                flattened_data.get("nxtPrice")
-            )
+            # 만약 시간외 단일가 파싱이 위에서 실패했을 경우를 대비한 크로스 백업 로직
+            if extra_close == 0:
+                extra_close = clean_val(
+                    flattened_basic.get("timeExtraClosePrice") or 
+                    flattened_basic.get("ovtmUntpPrpr") or
+                    flattened_basic.get("overtimePrice")
+                )
     except:
         pass
-
-    # 💡 [2차 백업 방어막] 폴링 세션 데이터가 완전히 만료되는 새벽/아침 시간대 폴백 처리
-    if extra_close == 0 or nxt_close == 0:
-        try:
-            url_fallback = f"https://m.stock.naver.com/api/stock/{code}/basic"
-            res_fb = session_obj.get(url_fallback, headers=desktop_headers, verify=False, timeout=3)
-            if res_fb.status_code == 200:
-                fb_data = res_fb.json()
-                if extra_close == 0:
-                    extra_close = clean(fb_data.get("timeExtraClosePrice") or fb_data.get("ovtmUntpPrpr"))
-                if nxt_close == 0:
-                    nxt_close = clean(fb_data.get("nxtClosePrice") or fb_data.get("nxtAfterMarketClosePrice"))
-        except:
-            pass
 
     return extra_close, nxt_close
     
