@@ -527,67 +527,46 @@ global_state = ScannerState()
 
 def fetch_extra_closing_prices_from_kis(code, session_obj):
     """
-    한국투자증권 정식 Open API(TR 코드) 자원을 호출하여
-    18시 거래소 시간외 단일가 및 20시 넥스트레이드(NXT) 야간 최종 종가를
-    24시간 언제 실행해도 오차 없이 100% 원화 숫자로 뽑아내는 오피셜 엔진
+    한투 정식 API를 이용해 시간외 및 넥스트레이드 종가를 조회합니다.
     """
-    # 글로벌 선언된 KIS 인증 자원 및 기본 URL 베이스 참조
     global KIS_TOKEN, KIS_APP_KEY, KIS_APP_SECRET, KIS_URL_BASE
     
-    extra_close = 0
-    nxt_close = 0
-    
-    # 토큰이나 키 세팅이 누락되었다면 안전하게 0으로 리턴 처리
     if not KIS_TOKEN or not KIS_APP_KEY:
         return 0, 0
         
-    # KIS API 규격 공통 헤더 세팅
     headers = {
         "Content-Type": "application/json",
         "authorization": f"Bearer {KIS_TOKEN}",
         "appkey": KIS_APP_KEY,
         "appsecret": KIS_APP_SECRET,
-        "custtype": "P" # 개인 투자자 고정
+        "custtype": "P"
     }
     
-    # ------------------------------------------------------------------
-    # 1. 기존 거래소 시간외 단일가 종가 (18시 마감가) 저격
-    # ------------------------------------------------------------------
+    # 1. 18시 종료 KRX 시간외 단일가 조회
+    extra_close = 0
     try:
-        headers["tr_id"] = "FHKST01010200" # 국내주식 시간외단일가 현재가 조회 TR
-        params = {
-            "fid_cond_mrkt_div_code": "J", # 주식 시장 구분 코드
-            "fid_input_iscd": code
-        }
-        url_overtime = f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-overtimePrice"
-        
-        res_overtime = session_obj.get(url_overtime, headers=headers, params=params, timeout=3)
-        if res_overtime.status_code == 200:
-            out_data = res_overtime.json().get("output", {})
-            # stck_prpr 필드에 단일가 최종 체결 가격이 정산되어 담겨있음
-            if out_data and "stck_prpr" in out_data:
-                extra_close = int(str(out_data["stck_prpr"]).replace(",", "").strip())
-    except:
-        pass
+        headers["tr_id"] = "FHKST01010200" 
+        params = {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}
+        url = f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-overtimePrice"
+        res = session_obj.get(url, headers=headers, params=params, timeout=3)
+        if res.status_code == 200:
+            out = res.json().get("output", {})
+            if out and "stck_prpr" in out:
+                extra_close = int(str(out["stck_prpr"]).replace(",", "").strip())
+    except: pass
 
-    # ------------------------------------------------------------------
-    # 2. 넥스트레이드(NXT) 애프터마켓 종가 (20시 마감가) 저격
-    # ------------------------------------------------------------------
+    # 2. 20시 종료 넥스트레이드(NXT) 조회
+    nxt_close = 0
     try:
-        headers["tr_id"] = "FNPST01010100" # 넥스트레이드 현재가/종가 조회 전용 TR
-        params = {
-            "fid_cond_mrkt_div_code": "N", # 넥스트레이드 시장 식별 코드 'N'
-            "fid_input_iscd": code
-        }
-        url_nextrade = f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-nextrade-price"
-        
-        res_nextrade = session_obj.get(url_nextrade, headers=headers, params=params, timeout=3)
-        if res_nextrade.status_code == 200:
-            out_nxt = res_nextrade.json().get("output", {})
-            if out_nxt and "stck_prpr" in out_nxt:
-                nxt_close = int(str(out_nxt["stck_prpr"]).replace(",", "").strip())
-    except:
-        pass
+        headers["tr_id"] = "FNPST01010100" 
+        params = {"fid_cond_mrkt_div_code": "N", "fid_input_iscd": code}
+        url = f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-nextrade-price"
+        res = session_obj.get(url, headers=headers, params=params, timeout=3)
+        if res.status_code == 200:
+            out = res.json().get("output", {})
+            if out and "stck_prpr" in out:
+                nxt_close = int(str(out["stck_prpr"]).replace(",", "").strip())
+    except: pass
 
     return extra_close, nxt_close
     
