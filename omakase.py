@@ -532,26 +532,8 @@ def fetch_extra_closing_prices_from_kis(code, session_obj):
 
     global KIS_TOKEN
 
-    # =========================
-    # 안전 숫자 변환 함수
-    # =========================
-    def safe_int(value, default=0):
-        try:
-            if value is None:
-                return default
-
-            value = str(value).replace(',', '').strip()
-
-            if value == '':
-                return default
-
-            return int(float(value))
-
-        except Exception:
-            return default
-
     if not KIS_TOKEN:
-        return 0, 0
+        return "", ""
 
     headers = {
         "Content-Type": "application/json",
@@ -561,8 +543,19 @@ def fetch_extra_closing_prices_from_kis(code, session_obj):
         "custtype": "P"
     }
 
-    extra_close = 0
-    nxt_close = 0
+    # -----------------------------
+    # 안전 숫자 변환
+    # -----------------------------
+    def safe_int(v, default=0):
+        try:
+            if v in [None, "", "null"]:
+                return default
+            return int(str(v).replace(",", "").strip())
+        except:
+            return default
+
+    extra_close = ""
+    nxt_close = ""
 
     # =====================================
     # 시간외단일가
@@ -592,11 +585,33 @@ def fetch_extra_closing_prices_from_kis(code, session_obj):
 
             output1 = data.get("output1", {})
 
-            extra_close = safe_int(
+            overtime_price = safe_int(
                 output1.get("ovtm_untp_prpr", 0)
             )
 
-            print(f"✅ 시간외단일가 성공 {code} = {extra_close}")
+            # 거래량
+            overtime_vol = safe_int(
+                output1.get("ovtm_untp_vol", 0)
+            )
+
+            # -----------------------------
+            # NXT 여부 판별
+            # -----------------------------
+            # 거래량 거의 없고 가격 동일하면
+            # NXT 종목 가능성 높음
+            # -----------------------------
+            if overtime_vol <= 10:
+
+                # NXT 표시
+                extra_close = "NXT"
+
+                print(f"🟣 NXT 추정 종목 {code}")
+
+            else:
+
+                extra_close = overtime_price
+
+                print(f"✅ 시간외단일가 성공 {code} = {extra_close}")
 
         else:
             print(f"❌ 시간외단일가 실패 {code}")
@@ -629,44 +644,39 @@ def fetch_extra_closing_prices_from_kis(code, session_obj):
 
         # 응답 자체 없음
         if not res.text.strip():
+
             print(f"⚠️ NXT 응답이 비어있음 {code}")
-            return extra_close, 0
+
+            # NXT 종목이면 fallback
+            if extra_close == "NXT":
+                nxt_close = ""
+
+            return extra_close, nxt_close
 
         data = res.json()
-
-        print(data)
 
         if data.get("rt_cd") == "0":
 
             output1 = data.get("output1", {})
 
-            # 여러 응답 구조 대응
-            nxt_close = safe_int(
-                output1.get("nxt_prpr")
-                or output1.get("stck_prpr")
-                or output1.get("ovtm_untp_prpr")
-                or 0
+            nxt_price = safe_int(
+                output1.get("nxt_prpr", 0)
             )
 
-            # output1이 비어있고 output2만 있는 경우 대응
-            if nxt_close == 0:
+            if nxt_price > 0:
 
-                output2 = data.get("output2", [])
+                nxt_close = nxt_price
 
-                if isinstance(output2, list) and len(output2) > 0:
+                print(f"✅ NXT 성공 {code} = {nxt_close}")
 
-                    first_row = output2[0]
+            else:
 
-                    nxt_close = safe_int(
-                        first_row.get("nxt_prpr")
-                        or first_row.get("stck_prpr")
-                        or first_row.get("ovtm_untp_prpr")
-                        or 0
-                    )
+                print(f"⚠️ NXT 가격 없음 {code}")
 
-            print(f"✅ NXT 성공 {code} = {nxt_close}")
+                nxt_close = ""
 
         else:
+
             print(f"❌ NXT 실패 {code}")
             print(data)
 
