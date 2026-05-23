@@ -528,12 +528,12 @@ class ScannerState:
 
 global_state = ScannerState()
 
-def fetch_extra_closing_prices_from_kis(code, session_obj):
+def fetch_extra_closing_prices_from_kis(code, session_obj, regular_close=0):
 
     global KIS_TOKEN
 
     if not KIS_TOKEN:
-        return "", ""
+        return "", "", ""
 
     headers = {
         "Content-Type": "application/json",
@@ -554,13 +554,14 @@ def fetch_extra_closing_prices_from_kis(code, session_obj):
         except:
             return default
 
-    extra_close = ""
+    krx_close = ""
     nxt_close = ""
+    integrated_close = ""
 
     is_nxt = False
 
     # =====================================
-    # 1. 시간외단일가
+    # 1. KRX 시간외단일가
     # =====================================
     try:
 
@@ -580,7 +581,7 @@ def fetch_extra_closing_prices_from_kis(code, session_obj):
 
         data = res.json()
 
-        print(f"\n[시간외단일가 RAW 응답] {code}")
+        print(f"\n[KRX 시간외단일가 RAW] {code}")
         print(data)
 
         if data.get("rt_cd") == "0":
@@ -595,81 +596,36 @@ def fetch_extra_closing_prices_from_kis(code, session_obj):
                 output1.get("ovtm_untp_vol", 0)
             )
 
-            # -----------------------------
-            # NXT 종목 추정
-            # -----------------------------
+            # ----------------------------------
+            # NXT 종목 판별
+            # ----------------------------------
+            # NXT 종목은 시간외단일가 거래 불가
+            # 거래량 거의 없음
+            # ----------------------------------
             if overtime_vol <= 10:
 
                 is_nxt = True
-                extra_close = "NXT"
+                krx_close = "NXT"
 
-                print(f"🟣 NXT 종목 추정 {code}")
+                print(f"🟣 NXT 종목 감지 {code}")
 
             else:
 
-                extra_close = overtime_price
+                krx_close = overtime_price
 
-                print(f"✅ 시간외단일가 성공 {code} = {extra_close}")
-
-        else:
-
-            print(f"❌ 시간외단일가 실패 {code}")
-            print(data)
+                print(f"✅ KRX 시간외단일가 {code} = {krx_close}")
 
     except Exception as e:
-        print(f"[시간외단일가 예외] {code} : {e}")
+        print(f"[KRX 시간외단일가 예외] {code} : {e}")
 
     # =====================================
-    # 2. NXT 전용 API
+    # 2. NXT 20시 종가
     # =====================================
-    try:
-
-        headers["tr_id"] = "FHPST02430000"
-
-        params = {
-            "fid_cond_mrkt_div_code": "N",
-            "fid_input_iscd": code
-        }
-
-        res = session_obj.get(
-            f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-nxt-trade-price",
-            headers=headers,
-            params=params,
-            timeout=5
-        )
-
-        print(f"\n[NXT RAW 응답] {code}")
-        print(res.text)
-
-        if res.text.strip():
-
-            data = res.json()
-
-            if data.get("rt_cd") == "0":
-
-                output1 = data.get("output1", {})
-
-                nxt_price = safe_int(
-                    output1.get("nxt_prpr", 0)
-                )
-
-                if nxt_price > 0:
-
-                    nxt_close = nxt_price
-
-                    print(f"✅ NXT API 성공 {code} = {nxt_close}")
-
-    except Exception as e:
-        print(f"[NXT API 예외] {code} : {e}")
-
-    # =====================================
-    # 3. 우회수집
-    # 시간외시간별체결 마지막값 사용
-    # =====================================
-    if is_nxt and not nxt_close:
+    if is_nxt:
 
         try:
 
+            # 우회용 시간외체결 API
             headers["tr_id"] = "FHPST02310000"
 
             params = {
@@ -686,7 +642,7 @@ def fetch_extra_closing_prices_from_kis(code, session_obj):
 
             data = res.json()
 
-            print(f"\n[NXT 우회 RAW 응답] {code}")
+            print(f"\n[NXT 우회 RAW] {code}")
             print(data)
 
             if data.get("rt_cd") == "0":
@@ -695,23 +651,58 @@ def fetch_extra_closing_prices_from_kis(code, session_obj):
 
                 if output2:
 
-                    # 마지막 체결값
+                    # 최신 체결
                     last_item = output2[0]
 
                     nxt_price = safe_int(
                         last_item.get("ovtm_untp_prpr", 0)
                     )
 
+                    nxt_vol = safe_int(
+                        last_item.get("ovtm_untp_vol", 0)
+                    )
+
                     if nxt_price > 0:
 
                         nxt_close = nxt_price
 
-                        print(f"✅ NXT 우회 성공 {code} = {nxt_close}")
+                        print(
+                            f"✅ NXT 20시종가 {code} = "
+                            f"{nxt_close} / 거래량={nxt_vol}"
+                        )
 
         except Exception as e:
             print(f"[NXT 우회 예외] {code} : {e}")
 
-    return extra_close, nxt_close
+    # =====================================
+    # 3. 통합종가(KRX + NXT)
+    # =====================================
+
+    # 우선순위:
+    # NXT > KRX 시간외 > 일반종가
+
+    if isinstance(nxt_close, int) and nxt_close > 0:
+
+        integrated_close = nxt_close
+
+    elif isinstance(krx_close, int) and krx_close > 0:
+
+        integrated_close = krx_close
+
+    elif regular_close:
+
+        integrated_close = regular_close
+
+    else:
+
+        integrated_close = ""
+
+    print(
+        f"📌 통합종가 {code} = "
+        f"{integrated_close}"
+    )
+
+    return krx_close, nxt_close, integrated_close
     
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db):
     local_session = requests.Session()
