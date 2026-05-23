@@ -532,6 +532,24 @@ def fetch_extra_closing_prices_from_kis(code, session_obj):
 
     global KIS_TOKEN
 
+    # =========================
+    # 안전 숫자 변환 함수
+    # =========================
+    def safe_int(value, default=0):
+        try:
+            if value is None:
+                return default
+
+            value = str(value).replace(',', '').strip()
+
+            if value == '':
+                return default
+
+            return int(float(value))
+
+        except Exception:
+            return default
+
     if not KIS_TOKEN:
         return 0, 0
 
@@ -609,19 +627,42 @@ def fetch_extra_closing_prices_from_kis(code, session_obj):
         print(f"\n[NXT RAW 응답] {code}")
         print(res.text)
 
+        # 응답 자체 없음
         if not res.text.strip():
             print(f"⚠️ NXT 응답이 비어있음 {code}")
             return extra_close, 0
 
         data = res.json()
 
+        print(data)
+
         if data.get("rt_cd") == "0":
 
             output1 = data.get("output1", {})
 
+            # 여러 응답 구조 대응
             nxt_close = safe_int(
-                output1.get("nxt_prpr", 0)
+                output1.get("nxt_prpr")
+                or output1.get("stck_prpr")
+                or output1.get("ovtm_untp_prpr")
+                or 0
             )
+
+            # output1이 비어있고 output2만 있는 경우 대응
+            if nxt_close == 0:
+
+                output2 = data.get("output2", [])
+
+                if isinstance(output2, list) and len(output2) > 0:
+
+                    first_row = output2[0]
+
+                    nxt_close = safe_int(
+                        first_row.get("nxt_prpr")
+                        or first_row.get("stck_prpr")
+                        or first_row.get("ovtm_untp_prpr")
+                        or 0
+                    )
 
             print(f"✅ NXT 성공 {code} = {nxt_close}")
 
