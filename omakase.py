@@ -1159,7 +1159,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, my_theme_name,
             program_text, int(display_high_250d), f"{int(acc_i_buy_eok)}억",
             target_price, stop_loss, is_seed_tag, # 23, 24, 25번째 열 데이터 정형화 완성
-            extra_krx, extra_nxt     # 💡 [신규] 26(시간외단일가), 27(NXT종가) 데이터 탑재 완료
+            extra_krx_close, extra_nxt_close   # 💡 [신규] 26(시간외단일가), 27(NXT종가) 데이터 탑재 완료
         ]
         
         return result_row, None
