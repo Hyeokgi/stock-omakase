@@ -1274,7 +1274,11 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_seed_tag = "SEED" if is_accumulation_cand else "NORMAL"
 
         # 💡 [신규 이식] 언제 호출해도 마감 후 시세를 가져오는 18시 / 20시 데이터 추출 엔진 연동
-        extra_krx_close, extra_nxt_close = fetch_extra_closing_prices_from_kis(code.replace("'", ""), local_session)
+        extra_krx_close, extra_nxt_close, integrated_close = fetch_extra_closing_prices_from_kis(
+    code.replace("'", ""),
+    local_session,
+    current_price
+)
         # 24, 25번 인덱스의 계산용 필드를 채우고, 26, 27번 인덱스 위치에 추가 필드 결합
         result_row = [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", 
@@ -1282,9 +1286,13 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             score_display, master_tajeom, today_high, today_low, int(display_high_60d), 
             market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, my_theme_name,
             program_text, int(display_high_250d), f"{int(acc_i_buy_eok)}억",
-            target_price, stop_loss, is_seed_tag, # 23, 24, 25번째 열 데이터 정형화 완성
-            extra_krx_close, extra_nxt_close   # 💡 [신규] 26(시간외단일가), 27(NXT종가) 데이터 탑재 완료
-        ]
+            target_price,
+            stop_loss,
+            is_seed_tag,
+            extra_krx_close,      # AA
+            extra_nxt_close,      # AB
+            integrated_close      # AC
+            ]
         
         return result_row, None
     except:
@@ -1498,11 +1506,11 @@ def update_technical_data(df_theme, all_theme_map):
                 "종목명", "종목코드", "현재가", "등락률", "5일평균", "20일평균", "거래량비율", "AI신호",
                 "마스터타점", "브리핑상태", "당일고가", "당일저가", "60일고가", "시가총액", "캔들상태",
                 "전고거리", "20일이격", "대장구분", "거래과열", "테마명", "프로그램", "52주고가",
-                "기관수급", "목표가(AI)", "손절가(AI)", "종목쿼터", "시간외단일가(18시)", "NXT야간종가(20시)"
+                "기관수급", "목표가(AI)", "손절가(AI)", "종목쿼터", "시간외단일가(18시)", "NXT야간종가(20시)", "KRX/NXT통합종가"
             ]
             
             # 수집 데이터 전체(28개 필드 전체)를 주가데이터_보조 시트에 다이렉트로 슬라이싱 다운로드
-            helper_sheet_data = [extended_headers] + [r[:28] for r in results]
+            helper_sheet_data = [extended_headers] + [r[:29] for r in results]
             helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
             print(f"✅ 총 {len(results)}개 종목 판독 완료 (시간외단일가 및 NXT야간종가 포함하여 주가데이터_보조 완료)")
             
