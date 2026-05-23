@@ -529,10 +529,6 @@ class ScannerState:
 global_state = ScannerState()
 
 def fetch_extra_closing_prices_from_kis(code, session_obj):
-    """
-    시간외단일가(18시), NXT야간종가(20시) 조회
-    실패 시 0 반환
-    """
 
     global KIS_TOKEN
 
@@ -550,10 +546,11 @@ def fetch_extra_closing_prices_from_kis(code, session_obj):
     extra_close = 0
     nxt_close = 0
 
-    # =========================
-    # 1. 시간외단일가 조회
-    # =========================
+    # =====================================
+    # 시간외단일가
+    # =====================================
     try:
+
         headers["tr_id"] = "FHPST02320000"
 
         params = {
@@ -568,39 +565,33 @@ def fetch_extra_closing_prices_from_kis(code, session_obj):
             timeout=5
         )
 
-        print(f"\n[시간외단일가 RAW 응답] {code}")
-        print(res.text)
-
         data = res.json()
 
-        # 실제 성공 여부 확인
+        print(f"\n[시간외단일가 RAW 응답] {code}")
+        print(data)
+
         if data.get("rt_cd") == "0":
 
-            # 가능한 필드들 탐색
-            candidate_keys = [
-                "stck_prpr",
-                "ovtm_untp_prpr",
-                "close",
-                "price"
-            ]
+            output1 = data.get("output1", {})
 
-            for key in candidate_keys:
-                val = find_key(data, key)
-                if val not in [None, "", "0", 0]:
-                    extra_close = safe_int(val)
-                    break
+            extra_close = safe_int(
+                output1.get("ovtm_untp_prpr", 0)
+            )
+
+            print(f"✅ 시간외단일가 성공 {code} = {extra_close}")
 
         else:
-            print(f"[시간외단일가 실패] {code}")
+            print(f"❌ 시간외단일가 실패 {code}")
             print(data)
 
     except Exception as e:
         print(f"[시간외단일가 예외] {code} : {e}")
 
-    # =========================
-    # 2. NXT 야간종가 조회
-    # =========================
+    # =====================================
+    # NXT 야간종가
+    # =====================================
     try:
+
         headers["tr_id"] = "FHPST02430000"
 
         params = {
@@ -618,25 +609,24 @@ def fetch_extra_closing_prices_from_kis(code, session_obj):
         print(f"\n[NXT RAW 응답] {code}")
         print(res.text)
 
+        if not res.text.strip():
+            print(f"⚠️ NXT 응답이 비어있음 {code}")
+            return extra_close, 0
+
         data = res.json()
 
         if data.get("rt_cd") == "0":
 
-            candidate_keys = [
-                "stck_prpr",
-                "nxt_prpr",
-                "close",
-                "price"
-            ]
+            output1 = data.get("output1", {})
 
-            for key in candidate_keys:
-                val = find_key(data, key)
-                if val not in [None, "", "0", 0]:
-                    nxt_close = safe_int(val)
-                    break
+            nxt_close = safe_int(
+                output1.get("nxt_prpr", 0)
+            )
+
+            print(f"✅ NXT 성공 {code} = {nxt_close}")
 
         else:
-            print(f"[NXT 실패] {code}")
+            print(f"❌ NXT 실패 {code}")
             print(data)
 
     except Exception as e:
