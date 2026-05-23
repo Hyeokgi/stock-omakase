@@ -543,9 +543,9 @@ def fetch_extra_closing_prices_from_kis(code, session_obj):
         "custtype": "P"
     }
 
-    # -----------------------------
+    # ----------------------------------
     # 안전 숫자 변환
-    # -----------------------------
+    # ----------------------------------
     def safe_int(v, default=0):
         try:
             if v in [None, "", "null"]:
@@ -557,8 +557,10 @@ def fetch_extra_closing_prices_from_kis(code, session_obj):
     extra_close = ""
     nxt_close = ""
 
+    is_nxt = False
+
     # =====================================
-    # 시간외단일가
+    # 1. 시간외단일가
     # =====================================
     try:
 
@@ -589,23 +591,19 @@ def fetch_extra_closing_prices_from_kis(code, session_obj):
                 output1.get("ovtm_untp_prpr", 0)
             )
 
-            # 거래량
             overtime_vol = safe_int(
                 output1.get("ovtm_untp_vol", 0)
             )
 
             # -----------------------------
-            # NXT 여부 판별
-            # -----------------------------
-            # 거래량 거의 없고 가격 동일하면
-            # NXT 종목 가능성 높음
+            # NXT 종목 추정
             # -----------------------------
             if overtime_vol <= 10:
 
-                # NXT 표시
+                is_nxt = True
                 extra_close = "NXT"
 
-                print(f"🟣 NXT 추정 종목 {code}")
+                print(f"🟣 NXT 종목 추정 {code}")
 
             else:
 
@@ -614,6 +612,7 @@ def fetch_extra_closing_prices_from_kis(code, session_obj):
                 print(f"✅ 시간외단일가 성공 {code} = {extra_close}")
 
         else:
+
             print(f"❌ 시간외단일가 실패 {code}")
             print(data)
 
@@ -621,7 +620,7 @@ def fetch_extra_closing_prices_from_kis(code, session_obj):
         print(f"[시간외단일가 예외] {code} : {e}")
 
     # =====================================
-    # NXT 야간종가
+    # 2. NXT 전용 API
     # =====================================
     try:
 
@@ -642,46 +641,75 @@ def fetch_extra_closing_prices_from_kis(code, session_obj):
         print(f"\n[NXT RAW 응답] {code}")
         print(res.text)
 
-        # 응답 자체 없음
-        if not res.text.strip():
+        if res.text.strip():
 
-            print(f"⚠️ NXT 응답이 비어있음 {code}")
+            data = res.json()
 
-            # NXT 종목이면 fallback
-            if extra_close == "NXT":
-                nxt_close = ""
+            if data.get("rt_cd") == "0":
 
-            return extra_close, nxt_close
+                output1 = data.get("output1", {})
 
-        data = res.json()
+                nxt_price = safe_int(
+                    output1.get("nxt_prpr", 0)
+                )
 
-        if data.get("rt_cd") == "0":
+                if nxt_price > 0:
 
-            output1 = data.get("output1", {})
+                    nxt_close = nxt_price
 
-            nxt_price = safe_int(
-                output1.get("nxt_prpr", 0)
-            )
-
-            if nxt_price > 0:
-
-                nxt_close = nxt_price
-
-                print(f"✅ NXT 성공 {code} = {nxt_close}")
-
-            else:
-
-                print(f"⚠️ NXT 가격 없음 {code}")
-
-                nxt_close = ""
-
-        else:
-
-            print(f"❌ NXT 실패 {code}")
-            print(data)
+                    print(f"✅ NXT API 성공 {code} = {nxt_close}")
 
     except Exception as e:
-        print(f"[NXT 예외] {code} : {e}")
+        print(f"[NXT API 예외] {code} : {e}")
+
+    # =====================================
+    # 3. 우회수집
+    # 시간외시간별체결 마지막값 사용
+    # =====================================
+    if is_nxt and not nxt_close:
+
+        try:
+
+            headers["tr_id"] = "FHPST02310000"
+
+            params = {
+                "fid_cond_mrkt_div_code": "J",
+                "fid_input_iscd": code
+            }
+
+            res = session_obj.get(
+                f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-time-overtimeconclusion",
+                headers=headers,
+                params=params,
+                timeout=5
+            )
+
+            data = res.json()
+
+            print(f"\n[NXT 우회 RAW 응답] {code}")
+            print(data)
+
+            if data.get("rt_cd") == "0":
+
+                output2 = data.get("output2", [])
+
+                if output2:
+
+                    # 마지막 체결값
+                    last_item = output2[0]
+
+                    nxt_price = safe_int(
+                        last_item.get("ovtm_untp_prpr", 0)
+                    )
+
+                    if nxt_price > 0:
+
+                        nxt_close = nxt_price
+
+                        print(f"✅ NXT 우회 성공 {code} = {nxt_close}")
+
+        except Exception as e:
+            print(f"[NXT 우회 예외] {code} : {e}")
 
     return extra_close, nxt_close
     
