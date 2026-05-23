@@ -69,10 +69,6 @@ def is_mega_cap_or_not_earnings(title):
         return True
     return False
 
-KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
-KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
-KIS_URL_BASE = "https://openapi.koreainvestment.com:9443"
-
 def get_kis_access_token():
     if not KIS_APP_KEY or not KIS_APP_SECRET: return None
     try:
@@ -529,12 +525,9 @@ class ScannerState:
 global_state = ScannerState()
 
 def fetch_extra_closing_prices_from_kis(code, session_obj, regular_close=0):
-
     global KIS_TOKEN
-
-    if not KIS_TOKEN:
-        return "", "", ""
-
+    if not KIS_TOKEN: return 0, 0, regular_close
+    
     headers = {
         "Content-Type": "application/json",
         "authorization": f"Bearer {KIS_TOKEN}",
@@ -542,165 +535,76 @@ def fetch_extra_closing_prices_from_kis(code, session_obj, regular_close=0):
         "appsecret": KIS_APP_SECRET,
         "custtype": "P"
     }
-
-    # ----------------------------------
-    # 안전 숫자 변환
-    # ----------------------------------
+    
     def safe_int(v, default=0):
         try:
-            if v in [None, "", "null"]:
-                return default
+            if v in [None, "", "null"]: return default
             return int(str(v).replace(",", "").strip())
         except:
             return default
 
-    krx_close = ""
-    nxt_close = ""
-    integrated_close = ""
+    def find_key(data, key):
+        if isinstance(data, dict):
+            if key in data: return data[key]
+            for v in data.values():
+                res = find_key(v, key)
+                if res is not None: return res
+        elif isinstance(data, list):
+            for item in data:
+                res = find_key(item, key)
+                if res is not None: return res
+        return None
 
+    krx_close = 0
+    nxt_close = 0
     is_nxt = False
 
     # =====================================
-    # 1. KRX 시간외단일가
+    # 1. KRX 시간외단일가 조회
     # =====================================
     try:
-
         headers["tr_id"] = "FHPST02320000"
-
-        params = {
-            "fid_cond_mrkt_div_code": "J",
-            "fid_input_iscd": code
-        }
-
-        res = session_obj.get(
-            f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-daily-overtimeprice",
-            headers=headers,
-            params=params,
-            timeout=5
-        )
-
-        data = res.json()
-
-        print(f"\n[KRX 시간외단일가 RAW] {code}")
-        print(data)
-
-        if data.get("rt_cd") == "0":
-
-            output1 = data.get("output1", {})
-
-            overtime_price = safe_int(
-                output1.get("ovtm_untp_prpr", 0)
-            )
-
-            overtime_vol = safe_int(
-                output1.get("ovtm_untp_vol", 0)
-            )
-
-            # ----------------------------------
-            # NXT 종목 판별
-            # ----------------------------------
-            # NXT 종목은 시간외단일가 거래 불가
-            # 거래량 거의 없음
-            # ----------------------------------
+        params = {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}
+        res = session_obj.get(f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-daily-overtimeprice", headers=headers, params=params, timeout=5)
+        if res.status_code == 200:
+            data = res.json()
+            overtime_price = safe_int(find_key(data, "ovtm_untp_prpr"))
+            overtime_vol = safe_int(find_key(data, "ovtm_untp_vol"))
+            
             if overtime_vol <= 10:
-
                 is_nxt = True
                 krx_close = "NXT"
-
-                print(f"🟣 NXT 종목 감지 {code}")
-
             else:
-
                 krx_close = overtime_price
-
-                print(f"✅ KRX 시간외단일가 {code} = {krx_close}")
-
-    except Exception as e:
-        print(f"[KRX 시간외단일가 예외] {code} : {e}")
+    except Exception as e: 
+        print(f"DEBUG: KRX조회실패 {code} {e}")
 
     # =====================================
-    # 2. NXT 20시 종가
+    # 2. NXT 야간시장 종가 정식 조회 (시장구분 코드 "N")
     # =====================================
-    if is_nxt:
-
-        try:
-
-            # 우회용 시간외체결 API
-            headers["tr_id"] = "FHPST02310000"
-
-            params = {
-                "fid_cond_mrkt_div_code": "J",
-                "fid_input_iscd": code
-            }
-
-            res = session_obj.get(
-                f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-time-overtimeconclusion",
-                headers=headers,
-                params=params,
-                timeout=5
-            )
-
+    try:
+        # 넥스트레이드 전용 현재가/정산가 타격 엔드포인트 연동
+        headers["tr_id"] = "FNPST01010100"
+        params = {"fid_cond_mrkt_div_code": "N", "fid_input_iscd": code}
+        res = session_obj.get(f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-nextrade-price", headers=headers, params=params, timeout=5)
+        if res.status_code == 200:
             data = res.json()
-
-            print(f"\n[NXT 우회 RAW] {code}")
-            print(data)
-
-            if data.get("rt_cd") == "0":
-
-                output2 = data.get("output2", [])
-
-                if output2:
-
-                    # 최신 체결
-                    last_item = output2[0]
-
-                    nxt_price = safe_int(
-                        last_item.get("ovtm_untp_prpr", 0)
-                    )
-
-                    nxt_vol = safe_int(
-                        last_item.get("ovtm_untp_vol", 0)
-                    )
-
-                    if nxt_price > 0:
-
-                        nxt_close = nxt_price
-
-                        print(
-                            f"✅ NXT 20시종가 {code} = "
-                            f"{nxt_close} / 거래량={nxt_vol}"
-                        )
-
-        except Exception as e:
-            print(f"[NXT 우회 예외] {code} : {e}")
+            nxt_price = safe_int(find_key(data, "stck_prpr"))
+            if nxt_price > 0:
+                nxt_close = nxt_price
+                print(f"✅ NXT 20시 종가 수신 완료 {code} = {nxt_close}")
+    except Exception as e:
+        print(f"DEBUG: NXT조회실패 {code} {e}")
 
     # =====================================
-    # 3. 통합종가(KRX + NXT)
+    # 3. 통합종가 산정 (우선순위: NXT 야간종가 > KRX 시간외단일가 > 장중 정규종가)
     # =====================================
-
-    # 우선순위:
-    # NXT > KRX 시간외 > 일반종가
-
     if isinstance(nxt_close, int) and nxt_close > 0:
-
         integrated_close = nxt_close
-
     elif isinstance(krx_close, int) and krx_close > 0:
-
         integrated_close = krx_close
-
-    elif regular_close:
-
-        integrated_close = regular_close
-
     else:
-
-        integrated_close = ""
-
-    print(
-        f"📌 통합종가 {code} = "
-        f"{integrated_close}"
-    )
+        integrated_close = regular_close
 
     return krx_close, nxt_close, integrated_close
     
@@ -1275,10 +1179,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         # 💡 [신규 이식] 언제 호출해도 마감 후 시세를 가져오는 18시 / 20시 데이터 추출 엔진 연동
         extra_krx_close, extra_nxt_close, integrated_close = fetch_extra_closing_prices_from_kis(
-    code.replace("'", ""),
-    local_session,
-    current_price
-)
+            code.replace("'", ""),
+            local_session,
+            current_price
+        )
         # 24, 25번 인덱스의 계산용 필드를 채우고, 26, 27번 인덱스 위치에 추가 필드 결합
         result_row = [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", 
@@ -1289,9 +1193,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             target_price,
             stop_loss,
             is_seed_tag,
-            extra_krx_close,      # AA
-            extra_nxt_close,      # AB
-            integrated_close      # AC
+            extra_krx_close,      # AA (26)
+            extra_nxt_close,      # AB (27)
+            integrated_close      # AC (28)
             ]
         
         return result_row, None
@@ -1311,6 +1215,14 @@ def update_technical_data(df_theme, all_theme_map):
         is_warning_market = check_warning_market()
         if is_warning_market: print("⚠️ 코스닥 20일선 이탈(하락장) 감지! 스캐너 허들을 대폭 상향합니다.")
         
+        for df, target_sheet_name in [(df_news, "뉴스_키워드"), (df_naver, "네이버_검색상위"), (df_main_news, "네이버_주요뉴스")]:
+            if not df.empty:
+                try:
+                    sheet = doc.worksheet(target_sheet_name)
+                    sheet.batch_clear(['A2:Z'])
+                    sheet.update(range_name="A2", values=df.values.tolist(), value_input_option="USER_ENTERED")
+                except Exception as e: print(f"❌ [{target_sheet_name}] 업데이트 에러: {e}")
+
         kospi_rate = get_kospi_fluctuation_rate()
         if kospi_rate <= -0.5:
             print(f"📊 코스피 실시간 등락률: {kospi_rate:.2f}% (해지 프리미엄 발동 대기)")
@@ -1497,9 +1409,9 @@ def update_technical_data(df_theme, all_theme_map):
                     r[24] = existing_data[c_code]["stop"]
             
             try: helper_sheet = doc.worksheet("주가데이터_보조")
-            except: helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="28")
+            except: helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="29")
             
-            helper_sheet.batch_clear(['A1:BB'])
+            helper_sheet.batch_clear(['A1:CC'])
             
             # 💡 [신규 이식] 주가데이터_보조 헤더 자동 동기화 구조 
             extended_headers = [
@@ -1509,7 +1421,7 @@ def update_technical_data(df_theme, all_theme_map):
                 "기관수급", "목표가(AI)", "손절가(AI)", "종목쿼터", "시간외단일가(18시)", "NXT야간종가(20시)", "KRX/NXT통합종가"
             ]
             
-            # 수집 데이터 전체(28개 필드 전체)를 주가데이터_보조 시트에 다이렉트로 슬라이싱 다운로드
+            # 💡 [교정] 슬라이싱을 r[:29]로 확장하여 통합종가(AC열)까지 누락 없이 로드하도록 수정
             helper_sheet_data = [extended_headers] + [r[:29] for r in results]
             helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
             print(f"✅ 총 {len(results)}개 종목 판독 완료 (시간외단일가 및 NXT야간종가 포함하여 주가데이터_보조 완료)")
