@@ -529,9 +529,16 @@ class ScannerState:
 global_state = ScannerState()
 
 def fetch_extra_closing_prices_from_kis(code, session_obj):
+    """
+    시간외단일가(18시), NXT야간종가(20시) 조회
+    실패 시 0 반환
+    """
+
     global KIS_TOKEN
-    if not KIS_TOKEN: return 0, 0
-    
+
+    if not KIS_TOKEN:
+        return 0, 0
+
     headers = {
         "Content-Type": "application/json",
         "authorization": f"Bearer {KIS_TOKEN}",
@@ -539,44 +546,101 @@ def fetch_extra_closing_prices_from_kis(code, session_obj):
         "appsecret": KIS_APP_SECRET,
         "custtype": "P"
     }
-    
-    def find_key(data, key):
-        """JSON 데이터 내에서 키를 재귀적으로 탐색"""
-        if isinstance(data, dict):
-            if key in data: return data[key]
-            for v in data.values():
-                res = find_key(v, key)
-                if res: return res
-        elif isinstance(data, list):
-            for item in data:
-                res = find_key(item, key)
-                if res: return res
-        return None
 
     extra_close = 0
-    try:
-        headers["tr_id"] = "FHKST01010200"
-        params = {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}
-        res = session_obj.get(f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-overtimePrice", headers=headers, params=params, timeout=3)
-        if res.status_code == 200:
-            # 💡 [핵심] JSON 전체 구조에서 'stck_prpr' 키를 찾음
-            data = res.json()
-            val = find_key(data, "stck_prpr")
-            if val: extra_close = int(str(val).replace(",", "").strip())
-    except Exception as e: 
-        print(f"DEBUG: KRX조회실패 {code} {e}")
-
     nxt_close = 0
+
+    # =========================
+    # 1. 시간외단일가 조회
+    # =========================
     try:
-        headers["tr_id"] = "FNPST01010100"
-        params = {"fid_cond_mrkt_div_code": "N", "fid_input_iscd": code}
-        res = session_obj.get(f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-nextrade-price", headers=headers, params=params, timeout=3)
-        if res.status_code == 200:
-            data = res.json()
-            val = find_key(data, "stck_prpr")
-            if val: nxt_close = int(str(val).replace(",", "").strip())
+        headers["tr_id"] = "FHPST02320000"
+
+        params = {
+            "fid_cond_mrkt_div_code": "J",
+            "fid_input_iscd": code
+        }
+
+        res = session_obj.get(
+            f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-daily-overtimeprice",
+            headers=headers,
+            params=params,
+            timeout=5
+        )
+
+        print(f"\n[시간외단일가 RAW 응답] {code}")
+        print(res.text)
+
+        data = res.json()
+
+        # 실제 성공 여부 확인
+        if data.get("rt_cd") == "0":
+
+            # 가능한 필드들 탐색
+            candidate_keys = [
+                "stck_prpr",
+                "ovtm_untp_prpr",
+                "close",
+                "price"
+            ]
+
+            for key in candidate_keys:
+                val = find_key(data, key)
+                if val not in [None, "", "0", 0]:
+                    extra_close = safe_int(val)
+                    break
+
+        else:
+            print(f"[시간외단일가 실패] {code}")
+            print(data)
+
     except Exception as e:
-        print(f"DEBUG: NXT조회실패 {code} {e}")
+        print(f"[시간외단일가 예외] {code} : {e}")
+
+    # =========================
+    # 2. NXT 야간종가 조회
+    # =========================
+    try:
+        headers["tr_id"] = "FHPST02430000"
+
+        params = {
+            "fid_cond_mrkt_div_code": "N",
+            "fid_input_iscd": code
+        }
+
+        res = session_obj.get(
+            f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-nxt-trade-price",
+            headers=headers,
+            params=params,
+            timeout=5
+        )
+
+        print(f"\n[NXT RAW 응답] {code}")
+        print(res.text)
+
+        data = res.json()
+
+        if data.get("rt_cd") == "0":
+
+            candidate_keys = [
+                "stck_prpr",
+                "nxt_prpr",
+                "close",
+                "price"
+            ]
+
+            for key in candidate_keys:
+                val = find_key(data, key)
+                if val not in [None, "", "0", 0]:
+                    nxt_close = safe_int(val)
+                    break
+
+        else:
+            print(f"[NXT 실패] {code}")
+            print(data)
+
+    except Exception as e:
+        print(f"[NXT 예외] {code} : {e}")
 
     return extra_close, nxt_close
     
