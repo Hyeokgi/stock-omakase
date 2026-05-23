@@ -1150,7 +1150,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_seed_tag = "SEED" if is_accumulation_cand else "NORMAL"
 
         # 💡 [신규 이식] 언제 호출해도 마감 후 시세를 가져오는 18시 / 20시 데이터 추출 엔진 연동
-        extra_krx, extra_nxt = fetch_extra_closing_prices_from_kis(code.replace("'", ""), local_session)
+        extra_krx_close, extra_nxt_close = fetch_extra_closing_prices_from_kis(code.replace("'", ""), local_session)
         # 24, 25번 인덱스의 계산용 필드를 채우고, 26, 27번 인덱스 위치에 추가 필드 결합
         result_row = [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%", 
