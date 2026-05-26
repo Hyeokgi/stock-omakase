@@ -784,7 +784,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             cond2_doji = body_m1 <= 0.015
             cond3_yang = is_today_yangbong and current_price > day_minus_1['high']
             
-            if cond1_big_yin and cond2_doji and cond3_yang:
+            if cond1_big_yin && cond2_doji && cond3_yang:
                 is_jang_do_ji_yang = True
 
         if static_info:
@@ -1410,7 +1410,6 @@ def update_technical_data(df_theme, all_theme_map):
         except Exception as e:
             print(f"⚠️ 수급_Raw 역대 테마 대금 연산 건너뜀 (초기 상태): {e}")
 
-        # 💡 [복원 성공] 유실되었던 target_dict 생성 엔진 재주입
         target_dict = {}
         for name in list(target_names):
             code = name_to_code.get(name) or search_code_from_naver(name)
@@ -1534,9 +1533,10 @@ def update_technical_data(df_theme, all_theme_map):
             top_20_results.sort(key=lambda x: int(str(x[10]).split('점')[0]) if '점' in str(x[10]) else 0, reverse=True)
             top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results}
 
+            # 💡 [핵심 교정완료] "리포트 발송 완료" 뿐만 아니라 장중 수집된 "간단 브리핑" 데이터도 증발하지 않도록 상시 보호막(Lock) 전면 확대!
             if not is_reset_time:
                 for c_code, data in existing_data.items():
-                    if "리포트 발송 완료" in data["briefing"] and c_code not in top_20_codes:
+                    if ("리포트 발송 완료" in data["briefing"] or "간단 브리핑" in data["briefing"]) and c_code not in top_20_codes:
                         top_20_results.append(data["raw_row"])
                         top_20_codes.add(c_code)
 
@@ -1588,7 +1588,7 @@ def update_technical_data(df_theme, all_theme_map):
             db_scanner_sheet.batch_clear(['A2:Z'])
             if top_20_results: 
                 db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
-            print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 (단기/스윙 및 중장기 모아가기 쿼터제 적용 완료)")
+            print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 (단기/스윙 및 중장기 간단 브리핑 영구 락인 완료)")
 
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
