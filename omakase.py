@@ -1437,27 +1437,23 @@ def update_technical_data(df_theme, all_theme_map):
 
         results.sort(key=lambda x: x[18], reverse=True) 
         
-        if results:
-            try: 
-                db_scanner_sheet = doc.worksheet("DB_스캐너")
-                existing_data = {}
-                old_data = db_scanner_sheet.get_all_values()
-
-                if not is_reset_time:
-                    for row in old_data[1:]:
-                        if len(row) > 15:
-                            saved_code = str(row[2]).replace("'", "").strip().zfill(6)
-                            briefing = str(row[9]).strip()
-                            target = str(row[14]).strip()
-                            stop = str(row[15]).strip()
-                            
-                            if "대기중" not in briefing and "계산중" not in target and "계산 대기" not in target:
-                                existing_data[saved_code] = {
-                                    "briefing": briefing,
-                                    "target": target,
-                                    "stop": stop,
-                                    "raw_row": row
-                                }
+        if not is_reset_time:
+            for row in old_data[1:]:
+                if len(row) > 15:
+                    saved_code = str(row[2]).replace("'", "").strip().zfill(6)
+                    # 💡 여기가 핵심: 브리핑 상태에 "간단 브리핑"이나 "리포트 발송 완료"가 있으면 무조건 보호!
+                    briefing = str(row[9]).strip() 
+                    target = str(row[14]).strip()
+                    stop = str(row[15]).strip()
+                    
+                    # 기존 로직은 "리포트 발송 완료"만 보호했지만, 이제는 "간단 브리핑"도 보호합니다.
+                    if any(key in briefing for key in ["리포트 발송 완료", "간단 브리핑"]) and "계산중" not in target:
+                        existing_data[saved_code] = {
+                            "briefing": briefing,
+                            "target": target,
+                            "stop": stop,
+                            "raw_row": row
+                        }
             except: 
                 doc.add_worksheet(title="DB_스캐너", rows="50", cols="17")
                 existing_data = {}
