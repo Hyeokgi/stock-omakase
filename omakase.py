@@ -784,7 +784,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             cond2_doji = body_m1 <= 0.015
             cond3_yang = is_today_yangbong and current_price > day_minus_1['high']
             
-            if cond1_big_yin && cond2_doji && cond3_yang:
+            # 💡 [교정 완료] 문법 에러가 났던 && 기호를 순정 파이썬 연산자인 and 로 전면 교체
+            if cond1_big_yin and cond2_doji and cond3_yang:
                 is_jang_do_ji_yang = True
 
         if static_info:
@@ -1236,6 +1237,9 @@ def update_technical_data(df_theme, all_theme_map):
         is_warning_market = check_warning_market()
         if is_warning_market: print("⚠️ 코스닥 20일선 이탈(하락장) 감지! 스캐너 허들을 대폭 상향합니다.")
         
+        # 💡 [버그 예방 고정 변수 선언부]
+        df_news, df_naver, df_main_news = get_news_keywords(), get_naver_search_ranking(), get_naver_main_news()
+
         for df, target_sheet_name in [(df_news, "뉴스_키워드"), (df_naver, "네이버_검색상위"), (df_main_news, "네이버_주요뉴스")]:
             if not df.empty:
                 try:
@@ -1533,7 +1537,6 @@ def update_technical_data(df_theme, all_theme_map):
             top_20_results.sort(key=lambda x: int(str(x[10]).split('점')[0]) if '점' in str(x[10]) else 0, reverse=True)
             top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results}
 
-            # 💡 [핵심 교정완료] "리포트 발송 완료" 뿐만 아니라 장중 수집된 "간단 브리핑" 데이터도 증발하지 않도록 상시 보호막(Lock) 전면 확대!
             if not is_reset_time:
                 for c_code, data in existing_data.items():
                     if ("리포트 발송 완료" in data["briefing"] or "간단 브리핑" in data["briefing"]) and c_code not in top_20_codes:
@@ -1598,6 +1601,8 @@ if __name__ == "__main__":
     global_state.platform_leader_count = 0
     
     df_theme, is_market_closed, all_theme_map = get_real_money_themes()
+    
+    # 💡 [버그 예방 고정 변수 선언부]
     df_news, df_naver, df_main_news = get_news_keywords(), get_naver_search_ranking(), get_naver_main_news()
     update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_closed)
     
