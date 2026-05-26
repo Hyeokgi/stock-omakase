@@ -1437,26 +1437,27 @@ def update_technical_data(df_theme, all_theme_map):
 
         results.sort(key=lambda x: x[18], reverse=True) 
         
-        if not is_reset_time:
-            for row in old_data[1:]:
-                if len(row) > 15:
-                    saved_code = str(row[2]).replace("'", "").strip().zfill(6)
-                    # 💡 여기가 핵심: 브리핑 상태에 "간단 브리핑"이나 "리포트 발송 완료"가 있으면 무조건 보호!
-                    briefing = str(row[9]).strip() 
-                    target = str(row[14]).strip()
-                    stop = str(row[15]).strip()
-                    
-                    # 기존 로직은 "리포트 발송 완료"만 보호했지만, 이제는 "간단 브리핑"도 보호합니다.
-                    if any(key in briefing for key in ["리포트 발송 완료", "간단 브리핑"]) and "계산중" not in target:
-                        existing_data[saved_code] = {
-                            "briefing": briefing,
-                            "target": target,
-                            "stop": stop,
-                            "raw_row": row
-                        }
-            except: 
-                doc.add_worksheet(title="DB_스캐너", rows="50", cols="17")
-                existing_data = {}
+        try: 
+            db_scanner_sheet = doc.worksheet("DB_스캐너")
+            existing_data = {}
+            old_data = db_scanner_sheet.get_all_values()
+
+            if not is_reset_time:
+                for row in old_data[1:]:
+                    if len(row) > 15:
+                        saved_code = str(row[2]).replace("'", "").strip().zfill(6)
+                        briefing = str(row[9]).strip()
+                        
+                        # 💡 핵심: 리포트 완료주나 간단 브리핑이 적혀있다면 무조건 무삭제 백업 캐시에 보존
+                        if any(key in briefing for key in ["리포트 발송 완료", "간단 브리핑"]) and "계산중" not in str(row[14]):
+                            existing_data[saved_code] = {
+                                "briefing": briefing,
+                                "target": row[14],
+                                "stop": row[15],
+                                "raw_row": row
+                            }
+        except: 
+            existing_data = {}
             
             for r in results:
                 c_code = str(r[1]).replace("'", "").strip().zfill(6)
@@ -1519,6 +1520,9 @@ def update_technical_data(df_theme, all_theme_map):
                     if is_seed_tag == "SEED": seed_cands.append(row_data)
                     else: normal_cands.append(row_data)
                     
+            # =======================================================
+            # [교체 지점] 최종 결과를 시트에 뿌리기 직전, 백업 데이터 강제 병합
+            # =======================================================
             normal_cands.sort(key=lambda x: int(str(x[10]).split('점')[0]) if '점' in str(x[10]) else 0, reverse=True)
             seed_cands.sort(key=lambda x: int(str(x[10]).split('점')[0]) if '점' in str(x[10]) else 0, reverse=True)
             
@@ -1533,11 +1537,18 @@ def update_technical_data(df_theme, all_theme_map):
             top_20_results.sort(key=lambda x: int(str(x[10]).split('점')[0]) if '점' in str(x[10]) else 0, reverse=True)
             top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results}
 
+            # 💡 장중(is_reset_time=False)일 때 백업된 간단 브리핑 행들을 누락 없이 재결합
             if not is_reset_time:
                 for c_code, data in existing_data.items():
-                    if ("리포트 발송 완료" in data["briefing"] or "간단 브리핑" in data["briefing"]) and c_code not in top_20_codes:
+                    if c_code not in top_20_codes:
                         top_20_results.append(data["raw_row"])
                         top_20_codes.add(c_code)
+
+            db_scanner_sheet = doc.worksheet("DB_스캐너")
+            db_scanner_sheet.batch_clear(['A2:Z'])
+            if top_20_results: 
+                db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
+            print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (간단 브리핑 영구 보존성 락 가동)")
 
             if is_reset_time:
                 try:
