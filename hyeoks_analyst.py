@@ -5,6 +5,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 from google import genai
 import urllib3
 import json
+import xml.etree.ElementTree as ET
+import concurrent.futures
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings("ignore")
@@ -112,6 +114,44 @@ def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
         print(f"⚠️ [{sheet_name}] 정렬 실패: {e}")
 
 # ==========================================
+# 💡 역사적 수급 DNA 검증 함수 (개별 최고 700억 / 당시 테마 2000억)
+# ==========================================
+def validate_stock_historical_dna(cand, raw_theme_daily_map):
+    code = cand['code']
+    name = cand['name']
+    theme_raw = cand.get('theme_name', '')
+    clean_theme = theme_raw.replace("🆕[당일]", "").replace("🕰️[과거]", "").split(' (대장:')[0].strip()
+    
+    local_session = requests.Session()
+    try:
+        url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=250&requestType=0"
+        res = local_session.get(url, verify=False, timeout=3)
+        root = ET.fromstring(res.text)
+        items = root.findall(".//item")
+        
+        has_qualified_day = False
+        for item in items:
+            data = item.get("data").split("|")
+            f_date_raw = data[0]  # YYYYMMDD
+            f_date = f"{f_date_raw[:4]}-{f_date_raw[4:6]}-{f_date_raw[6:8]}"
+            close_p = int(data[4])
+            vol = int(data[5])
+            
+            day_tv_krw = close_p * vol
+            if day_tv_krw >= 70_000_000_000:  # 1. 역사적 일일 최고 거래대금 700억 이상 조건 충증
+                # 2. 당일 소속 테마 전체 거래대금 누적 합산 2000억 이상 검증
+                theme_val_eok = raw_theme_daily_map.get((f_date, clean_theme), 0)
+                if theme_val_eok >= 2000 or theme_val_eok == 0:
+                    # 누적 데이터가 미처 없는 날이거나 조건 충족 시 패스 허용
+                    has_qualified_day = True
+                    break
+                    
+        return cand, has_qualified_day
+    except Exception as e:
+        print(f"⚠️ [{name}] 역사적 DNA 검증 스킵 (통과): {e}")
+        return cand, True
+
+# ==========================================
 # 2. 구글 시트 연결 및 모드별 작동
 # ==========================================
 try:
@@ -131,7 +171,6 @@ try:
             if len(row) >= 2 and row[0] == "KIS_TOKEN": KIS_TOKEN = row[1]; break
     except: pass
 
-    # 💡 [하락장 여부 판별 추가] 시트의 코스닥 상태 확인
     market_summary_data = doc.worksheet("시장요약").get_all_values()
     korean_market_status = clean_emojis(market_summary_data[1][8]) if len(market_summary_data) > 1 and len(market_summary_data[1]) > 8 else "확인불가"
     is_warning_market = "하락" in korean_market_status or "이탈" in korean_market_status
@@ -241,6 +280,28 @@ try:
     nasdaq, exchange, oil = clean_emojis(macro_data[1][4]), clean_emojis(macro_data[1][6]), clean_emojis(macro_data[1][7])
     news_keywords = clean_emojis("\n".join([f"{r[2]}({r[3]}회)" for r in doc.worksheet("뉴스_키워드").get_all_values()[1:6]]))
     
+    # 💡 [역사적 수급 DNA 필터용] 수급_Raw 일자별/테마별 거래대금 통계 마스터 맵 빌드
+    raw_theme_daily_map = {}
+    try:
+        raw_sheet = doc.worksheet("수급_Raw")
+        raw_values = raw_sheet.get_all_values()
+        if len(raw_values) > 1:
+            header = raw_values[0]
+            date_idx = header.index('날짜') if '날짜' in header else 0
+            theme_idx = header.index('테마명') if '테마명' in header else 2
+            val_idx = header.index('거래대금(억원)') if '거래대금(억원)' in header else 6
+            
+            for row in raw_values[1:]:
+                if len(row) > max(date_idx, theme_idx, val_idx):
+                    r_date = str(row[date_idx]).strip()
+                    r_theme = str(row[theme_idx]).split(' (대장:')[0].strip()
+                    try:
+                        r_val = int(str(row[val_idx]).replace(',', '').strip())
+                        raw_theme_daily_map[(r_date, r_theme)] = raw_theme_daily_map.get((r_date, r_theme), 0) + r_val
+                    except: pass
+    except Exception as e:
+        print(f"⚠️ 역사적 주도 테마 대금 연산 보조맵 생성 누락: {e}")
+
     tech_data = doc.worksheet("주가데이터_보조").get_all_values()[1:]
     
     cands_list = []
@@ -248,34 +309,56 @@ try:
         if len(r) < 21: continue
         name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
         curr_p, chg, score_str, tajeom_raw = str(r[2]).strip(), str(r[3]).strip(), str(r[8]).strip(), str(r[9]).strip()
+        theme_name = str(r[19]).strip()  # 19번 열 테마명 구조 확보
         prog = str(r[20]).strip()
         seed_tag = str(r[25]).strip() if len(r) > 25 else "NORMAL"
         
         try: num_score = int(re.findall(r'-?\d+', score_str)[0])
         except: num_score = 0
         
-        if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|3년적자|스코어 미달', tajeom_raw): continue 
+        if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|3년적자|스코어 미달|과거 주도주 이력 미달', tajeom_raw): continue 
         
         tajeom_clean = tajeom_raw.split('⚠️')[0].strip()
         tajeom_clean = tajeom_clean.split('🎯')[0].strip()
         
         info = f"종목:{name}({code}) | 현재가:{curr_p}원({chg}) | 퀀트점수:{num_score}점 | 타점:{tajeom_clean} | 수급:{prog} | 유형:{seed_tag}"
-        cands_list.append({'name': name, 'code': code, 'score': num_score, 'info': info, 'curr_p': int(curr_p.replace(',','')), 'type': seed_tag})
+        cands_list.append({
+            'name': name, 
+            'code': code, 
+            'score': num_score, 
+            'info': info, 
+            'curr_p': int(curr_p.replace(',','').replace('원','')), 
+            'type': seed_tag,
+            'theme_name': theme_name
+        })
 
     high_score_cands = [c for c in cands_list if c['score'] >= 30]
-    
-    if len(high_score_cands) < 10:
+    if len(high_score_cands) < 15:
         cands_list.sort(key=lambda x: x['score'], reverse=True)
-        pool_150 = cands_list[:150]
+        pre_pool = cands_list[:100]
     else:
         high_score_cands.sort(key=lambda x: x['score'], reverse=True)
-        pool_150 = high_score_cands[:150]
+        pre_pool = high_score_cands[:100]
 
+    # 💡 [역사적 DNA 동시 검증 실행]
+    print(f"🧬 후보군 {len(pre_pool)}개 종목의 역사적 수급 DNA(개별 700억 / 테마 2000억) 검증 돌입...")
+    validated_pool = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
+        future_to_dna = {executor.submit(validate_stock_historical_dna, c, raw_theme_daily_map): c for c in pre_pool}
+        for future in concurrent.futures.as_completed(future_to_dna):
+            cand, is_qualified = future.result()
+            if is_qualified:
+                validated_pool.append(cand)
+            else:
+                print(f"❌ [{cand['name']}] 역대 최고거래대금 기준 미달로 최종 리포트 및 스캐너 풀에서 완전 배제")
+
+    validated_pool.sort(key=lambda x: x['score'], reverse=True)
+    pool_150 = validated_pool[:150]
     pool_str = "\n".join([c['info'] for c in pool_150])
 
     pick_prompt = f"""
     당신은 세계 최고의 애널리스트 집단이 검증하는 HYEOKS 퀀트 분석가입니다.
-    아래는 HYEOKS 퀀트 점수가 검증된 최상위 150개 종목 리스트입니다.
+    아래는 HYEOKS 퀀트 점수와 역사적 주도주 DNA 검증이 끝난 최상위 150개 종목 리스트입니다.
     현재 시장 국면은 {'하락장' if is_warning_market else '상승/보합장'}입니다.
     
     이 중에서 제미나이 2.5 모델의 직관과 종합적인 판단을 활용해 
@@ -283,7 +366,7 @@ try:
     🚨 하락장이라면 안정성이 100% 보장되지 않는 단기 종목은 억지로 뽑지 마십시오("000000" 반환).
 
     [종목 선정 절대 기준]
-    1. 단기 슈팅 공략주 (short_term_code): 당일 수급(프로그램 대량유입 등)이 몰리며 '유형:NORMAL' 인 종목 중 전고점 돌파를 목전에 둔 파괴력 있는 종목 1개. (적절한 종목이 없으면 "000000" 반환)
+    1. 단기 슈팅 공략주 (short_term_code): 당일 수급이 몰리며 '유형:NORMAL' 인 종목 중 전고점 돌파를 목전에 둔 파괴력 있는 종목 1개. (적절한 종목이 없으면 "000000" 반환)
     
     2. 중장기 모아가기주 (swing_code): 
        - 🚨 '🔴 3차 파동 (전량 익절)' 등 과열 배지가 붙은 종목은 절대 배제하십시오.
@@ -406,7 +489,6 @@ try:
     report_short, pick_short = generate_deep_report("short", best_short, is_warning_market)
     if best_short: time.sleep(15)
     report_mid, pick_mid = generate_deep_report("mid", best_mid, is_warning_market)
-
 
     # ==========================================
     # 6. 3시 마감 최신 DB_스캐너 동기화 및 브리핑 일괄 덮어쓰기
