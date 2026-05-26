@@ -608,7 +608,7 @@ def fetch_extra_closing_prices_from_kis(code, session_obj, regular_close=0):
 
     return krx_close, nxt_close, integrated_close
     
-def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db):
+def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db, theme_historical_max):
     local_session = requests.Session()
     try:
         desktop_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
@@ -622,6 +622,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         low_prices = [] 
         items = root.findall(".//item")
         
+        # 💡 [역사적 DNA] 250일 이력 중 개별 종목의 최대 거래대금(원) 추적 변수
+        max_hist_tv_krw = 0
+        
         for item in items:
             data = item.get("data").split("|")
             date_str = data[0]
@@ -629,6 +632,11 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             
             if vol == 0: 
                 continue
+            
+            # 당일 종가 × 거래량으로 역사적 최고 거래대금 갱신
+            day_tv_krw = close_p * vol
+            if day_tv_krw > max_hist_tv_krw:
+                max_hist_tv_krw = day_tv_krw
             
             history.append({
                 "date": date_str,
@@ -1176,7 +1184,19 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             master_tajeom += f" 🛡️(+{hedge_premium}점)"
 
         is_seed_tag = "SEED" if is_accumulation_cand else "NORMAL"
-
+        # 💡 [역사적 수급 DNA 필터 게이트]
+        has_700eok_history = (max_hist_tv_krw >= 70_000_000_000) # 과거 최고대금 700억 이상 여부
+        
+        clean_theme = my_theme_name.replace("🆕[당일]", "").replace("🕰️[과거]", "").split(' (대장:')[0].strip()
+        max_theme_val = theme_historical_max.get(clean_theme, 0)
+        # 역대 테마 최고합산 대금이 2000억 이상이거나, 신규 테마(0) 혹은 개별주일 경우 통과
+        is_theme_qualified = (max_theme_val >= 2000) or (max_theme_val == 0) or (clean_theme == "개별주/기타")
+        
+        # 🚨 상한가(종가 세력 마감)가 아닌데 역사적 DNA 기준에 미달하면 강제 관망 처리
+        if not (has_700eok_history and is_theme_qualified) and not is_upper_limit:
+            quant_score = 0
+            score_display = f"0점 ({track_type})"
+            master_tajeom = f"👀 [관망] 과거 주도주 이력 미달 (최고 {max_hist_tv_krw // 100_000_000}억 / 테마 {max_theme_val}억)"
         # 💡 [신규 이식] 언제 호출해도 마감 후 시세를 가져오는 18시 / 20시 데이터 추출 엔진 연동
         extra_krx_close, extra_nxt_close, integrated_close = fetch_extra_closing_prices_from_kis(
             code.replace("'", ""),
@@ -1354,18 +1374,48 @@ def update_technical_data(df_theme, all_theme_map):
             
         for t_name in all_theme_map.keys(): target_names.add(str(t_name).strip())
 
-        target_dict = {}
-        for name in list(target_names):
-            code = name_to_code.get(name) or search_code_from_naver(name)
-            if code and code not in target_dict.values():
-                target_dict[name] = code
+        # 💡 [역사적 DNA] 수급_Raw 및 당일 데이터를 기반으로 테마별 역사적 최대 거래대금(역대 최고점) 맵 구축
+        from collections import defaultdict
+        theme_historical_max = defaultdict(int)
+
+        if not df_theme.empty:
+            curr_theme_sums = df_theme.groupby('테마명')['거래대금(억원)'].sum().to_dict()
+            for t_name, t_sum in curr_theme_sums.items():
+                clean_t = t_name.split(' (대장:')[0].strip()
+                if t_sum > theme_historical_max[clean_t]:
+                    theme_historical_max[clean_t] = t_sum
+
+        try:
+            raw_data_values = doc.worksheet("수급_Raw").get_all_values()
+            if len(raw_data_values) > 1:
+                header = raw_data_values[0]
+                date_idx = header.index('날짜') if '날짜' in header else 0
+                theme_idx = header.index('테마명') if '테마명' in header else 2
+                val_idx = header.index('거래대금(억원)') if '거래대금(억원)' in header else 6
+                
+                daily_sums = defaultdict(int)
+                for row in raw_data_values[1:]:
+                    if len(row) > max(date_idx, theme_idx, val_idx):
+                        dt = row[date_idx]
+                        th = row[theme_idx].split(' (대장:')[0].strip()
+                        try:
+                            v = int(str(row[val_idx]).replace(',', '').strip())
+                            daily_sums[(dt, th)] += v
+                        except: pass
+                
+                for (dt, th), t_sum in daily_sums.items():
+                    if t_sum > theme_historical_max[th]:
+                        theme_historical_max[th] = t_sum
+        except Exception as e:
+            print(f"⚠️ 수급_Raw 역대 테마 대금 연산 건너뜀 (초기 상태): {e}")
 
         results = []
         new_static_data = []
         print(f"⚡ {len(target_dict)}개 고유 종목을 30개의 스레드로 동시 타격합니다...")
         
         with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
-            future_to_name = {executor.submit(analyze_single_stock, name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db): name for name, code in target_dict.items()}
+            # 💡 인수 최하단에 theme_historical_max 마스터 딕셔너리를 추가 전달합니다.
+            future_to_name = {executor.submit(analyze_single_stock, name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db, theme_historical_max): name for name, code in target_dict.items()}
             for future in concurrent.futures.as_completed(future_to_name):
                 res, static_res = future.result()
                 if res: results.append(res)
