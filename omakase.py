@@ -583,7 +583,6 @@ def fetch_extra_closing_prices_from_kis(code, session_obj, regular_close=0):
     # 2. NXT 야간시장 종가 정식 조회 (시장구분 코드 "N")
     # =====================================
     try:
-        # 넥스트레이드 전용 현재가/정산가 타격 엔드포인트 연동
         headers["tr_id"] = "FNPST01010100"
         params = {"fid_cond_mrkt_div_code": "N", "fid_input_iscd": code}
         res = session_obj.get(f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-nextrade-price", headers=headers, params=params, timeout=5)
@@ -1184,6 +1183,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             master_tajeom += f" 🛡️(+{hedge_premium}점)"
 
         is_seed_tag = "SEED" if is_accumulation_cand else "NORMAL"
+        
         # 💡 [역사적 수급 DNA 필터 게이트]
         has_700eok_history = (max_hist_tv_krw >= 70_000_000_000) # 과거 최고대금 700억 이상 여부
         
@@ -1197,6 +1197,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             quant_score = 0
             score_display = f"0점 ({track_type})"
             master_tajeom = f"👀 [관망] 과거 주도주 이력 미달 (최고 {max_hist_tv_krw // 100_000_000}억 / 테마 {max_theme_val}억)"
+            
         # 💡 [신규 이식] 언제 호출해도 마감 후 시세를 가져오는 18시 / 20시 데이터 추출 엔진 연동
         extra_krx_close, extra_nxt_close, integrated_close = fetch_extra_closing_prices_from_kis(
             code.replace("'", ""),
@@ -1409,12 +1410,18 @@ def update_technical_data(df_theme, all_theme_map):
         except Exception as e:
             print(f"⚠️ 수급_Raw 역대 테마 대금 연산 건너뜀 (초기 상태): {e}")
 
+        # 💡 [복원 성공] 유실되었던 target_dict 생성 엔진 재주입
+        target_dict = {}
+        for name in list(target_names):
+            code = name_to_code.get(name) or search_code_from_naver(name)
+            if code and code not in target_dict.values():
+                target_dict[name] = code
+
         results = []
         new_static_data = []
         print(f"⚡ {len(target_dict)}개 고유 종목을 30개의 스레드로 동시 타격합니다...")
         
         with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
-            # 💡 인수 최하단에 theme_historical_max 마스터 딕셔너리를 추가 전달합니다.
             future_to_name = {executor.submit(analyze_single_stock, name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db, theme_historical_max): name for name, code in target_dict.items()}
             for future in concurrent.futures.as_completed(future_to_name):
                 res, static_res = future.result()
@@ -1463,7 +1470,6 @@ def update_technical_data(df_theme, all_theme_map):
             
             helper_sheet.batch_clear(['A1:CC'])
             
-            # 💡 [신규 이식] 주가데이터_보조 헤더 자동 동기화 구조 
             extended_headers = [
                 "종목명", "종목코드", "현재가", "등락률", "5일평균", "20일평균", "거래량비율", "AI신호",
                 "마스터타점", "브리핑상태", "당일고가", "당일저가", "60일고가", "시가총액", "캔들상태",
@@ -1471,7 +1477,6 @@ def update_technical_data(df_theme, all_theme_map):
                 "기관수급", "목표가(AI)", "손절가(AI)", "종목쿼터", "시간외단일가(18시)", "NXT야간종가(20시)", "KRX/NXT통합종가"
             ]
             
-            # 💡 [교정] 슬라이싱을 r[:29]로 확장하여 통합종가(AC열)까지 누락 없이 로드하도록 수정
             helper_sheet_data = [extended_headers] + [r[:29] for r in results]
             helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
             print(f"✅ 총 {len(results)}개 종목 판독 완료 (시간외단일가 및 NXT야간종가 포함하여 주가데이터_보조 완료)")
