@@ -650,18 +650,48 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             
         if len(history) < 2: return None, None
 
+        # ==========================================
+        # [교체 구역 시작] 기존 종가 정의부 아래를 이 블록으로 대체하세요
+        # ==========================================
         last_day = history[-1]
         open_price, today_high, today_low, current_price, today_vol = last_day['open'], last_day['high'], last_day['low'], last_day['close'], last_day['volume']
         
         df_hist = pd.DataFrame(history)
         
-        prev_price = int(df_hist['close'].iloc[-2]) if len(df_hist) >= 2 else current_price
-        yest_close = prev_price 
-        
-        change_rate = (current_price - prev_price) / prev_price if prev_price > 0 else 0.0
+        # 💡 [전일 종가 영점 조절] fchart에 오늘 일봉이 생성되었는지 여부에 따라 기준 전일종가 판별
+        today_str_ymd = datetime.datetime.now(KST).strftime('%Y%m%d')
+        if last_day['date'] == today_str_ymd:
+            yest_close = int(df_hist['close'].iloc[-2]) if len(df_hist) >= 2 else current_price
+        else:
+            yest_close = current_price
+
+        # 💡 [실시간 엔진 연동] 네이버 모바일 실시간 API를 통한 강제 덮어쓰기
+        try:
+            rt_url = f"https://m.stock.naver.com/api/stock/{code}/basic"
+            rt_json = local_session.get(rt_url, headers=desktop_headers, verify=False, timeout=2).json()
+            if rt_json:
+                # 1. 실시간 현재가 적용
+                if 'closePrice' in rt_json and rt_json['closePrice']:
+                    live_price = int(str(rt_json['closePrice']).replace(',', '').strip())
+                    if live_price > 0: current_price = live_price
+                # 2. 실시간 당일 누적 거래량 적용 (거래대금 실시간 연산을 위해 필수)
+                if 'accumulatedTradingVolume' in rt_json and rt_json['accumulatedTradingVolume']:
+                    live_vol = int(str(rt_json['accumulatedTradingVolume']).replace(',', '').strip())
+                    if live_vol > 0: today_vol = live_vol
+                # 3. 실시간 등락률 적용
+                if 'fluctuationsRatio' in rt_json and rt_json['fluctuationsRatio']:
+                    change_rate = float(str(rt_json['fluctuationsRatio']).replace('%', '').replace('+', '').strip()) / 100.0
+                else:
+                    change_rate = (current_price - yest_close) / yest_close if yest_close > 0 else 0.0
+        except Exception as e:
+            print(f"⚠️ [{name}] 장중 실시간 시세 연동 실패 (fchart 스킵본 유지): {e}")
+            change_rate = (current_price - yest_close) / yest_close if yest_close > 0 else 0.0
         
         is_upper_limit = change_rate >= 0.295
         yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) >= 2 else today_vol
+        # ==========================================
+        # [교체 구역 끝] 이 아래 trading_value 계산 및 보조지표 로직은 그대로 유지됩니다.
+        # ==========================================
         
         try:
             high_low = df_hist['high'] - df_hist['low']
