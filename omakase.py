@@ -156,7 +156,7 @@ def get_news_keywords():
             for sub in soup.select('.articleSubject a'):
                 title_text = sub.get_text(strip=True)
                 full_text += title_text + " \n "
-                for m in re.findall(r"['\"'"](.*?)['\"'"]", title_text):
+                for m in re.findall(r"['\"‘“](.*?)['\"’”]", title_text):
                     clean = re.sub(r'(수혜|관련주|테마주|대장주|강세|상한가|특징주|급등|주목|부각)', '', m).strip()
                     clean = re.sub(r'[^\w\s]', '', clean).strip()
                     if 1 < len(clean) <= 12 and clean.count(' ') <= 1 and not any(ad in clean for ad in AD_FILTER):
