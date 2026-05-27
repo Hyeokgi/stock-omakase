@@ -611,7 +611,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
     local_session = requests.Session()
     try:
         desktop_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-        
         url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=250&requestType=0"
         res = local_session.get(url, verify=False, timeout=3)
         root = ET.fromstring(res.text)
@@ -621,7 +620,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         low_prices = [] 
         items = root.findall(".//item")
         
-        # 💡 [역사적 DNA] 250일 이력 중 개별 종목의 최대 거래대금(원) 추적 변수
         max_hist_tv_krw = 0
         
         for item in items:
@@ -632,7 +630,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if vol == 0: 
                 continue
             
-            # 당일 종가 × 거래량으로 역사적 최고 거래대금 갱신
             day_tv_krw = close_p * vol
             if day_tv_krw > max_hist_tv_krw:
                 max_hist_tv_krw = day_tv_krw
@@ -645,18 +642,16 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 "close": close_p, 
                 "volume": vol
             })
-                    high_prices.append(high_p)
-                    low_prices.append(low_p)
-                    
-            if len(history) < 2: return None, None
-
-            # =======================================================
-            # [🔥 교체 시작점] 실시간 멀티 시세 엔진 & 장중 고/저가 동기화 패치
-            # =======================================================
-            last_day = history[-1]
-            open_price, today_high, today_low, current_price, today_vol = last_day['open'], last_day['high'], last_day['low'], last_day['close'], last_day['volume']
+            high_prices.append(high_p)
+            low_prices.append(low_p)
             
-            df_hist = pd.DataFrame(history)
+        if len(history) < 2: return None, None
+        
+        # 여기서부터 들여쓰기가 완벽히 정렬된 로직으로 이어집니다.
+        last_day = history[-1]
+        open_price, today_high, today_low, current_price, today_vol = last_day['open'], last_day['high'], last_day['low'], last_day['close'], last_day['volume']
+        
+        df_hist = pd.DataFrame(history)
             
             # fchart 오늘 자 데이터 생성 여부에 따른 전일 종가 영점 조절
             today_str_ymd = datetime.datetime.now(KST).strftime('%Y%m%d')
@@ -1279,7 +1274,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             ]
         
         return result_row, None
-    except:
+    except Exception as e:
+        print(f"❌ 분석 에러 [{name}]: {e}")
         return None, None
 
 def update_technical_data(df_theme, all_theme_map):
