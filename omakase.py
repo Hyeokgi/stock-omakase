@@ -652,22 +652,32 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         else:
             yest_close = current_price
 
-        # [실시간 시세 강제 동기화 엔진]
+        # [네이버 모바일 실시간 API 강제 동기화]
         try:
             rt_url = f"https://m.stock.naver.com/api/stock/{code}/basic"
             rt_json = local_session.get(rt_url, headers=desktop_headers, verify=False, timeout=2).json()
             if rt_json:
                 if 'closePrice' in rt_json and rt_json['closePrice']:
-                    current_price = int(str(rt_json['closePrice']).replace(',', '').strip())
+                    live_price = int(str(rt_json['closePrice']).replace(',', '').strip())
+                    if live_price > 0: current_price = live_price
                 if 'accumulatedTradingVolume' in rt_json and rt_json['accumulatedTradingVolume']:
                     today_vol = int(str(rt_json['accumulatedTradingVolume']).replace(',', '').strip())
+                    if today_vol > 0: today_vol = today_vol
                 if 'fluctuationsRatio' in rt_json and rt_json['fluctuationsRatio']:
                     change_rate = float(str(rt_json['fluctuationsRatio']).replace('%', '').replace('+', '').strip()) / 100.0
+                    live_success = True
                 else:
                     change_rate = (current_price - yest_close) / yest_close if yest_close > 0 else 0.0
-        except Exception:
+        except Exception as live_err:
+            print(f"⚠️ [{name}] 장중 실시간 시세 연동 실패 (fchart 스킵본 유지): {live_err}")
             change_rate = (current_price - yest_close) / yest_close if yest_close > 0 else 0.0
-        
+
+        # 💡 [핵심 정렬] 바로 이 위치가 'try' 블록 바깥이며, 들여쓰기 8칸으로 맞춰져야 합니다.
+        if not live_success:
+            change_rate = (current_price - yest_close) / yest_close if yest_close > 0 else 0.0
+
+        is_upper_limit = change_rate >= 0.295
+        yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) >= 2 else today_vol
         # (이후 기존 로직 유지 - 들여쓰기 8칸 준수)
         trading_value = current_price * today_vol
 
