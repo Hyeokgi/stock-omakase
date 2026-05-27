@@ -645,56 +645,81 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 "close": close_p, 
                 "volume": vol
             })
-            high_prices.append(high_p)
+                    high_prices.append(high_p)
                     low_prices.append(low_p)
                     
-        # =======================================================
-        # [🔥 교체 시작점] 여기서부터 들여쓰기를 공백 8칸으로 완전 일치시킵니다.
-        # =======================================================
-        if len(history) < 2: return None, None
+            if len(history) < 2: return None, None
 
-        last_day = history[-1]
-        open_price, today_high, today_low, current_price, today_vol = last_day['open'], last_day['high'], last_day['low'], last_day['close'], last_day['volume']
-        
-        df_hist = pd.DataFrame(history)
-        
-        # [전일 종가 정밀 동기화] fchart에 오늘 일봉이 생성되었는지 여부에 따라 기준 종가 판별
-        today_str_ymd = datetime.datetime.now(KST).strftime('%Y%m%d')
-        if last_day['date'] == today_str_ymd:
-            yest_close = int(df_hist['close'].iloc[-2]) if len(df_hist) >= 2 else current_price
-        else:
-            yest_close = current_price
+            # =======================================================
+            # [🔥 교체 시작점] 실시간 멀티 시세 엔진 & 장중 고/저가 동기화 패치
+            # =======================================================
+            last_day = history[-1]
+            open_price, today_high, today_low, current_price, today_vol = last_day['open'], last_day['high'], last_day['low'], last_day['close'], last_day['volume']
+            
+            df_hist = pd.DataFrame(history)
+            
+            # fchart 오늘 자 데이터 생성 여부에 따른 전일 종가 영점 조절
+            today_str_ymd = datetime.datetime.now(KST).strftime('%Y%m%d')
+            if last_day['date'] == today_str_ymd:
+                yest_close = int(df_hist['close'].iloc[-2]) if len(df_hist) >= 2 else current_price
+            else:
+                yest_close = current_price
 
-        # [네이버 모바일 실시간 API 강제 동기화] 현재가, 등락률, 당일 누적 거래량 완전 갱신
-        try:
-            rt_url = f"https://m.stock.naver.com/api/stock/{code}/basic"
-            rt_json = local_session.get(rt_url, headers=desktop_headers, verify=False, timeout=2).json()
-            if rt_json:
-                # 1. 초단위 실시간 현재가 덮어쓰기
-                if 'closePrice' in rt_json and rt_json['closePrice']:
-                    live_price = int(str(rt_json['closePrice']).replace(',', '').strip())
-                    if live_price > 0: current_price = live_price
-                # 2. 실시간 당일 누적 거래량 덮어쓰기 (거래대금 실시간 연산용)
-                if 'accumulatedTradingVolume' in rt_json and rt_json['accumulatedTradingVolume']:
-                    live_vol = int(str(rt_json['accumulatedTradingVolume']).replace(',', '').strip())
-                    if live_vol > 0: today_vol = live_vol
-                # 3. 실시간 등락률 반영
-                if 'fluctuationsRatio' in rt_json and rt_json['fluctuationsRatio']:
-                    change_rate = float(str(rt_json['fluctuationsRatio']).replace('%', '').replace('+', '').strip()) / 100.0
-                else:
+            live_success = False
+            
+            # 1차 엔진: 네이버 금융 실시간 고속 폴링 API (차단 우회 및 정수 데이터 직접 추출)
+            try:
+                poll_url = f"https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:{code}"
+                poll_res = local_session.get(poll_url, timeout=2).json()
+                if poll_res and 'result' in poll_res and poll_res['result']['areas'][0]['datas']:
+                    live_data = poll_res['result']['areas'][0]['datas'][0]
+                    if live_data.get('nv') and live_data['nv'] > 0:
+                        current_price = int(live_data['nv'])
+                        open_price = int(live_data.get('ov', open_price))
+                        today_high = int(live_data.get('hv', today_high))
+                        today_low = int(live_data.get('lv', today_low))
+                        today_vol = int(live_data.get('aq', today_vol))
+                        change_rate = float(live_data.get('cr', 0.0)) / 100.0
+                        live_success = True
+            except Exception:
+                pass
+
+            # 2차 엔진 (백업): 모바일 basic API (아이폰 에이전트 가상 변조로 403 우회 우회)
+            if not live_success:
+                try:
+                    mobile_headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1"}
+                    rt_url = f"https://m.stock.naver.com/api/stock/{code}/basic"
+                    rt_json = local_session.get(rt_url, headers=mobile_headers, verify=False, timeout=2).json()
+                    if rt_json:
+                        if 'closePrice' in rt_json and rt_json['closePrice']:
+                            current_price = int(str(rt_json['closePrice']).replace(',', '').strip())
+                        if 'accumulatedTradingVolume' in rt_json and rt_json['accumulatedTradingVolume']:
+                            today_vol = int(str(rt_json['accumulatedTradingVolume']).replace(',', '').strip())
+                        if 'highPrice' in rt_json and rt_json['highPrice']:
+                            today_high = int(str(rt_json['highPrice']).replace(',', '').strip())
+                        if 'lowPrice' in rt_json and rt_json['lowPrice']:
+                            today_low = int(str(rt_json['lowPrice']).replace(',', '').strip())
+                        if 'openPrice' in rt_json and rt_json['openPrice']:
+                            open_price = int(str(rt_json['openPrice']).replace(',', '').strip())
+                        if 'fluctuationsRatio' in rt_json and rt_json['fluctuationsRatio']:
+                            change_rate = float(str(rt_json['fluctuationsRatio']).replace('%', '').replace('+', '').strip()) / 100.0
+                        else:
+                            change_rate = (current_price - yest_close) / yest_close if yest_close > 0 else 0.0
+                        live_success = True
+                except Exception:
                     change_rate = (current_price - yest_close) / yest_close if yest_close > 0 else 0.0
-        except Exception as live_err:
-            print(f"⚠️ [{name}] 장중 실시간 시세 연동 실패 (fchart 스킵본 유지): {live_err}")
-            change_rate = (current_price - yest_close) / yest_close if yest_close > 0 else 0.0
-        
-        is_upper_limit = change_rate >= 0.295
-        yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) >= 2 else today_vol
-        # =======================================================
-        # [🔥 교체 종료점] 아래 trading_value 로직으로 자연스럽게 이어집니다.
-        # =======================================================
+            
+            if not live_success:
+                change_rate = (current_price - yest_close) / yest_close if yest_close > 0 else 0.0
 
-        trading_value = current_price * today_vol
-        high_prices_60 = high_prices[-60:] if len(high_prices) >= 60 else high_prices
+            is_upper_limit = change_rate >= 0.295
+            yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) >= 2 else today_vol
+            # =======================================================
+            # [🔥 교체 종료점] 이제 아래 실시간 연산으로 빈틈없이 바인딩됩니다.
+            # =======================================================
+
+            trading_value = current_price * today_vol
+            high_prices_60 = high_prices[-60:] if len(high_prices) >= 60 else high_prices
         
         try:
             high_low = df_hist['high'] - df_hist['low']
