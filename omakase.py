@@ -487,14 +487,12 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         last_day = history[-1]
         df_hist = pd.DataFrame(history)
 
-        # fchart 기준 초기값 (실시간 API로 덮어쓸 예정)
         open_price = last_day['open']
         today_high = last_day['high']
         today_low = last_day['low']
         current_price = last_day['close']
         today_vol = last_day['volume']
 
-        # 전일 종가: fchart 마지막 봉이 오늘 봉인지 확인
         today_str_ymd = datetime.datetime.now(KST).strftime('%Y%m%d')
         if last_day['date'] == today_str_ymd:
             yest_close = int(df_hist['close'].iloc[-2]) if len(df_hist) >= 2 else current_price
@@ -508,7 +506,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         # --------------------------------------------------
         live_success = False
 
-        # 1차 시도: 데스크톱 UA
         try:
             rt_url = f"https://m.stock.naver.com/api/stock/{code}/basic"
             rt_json = local_session.get(rt_url, headers=desktop_headers, verify=False, timeout=2).json()
@@ -536,7 +533,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         except Exception as e1:
             print(f"⚠️ [{name}] 1차 실시간 시세 실패: {e1}")
 
-        # 2차 시도: 모바일 UA 폴백
         if not live_success:
             try:
                 mobile_headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1"}
@@ -588,8 +584,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         surge_rate_60d_top = (current_price - high_60d_calc) / high_60d_calc if high_60d_calc > 0 else 0
         is_deep_correction = surge_rate_60d_top <= -0.15
-
-        max_hist_tv_krw = max_hist_tv_krw
 
         min_250d = int(df_hist['close'].min())
         surge_rate_250d = (current_price - min_250d) / min_250d if min_250d > 0 else 0
@@ -1374,11 +1368,14 @@ def update_technical_data(df_theme, all_theme_map):
         helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
         print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 실시간 현행화 완료)")
 
-        # ✅ DB_스캐너 기존 규칙 분류 시작
+        # ============================================================
+        # 🚨 [구조 전면 리팩토링] 하이브리드 독립 풀(Pool) 선별 게이트
+        # ============================================================
         scanner_keywords = ["[종베]", "[스윙/눌림]", "[스윙/추세]", "[당일/단타]", "[관심/수급]", "[중장기/모아가기]"]
-        normal_cands = []
-        seed_cands = []
+        all_candidates = []
+        processed_codes = set()
 
+        # 1. 오늘 분석된 결과물 중 타점 통과 대상을 row_data 규격으로 변환
         for r in results:
             tajeom = r[9]
             if any(kw in tajeom for kw in scanner_keywords):
@@ -1395,7 +1392,6 @@ def update_technical_data(df_theme, all_theme_map):
                 프로그램 = r[20]
                 고가_52주 = r[21]
                 기관누적수급 = r[22]
-                is_seed_tag = r[25]
 
                 ai_briefing = "AI 브리핑 대기중"
                 ai_target = r[23]
@@ -1410,39 +1406,54 @@ def update_technical_data(df_theme, all_theme_map):
                     하이퍼링크, 시장구분, f"'{종목코드}", 현재가, 등락률, 테마명, AI신호, 거래량비율,
                     tajeom, ai_briefing, 스코어, 프로그램, 고가_52주, 기관누적수급, ai_target, ai_stop
                 ]
+                all_candidates.append(row_data)
+                processed_codes.add(종목코드)
 
-                if is_seed_tag == "SEED": seed_cands.append(row_data)
-                else: normal_cands.append(row_data)
-
-        normal_cands.sort(key=lambda x: int(str(x[10]).split('점')[0]) if '점' in str(x[10]) else 0, reverse=True)
-        seed_cands.sort(key=lambda x: int(str(x[10]).split('점')[0]) if '점' in str(x[10]) else 0, reverse=True)
-
-        MAX_DISPLAY_COUNT = 20
-        MAX_SEED_COUNT = 5
-        final_seed = seed_cands[:MAX_SEED_COUNT]
-        needed_normal = MAX_DISPLAY_COUNT - len(final_seed)
-        final_normal = normal_cands[:needed_normal]
-
-        top_20_results = final_seed + final_normal
-        top_20_results.sort(key=lambda x: int(str(x[10]).split('점')[0]) if '점' in str(x[10]) else 0, reverse=True)
-        top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results}
-
+        # 2. 장중 갱신인 경우(is_reset_time이 아닐 때), 오늘 탐색 풀에는 없으나 기존 시트에 살아있던 브리핑 보존 종목 강제 합산
         if not is_reset_time:
             for c_code, data in existing_data.items():
-                if c_code not in top_20_codes:
-                    top_20_results.append(data["raw_row"])
-                    top_20_codes.add(c_code)
+                if c_code not in processed_codes:
+                    all_candidates.append(data["raw_row"])
 
-        # 🚨 [핵심 수정 추가] 기존 보존 종목의 추가로 인해 총 개수가 20개를 초과하는 누수 차단 게이트
-        # 최종 리스트를 퀀트 스코어 기준 내림차순 정렬한 뒤 정확히 20개 슬롯으로 물리적 슬라이싱 처리를 진행합니다.
-        top_20_results.sort(key=lambda x: int(str(x[10]).split('점')[0]) if '점' in str(x[10]) else 0, reverse=True)
-        top_20_results = top_20_results[:MAX_DISPLAY_COUNT]
+        # 3. 캔들 타점 텍스트 역추적을 통한 중장기(SEED) vs 일반(NORMAL) 완전 분리형 풀 빌드
+        seed_cands = []
+        normal_cands = []
 
+        for cand in all_candidates:
+            tajeom_str = str(cand[8])
+            # 타점에 중장기 태그나 바닥을 뜻하는 🌱 이모지가 박혀있다면 중장기로 분류
+            if "🌱" in tajeom_str or "[중장기/모아가기]" in tajeom_str:
+                seed_cands.append(cand)
+            else:
+                normal_cands.append(cand)
+
+        # 4. 각 트랙별 퀀트 스코어 독립 정렬
+        def get_score_num(x):
+            try: return int(str(x[10]).split('점')[0]) if '점' in str(x[10]) else 0
+            except: return 0
+
+        seed_cands.sort(key=get_score_num, reverse=True)
+        normal_cands.sort(key=get_score_num, reverse=True)
+
+        # 5. 🚨 [트레이더 요건 절대 반영] 
+        # 중장기는 무조건 '최대 5개'만 수용 (나머지 슬롯 탈락)
+        # 일반 종목은 최대 15개 수용하여 가독성 20개 라인을 정밀 제어
+        MAX_SEED_COUNT = 5
+        MAX_NORMAL_COUNT = 15
+
+        final_seed = seed_cands[:MAX_SEED_COUNT]
+        final_normal = normal_cands[:MAX_NORMAL_COUNT]
+
+        # 6. 두 독립 그룹을 병합하고 시트 출력을 위해 최종 정렬 (종목이 부족하여 20개가 안 채워져도 그대로 노출)
+        top_20_results = final_seed + final_normal
+        top_20_results.sort(key=get_score_num, reverse=True)
+
+        # 시트 Overwrite 전송
         db_scanner_sheet = doc.worksheet("DB_스캐너")
         db_scanner_sheet.batch_clear(['A2:Z'])
         if top_20_results:
             db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
-        print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (간단 브리핑 영구 보존성 락 가동 및 20개 상한 통제 완료)")
+        print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (중장기 쿼터 {len(final_seed)}개 통제 게이트 완벽 작동)")
 
         if is_reset_time:
             try:
