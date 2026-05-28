@@ -456,15 +456,6 @@ class ScannerState:
 
 global_state = ScannerState()
 
-# ============================================================
-# ✅ [핵심 수정] analyze_single_stock - 실시간 현행화 완전 수정본
-# 수정 내역:
-#   1. live_success 플래그를 함수 최상단에서 False로 선언
-#   2. 1차(데스크톱) / 2차(모바일) 실시간 API 시도를 명확한 if/else로 분리
-#   3. trading_value, high_prices_60 등 핵심 변수를 실시간 동기화 이후 1회만 계산
-#   4. prev_price를 yest_close로 통일하여 gap_ratio NameError 제거
-#   5. 칼만 필터 이후 trading_value 재선언 제거
-# ============================================================
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db, theme_historical_max):
     local_session = requests.Session()
     try:
@@ -514,9 +505,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         # --------------------------------------------------
         # STEP 2: 네이버 실시간 API로 현재가/등락률 동기화
-        #         1차: 데스크톱 UA → 2차: 모바일 UA 폴백
         # --------------------------------------------------
-        live_success = False  # ✅ 반드시 먼저 선언
+        live_success = False
 
         # 1차 시도: 데스크톱 UA
         try:
@@ -580,11 +570,11 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             print(f"⚠️ [{name}] 실시간 시세 동기화 실패 - fchart 스냅샷 사용")
 
         # --------------------------------------------------
-        # STEP 3: 실시간 동기화 완료 후 핵심 파생 변수 1회 계산
+        # STEP 3: 파생 변수 계산
         # --------------------------------------------------
         is_upper_limit = change_rate >= 0.295
         yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) >= 2 else today_vol
-        trading_value = current_price * today_vol  # ✅ 실시간 값 기준 1회 계산
+        trading_value = current_price * today_vol
 
         high_prices_60 = high_prices[-60:] if len(high_prices) >= 60 else high_prices
         high_60d_calc = max(high_prices_60[:-1]) if len(high_prices_60) > 1 else today_high
@@ -599,6 +589,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         surge_rate_60d_top = (current_price - high_60d_calc) / high_60d_calc if high_60d_calc > 0 else 0
         is_deep_correction = surge_rate_60d_top <= -0.15
 
+        max_hist_tv_krw = max_hist_tv_krw
+
         min_250d = int(df_hist['close'].min())
         surge_rate_250d = (current_price - min_250d) / min_250d if min_250d > 0 else 0
         is_mega_trend_exhausted = surge_rate_250d >= 2.0
@@ -611,7 +603,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         upper_shadow_ratio = upper_shadow / current_price if current_price > 0 else 0
         is_today_yangbong = current_price >= open_price
 
-        # gap_ratio: 전일 종가(yest_close) 기준 ✅ prev_price NameError 제거
         gap_ratio = (open_price - yest_close) / yest_close if yest_close > 0 else 0
         is_huge_gap = gap_ratio >= 0.04
 
@@ -622,13 +613,12 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         min_20d = int(df_hist['close'].tail(20).min()) if len(df_hist) >= 20 else int(df_hist['close'].min())
         surge_rate_20d = (current_price - min_20d) / min_20d if min_20d > 0 else 0
 
-        # 상한가 시 거래량 비율 보정
         if is_upper_limit and today_vol > 0:
             vol_ratio_10d = max(vol_ratio_10d, 500)
             vol_ratio_yest = max(vol_ratio_yest, 500)
 
         # --------------------------------------------------
-        # STEP 4: 칼만 필터 (실시간 변수 확정 이후 실행)
+        # STEP 4: 칼만 필터
         # --------------------------------------------------
         try:
             high_low = df_hist['high'] - df_hist['low']
@@ -687,7 +677,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             secret_tajeom = ""
 
         # --------------------------------------------------
-        # STEP 5: 윗꼬리 판독 (실시간 값 기준)
+        # STEP 5: 윗꼬리 판독
         # --------------------------------------------------
         is_volume_dead = (vol_ratio_yest <= 60) and (vol_ratio_10d <= 60)
 
@@ -721,7 +711,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 is_jang_do_ji_yang = True
 
         # --------------------------------------------------
-        # STEP 7: 정적 데이터 (시가총액, 재무위험 등)
+        # STEP 7: 정적 데이터 조회
         # --------------------------------------------------
         static_info = static_db.get(code)
         needs_static_update = False
@@ -764,7 +754,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             static_info_to_save = [f"'{code}", name, market_cap, str(is_junk), str(is_financial_risk), str(is_chronic_loss)]
 
         # --------------------------------------------------
-        # STEP 8: 프로그램 수급 (외국인/기관 5일)
+        # STEP 8: 프로그램 수급 조회
         # --------------------------------------------------
         is_strong_dual_buy = False
         is_weak_dual_buy = False
@@ -828,7 +818,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             supply_text = " (기관 누적매집)"
 
         # --------------------------------------------------
-        # STEP 9: 이동평균, 볼린저밴드, 거래량 지표
+        # STEP 9: 보조지표 연산
         # --------------------------------------------------
         ma5 = int(df_hist['close'].tail(5).mean()) if len(df_hist) >= 5 else current_price
         ma20 = int(df_hist['close'].tail(20).mean()) if len(df_hist) >= 20 else current_price
@@ -866,7 +856,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if min_20d_box > 0: box_ratio = (max_20d_box - min_20d_box) / min_20d_box
 
         # --------------------------------------------------
-        # STEP 10: 매매 전략 허들 설정 (장세 기반)
+        # STEP 10: 전략 허들 및 마스터 시그널
         # --------------------------------------------------
         min_breakout_tv = 50_000_000_000 if is_warning_market else 30_000_000_000
         min_nulim_tv = 10_000_000_000 if is_warning_market else 5_000_000_000
@@ -880,9 +870,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if not is_upper_limit and ((abs(current_price - ma20) / ma20 < 0.03) or (abs(current_price - ma60) / ma60 < 0.03) or is_double_bottom):
                 is_accumulation_cand = True
 
-        # --------------------------------------------------
-        # STEP 11: AI 신호 (signal)
-        # --------------------------------------------------
         if is_junk: signal = "🚨 매매제한 (관리/주의)"
         elif is_financial_risk: signal = "🚨 매매제한 (재무위험)"
         elif is_accumulation_cand: signal = "🌱 바닥 확인 (모아가기)" + supply_text
@@ -902,7 +889,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         else: dist_text = "📉 이격 과다"
 
         # --------------------------------------------------
-        # STEP 12: 테마 분류
+        # STEP 11: 테마 맵핑 및 점수화
         # --------------------------------------------------
         is_danta_range = min_danta_rate <= change_rate < 0.295
         has_today_theme = False
@@ -940,7 +927,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         track_type = "눌림" if is_accumulation_cand else ("돌파" if is_breakout_track else "눌림")
 
         # --------------------------------------------------
-        # STEP 13: 플래그 패턴 / 최근 돌파 감지
+        # STEP 12: 플래그 패턴 판독
         # --------------------------------------------------
         flag_days = 0
         for d in range(1, 4):
@@ -977,15 +964,15 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_ss_breakout = (trading_value >= min_breakout_tv) and (change_rate >= 0.05) and not is_long_shadow and is_near_high
 
         now_kst_tajeom = datetime.datetime.now(KST)
-        is_overnight_time = (now_kst_tajeom.hour >= 14)
+        is_near_closing_time = (now_kst_tajeom.hour >= 14)
 
         is_overnight_breakout = ((trading_value >= min_breakout_tv) and (pg_amount_eok >= 5 or is_strong_dual_buy) and (acc_i_buy_eok >= 3) and (0.04 <= change_rate <= 0.28) and (current_price >= today_high * 0.95) and (is_near_high or is_near_52w_high) and is_breakout_track and not is_long_shadow)
         is_overnight_pullback = (is_extreme_nulim and (current_price >= ma5) and (pg_amount_eok >= 3 or i_buy_today >= 30_000_000))
-        is_overnight_candidate = is_overnight_time and (is_overnight_breakout or is_overnight_pullback)
+        is_overnight_candidate = is_near_closing_time and (is_overnight_breakout or is_overnight_pullback)
         is_fatal_drop = is_junk or is_financial_risk
 
         # --------------------------------------------------
-        # STEP 14: 퀀트 스코어 계산
+        # STEP 13: 스코어 산출 알고리즘
         # --------------------------------------------------
         base_score = 0
         if is_accumulation_cand:
@@ -1127,7 +1114,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_seed_tag = "SEED" if is_accumulation_cand else "NORMAL"
 
         # --------------------------------------------------
-        # STEP 15: 역사적 수급 DNA 필터 게이트
+        # STEP 14: 역사적 수급 DNA 필터 게이트
         # --------------------------------------------------
         has_700eok_history = (max_hist_tv_krw >= 70_000_000_000)
         clean_theme = my_theme_name.replace("🆕[당일]", "").replace("🕰️[과거]", "").split(' (대장:')[0].strip()
@@ -1153,7 +1140,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
     except Exception as e:
         print(f"❌ 분석 에러 [{name}]: {e}")
         return None, None
-
 
 def update_technical_data(df_theme, all_theme_map):
     try:
@@ -1292,7 +1278,6 @@ def update_technical_data(df_theme, all_theme_map):
 
         for t_name in all_theme_map.keys(): target_names.add(str(t_name).strip())
 
-        # ✅ 역사적 DNA: 테마별 역대 최고 합산 거래대금 맵 구축
         theme_historical_max = defaultdict(int)
 
         if not df_theme.empty:
@@ -1347,7 +1332,6 @@ def update_technical_data(df_theme, all_theme_map):
 
         results.sort(key=lambda x: x[18], reverse=True)
 
-        # ✅ DB_스캐너 기존 브리핑 보존 캐시
         existing_data = {}
         try:
             db_scanner_sheet = doc.worksheet("DB_스캐너")
@@ -1373,7 +1357,6 @@ def update_technical_data(df_theme, all_theme_map):
                 r[23] = existing_data[c_code]["target"]
                 r[24] = existing_data[c_code]["stop"]
 
-        # ✅ 주가데이터_보조 업데이트 (helper_sheet)
         try:
             helper_sheet = doc.worksheet("주가데이터_보조")
         except:
@@ -1391,7 +1374,7 @@ def update_technical_data(df_theme, all_theme_map):
         helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
         print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 실시간 현행화 완료)")
 
-        # ✅ DB_스캐너 상위 20개 선별
+        # ✅ DB_스캐너 기존 규칙 분류 시작
         scanner_keywords = ["[종베]", "[스윙/눌림]", "[스윙/추세]", "[당일/단타]", "[관심/수급]", "[중장기/모아가기]"]
         normal_cands = []
         seed_cands = []
@@ -1450,13 +1433,17 @@ def update_technical_data(df_theme, all_theme_map):
                     top_20_results.append(data["raw_row"])
                     top_20_codes.add(c_code)
 
+        # 🚨 [핵심 수정 추가] 기존 보존 종목의 추가로 인해 총 개수가 20개를 초과하는 누수 차단 게이트
+        # 최종 리스트를 퀀트 스코어 기준 내림차순 정렬한 뒤 정확히 20개 슬롯으로 물리적 슬라이싱 처리를 진행합니다.
+        top_20_results.sort(key=lambda x: int(str(x[10]).split('점')[0]) if '점' in str(x[10]) else 0, reverse=True)
+        top_20_results = top_20_results[:MAX_DISPLAY_COUNT]
+
         db_scanner_sheet = doc.worksheet("DB_스캐너")
         db_scanner_sheet.batch_clear(['A2:Z'])
         if top_20_results:
             db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
-        print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (간단 브리핑 영구 보존성 락 가동)")
+        print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (간단 브리핑 영구 보존성 락 가동 및 20개 상한 통제 완료)")
 
-        # 백테스트 로그 수익률 자동 갱신 (아침 리셋 시)
         if is_reset_time:
             try:
                 bt_sheet = doc.worksheet("백테스트_로그")
@@ -1496,7 +1483,6 @@ def update_technical_data(df_theme, all_theme_map):
 
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
-
 
 if __name__ == "__main__":
     global_state.super_leader_count = 0
