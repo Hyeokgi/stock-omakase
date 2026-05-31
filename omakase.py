@@ -459,8 +459,6 @@ global_state = ScannerState()
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db, theme_historical_max):
     local_session = requests.Session()
     try:
-        desktop_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-
         # --------------------------------------------------
         # STEP 1: fchart 일봉 데이터 수집 (히스토리 기반)
         # --------------------------------------------------
@@ -502,15 +500,18 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         change_rate = (current_price - yest_close) / yest_close if yest_close > 0 else 0.0
 
         # --------------------------------------------------
-        # STEP 2: 네이버 실시간 API로 현재가/등락률 동기화 (NXT 통합 대응 고도화)
+        # STEP 2: 네이버 실시간 API로 현재가/등락률 동기화 (NXT 헤더 버그 완벽 패치)
         # --------------------------------------------------
         live_success = False
         time_after_status = "정규"
         integrated_close = current_price
 
+        # 🚨 순서 교정: 모바일 주소이므로 처음부터 무조건 순수 모바일 헤더로 접근해야 시간외 데이터(overMarketPriceInfo)가 패킹됩니다.
+        mobile_headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1"}
+        
         try:
             rt_url = f"https://m.stock.naver.com/api/stock/{code}/basic"
-            rt_json = local_session.get(rt_url, headers=desktop_headers, verify=False, timeout=2).json()
+            rt_json = local_session.get(rt_url, headers=mobile_headers, verify=False, timeout=3).json()
             if rt_json and rt_json.get('closePrice'):
                 live_p = int(str(rt_json['closePrice']).replace(',', '').strip())
                 if live_p > 0:
@@ -532,59 +533,41 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     else:
                         change_rate = (current_price - yest_close) / yest_close if yest_close > 0 else 0.0
                     
-                    # 🚨 챗GPT 연동 기능: 시간외단일가 패킷 구조화 및 종가 가로채기
+                    # 시간외단일가 패킷 구조화 및 종가 강제 가로채기
                     over_info = rt_json.get("overMarketPriceInfo", {})
                     if over_info:
                         over_p_str = str(over_info.get("overPrice", "0")).replace(",", "").strip()
                         if over_p_str.isdigit() and int(over_p_str) > 0:
                             integrated_close = int(over_p_str)
                             time_after_status = "NXT"
-                            current_price = integrated_close  # 퀀트 연산의 무결성을 위해 실시간 추적가를 NXT 최종가로 갱신
+                            current_price = integrated_close  # 모든 지표 연산 무결성을 위해 NXT 최종가로 현행화
                     
                     live_success = True
         except Exception as e1:
-            print(f"⚠️ [{name}] 1차 실시간 시세 실패: {e1}")
+            print(f"⚠️ [{name}] 모바일 실시간 시세 및 NXT 파싱 실패: {e1}")
 
+        # 백업용 데스크톱 헤더 게이트 (모바일 트래픽 장애 시 최소한의 안전장치)
         if not live_success:
             try:
-                mobile_headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1"}
-                rt_json2 = local_session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", headers=mobile_headers, verify=False, timeout=2).json()
+                desktop_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+                rt_json2 = local_session.get(rt_url, headers=desktop_headers, verify=False, timeout=2).json()
                 if rt_json2 and rt_json2.get('closePrice'):
                     live_p = int(str(rt_json2['closePrice']).replace(',', '').strip())
                     if live_p > 0:
                         current_price = live_p
-                        if rt_json2.get('accumulatedTradingVolume'):
-                            v = int(str(rt_json2['accumulatedTradingVolume']).replace(',', '').strip())
-                            if v > 0: today_vol = v
-                        if rt_json2.get('highPrice'):
-                            h = int(str(rt_json2['highPrice']).replace(',', '').strip())
-                            if h > 0: today_high = h
-                        if rt_json2.get('lowPrice'):
-                            l = int(str(rt_json2['lowPrice']).replace(',', '').strip())
-                            if l > 0: today_low = l
-                        if rt_json2.get('openPrice'):
-                            o = int(str(rt_json2['openPrice']).replace(',', '').strip())
-                            if o > 0: open_price = o
+                        integrated_close = current_price
+                        time_after_status = "정규"
                         if rt_json2.get('fluctuationsRatio'):
                             change_rate = float(str(rt_json2['fluctuationsRatio']).replace('%', '').replace('+', '').strip()) / 100.0
-                        
-                        over_info = rt_json2.get("overMarketPriceInfo", {})
-                        if over_info:
-                            over_p_str = str(over_info.get("overPrice", "0")).replace(",", "").strip()
-                            if over_p_str.isdigit() and int(over_p_str) > 0:
-                                integrated_close = int(over_p_str)
-                                time_after_status = "NXT"
-                                current_price = integrated_close
-                        
                         live_success = True
             except Exception as e2:
-                print(f"⚠️ [{name}] 2차 실시간 시세 실패: {e2}")
+                print(f"⚠️ [{name}] 데스크톱 백업 시세 실패: {e2}")
 
         if not live_success:
             change_rate = (current_price - yest_close) / yest_close if yest_close > 0 else 0.0
             integrated_close = current_price
             time_after_status = "정규"
-            print(f"⚠️ [{name}] 실시간 시세 동기화 실패 - fchart 스냅샷 사용")
+            print(f"⚠️ [{name}] 실시간 시세 동기화 최종 실패 - fchart 스냅샷 사용")
 
         # --------------------------------------------------
         # STEP 3: 파생 변수 계산
@@ -1141,7 +1124,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             score_display = f"0점 ({track_type})"
             master_tajeom = f"👀 [관망] 과거 주도주 이력 미달 (최고 {max_hist_tv_krw // 100_000_000}억 / 테마 {max_theme_val}억)"
 
-        # AA, AB열 연동 및 정렬 정밀도 확보를 위한 데이터 구조 재배치
         result_row = [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%",
             int(ma5), int(ma20), vol_ratio_text, signal,
@@ -1149,8 +1131,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, my_theme_name,
             program_text, int(display_high_250d), f"{int(acc_i_buy_eok)}억",
             target_price, stop_loss, is_seed_tag,
-            time_after_status, integrated_close,  # 26: 시간외상태(AA열), 27: 시간외종가(AB열)
-            quant_score                           # 28: 정렬용 정수 필드 생성 (버그 방지)
+            time_after_status, integrated_close,
+            quant_score
         ]
 
         return result_row, static_info_to_save
