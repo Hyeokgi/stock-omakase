@@ -455,14 +455,14 @@ class ScannerState:
 
 global_state = ScannerState()
 
-# 🚨 [KIS 엔진 완전 복원] 18시 시간외단일가 종가 수집 함수 (이중 안전 게이트 구조)
+# 🚨 [KIS 전용 보안 소켓 엔진 규격 복원] 18시 시간외단일가 종가 수집 (정규 헤더 주입)
 def fetch_extra_closing_prices_from_kis(code):
     if not KIS_TOKEN or not KIS_APP_KEY or not KIS_APP_SECRET: return 0
     try:
-        # 1차 시도: KIS 시간외단일가 현재가/종가 전용 엔드포인트 타격
+        # KIS 표준 명세서 규격에 의거한 헤더 및 파라미터 재구축
         headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {KIS_TOKEN}",
+            "content-type": "application/json; charset=utf-8",
+            "authorization": f"Bearer {KIS_TOKEN}",
             "appkey": KIS_APP_KEY,
             "appsecret": KIS_APP_SECRET,
             "tr_id": "FHPST02310000"
@@ -472,14 +472,14 @@ def fetch_extra_closing_prices_from_kis(code):
             "FID_INPUT_ISCD": code
         }
         url = f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-time-over-price"
-        res = requests.get(url, headers=headers, params=params, timeout=3)
+        res = requests.get(url, headers=headers, params=params, timeout=4)
         if res.status_code == 200:
             output = res.json().get("output", {})
             price_str = output.get("stck_prpr", "0")
             if price_str.isdigit() and int(price_str) > 0:
                 return int(price_str)
         
-        # 2차 폴백: 정규장 현재가 엔드포인트 조회 (단일가 세션 가동 시 stck_prpr 필드가 시간외 현재가로 동적 매핑됨)
+        # 실시간 동적 폴백 체계 세팅
         headers["tr_id"] = "FBDT00100000"
         url_fb = f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-price"
         res_fb = requests.get(url_fb, headers=headers, params=params, timeout=3)
@@ -812,7 +812,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             static_info_to_save = [f"'{code}", name, market_cap, str(is_junk), str(is_financial_risk), str(is_chronic_loss)]
 
         # --------------------------------------------------
-        # STEP 8: 프로그램 수급 조회 (오타 제로 검증 완료)
+        # STEP 8: 프로그램 수급 조회
         # --------------------------------------------------
         is_strong_dual_buy = False
         is_weak_dual_buy = False
@@ -985,7 +985,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         track_type = "눌림" if is_accumulation_cand else ("돌파" if is_breakout_track else "눌림")
 
         # --------------------------------------------------
-        # STEP 12: 플래그 패턴 판독 (파이썬 표준 and 구문 확립)
+        # STEP 12: 플래그 패턴 판독
         # --------------------------------------------------
         flag_days = 0
         for d in range(1, 4):
@@ -999,7 +999,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 anchor_change = (anchor_close - anchor_prev_close) / anchor_prev_close if anchor_prev_close > 0 else 0
                 hist_before_anchor = high_prices[:anchor_idx] if anchor_idx < -1 else high_prices[:-1]
                 high_60d_anchor = max(hist_before_anchor) if hist_before_anchor else anchor_close
-                # 🚨 [오류 교정 구역] 939번지 && 기호를 파이썬 표준 연산자인 and로 원천 교정
                 if anchor_tv >= min_breakout_tv and anchor_change >= 0.10 and anchor_close > anchor_open and (anchor_close >= high_60d_anchor * 0.90):
                     is_holding = True
                     for j in range(anchor_idx + 1, 0):
@@ -1185,14 +1184,14 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             score_display = f"0점 ({track_type})"
             master_tajeom = f"👀 [관망] 과거 주도주 이력 미달 (최고 {max_hist_tv_krw // 100_000_000}억 / 테마 {max_theme_val}억)"
 
-        # 🚨 오리지널 26개 요소 완벽 보존 + 시간외/NXT/장구분 데이터 패키징 완료
+        # 🚨 오리지널 26개 요소 완벽 보존 + 시간외(AA)/NXT(AB)/장구분(AC) 데이터 패킹 통일
         result_row = [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%",
             int(ma5), int(ma20), vol_ratio_text, signal,
             score_display, master_tajeom, today_high, today_low, int(display_high_60d),
             market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, my_theme_name,
             program_text, int(display_high_250d), f"{int(acc_i_buy_eok)}억",
-            target_price, stop_loss, is_seed_tag,                # 0 ~ 25번 인덱스 (Z열 종목쿼터까지)
+            target_price, stop_loss, is_seed_tag,                # 0 ~ 25번 인덱스 (Z열 종목쿼터)
             krx_close if krx_close > 0 else "",                  # 26번 인덱스: AA열 (시간외단일가 18시)
             nxt_close if nxt_close > 0 else "",                  # 27번 인덱스: AB열 (NXT야간종가 20시)
             market_type,                                         # 28번 인덱스: AC열 (장구분)
@@ -1440,7 +1439,7 @@ def update_technical_data(df_theme, all_theme_map):
         # 전송 시에는 r[:29] 슬라이싱을 걸어 정확하게 AC열(장구분)까지만 구글 시트에 업데이트
         helper_sheet_data = [extended_headers] + [r[:29] for r in results]
         helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
-        print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 AA/AB/AC열 완벽 정렬 전송)")
+        print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 AA/AB/AC열 완벽 전송)")
 
         # ============================================================
         # 🚨 하이브리드 독립 풀(Pool) 선별 게이트 (A~AC열 29컬럼 와이드 포맷)
@@ -1489,7 +1488,6 @@ def update_technical_data(df_theme, all_theme_map):
             for c_code, data in existing_data.items():
                 if c_code not in processed_codes:
                     raw_r = data["raw_row"]
-                    # 데이터 안정성을 위해 최소 29개 열 너비 보장 후 삽입
                     while len(raw_r) < 29:
                         raw_r.append("")
                     all_candidates.append(raw_r)
