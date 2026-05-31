@@ -186,8 +186,7 @@ def get_market_cap(code):
             if '조' in text:
                 parts = text.split('조')
                 jo = int(parts[0].replace(',', '').strip())
-                eok = int(parts[1].replace(',', '').strip()) if len(parts) > 1 and parts[1].strip() else 0
-                return jo * 10000 + eok
+                return jo * 10000 + (int(parts[1].replace(',', '').strip()) if len(parts) > 1 and parts[1].strip() else 0)
             else:
                 return int(text.replace(',', '').strip())
     except:
@@ -805,7 +804,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if dual_buy_days >= 3 and today_dual_buy_ratio >= 3.0 and i_buy_today >= 200_000_000 and f_buy_today >= 200_000_000 and acc_i_buy_eok >= 20:
             is_strong_dual_buy = True
             supply_text = " (🌟쌍끌이 모아가기)"
-        # 🚨 [오류 교정 구역] 잘못 기입되어 문법 오류를 일으킨 Glen 단어를 완전히 삭제했습니다.
         elif i_buy_today >= 200_000_000 and f_buy_today >= 200_000_000:
             is_weak_dual_buy = True
             supply_text = " (🟢약한 양매수)"
@@ -936,7 +934,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 anchor_change = (anchor_close - anchor_prev_close) / anchor_prev_close if anchor_prev_close > 0 else 0
                 hist_before_anchor = high_prices[:anchor_idx] if anchor_idx < -1 else high_prices[:-1]
                 high_60d_anchor = max(hist_before_anchor) if hist_before_anchor else anchor_close
-                if anchor_tv >= min_breakout_tv && anchor_change >= 0.10 and anchor_close > anchor_open and (anchor_close >= high_60d_anchor * 0.90):
+                # 🚨 [오류 교정 구역] && 문법 오류를 파이썬 표준인 and 로 완전히 수정했습니다.
+                if anchor_tv >= min_breakout_tv and anchor_change >= 0.10 and anchor_close > anchor_open and (anchor_close >= high_60d_anchor * 0.90):
                     is_holding = True
                     for j in range(anchor_idx + 1, 0):
                         if not (anchor_close * 0.97 <= int(df_hist['close'].iloc[j]) <= anchor_close * 1.12): is_holding = False; break
@@ -1328,7 +1327,6 @@ def update_technical_data(df_theme, all_theme_map):
             static_sheet.append_rows(new_static_data, value_input_option="USER_ENTERED")
             print(f"✅ 정적 데이터(시가총액/재무) {len(new_static_data)}건 캐시 업데이트 완료")
 
-        # 🚨 [정렬 핵심 교정] 문자열 상태 대신 숨겨둔 순수 숫자 스코어 인덱스(26)로 내림차순 정렬 지배
         results.sort(key=lambda x: x[26], reverse=True)
 
         existing_data = {}
@@ -1369,7 +1367,6 @@ def update_technical_data(df_theme, all_theme_map):
         ]
 
         helper_sheet.batch_clear(['A1:Z'])
-        # 전송 시에는 정확하게 수석님의 UI 크기인 26개 필드만 밀어넣어 내부 스코어 필드 노출 원천 차단
         helper_sheet_data = [extended_headers] + [r[:26] for r in results]
         helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
         print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 정밀 정렬 주입 완료)")
@@ -1402,7 +1399,7 @@ def update_technical_data(df_theme, all_theme_map):
                 ai_target = r[23]
                 ai_stop = r[24]
 
-                if종목코드 in existing_data:
+                if 종목코드 in existing_data:
                     ai_briefing = existing_data[종목코드]["briefing"]
                     ai_target = existing_data[종목코드]["target"]
                     ai_stop = existing_data[종목코드]["stop"]
