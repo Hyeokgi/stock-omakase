@@ -502,9 +502,11 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         change_rate = (current_price - yest_close) / yest_close if yest_close > 0 else 0.0
 
         # --------------------------------------------------
-        # STEP 2: 네이버 실시간 API로 현재가/등락률 동기화
+        # STEP 2: 네이버 실시간 API로 현재가/등락률 동기화 (NXT 통합 대응 고도화)
         # --------------------------------------------------
         live_success = False
+        time_after_status = "정규"
+        integrated_close = current_price
 
         try:
             rt_url = f"https://m.stock.naver.com/api/stock/{code}/basic"
@@ -529,6 +531,16 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         change_rate = float(str(rt_json['fluctuationsRatio']).replace('%', '').replace('+', '').strip()) / 100.0
                     else:
                         change_rate = (current_price - yest_close) / yest_close if yest_close > 0 else 0.0
+                    
+                    # 🚨 챗GPT 연동 기능: 시간외단일가 패킷 구조화 및 종가 가로채기
+                    over_info = rt_json.get("overMarketPriceInfo", {})
+                    if over_info:
+                        over_p_str = str(over_info.get("overPrice", "0")).replace(",", "").strip()
+                        if over_p_str.isdigit() and int(over_p_str) > 0:
+                            integrated_close = int(over_p_str)
+                            time_after_status = "NXT"
+                            current_price = integrated_close  # 퀀트 연산의 무결성을 위해 실시간 추적가를 NXT 최종가로 갱신
+                    
                     live_success = True
         except Exception as e1:
             print(f"⚠️ [{name}] 1차 실시간 시세 실패: {e1}")
@@ -555,14 +567,23 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                             if o > 0: open_price = o
                         if rt_json2.get('fluctuationsRatio'):
                             change_rate = float(str(rt_json2['fluctuationsRatio']).replace('%', '').replace('+', '').strip()) / 100.0
-                        else:
-                            change_rate = (current_price - yest_close) / yest_close if yest_close > 0 else 0.0
+                        
+                        over_info = rt_json2.get("overMarketPriceInfo", {})
+                        if over_info:
+                            over_p_str = str(over_info.get("overPrice", "0")).replace(",", "").strip()
+                            if over_p_str.isdigit() and int(over_p_str) > 0:
+                                integrated_close = int(over_p_str)
+                                time_after_status = "NXT"
+                                current_price = integrated_close
+                        
                         live_success = True
             except Exception as e2:
                 print(f"⚠️ [{name}] 2차 실시간 시세 실패: {e2}")
 
         if not live_success:
             change_rate = (current_price - yest_close) / yest_close if yest_close > 0 else 0.0
+            integrated_close = current_price
+            time_after_status = "정규"
             print(f"⚠️ [{name}] 실시간 시세 동기화 실패 - fchart 스냅샷 사용")
 
         # --------------------------------------------------
@@ -1120,13 +1141,16 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             score_display = f"0점 ({track_type})"
             master_tajeom = f"👀 [관망] 과거 주도주 이력 미달 (최고 {max_hist_tv_krw // 100_000_000}억 / 테마 {max_theme_val}억)"
 
+        # AA, AB열 연동 및 정렬 정밀도 확보를 위한 데이터 구조 재배치
         result_row = [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%",
             int(ma5), int(ma20), vol_ratio_text, signal,
             score_display, master_tajeom, today_high, today_low, int(display_high_60d),
             market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, my_theme_name,
             program_text, int(display_high_250d), f"{int(acc_i_buy_eok)}억",
-            target_price, stop_loss, is_seed_tag
+            target_price, stop_loss, is_seed_tag,
+            time_after_status, integrated_close,  # 26: 시간외상태(AA열), 27: 시간외종가(AB열)
+            quant_score                           # 28: 정렬용 정수 필드 생성 (버그 방지)
         ]
 
         return result_row, static_info_to_save
@@ -1324,7 +1348,8 @@ def update_technical_data(df_theme, all_theme_map):
             static_sheet.append_rows(new_static_data, value_input_option="USER_ENTERED")
             print(f"✅ 정적 데이터(시가총액/재무) {len(new_static_data)}건 캐시 업데이트 완료")
 
-        results.sort(key=lambda x: x[18], reverse=True)
+        # 🚨 [정렬 버그 완벽 해제] 문자열 테마필드(18) 대신 순수 정수 점수(28) 기준으로 내림차순 최상위 정렬 정밀화
+        results.sort(key=lambda x: x[28], reverse=True)
 
         existing_data = {}
         try:
@@ -1354,19 +1379,20 @@ def update_technical_data(df_theme, all_theme_map):
         try:
             helper_sheet = doc.worksheet("주가데이터_보조")
         except:
-            helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="26")
+            helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="28")
 
+        # AA, AB열 헤더 명문화 매핑
         extended_headers = [
             "종목명", "종목코드", "현재가", "등락률", "5일평균", "20일평균", "거래량비율", "AI신호",
             "마스터타점", "브리핑상태", "당일고가", "당일저가", "60일고가", "시가총액", "캔들상태",
             "전고거리", "20일이격", "대장구분", "거래과열", "테마명", "프로그램", "52주고가",
-            "기관수급", "목표가(AI)", "손절가(AI)", "종목쿼터"
+            "기관수급", "목표가(AI)", "손절가(AI)", "종목쿼터", "시간외상태", "시간외종가"
         ]
 
-        helper_sheet.batch_clear(['A1:Z'])
-        helper_sheet_data = [extended_headers] + [r[:26] for r in results]
+        helper_sheet.batch_clear(['A1:AB'])
+        helper_sheet_data = [extended_headers] + [r[:28] for r in results]
         helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
-        print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 실시간 현행화 완료)")
+        print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 실시간 AA/AB열 동기화 포함 완료)")
 
         # ============================================================
         # 🚨 [구조 전면 리팩토링] 하이브리드 독립 풀(Pool) 선별 게이트
@@ -1402,9 +1428,12 @@ def update_technical_data(df_theme, all_theme_map):
                     ai_target = existing_data[종목코드]["target"]
                     ai_stop = existing_data[종목코드]["stop"]
 
+                # 🚨 DB_스캐너 시트의 AA(27번째)열, AB(28번째)열 위치에 정확하게 값 매핑 (공백 11개 패딩 포함)
                 row_data = [
                     하이퍼링크, 시장구분, f"'{종목코드}", 현재가, 등락률, 테마명, AI신호, 거래량비율,
-                    tajeom, ai_briefing, 스코어, 프로그램, 고가_52주, 기관누적수급, ai_target, ai_stop
+                    tajeom, ai_briefing, 스코어, 프로그램, 고가_52주, 기관누적수급, ai_target, ai_stop,
+                    "", "", "", "", "", "", "", "", "", "",  # Q열부터 Z열까지 가독성 공백 채우기
+                    r[26], r[27]  # AA열: 시간외상태, AB열: 시간외종가
                 ]
                 all_candidates.append(row_data)
                 processed_codes.add(종목코드)
@@ -1413,7 +1442,10 @@ def update_technical_data(df_theme, all_theme_map):
         if not is_reset_time:
             for c_code, data in existing_data.items():
                 if c_code not in processed_codes:
-                    all_candidates.append(data["raw_row"])
+                    raw_r = data["raw_row"]
+                    while len(raw_r) < 28:
+                        raw_r.append("")
+                    all_candidates.append(raw_r)
 
         # 3. 캔들 타점 텍스트 역추적을 통한 중장기(SEED) vs 일반(NORMAL) 완전 분리형 풀 빌드
         seed_cands = []
@@ -1421,7 +1453,6 @@ def update_technical_data(df_theme, all_theme_map):
 
         for cand in all_candidates:
             tajeom_str = str(cand[8])
-            # 타점에 중장기 태그나 바닥을 뜻하는 🌱 이모지가 박혀있다면 중장기로 분류
             if "🌱" in tajeom_str or "[중장기/모아가기]" in tajeom_str:
                 seed_cands.append(cand)
             else:
@@ -1435,25 +1466,23 @@ def update_technical_data(df_theme, all_theme_map):
         seed_cands.sort(key=get_score_num, reverse=True)
         normal_cands.sort(key=get_score_num, reverse=True)
 
-        # 5. 🚨 [트레이더 요건 절대 반영] 
-        # 중장기는 무조건 '최대 5개'만 수용 (나머지 슬롯 탈락)
-        # 일반 종목은 최대 15개 수용하여 가독성 20개 라인을 정밀 제어
+        # 5. [트레이더 요건 반영] 중장기 최대 5개, 일반 종목 최대 15개 슬롯 쿼터 통제
         MAX_SEED_COUNT = 5
         MAX_NORMAL_COUNT = 15
 
         final_seed = seed_cands[:MAX_SEED_COUNT]
         final_normal = normal_cands[:MAX_NORMAL_COUNT]
 
-        # 6. 두 독립 그룹을 병합하고 시트 출력을 위해 최종 정렬 (종목이 부족하여 20개가 안 채워져도 그대로 노출)
+        # 6. 두 독립 그룹 병합 및 스코어 최종 재정렬
         top_20_results = final_seed + final_normal
         top_20_results.sort(key=get_score_num, reverse=True)
 
         # 시트 Overwrite 전송
         db_scanner_sheet = doc.worksheet("DB_스캐너")
-        db_scanner_sheet.batch_clear(['A2:Z'])
+        db_scanner_sheet.batch_clear(['A2:AB'])
         if top_20_results:
             db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
-        print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (중장기 쿼터 {len(final_seed)}개 통제 게이트 완벽 작동)")
+        print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (중장기 쿼터 {len(final_seed)}개 제어 및 AA/AB열 주입 작동 완료)")
 
         if is_reset_time:
             try:
