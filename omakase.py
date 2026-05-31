@@ -186,7 +186,8 @@ def get_market_cap(code):
             if '조' in text:
                 parts = text.split('조')
                 jo = int(parts[0].replace(',', '').strip())
-                return jo * 10000 + (int(parts[1].replace(',', '').strip()) if len(parts) > 1 and parts[1].strip() else 0)
+                eok = int(parts[1].replace(',', '').strip()) if len(parts) > 1 and parts[1].strip() else 0
+                return jo * 10000 + eok
             else:
                 return int(text.replace(',', '').strip())
     except:
@@ -501,9 +502,14 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         change_rate = (current_price - yest_close) / yest_close if yest_close > 0 else 0.0
 
         # --------------------------------------------------
-        # STEP 2: 네이버 실시간 API로 현재가/등락률 동기화 (수석님 오리지널 소스 복구)
+        # STEP 2: 네이버 실시간 API로 현재가/등락률 동기화
+        #         + overMarketPriceInfo에서 KRX시간외/NXT종가 동시 수집
         # --------------------------------------------------
         live_success = False
+        over_price_krx = 0      # KRX 시간외단일가 (18:00 종료) - tradingSessionType: AFTER_HOURS
+        nxt_price = 0           # NXT 야간거래 종가 (20:00 종료) - tradingSessionType: AFTER_MARKET
+        over_price_display = "" # 시트 표시용 문자열
+        nxt_price_display = ""  # 시트 표시용 문자열
 
         try:
             rt_url = f"https://m.stock.naver.com/api/stock/{code}/basic"
@@ -529,6 +535,40 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     else:
                         change_rate = (current_price - yest_close) / yest_close if yest_close > 0 else 0.0
                     live_success = True
+
+                    # ✅ [NXT/KRX 시간외 종가 수집] overMarketPriceInfo 파싱
+                    # 네이버 API는 가장 최신 시간외 세션 정보를 overMarketPriceInfo 하나에 담아 반환합니다.
+                    # tradingSessionType 값으로 어떤 세션인지 구분:
+                    #   "AFTER_HOURS" = KRX 시간외단일가 (18:00 종료)
+                    #   "AFTER_MARKET" = NXT 야간거래 (20:00 종료)
+                    over_info = rt_json.get('overMarketPriceInfo', {})
+                    if over_info and over_info.get('overPrice'):
+                        try:
+                            raw_over_p = int(str(over_info['overPrice']).replace(',', '').strip())
+                            raw_over_ratio = str(over_info.get('fluctuationsRatio', '0')).replace('%', '').replace('+', '').strip()
+                            session_type = over_info.get('tradingSessionType', '')
+                            over_status = over_info.get('overMarketStatus', '')
+
+                            # 등락률 부호 포함 표시용 문자열 생성
+                            try:
+                                ratio_val = float(raw_over_ratio)
+                                ratio_sign = "+" if ratio_val > 0 else ""
+                                ratio_str = f"{ratio_sign}{ratio_val:.2f}%"
+                            except:
+                                ratio_str = raw_over_ratio
+
+                            price_str = f"{raw_over_p:,}원 ({ratio_str})"
+
+                            if session_type == "AFTER_MARKET":
+                                # NXT 야간거래 종가 (20시 마감)
+                                nxt_price = raw_over_p
+                                nxt_price_display = price_str
+                            else:
+                                # KRX 시간외단일가 (18시 마감) 또는 기타
+                                over_price_krx = raw_over_p
+                                over_price_display = price_str
+                        except Exception as oe:
+                            pass  # 파싱 실패 시 0 유지, 조용히 스킵
         except Exception as e1:
             print(f"⚠️ [{name}] 1차 실시간 시세 실패: {e1}")
 
@@ -557,6 +597,28 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         else:
                             change_rate = (current_price - yest_close) / yest_close if yest_close > 0 else 0.0
                         live_success = True
+
+                        # ✅ 2차 폴백에서도 over_info 파싱 시도 (1차 실패 시 대비)
+                        if over_price_krx == 0 and nxt_price == 0:
+                            over_info2 = rt_json2.get('overMarketPriceInfo', {})
+                            if over_info2 and over_info2.get('overPrice'):
+                                try:
+                                    raw_over_p2 = int(str(over_info2['overPrice']).replace(',', '').strip())
+                                    raw_ratio2 = str(over_info2.get('fluctuationsRatio', '0')).replace('%', '').replace('+', '').strip()
+                                    session_type2 = over_info2.get('tradingSessionType', '')
+                                    try:
+                                        ratio_val2 = float(raw_ratio2)
+                                        ratio_sign2 = "+" if ratio_val2 > 0 else ""
+                                        price_str2 = f"{raw_over_p2:,}원 ({ratio_sign2}{ratio_val2:.2f}%)"
+                                    except:
+                                        price_str2 = f"{raw_over_p2:,}원"
+                                    if session_type2 == "AFTER_MARKET":
+                                        nxt_price = raw_over_p2
+                                        nxt_price_display = price_str2
+                                    else:
+                                        over_price_krx = raw_over_p2
+                                        over_price_display = price_str2
+                                except: pass
             except Exception as e2:
                 print(f"⚠️ [{name}] 2차 실시간 시세 실패: {e2}")
 
@@ -934,7 +996,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 anchor_change = (anchor_close - anchor_prev_close) / anchor_prev_close if anchor_prev_close > 0 else 0
                 hist_before_anchor = high_prices[:anchor_idx] if anchor_idx < -1 else high_prices[:-1]
                 high_60d_anchor = max(hist_before_anchor) if hist_before_anchor else anchor_close
-                # 🚨 [오류 교정 구역] && 문법 오류를 파이썬 표준인 and 로 완전히 수정했습니다.
                 if anchor_tv >= min_breakout_tv and anchor_change >= 0.10 and anchor_close > anchor_open and (anchor_close >= high_60d_anchor * 0.90):
                     is_holding = True
                     for j in range(anchor_idx + 1, 0):
@@ -1120,7 +1181,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             score_display = f"0점 ({track_type})"
             master_tajeom = f"👀 [관망] 과거 주도주 이력 미달 (최고 {max_hist_tv_krw // 100_000_000}억 / 테마 {max_theme_val}억)"
 
-        # 오리지널 26개 요소 배치 후 내부 정렬용 고유 인덱스(26)에 quant_score 바인딩
         result_row = [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%",
             int(ma5), int(ma20), vol_ratio_text, signal,
@@ -1128,7 +1188,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, my_theme_name,
             program_text, int(display_high_250d), f"{int(acc_i_buy_eok)}억",
             target_price, stop_loss, is_seed_tag,
-            quant_score
+            over_price_display,   # [26] KRX 시간외단일가 (18:00 종료)
+            nxt_price_display     # [27] NXT 야간거래 종가 (20:00 종료)
         ]
 
         return result_row, static_info_to_save
@@ -1163,7 +1224,6 @@ def update_technical_data(df_theme, all_theme_map):
             static_sheet = doc.add_worksheet(title="DB_정적데이터", rows="1000", cols="6")
             static_sheet.append_row(["종목코드", "종목명", "시가총액", "관리종목", "재무위험", "만성적자"])
 
-        print("🔄 정적 데이터 캐싱 메커니즘 구동")
         now_time = datetime.datetime.now(KST)
         is_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50) or len(static_sheet.get_all_values()) <= 5
         static_db = {}
@@ -1327,7 +1387,7 @@ def update_technical_data(df_theme, all_theme_map):
             static_sheet.append_rows(new_static_data, value_input_option="USER_ENTERED")
             print(f"✅ 정적 데이터(시가총액/재무) {len(new_static_data)}건 캐시 업데이트 완료")
 
-        results.sort(key=lambda x: x[26], reverse=True)
+        results.sort(key=lambda x: x[18], reverse=True)
 
         existing_data = {}
         try:
@@ -1357,27 +1417,29 @@ def update_technical_data(df_theme, all_theme_map):
         try:
             helper_sheet = doc.worksheet("주가데이터_보조")
         except:
-            helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="26")
+            helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="28")
 
         extended_headers = [
             "종목명", "종목코드", "현재가", "등락률", "5일평균", "20일평균", "거래량비율", "AI신호",
             "마스터타점", "브리핑상태", "당일고가", "당일저가", "60일고가", "시가총액", "캔들상태",
             "전고거리", "20일이격", "대장구분", "거래과열", "테마명", "프로그램", "52주고가",
-            "기관수급", "목표가(AI)", "손절가(AI)", "종목쿼터"
+            "기관수급", "목표가(AI)", "손절가(AI)", "종목쿼터",
+            "KRX시간외(18시)", "NXT야간(20시)"
         ]
 
-        helper_sheet.batch_clear(['A1:Z'])
-        helper_sheet_data = [extended_headers] + [r[:26] for r in results]
+        helper_sheet.batch_clear(['A1:AB'])
+        helper_sheet_data = [extended_headers] + [r[:28] for r in results]
         helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
-        print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 정밀 정렬 주입 완료)")
+        print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 + KRX시간외/NXT야간 수집 완료)")
 
         # ============================================================
-        # 🚨 하이브리드 독립 풀(Pool) 선별 게이트 (오리지널 UI 규격 유지)
+        # 🚨 [구조 전면 리팩토링] 하이브리드 독립 풀(Pool) 선별 게이트
         # ============================================================
         scanner_keywords = ["[종베]", "[스윙/눌림]", "[스윙/추세]", "[당일/단타]", "[관심/수급]", "[중장기/모아가기]"]
         all_candidates = []
         processed_codes = set()
 
+        # 1. 오늘 분석된 결과물 중 타점 통과 대상을 row_data 규격으로 변환
         for r in results:
             tajeom = r[9]
             if any(kw in tajeom for kw in scanner_keywords):
@@ -1411,21 +1473,25 @@ def update_technical_data(df_theme, all_theme_map):
                 all_candidates.append(row_data)
                 processed_codes.add(종목코드)
 
+        # 2. 장중 갱신인 경우(is_reset_time이 아닐 때), 오늘 탐색 풀에는 없으나 기존 시트에 살아있던 브리핑 보존 종목 강제 합산
         if not is_reset_time:
             for c_code, data in existing_data.items():
                 if c_code not in processed_codes:
                     all_candidates.append(data["raw_row"])
 
+        # 3. 캔들 타점 텍스트 역추적을 통한 중장기(SEED) vs 일반(NORMAL) 완전 분리형 풀 빌드
         seed_cands = []
         normal_cands = []
 
         for cand in all_candidates:
             tajeom_str = str(cand[8])
+            # 타점에 중장기 태그나 바닥을 뜻하는 🌱 이모지가 박혀있다면 중장기로 분류
             if "🌱" in tajeom_str or "[중장기/모아가기]" in tajeom_str:
                 seed_cands.append(cand)
             else:
                 normal_cands.append(cand)
 
+        # 4. 각 트랙별 퀀트 스코어 독립 정렬
         def get_score_num(x):
             try: return int(str(x[10]).split('점')[0]) if '점' in str(x[10]) else 0
             except: return 0
@@ -1433,15 +1499,20 @@ def update_technical_data(df_theme, all_theme_map):
         seed_cands.sort(key=get_score_num, reverse=True)
         normal_cands.sort(key=get_score_num, reverse=True)
 
+        # 5. 🚨 [트레이더 요건 절대 반영] 
+        # 중장기는 무조건 '최대 5개'만 수용 (나머지 슬롯 탈락)
+        # 일반 종목은 최대 15개 수용하여 가독성 20개 라인을 정밀 제어
         MAX_SEED_COUNT = 5
         MAX_NORMAL_COUNT = 15
 
         final_seed = seed_cands[:MAX_SEED_COUNT]
         final_normal = normal_cands[:MAX_NORMAL_COUNT]
 
+        # 6. 두 독립 그룹을 병합하고 시트 출력을 위해 최종 정렬 (종목이 부족하여 20개가 안 채워져도 그대로 노출)
         top_20_results = final_seed + final_normal
         top_20_results.sort(key=get_score_num, reverse=True)
 
+        # 시트 Overwrite 전송
         db_scanner_sheet = doc.worksheet("DB_스캐너")
         db_scanner_sheet.batch_clear(['A2:Z'])
         if top_20_results:
