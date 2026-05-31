@@ -104,7 +104,7 @@ if KIS_TOKEN: print("✅ KIS 토큰 준비 완료!")
 else: print("⚠️ KIS 토큰 준비 실패")
 
 STOPWORDS = ['코스피', '코스닥', '증시', '주식', '투자', '종목', '시장', '지수', '대형주', '중소형주', '외인', '기관', '개인', '외국인', '매수', '매도', '순매수', '순매도', '거래', '대금', '주가', '펀드', '사모', '상장', '상폐', '공모', '특징주', '테마', '테마주', '관련', '관련주', '수혜', '수혜주', '장세', '개장', '출발', '마감', '초반', '후반', '오전', '오후', '장중', '증권', '증권사', '운용', '자사', '괴리', '프리미어', '가치', '밸류', '공시', '병합', '분할', '상승', '하락', '급등', '급락', '강세', '약세', '폭락', '반등', '조정', '랠리', '위축', '냉각', '훈풍', '안도', '불안', '쇼크', '서프라이즈', '돌파', '경신', '연속', '최고', '최저', '신고가', '신저가', '최고치', '최저치', '최고가', '최저가', '급증', '급감', '확산', '진정', '완화', '악화', '개선', '회복', '최대', '사상', '역대', '최초', '최신', '규모', '수준', '가격', '목표가', '상향', '하향', '박살', '킬러', '대규모', '변동', '오픈', '호재', '연계', '대비', '경제', '금융', '기업', '정부', '자산', '머니', '한국', '미국', '국내', '글로벌', '뉴욕', '회장', '대표', '임원', '주주', '총회', '이유', '때문', '달러', '금리', '인상', '인하', '동결', '연준', '파월', '물가', '지표', '고용', '기름값', '주유소', '석유', '신용', '수익', '매출', '적자', '흑자', '배당', '지분', '인수', '합병', '사업', '추진', '공급', '계약', '체결', '실적', '발표', '이익', '반사이익', '현금', '자회사', '계열사', '지주사', '관계사', '기내식', '서비스', '오늘', '내일', '이번', '주간', '월간', '분기', '시간', '하루', '하루만', '올해', '내년', '지난해', '전일', '전주', '전월', '동기', '내달', '연말', '연초', '이날', '당일', '최근', '현재', '이후', '이전', '상반기', '하반기', '당분간', '예상', '전망', '기대', '우려', '경고', '목표', '분석', '평가', '결정', '검토', '참여', '진출', '포기', '중단', '재개', '완료', '시작', '종료', '영향', '타격', '피해', '직격탄', '부양', '지원', '규제', '단속', '강화', '철폐', '폐지', '유지', '보류', '달성', '기준', '행사', '이사', '의결', '개정', '취지', '적극', '개최', '진행', '예정', '상황', '필요', '대응', '마련', '운영', '관리', '적용', '이용', '사용', '활용', '확보', '제공', '구축', '기반', '중심', '노력', '계획', '정도', '경우', '이상', '이하', '가운데', '가장', '포함', '제외', '기대감', '우려감', '불확실성', '가능성', '움직임', '분위기', '흐름', '국면', '대목', '차원', '입장', '배경', '결과', '모습', '모멘텀', '현상', '차이', '비중', '비율', '단계', '목적', '대상', '조원', '억원', '만원', '천원', '전문', '현지', '사회', '생산자', '제도', '재고', '면제', '속보', '단독', '기자', '특파원', '앵커', '저작권', '무단', '전재', '재배포', '금지', '뉴스', '보도', '자료', '사진', '관계자', '주장', '설명', '강조', '위원회', '법안', '회의', '통과', '정책', '의원', '장관', '페이지', '주소', '입력', '방문', '삭제', '요청', '정확', '확인', '문의', '사항', '고객', '센터', '안내', '감사', '반대', '선임', '공개', '자본', '공개', '이란', '국민연금', '종전', '전쟁', '트럼프', '제안', '찬성', '대통령', '사내', '협상', '출시', '계좌', '중동', '상품', '체제', '변경', '투자증권', '성장', '시그널', '신규', '정치', '외교', '합의', '수출', '수입', '도입', '본격', '소식', '임박', '부각', '주도']
-AD_FILTER = ['펀드', '투어', '캠페인', '서비스', '최초', '강화', '고객', '연금', '마스터', '코리아', '정책', '개최', '박람회', '전시회', '프로모션', '할인', '기획전', '페스티벌', '출시', '협약', 'MOU', '체결', '선정', '어워드', '스마트픽', '팔자', '사자', '증가', '감소', '목표', '꺾인', '주석', '전망', '우려', '기대', '연내', '내달', '오늘', '내일', '돌파', '연속', '급락', '투자', '매수', '매도', '수익']
+AD_FILTER = ['펀드', '투어', '캠페인', '서비스', '최초', '강화', '고객', '연금', '마스터', '코리아', '정책', '개최', '박람회', '전시회', '프로모션', '할인', '기획전', '페стики벌', '출시', '협약', 'MOU', '체결', '선정', '어워드', '스마트픽', '팔자', '사자', '증가', '감소', '목표', '꺾인', '주석', '전망', '우려', '기대', '연내', '내달', '오늘', '내일', '돌파', '연속', '급락', '투자', '매수', '매도', '수익']
 THEME_BLACKLIST = ['코로나19', '메르스', '지카바이러스', '우한폐렴', '원숭이두창', '엠폭스', '아프리카돼지열병', '구제역', '광우병', '야놀자(Yanolja)', '리비안(RIVIAN)']
 
 def check_warning_market():
@@ -459,6 +459,8 @@ global_state = ScannerState()
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db, theme_historical_max):
     local_session = requests.Session()
     try:
+        desktop_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+
         # --------------------------------------------------
         # STEP 1: fchart 일봉 데이터 수집 (히스토리 기반)
         # --------------------------------------------------
@@ -500,18 +502,13 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         change_rate = (current_price - yest_close) / yest_close if yest_close > 0 else 0.0
 
         # --------------------------------------------------
-        # STEP 2: 네이버 실시간 API로 현재가/등락률 동기화 (NXT 헤더 버그 완벽 패치)
+        # STEP 2: 네이버 실시간 API로 현재가/등락률 동기화 (수석님 오리지널 소스 복구)
         # --------------------------------------------------
         live_success = False
-        time_after_status = "정규"
-        integrated_close = current_price
 
-        # 🚨 순서 교정: 모바일 주소이므로 처음부터 무조건 순수 모바일 헤더로 접근해야 시간외 데이터(overMarketPriceInfo)가 패킹됩니다.
-        mobile_headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1"}
-        
         try:
             rt_url = f"https://m.stock.naver.com/api/stock/{code}/basic"
-            rt_json = local_session.get(rt_url, headers=mobile_headers, verify=False, timeout=3).json()
+            rt_json = local_session.get(rt_url, headers=desktop_headers, verify=False, timeout=2).json()
             if rt_json and rt_json.get('closePrice'):
                 live_p = int(str(rt_json['closePrice']).replace(',', '').strip())
                 if live_p > 0:
@@ -532,42 +529,41 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         change_rate = float(str(rt_json['fluctuationsRatio']).replace('%', '').replace('+', '').strip()) / 100.0
                     else:
                         change_rate = (current_price - yest_close) / yest_close if yest_close > 0 else 0.0
-                    
-                    # 시간외단일가 패킷 구조화 및 종가 강제 가로채기
-                    over_info = rt_json.get("overMarketPriceInfo", {})
-                    if over_info:
-                        over_p_str = str(over_info.get("overPrice", "0")).replace(",", "").strip()
-                        if over_p_str.isdigit() and int(over_p_str) > 0:
-                            integrated_close = int(over_p_str)
-                            time_after_status = "NXT"
-                            current_price = integrated_close  # 모든 지표 연산 무결성을 위해 NXT 최종가로 현행화
-                    
                     live_success = True
         except Exception as e1:
-            print(f"⚠️ [{name}] 모바일 실시간 시세 및 NXT 파싱 실패: {e1}")
+            print(f"⚠️ [{name}] 1차 실시간 시세 실패: {e1}")
 
-        # 백업용 데스크톱 헤더 게이트 (모바일 트래픽 장애 시 최소한의 안전장치)
         if not live_success:
             try:
-                desktop_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-                rt_json2 = local_session.get(rt_url, headers=desktop_headers, verify=False, timeout=2).json()
+                mobile_headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1"}
+                rt_json2 = local_session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", headers=mobile_headers, verify=False, timeout=2).json()
                 if rt_json2 and rt_json2.get('closePrice'):
                     live_p = int(str(rt_json2['closePrice']).replace(',', '').strip())
                     if live_p > 0:
                         current_price = live_p
-                        integrated_close = current_price
-                        time_after_status = "정규"
+                        if rt_json2.get('accumulatedTradingVolume'):
+                            v = int(str(rt_json2['accumulatedTradingVolume']).replace(',', '').strip())
+                            if v > 0: today_vol = v
+                        if rt_json2.get('highPrice'):
+                            h = int(str(rt_json2['highPrice']).replace(',', '').strip())
+                            if h > 0: today_high = h
+                        if rt_json2.get('lowPrice'):
+                            l = int(str(rt_json2['lowPrice']).replace(',', '').strip())
+                            if l > 0: today_low = l
+                        if rt_json2.get('openPrice'):
+                            o = int(str(rt_json2['openPrice']).replace(',', '').strip())
+                            if o > 0: open_price = o
                         if rt_json2.get('fluctuationsRatio'):
                             change_rate = float(str(rt_json2['fluctuationsRatio']).replace('%', '').replace('+', '').strip()) / 100.0
+                        else:
+                            change_rate = (current_price - yest_close) / yest_close if yest_close > 0 else 0.0
                         live_success = True
             except Exception as e2:
-                print(f"⚠️ [{name}] 데스크톱 백업 시세 실패: {e2}")
+                print(f"⚠️ [{name}] 2차 실시간 시세 실패: {e2}")
 
         if not live_success:
             change_rate = (current_price - yest_close) / yest_close if yest_close > 0 else 0.0
-            integrated_close = current_price
-            time_after_status = "정규"
-            print(f"⚠️ [{name}] 실시간 시세 동기화 최종 실패 - fchart 스냅샷 사용")
+            print(f"⚠️ [{name}] 실시간 시세 동기화 실패 - fchart 스냅샷 사용")
 
         # --------------------------------------------------
         # STEP 3: 파생 변수 계산
@@ -864,7 +860,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_platform_breakout = (box_ratio <= 0.15) and (vol_ratio_10d >= 300) and (current_price > ma20) and is_today_yangbong and (trading_value >= min_breakout_tv)
 
         is_accumulation_cand = False
-        if is_true_history_leader and is_deep_correction and is_volume_dead and not is_long_shadow and not is_financial_risk:
+        if is_true_history_leader and is_deep_correction parks and is_volume_dead and not is_long_shadow and not is_financial_risk:
             if not is_upper_limit and ((abs(current_price - ma20) / ma20 < 0.03) or (abs(current_price - ma60) / ma60 < 0.03) or is_double_bottom):
                 is_accumulation_cand = True
 
@@ -934,6 +930,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 anchor_close = int(df_hist['close'].iloc[anchor_idx])
                 anchor_open = int(df_hist['open'].iloc[anchor_idx])
                 anchor_vol = int(df_hist['volume'].iloc[anchor_idx])
+                anchor_prev_close = int(df_hist['close'].iloc[anchor_idx - 1]) if len(df_hist) > abs(anchor_idx) + 1 else anchor_open
                 anchor_prev_close = int(df_hist['close'].iloc[anchor_idx - 1]) if len(df_hist) > abs(anchor_idx) + 1 else anchor_open
                 anchor_tv = anchor_close * anchor_vol
                 anchor_change = (anchor_close - anchor_prev_close) / anchor_prev_close if anchor_prev_close > 0 else 0
@@ -1124,6 +1121,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             score_display = f"0점 ({track_type})"
             master_tajeom = f"👀 [관망] 과거 주도주 이력 미달 (최고 {max_hist_tv_krw // 100_000_000}억 / 테마 {max_theme_val}억)"
 
+        # 오리지널 26개 요소 배치 후, 내부 정렬용 고유 인덱스(26)에 quant_score만 살짝 바인딩
         result_row = [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%",
             int(ma5), int(ma20), vol_ratio_text, signal,
@@ -1131,8 +1129,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, my_theme_name,
             program_text, int(display_high_250d), f"{int(acc_i_buy_eok)}억",
             target_price, stop_loss, is_seed_tag,
-            time_after_status, integrated_close,
-            quant_score
+            quant_score # 26번째 인덱스: 내부 정렬용 순수 숫자 스코어 보관함
         ]
 
         return result_row, static_info_to_save
@@ -1167,6 +1164,7 @@ def update_technical_data(df_theme, all_theme_map):
             static_sheet = doc.add_worksheet(title="DB_정적데이터", rows="1000", cols="6")
             static_sheet.append_row(["종목코드", "종목명", "시가총액", "관리종목", "재무위험", "만성적자"])
 
+        print("🔄 정적 데이터 캐싱 메커니즘 구동")
         now_time = datetime.datetime.now(KST)
         is_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50) or len(static_sheet.get_all_values()) <= 5
         static_db = {}
@@ -1330,8 +1328,8 @@ def update_technical_data(df_theme, all_theme_map):
             static_sheet.append_rows(new_static_data, value_input_option="USER_ENTERED")
             print(f"✅ 정적 데이터(시가총액/재무) {len(new_static_data)}건 캐시 업데이트 완료")
 
-        # 🚨 [정렬 버그 완벽 해제] 문자열 테마필드(18) 대신 순수 정수 점수(28) 기준으로 내림차순 최상위 정렬 정밀화
-        results.sort(key=lambda x: x[28], reverse=True)
+        # 🚨 [정렬 핵심 교정] 문자열 상태(18) 대신 숨겨둔 순수 숫자 스코어 인덱스(26)로 내림차순 정렬 지배
+        results.sort(key=lambda x: x[26], reverse=True)
 
         existing_data = {}
         try:
@@ -1361,29 +1359,28 @@ def update_technical_data(df_theme, all_theme_map):
         try:
             helper_sheet = doc.worksheet("주가데이터_보조")
         except:
-            helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="28")
+            helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="26")
 
-        # AA, AB열 헤더 명문화 매핑
         extended_headers = [
             "종목명", "종목코드", "현재가", "등락률", "5일평균", "20일평균", "거래량비율", "AI신호",
             "마스터타점", "브리핑상태", "당일고가", "당일저가", "60일고가", "시가총액", "캔들상태",
             "전고거리", "20일이격", "대장구분", "거래과열", "테마명", "프로그램", "52주고가",
-            "기관수급", "목표가(AI)", "손절가(AI)", "종목쿼터", "시간외상태", "시간외종가"
+            "기관수급", "목표가(AI)", "손절가(AI)", "종목쿼터"
         ]
 
-        helper_sheet.batch_clear(['A1:AB'])
-        helper_sheet_data = [extended_headers] + [r[:28] for r in results]
+        helper_sheet.batch_clear(['A1:Z'])
+        # 전송 시에는 정확하게 수석님의 UI 크기인 26개 필드만 밀어넣어 내부 스코어 필드 노출 원천 차단
+        helper_sheet_data = [extended_headers] + [r[:26] for r in results]
         helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
-        print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 실시간 AA/AB열 동기화 포함 완료)")
+        print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 정밀 정렬 주입 완료)")
 
         # ============================================================
-        # 🚨 [구조 전면 리팩토링] 하이브리드 독립 풀(Pool) 선별 게이트
+        # 🚨 하이브리드 독립 풀(Pool) 선별 게이트 (오리지널 UI 규격 유지)
         # ============================================================
         scanner_keywords = ["[종베]", "[스윙/눌림]", "[스윙/추세]", "[당일/단타]", "[관심/수급]", "[중장기/모아가기]"]
         all_candidates = []
         processed_codes = set()
 
-        # 1. 오늘 분석된 결과물 중 타점 통과 대상을 row_data 규격으로 변환
         for r in results:
             tajeom = r[9]
             if any(kw in tajeom for kw in scanner_keywords):
@@ -1410,26 +1407,18 @@ def update_technical_data(df_theme, all_theme_map):
                     ai_target = existing_data[종목코드]["target"]
                     ai_stop = existing_data[종목코드]["stop"]
 
-                # 🚨 DB_스캐너 시트의 AA(27번째)열, AB(28번째)열 위치에 정확하게 값 매핑 (공백 11개 패딩 포함)
                 row_data = [
                     하이퍼링크, 시장구분, f"'{종목코드}", 현재가, 등락률, 테마명, AI신호, 거래량비율,
-                    tajeom, ai_briefing, 스코어, 프로그램, 고가_52주, 기관누적수급, ai_target, ai_stop,
-                    "", "", "", "", "", "", "", "", "", "",  # Q열부터 Z열까지 가독성 공백 채우기
-                    r[26], r[27]  # AA열: 시간외상태, AB열: 시간외종가
+                    tajeom, ai_briefing, 스코어, 프로그램, 고가_52주, 기관누적수급, ai_target, ai_stop
                 ]
                 all_candidates.append(row_data)
                 processed_codes.add(종목코드)
 
-        # 2. 장중 갱신인 경우(is_reset_time이 아닐 때), 오늘 탐색 풀에는 없으나 기존 시트에 살아있던 브리핑 보존 종목 강제 합산
         if not is_reset_time:
             for c_code, data in existing_data.items():
                 if c_code not in processed_codes:
-                    raw_r = data["raw_row"]
-                    while len(raw_r) < 28:
-                        raw_r.append("")
-                    all_candidates.append(raw_r)
+                    all_candidates.append(data["raw_row"])
 
-        # 3. 캔들 타점 텍스트 역추적을 통한 중장기(SEED) vs 일반(NORMAL) 완전 분리형 풀 빌드
         seed_cands = []
         normal_cands = []
 
@@ -1440,7 +1429,6 @@ def update_technical_data(df_theme, all_theme_map):
             else:
                 normal_cands.append(cand)
 
-        # 4. 각 트랙별 퀀트 스코어 독립 정렬
         def get_score_num(x):
             try: return int(str(x[10]).split('점')[0]) if '점' in str(x[10]) else 0
             except: return 0
@@ -1448,23 +1436,20 @@ def update_technical_data(df_theme, all_theme_map):
         seed_cands.sort(key=get_score_num, reverse=True)
         normal_cands.sort(key=get_score_num, reverse=True)
 
-        # 5. [트레이더 요건 반영] 중장기 최대 5개, 일반 종목 최대 15개 슬롯 쿼터 통제
         MAX_SEED_COUNT = 5
         MAX_NORMAL_COUNT = 15
 
         final_seed = seed_cands[:MAX_SEED_COUNT]
         final_normal = normal_cands[:MAX_NORMAL_COUNT]
 
-        # 6. 두 독립 그룹 병합 및 스코어 최종 재정렬
         top_20_results = final_seed + final_normal
         top_20_results.sort(key=get_score_num, reverse=True)
 
-        # 시트 Overwrite 전송
         db_scanner_sheet = doc.worksheet("DB_스캐너")
-        db_scanner_sheet.batch_clear(['A2:AB'])
+        db_scanner_sheet.batch_clear(['A2:Z'])
         if top_20_results:
             db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
-        print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (중장기 쿼터 {len(final_seed)}개 제어 및 AA/AB열 주입 작동 완료)")
+        print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (중장기 쿼터 {len(final_seed)}개 통제 게이트 완벽 작동)")
 
         if is_reset_time:
             try:
