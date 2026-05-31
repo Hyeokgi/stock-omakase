@@ -805,7 +805,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if dual_buy_days >= 3 and today_dual_buy_ratio >= 3.0 and i_buy_today >= 200_000_000 and f_buy_today >= 200_000_000 and acc_i_buy_eok >= 20:
             is_strong_dual_buy = True
             supply_text = " (🌟쌍끌이 모아가기)"
-        elif i_buy_today >= 200_000_000 Glen and f_buy_today >= 200_000_000:
+        # 🚨 [오류 교정 구역] 잘못 기입되어 문법 오류를 일으킨 Glen 단어를 완전히 삭제했습니다.
+        elif i_buy_today >= 200_000_000 and f_buy_today >= 200_000_000:
             is_weak_dual_buy = True
             supply_text = " (🟢약한 양매수)"
         elif acc_i_buy_eok >= 20:
@@ -860,7 +861,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_platform_breakout = (box_ratio <= 0.15) and (vol_ratio_10d >= 300) and (current_price > ma20) and is_today_yangbong and (trading_value >= min_breakout_tv)
 
         is_accumulation_cand = False
-        # 🚨 [오류 교정 구역] 무단으로 삽입된 parks 텍스트 완벽 제거
         if is_true_history_leader and is_deep_correction and is_volume_dead and not is_long_shadow and not is_financial_risk:
             if not is_upper_limit and ((abs(current_price - ma20) / ma20 < 0.03) or (abs(current_price - ma60) / ma60 < 0.03) or is_double_bottom):
                 is_accumulation_cand = True
@@ -936,7 +936,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 anchor_change = (anchor_close - anchor_prev_close) / anchor_prev_close if anchor_prev_close > 0 else 0
                 hist_before_anchor = high_prices[:anchor_idx] if anchor_idx < -1 else high_prices[:-1]
                 high_60d_anchor = max(hist_before_anchor) if hist_before_anchor else anchor_close
-                if anchor_tv >= min_breakout_tv and anchor_change >= 0.10 and anchor_close > anchor_open and (anchor_close >= high_60d_anchor * 0.90):
+                if anchor_tv >= min_breakout_tv && anchor_change >= 0.10 and anchor_close > anchor_open and (anchor_close >= high_60d_anchor * 0.90):
                     is_holding = True
                     for j in range(anchor_idx + 1, 0):
                         if not (anchor_close * 0.97 <= int(df_hist['close'].iloc[j]) <= anchor_close * 1.12): is_holding = False; break
@@ -1402,7 +1402,7 @@ def update_technical_data(df_theme, all_theme_map):
                 ai_target = r[23]
                 ai_stop = r[24]
 
-                if 종목코드 in existing_data:
+                if종목코드 in existing_data:
                     ai_briefing = existing_data[종목코드]["briefing"]
                     ai_target = existing_data[종목코드]["target"]
                     ai_stop = existing_data[종목코드]["stop"]
