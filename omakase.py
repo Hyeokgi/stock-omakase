@@ -21,8 +21,8 @@ KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
 KIS_URL_BASE = "https://openapi.koreainvestment.com:9443"
 
 now_kst_check = datetime.datetime.now(KST)
-if 2 <= now_kst_check.hour < 7:
-    print(f"🌙 현재 시간({now_kst_check.strftime('%H:%M')}): 시스템을 휴식 모드로 전환합니다. (02시~07시)")
+if 3 <= now_kst_check.hour < 7:
+    print(f"🌙 현재 시간({now_kst_check.strftime('%H:%M')}): 시스템을 휴식 모드로 전환합니다. (03시~07시)")
     sys.exit(0)
 
 def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
