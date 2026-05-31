@@ -103,8 +103,8 @@ KIS_TOKEN = get_kis_access_token()
 if KIS_TOKEN: print("✅ KIS 토큰 준비 완료!")
 else: print("⚠️ KIS 토큰 준비 실패")
 
-STOPWORDS = ['코스피', '코스닥', '증시', '주식', '투자', '종목', '시장', '지수', '대형주', '중소형주', '외인', '기관', '개인', '외국인', '매수', '매도', '순매수', '순매도', '거래', '대금', '주가', '펀드', '사모', '상장', '상폐', '공모', '특징주', '테마', '테마주', '관련', '관련주', '수혜', '수혜주', '장세', '개장', '출발', '마감', '초반', '후반', '오전', '오후', '장중', '증권', '증권사', '운용', '자사', '괴리', '프리미어', '가치', '밸류', '공시', '병합', '분할', '상승', '하락', '급등', '급락', '강세', '약세', '폭락', '반등', '조정', '랠리', '위축', '냉각', '훈풍', '안도', '불안', '쇼크', '서프라이즈', '돌파', '경신', '연속', '최고', '최저', '신고가', '신저가', '최고치', '최저치', '최고가', '최저가', '급증', '급감', '확산', '진정', '완화', '악화', '개선', '회복', '최대', '사상', '역대', '최초', '최신', '규모', '수준', '가격', '목표가', '상향', '하향', '박살', '킬러', '대규모', '변동', '오픈', '호재', '연계', '대비', '경제', '금융', '기업', '정부', '자산', '머니', '한국', '미국', '국내', '글로벌', '뉴욕', '회장', '대표', '임원', '주주', '총회', '이유', '때문', '달러', '금리', '인상', '인하', '동결', '연준', '파월', '물가', '지표', '고용', '기름값', '주유소', '석유', '신용', '수익', '매출', '적자', '흑자', '배당', '지분', '인수', '합병', '사업', '추진', '공급', '계약', '체결', '실적', '발표', '이익', '반사이익', '현금', '자회사', '계열사', '지주사', '관계사', '기내식', '서비스', '오늘', '내일', '이번', '주간', '월간', '분기', '시간', '하루', '하루만', '올해', '내년', '지난해', '전일', '전주', '전월', '동기', '내달', '연말', '연초', '이날', '당일', '최근', '현재', '이후', '이전', '상반기', '하반기', '당분간', '예상', '전망', '기대', '우려', '경고', '목표', '분석', '평가', '결정', '검토', '참여', '진출', '포기', '중단', '재개', '완료', '시작', '종료', '영향', '타격', '피해', '직격탄', '부양', '지원', '규제', '단속', '강화', '철폐', '폐지', '유지', '보류', '달성', '기준', '행사', '이사', '의결', '개정', '취지', '적극', '개최', '진행', '예정', '상황', '필요', '대응', '마련', '운영', '관리', '적용', '이용', '사용', '활용', '확보', '제공', '구축', '기반', '중심', '노력', '계획', '정도', '경우', '이상', '이하', '가운데', '가장', '포함', '제외', '기대감', '우려감', '불확실성', '가능성', '움직임', '분위기', '흐름', '국면', '대목', '차원', '입장', '배경', '결과', '모습', '모멘텀', '현상', '차이', '비중', '비율', '단계', '목적', '대상', '조원', '억원', '만원', '천원', '전문', '현지', '사회', '생산자', '제도', '재고', '면제', '속보', '단독', '기자', '특파원', '앵커', '저작권', '무단', '전재', '재배포', '금지', '뉴스', '보도', '자료', '사진', '관계자', '주장', '설명', '강조', '위원회', '법안', '회의', '통과', '정책', '의원', '장관', '페이지', '주소', '입력', '방문', '삭제', '요청', '정확', '확인', '문의', '사항', '고객', '센터', '안내', '감사', '반대', '선임', '공개', '자본', '공개', '이란', '국민연금', '종전', '전쟁', '트럼프', '제안', '찬성', '대통령', '사내', '협상', '출시', '계좌', '중동', '상품', '체제', '변경', '투자증권', '성장', '시그널', '신규', '정치', '외교', '합의', '수출', '수입', '도입', '본격', '소식', '임박', '부각', '주도']
-AD_FILTER = ['펀드', '투어', '캠페인', '서비스', '최초', '강화', '고객', '연금', '마스터', '코리아', '정책', '개최', '박람회', '전시회', '프로모션', '할인', '기획전', '페스티벌', '출시', '협약', 'MOU', '체격', '선정', '어워드', '스마트픽', '팔자', '사자', '증가', '감소', '목표', '꺾인', '주석', '전망', '우려', '기대', '연내', '내달', '오늘', '내일', '돌파', '연속', '급락', '투자', '매수', '매도', '수익']
+STOPWORDS = ['코스피', '코스닥', '증시', '주식', '투자', '종목', '시장', '지수', '대형주', '중소형주', '외인', '기관', '개인', '외국인', '매수', '매도', '순매수', '순매도', '거래', '대금', '주가', '펀드', '사모', '상장', '상폐', '공모', '특징주', '테마', '테마주', '관련', '관련주', '수혜', '수혜주', '장세', '개장', '출발', '마감', '초반', '후반', '오전', '오후', '장중', '증권', '증권사', '운용', '자사', '괴리', '프리미어', '가치', '밸류', '공시', '병합', '분할', '상승', '하락', '급등', '급락', '강세', '약세', '폭락', '반등', '조정', '랠리', '위축', '냉각', '훈풍', '안도', '불안', '쇼크', '서프라이즈', '돌파', '경신', '연속', '최고', '최저', '신고가', '신저가', '최고치', '최저치', '최고가', '최저가', '급증', '급감', '확산', '진정', '완화', '악화', '개선', '회복', '최대', '사상', '역대', '최초', '최신', '규모', '수준', '가격', '목표가', '상향', '하향', '박살', '킬러', '대규모', '변동', '오픈', '호재', '연계', '대비', '경제', '금융', '기업', '정부', '자산', '머니', '한국', '미국', '국내', '글로벌', '뉴욕', '회장', '대표', '임원', '주주', '총회', '이유', '때문', '달러', '금리', '인상', '인하', '동결', '연준', '파월', '물가', '지표', '고용', '기름값', '주유소', '석유', '신용', '수익', '매출', '적자', '흑자', '배당', '지분', '인수', '합병', '사업', '추진', '공급', '계약', '체결', '실적', '발표', '이익', '반사이익', '현금', '자회사', '계열사', '지주사', '관계사', '기내식', '서비스', '오늘', '내일', '이번', '주간', '월간', '분기', '시간', '하루', '하루만', '올해', '내년', '지난해', '전일', '전주', '전월', '동기', '내달', '연말', '연초', '이날', '당일', '최근', '현재', '이후', '이전', '상반기', '하반기', '당분간', '예상', '전망', '기대', '우려', '경고', '목표', '분석', '평가', '결정', '검토', '참여', '진출', '포기', '중단', '재개', '완료', '시작', '종료', '영향', '타격', '피해', '직격탄', '부양', '지원', '규제', '단속', '강화', '철폐', '폐지', '유지', '보류', '달성', '기준', '행사', '이사', '의결', '개정', '취지', '적극', '개최', '진행', '예정', '상황', '필요', '대응', '마련', '운영', '관리', '적용', '이용', '사용', '활용', '확보', '제공', '구축', '기반', '중심', '노력', '계획', '정밀', '경우', '이상', '이하', '가운데', '가장', '포함', '제외', '기대감', '우려감', '불확실성', '가능성', '움직임', '분위기', '흐름', '국면', '대목', '차원', '입장', '배경', '결과', '모습', '모멘텀', '현상', '차이', '비중', '비율', '단계', '목적', '대상', '조원', '억원', '만원', '천원', '전문', '현지', '사회', '생산자', '제도', '재고', '면제', '속보', '단독', '기자', '특파원', '앵커', '저작권', '무단', '전재', '재배포', '금지', '뉴스', '보도', '자료', '사진', '관계자', '주장', '설명', '강조', '위원회', '법안', '회의', '통과', '정책', '의원', '장관', '페이지', '주소', '입력', '방문', '삭제', '요청', '정확', '확인', '문의', '사항', '고객', '센터', '안내', '감사', '반대', '선임', '공개', '자본', '공개', '이란', '국민연금', '종전', '전쟁', '트럼프', '제안', '찬성', '대통령', '사내', '협상', '출시', '계좌', '중동', '상품', '체제', '변경', '투자증권', '성장', '시그널', '신규', '정치', '외교', '합의', '수출', '수입', '도입', '본격', '소식', '임박', '부각', '주도']
+AD_FILTER = ['펀드', '투어', '캠페인', '서비스', '최초', '강화', '고객', '연금', '마스터', '코리아', '정책', '개최', '박람회', '전시회', '프로모션', '할인', '기획전', '페스티벌', '출시', '협약', 'MOU', '체결', '선정', '어워드', '스마트픽', '팔자', '사자', '증가', '감소', '목표', '꺾인', '주석', '전망', '우려', '기대', '연내', '내달', '오늘', '내일', '돌파', '연속', '급락', '투자', '매수', '매도', '수익']
 THEME_BLACKLIST = ['코로나19', '메르스', '지카바이러스', '우한폐렴', '원숭이두창', '엠폭스', '아프리카돼지열병', '구제역', '광우병', '야놀자(Yanolja)', '리비안(RIVIAN)']
 
 def check_warning_market():
@@ -459,7 +459,6 @@ global_state = ScannerState()
 def fetch_extra_closing_prices_from_kis(code):
     if not KIS_TOKEN or not KIS_APP_KEY or not KIS_APP_SECRET: return 0
     try:
-        # KIS 표준 명세서 규격에 의거한 헤더 및 파라미터 재구축
         headers = {
             "content-type": "application/json; charset=utf-8",
             "authorization": f"Bearer {KIS_TOKEN}",
@@ -479,7 +478,6 @@ def fetch_extra_closing_prices_from_kis(code):
             if price_str.isdigit() and int(price_str) > 0:
                 return int(price_str)
         
-        # 실시간 동적 폴백 체계 세팅
         headers["tr_id"] = "FBDT00100000"
         url_fb = f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-price"
         res_fb = requests.get(url_fb, headers=headers, params=params, timeout=3)
@@ -608,10 +606,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         nxt_close = 0
         market_type = ""
 
-        # 1) KIS 엔진 가동 -> 18시 KRX 시간외단일가 적출
         krx_close = fetch_extra_closing_prices_from_kis(code)
 
-        # 2) 네이버 모바일 API 가동 -> 20시 NXT 야간 종가 적출
         try:
             rt_url = f"https://m.stock.naver.com/api/stock/{code}/basic"
             mobile_headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1"}
@@ -624,7 +620,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         except Exception:
             pass
 
-        # 3) 장구분 판별 조건문 생성
         if krx_close > 0 and nxt_close > 0: market_type = "KRX+NXT"
         elif nxt_close > 0: market_type = "NXT"
         elif krx_close > 0: market_type = "KRX"
@@ -985,7 +980,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         track_type = "눌림" if is_accumulation_cand else ("돌파" if is_breakout_track else "눌림")
 
         # --------------------------------------------------
-        # STEP 12: 플래그 패턴 판독 (파이썬 표준 and 구문 확립)
+        # STEP 12: 플래그 패턴 판독
         # --------------------------------------------------
         flag_days = 0
         for d in range(1, 4):
@@ -1025,7 +1020,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_near_closing_time = (now_kst_tajeom.hour >= 14)
 
         is_overnight_breakout = ((trading_value >= min_breakout_tv) and (pg_amount_eok >= 5 or is_strong_dual_buy) and (acc_i_buy_eok >= 3) and (0.04 <= change_rate <= 0.28) and (current_price >= today_high * 0.95) and (is_near_high or is_near_52w_high) and is_breakout_track and not is_long_shadow)
-        is_overnight_pullback = (is_extreme_nulim navigate_to and (current_price >= ma5) and (pg_amount_eok >= 3 or i_buy_today >= 30_000_000))
+        # 🚨 [오류 교정 구역] 오염 물질로 섞여 들어간 navigate_to 키워드를 완벽 청소
+        is_overnight_pullback = (is_extreme_nulim and (current_price >= ma5) and (pg_amount_eok >= 3 or i_buy_today >= 30_000_000))
         is_overnight_candidate = is_near_closing_time and (is_overnight_breakout or is_overnight_pullback)
         is_fatal_drop = is_junk or is_financial_risk
 
@@ -1184,18 +1180,17 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             score_display = f"0점 ({track_type})"
             master_tajeom = f"👀 [관망] 과거 주도주 이력 미달 (최고 {max_hist_tv_krw // 100_000_000}억 / 테마 {max_theme_val}억)"
 
-        # 🚨 오리지널 26개 요소 완벽 보존 + 시간외/NXT/장구분 데이터 패키징 완료
         result_row = [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%",
             int(ma5), int(ma20), vol_ratio_text, signal,
             score_display, master_tajeom, today_high, today_low, int(display_high_60d),
             market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, my_theme_name,
             program_text, int(display_high_250d), f"{int(acc_i_buy_eok)}억",
-            target_price, stop_loss, is_seed_tag,                # 0 ~ 25번 인덱스 (Z열 종목쿼터)
-            krx_close if krx_close > 0 else "",                  # 26번 인덱스: AA열 (시간외단일가 18시)
-            nxt_close if nxt_close > 0 else "",                  # 27번 인덱스: AB열 (NXT야간종가 20시)
-            market_type,                                         # 28번 인덱스: AC열 (장구분)
-            quant_score                                          # 29번 인덱스: 내부 역정렬 고유 키값
+            target_price, stop_loss, is_seed_tag,
+            krx_close if krx_close > 0 else "",
+            nxt_close if nxt_close > 0 else "",
+            market_type,
+            quant_score
         ]
 
         return result_row, static_info_to_save
@@ -1394,7 +1389,6 @@ def update_technical_data(df_theme, all_theme_map):
             static_sheet.append_rows(new_static_data, value_input_option="USER_ENTERED")
             print(f"✅ 정적 데이터(시가총액/재무) {len(new_static_data)}건 캐시 업데이트 완료")
 
-        # 🚨 [정렬 기준 동기화] 인덱스 29번(숫자형 스코어)으로 역정렬 지배
         results.sort(key=lambda x: x[29], reverse=True)
 
         existing_data = {}
@@ -1427,7 +1421,6 @@ def update_technical_data(df_theme, all_theme_map):
         except:
             helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="29")
 
-        # 🚨 AC열 장구분 헤더 명문화 매핑
         extended_headers = [
             "종목명", "종목코드", "현재가", "등락률", "5일평균", "20일평균", "거래량비율", "AI신호",
             "마스터타점", "브리핑상태", "당일고가", "당일저가", "60일고가", "시가총액", "캔들상태",
@@ -1436,7 +1429,6 @@ def update_technical_data(df_theme, all_theme_map):
         ]
 
         helper_sheet.batch_clear(['A1:AC'])
-        # 전송 시에는 r[:29] 슬라이싱을 걸어 정확하게 AC열(장구분)까지만 구글 시트에 업데이트
         helper_sheet_data = [extended_headers] + [r[:29] for r in results]
         helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
         print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 AA/AB/AC열 완벽 전송)")
@@ -1469,17 +1461,17 @@ def update_technical_data(df_theme, all_theme_map):
                 ai_target = r[23]
                 ai_stop = r[24]
 
+                # 🚨 [오류 교정 부역] 찰싹 붙어있던 공백 누락 오류 수정
                 if 종목코드 in existing_data:
                     ai_briefing = existing_data[종목코드]["briefing"]
                     ai_target = existing_data[종목코드]["target"]
                     ai_stop = existing_data[종목코드]["stop"]
 
-                # 🚨 DB_스캐너 시트도 동일하게 와이드 매핑 구조 적용 (Q열~Z열 공백 패딩 + AA, AB, AC열 데이터 바인딩)
                 row_data = [
                     하이퍼링크, 시장구분, f"'{종목코드}", 현재가, 등락률, 테마명, AI신호, 거래량비율,
                     tajeom, ai_briefing, 스코어, 프로그램, 고가_52주, 기관누적수급, ai_target, ai_stop,
-                    "", "", "", "", "", "", "", "", "", "",  # Q열부터 Z열까지 가독성용 공백 패딩
-                    r[26], r[27], r[28]                      # AA: KIS시간외, AB: NXT종가, AC: 장구분
+                    "", "", "", "", "", "", "", "", "", "",  
+                    r[26], r[27], r[28]                      
                 ]
                 all_candidates.append(row_data)
                 processed_codes.add(종목코드)
@@ -1522,7 +1514,7 @@ def update_technical_data(df_theme, all_theme_map):
         db_scanner_sheet.batch_clear(['A2:AC'])
         if top_20_results:
             db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
-        print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (중장기 쿼터 {len(final_seed)}개 통제 게이트 완벽 작동)")
+        print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (중장기 쿼터 {len(final_seed)}개 제어 및 AA~AC열 연동 성공)")
 
         if is_reset_time:
             try:
