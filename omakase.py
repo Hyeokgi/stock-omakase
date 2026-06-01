@@ -21,8 +21,8 @@ KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
 KIS_URL_BASE = "https://openapi.koreainvestment.com:9443"
 
 now_kst_check = datetime.datetime.now(KST)
-if 3 <= now_kst_check.hour < 7:
-    print(f"🌙 현재 시간({now_kst_check.strftime('%H:%M')}): 시스템을 휴식 모드로 전환합니다. (03시~07시)")
+if 2 <= now_kst_check.hour < 7:
+    print(f"🌙 현재 시간({now_kst_check.strftime('%H:%M')}): 시스템을 휴식 모드로 전환합니다. (02시~07시)")
     sys.exit(0)
 
 def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
@@ -980,7 +980,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         track_type = "눌림" if is_accumulation_cand else ("돌파" if is_breakout_track else "눌림")
 
         # --------------------------------------------------
-        # STEP 12: 플래그 패턴 판독
+        # STEP 12: 플래그 패턴 판독 
         # --------------------------------------------------
         flag_days = 0
         for d in range(1, 4):
@@ -1020,7 +1020,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_near_closing_time = (now_kst_tajeom.hour >= 14)
 
         is_overnight_breakout = ((trading_value >= min_breakout_tv) and (pg_amount_eok >= 5 or is_strong_dual_buy) and (acc_i_buy_eok >= 3) and (0.04 <= change_rate <= 0.28) and (current_price >= today_high * 0.95) and (is_near_high or is_near_52w_high) and is_breakout_track and not is_long_shadow)
-        # 🚨 [오류 교정 구역] 오염 물질로 섞여 들어간 navigate_to 키워드를 완벽 청소
         is_overnight_pullback = (is_extreme_nulim and (current_price >= ma5) and (pg_amount_eok >= 3 or i_buy_today >= 30_000_000))
         is_overnight_candidate = is_near_closing_time and (is_overnight_breakout or is_overnight_pullback)
         is_fatal_drop = is_junk or is_financial_risk
@@ -1180,17 +1179,18 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             score_display = f"0점 ({track_type})"
             master_tajeom = f"👀 [관망] 과거 주도주 이력 미달 (최고 {max_hist_tv_krw // 100_000_000}억 / 테마 {max_theme_val}억)"
 
+        # 🚨 [하이브리드 다이렉트 바인딩 완료] 정수형 정렬 전용 키값을 맨 마지막 인덱스(29번)로 수치 고정
         result_row = [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%",
             int(ma5), int(ma20), vol_ratio_text, signal,
             score_display, master_tajeom, today_high, today_low, int(display_high_60d),
             market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, my_theme_name,
             program_text, int(display_high_250d), f"{int(acc_i_buy_eok)}억",
-            target_price, stop_loss, is_seed_tag,
-            krx_close if krx_close > 0 else "",
-            nxt_close if nxt_close > 0 else "",
-            market_type,
-            quant_score
+            target_price, stop_loss, is_seed_tag,                # 0 ~ 25번 인덱스 (Z열 종목쿼터)
+            krx_close if krx_close > 0 else "",                  # 26번 인덱스: AA열 (시간외단일가 18시)
+            nxt_close if nxt_close > 0 else "",                  # 27번 인덱스: AB열 (NXT야간종가 20시)
+            market_type,                                         # 28번 인덱스: AC열 (장구분)
+            quant_score                                          # 29번 인덱스: 내부 역정렬 고유 키값
         ]
 
         return result_row, static_info_to_save
@@ -1389,6 +1389,7 @@ def update_technical_data(df_theme, all_theme_map):
             static_sheet.append_rows(new_static_data, value_input_option="USER_ENTERED")
             print(f"✅ 정적 데이터(시가총액/재무) {len(new_static_data)}건 캐시 업데이트 완료")
 
+        # 🚨 [인덱스 버그 원천 진압] 문자열이 아닌, 29번째 인덱스에 숨겨둔 순수 퀀트 점수(quant_score) 기준으로 정렬 지배
         results.sort(key=lambda x: x[29], reverse=True)
 
         existing_data = {}
@@ -1429,9 +1430,10 @@ def update_technical_data(df_theme, all_theme_map):
         ]
 
         helper_sheet.batch_clear(['A1:AC'])
+        # 전송 시에는 r[:29] 슬라이싱을 걸어 주가데이터_보조 시트의 AC열(장구분)까지만 완벽하게 주입
         helper_sheet_data = [extended_headers] + [r[:29] for r in results]
         helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
-        print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 AA/AB/AC열 완벽 전송)")
+        print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 실시간 갱신 및 동기화 완료)")
 
         # ============================================================
         # 🚨 하이브리드 독립 풀(Pool) 선별 게이트 (A~AC열 29컬럼 와이드 포맷)
@@ -1461,7 +1463,6 @@ def update_technical_data(df_theme, all_theme_map):
                 ai_target = r[23]
                 ai_stop = r[24]
 
-                # 🚨 [오류 교정 부역] 찰싹 붙어있던 공백 누락 오류 수정
                 if 종목코드 in existing_data:
                     ai_briefing = existing_data[종목코드]["briefing"]
                     ai_target = existing_data[종목코드]["target"]
@@ -1514,7 +1515,7 @@ def update_technical_data(df_theme, all_theme_map):
         db_scanner_sheet.batch_clear(['A2:AC'])
         if top_20_results:
             db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
-        print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (중장기 쿼터 {len(final_seed)}개 제어 및 AA~AC열 연동 성공)")
+        print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (중장기 쿼터 {len(final_seed)}개 통제 게이트 완벽 작동)")
 
         if is_reset_time:
             try:
