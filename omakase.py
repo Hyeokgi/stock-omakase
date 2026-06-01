@@ -980,7 +980,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         track_type = "눌림" if is_accumulation_cand else ("돌파" if is_breakout_track else "눌림")
 
         # --------------------------------------------------
-        # STEP 12: 플래그 패턴 판독 
+        # STEP 12: 플래그 패턴 판독
         # --------------------------------------------------
         flag_days = 0
         for d in range(1, 4):
@@ -1166,20 +1166,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         is_seed_tag = "SEED" if is_accumulation_cand else "NORMAL"
 
-        # --------------------------------------------------
-        # STEP 14: 역사적 수급 DNA 필터 게이트
-        # --------------------------------------------------
-        has_700eok_history = (max_hist_tv_krw >= 70_000_000_000)
-        clean_theme = my_theme_name.replace("🆕[당일]", "").replace("🕰️[과거]", "").split(' (대장:')[0].strip()
-        max_theme_val = theme_historical_max.get(clean_theme, 0)
-        is_theme_qualified = (max_theme_val >= 2000) or (max_theme_val == 0) or (clean_theme == "개별주/기타")
-
-        if not (has_700eok_history and is_theme_qualified) and not is_upper_limit:
-            quant_score = 0
-            score_display = f"0점 ({track_type})"
-            master_tajeom = f"👀 [관망] 과거 주도주 이력 미달 (최고 {max_hist_tv_krw // 100_000_000}억 / 테마 {max_theme_val}억)"
-
-        # 🚨 [하이브리드 다이렉트 바인딩 완료] 정수형 정렬 전용 키값을 맨 마지막 인덱스(29번)로 수치 고정
+        # 🚨 오리지널 26개 요소 완벽 보존 + 시간외/NXT/장구분 데이터 패키징 완료
         result_row = [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%",
             int(ma5), int(ma20), vol_ratio_text, signal,
@@ -1389,7 +1376,7 @@ def update_technical_data(df_theme, all_theme_map):
             static_sheet.append_rows(new_static_data, value_input_option="USER_ENTERED")
             print(f"✅ 정적 데이터(시가총액/재무) {len(new_static_data)}건 캐시 업데이트 완료")
 
-        # 🚨 [인덱스 버그 원천 진압] 문자열이 아닌, 29번째 인덱스에 숨겨둔 순수 퀀트 점수(quant_score) 기준으로 정렬 지배
+        # 🚨 [인덱스 버그 원천 진압] 문자열 상태 대신 숨겨둔 순수 숫자 스코어 인덱스(29)로 내림차순 정렬 지배
         results.sort(key=lambda x: x[29], reverse=True)
 
         existing_data = {}
@@ -1436,7 +1423,7 @@ def update_technical_data(df_theme, all_theme_map):
         print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 실시간 갱신 및 동기화 완료)")
 
         # ============================================================
-        # 🚨 하이브리드 독립 풀(Pool) 선별 게이트 (A~AC열 29컬럼 와이드 포맷)
+        # 🚨 하이브리드 독립 풀(Pool) 선별 게이트 (A~S열 19컬럼 컴팩트 포맷)
         # ============================================================
         scanner_keywords = ["[종베]", "[스윙/눌림]", "[스윙/추세]", "[당일/단타]", "[관심/수급]", "[중장기/모아가기]"]
         all_candidates = []
@@ -1468,11 +1455,11 @@ def update_technical_data(df_theme, all_theme_map):
                     ai_target = existing_data[종목코드]["target"]
                     ai_stop = existing_data[종목코드]["stop"]
 
+                # 🚨 수석님 요청 적극 반영: 가독성을 위해 공란(Q~AA)을 전면 제거하고 Q, R, S열에 다이렉트 주입
                 row_data = [
                     하이퍼링크, 시장구분, f"'{종목코드}", 현재가, 등락률, 테마명, AI신호, 거래량비율,
                     tajeom, ai_briefing, 스코어, 프로그램, 고가_52주, 기관누적수급, ai_target, ai_stop,
-                    "", "", "", "", "", "", "", "", "", "",  
-                    r[26], r[27], r[28]                      
+                    r[26], r[27], r[28]                      # 16: Q(KRX시간외), 17: R(NXT종가), 18: S(시장구분)
                 ]
                 all_candidates.append(row_data)
                 processed_codes.add(종목코드)
@@ -1481,8 +1468,17 @@ def update_technical_data(df_theme, all_theme_map):
             for c_code, data in existing_data.items():
                 if c_code not in processed_codes:
                     raw_r = data["raw_row"]
-                    while len(raw_r) < 29:
-                        raw_r.append("")
+                    if len(raw_r) > 28:
+                        # 💡 구형 포맷(AA, AB, AC)의 잔재가 시트에 있다면, 신형 컴팩트 포맷(Q, R, S)으로 자동 시프트 보정
+                        krx_val = raw_r[26]
+                        nxt_val = raw_r[27]
+                        mkt_val = raw_r[28]
+                        raw_r = raw_r[:16] + [krx_val, nxt_val, mkt_val]
+                    elif len(raw_r) < 19:
+                        while len(raw_r) < 19:
+                            raw_r.append("")
+                    else:
+                        raw_r = raw_r[:19]
                     all_candidates.append(raw_r)
 
         seed_cands = []
@@ -1512,10 +1508,10 @@ def update_technical_data(df_theme, all_theme_map):
         top_20_results.sort(key=get_score_num, reverse=True)
 
         db_scanner_sheet = doc.worksheet("DB_스캐너")
-        db_scanner_sheet.batch_clear(['A2:AC'])
+        db_scanner_sheet.batch_clear(['A2:AC']) # 🚨 구형 버전의 흔적인 AC열까지 완전히 청소하여 셀 밀림 버그 차단
         if top_20_results:
             db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
-        print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (중장기 쿼터 {len(final_seed)}개 통제 게이트 완벽 작동)")
+        print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (중장기 쿼터 제어 및 Q, R, S 컴팩트 정렬 안착 완료)")
 
         if is_reset_time:
             try:
