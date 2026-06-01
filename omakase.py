@@ -29,19 +29,28 @@ def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
     try:
         sheet = doc.worksheet(sheet_name)
         data = sheet.get_all_values()
-        if len(data) <= 2: return
+        if len(data) <= 1: return
         header = data[0]
-        rows = [r for r in data[1:] if len(r) > sort_col_idx and str(r[sort_col_idx]).strip()]
+        
+        # 🚨 버그 패치 1: 데이터 풀에 흡수된 유령 제목행 행들을 원천 필터링하여 제거
+        rows = [r for r in data[1:] if len(r) > sort_col_idx and str(r[sort_col_idx]).strip() and r[0] != header[0]]
+        
         def parse_date(val):
             val = str(val).strip()
             for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y. %m. %d"):
                 try: return datetime.datetime.strptime(val, fmt)
                 except: continue
             return datetime.datetime(1900, 1, 1)
+            
         rows.sort(key=lambda x: parse_date(x[sort_col_idx]), reverse=True)
-        sheet.batch_clear(['A2:Z'])
-        sheet.update(range_name="A2", values=[header] + rows, value_input_option="USER_ENTERED")
-        print(f"✅ [{sheet_name}] 최신순 정렬 및 청소 완료")
+        
+        # 🚨 버그 패치 2: 하단에 누적된 쓰레기 데이터를 밀어버리기 위해 영역을 넉넉하게 청소
+        sheet.batch_clear(['A2:Z10000'])
+        
+        if rows:
+            # 🚨 버그 패치 3: A2부터 채우므로 [header]를 더하지 않고 순수 수집 데이터(rows)만 전송합니다.
+            sheet.update(range_name="A2", values=rows, value_input_option="USER_ENTERED")
+        print(f"✅ [{sheet_name}] 최신순 정렬 및 오염 데이터 청소 완료")
     except Exception as e:
         print(f"⚠️ [{sheet_name}] 정렬 실패: {e}")
 
