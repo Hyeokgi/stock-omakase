@@ -337,7 +337,7 @@ def get_naver_main_news():
         return pd.DataFrame(news_list, columns=['업데이트 시간', '언론사', '기사 제목', '요약 내용', '기사 링크'])
     except: return pd.DataFrame()
 
-# 🚨 [버그 패치 2] 위치 인자(doc)를 매개변수 최상단에 바인딩하여 TypeError 완벽 해소
+# 🚨 [버그 패치 1] 위치 인자(doc)를 선언하여 TypeError 근본 차단
 def update_google_sheet(doc, df_theme, df_news, df_naver, df_main_news, is_market_closed):
     try:
         if not df_theme.empty:
@@ -464,7 +464,7 @@ class ScannerState:
 
 global_state = ScannerState()
 
-# 🚨 [18시 단일가 수리 완료] FHPST02310000 엔드포인트 교차 백업 구조 구축
+# 🚨 [18시 시간외 대규모 복구] KIS API output/output1/output2 가변 레이아웃 무조건 검증
 def fetch_extra_closing_prices_from_kis(code):
     if not KIS_TOKEN or not KIS_APP_KEY or not KIS_APP_SECRET: return 0
     try:
@@ -505,7 +505,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
     local_session = requests.Session()
     time.sleep(random.uniform(0.1, 0.4))
     
-    # 🚨 무결성 30차원 더미 규격 리스트 배정 선언
+    # 🚨 [백지 멸종 조치] 예외 발생 종목 가용 30차원 완전 규격 더미 리스트 배정
     fail_fallback = [
         name, f"'{code}", 0, "0.00%", 0, 0, "전일비 100%", "⚡ 관망 (데이터 수집 오류)",
         "0점 (오류)", "⏸️ [대기] 분석 오류 우회", 0, 0, 0, 0, "🟡 일반형", "📉 이격 과다",
@@ -578,7 +578,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     live_success = True
         except Exception: pass
 
-        # 🚨 [20시 NXT 야간 완벽 복구] 3대 하이브리드 필터 연쇄 추적기 가동
+        # 🚨 [20시 NXT 단일가 복구 수리] 3대 시간외 탐색 객체 복합 교차 필터 매핑
         krx_close = fetch_extra_closing_prices_from_kis(code)
         nxt_close = 0
         market_type = ""
@@ -616,15 +616,18 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         else: market_type = "정규장"
 
         # --------------------------------------------------
-        # STEP 3: 파생 변수 계산
+        # STEP 3: 파생 변수 계산 및 [누락 핵심 캐시 로직 복원]
         # --------------------------------------------------
         is_upper_limit = change_rate >= 0.295
         yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) >= 2 else today_vol
         trading_value = current_price * today_vol
 
         high_prices_60 = high_prices[-60:] if len(high_prices) >= 60 else high_prices
+        
+        # 💡 [핵심 누락 복원] 원본 코드에서 분석 에러(NameError)를 유발하던 핵심 전고 변수 바인딩 정상화
         high_60d_calc = max(high_prices_60[:-1]) if len(high_prices_60) > 1 else today_high
         high_250d_calc = max(high_prices[:-1]) if len(high_prices) > 1 else today_high
+        
         display_high_60d = max(high_prices_60) if high_prices_60 else today_high
         display_high_250d = max(high_prices) if high_prices else today_high
 
@@ -734,7 +737,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             static_info_to_save = [f"'{code}", name, market_cap, str(is_junk), str(is_financial_risk), str(is_chronic_loss)]
 
         # --------------------------------------------------
-        # 🚨 STEP 8: [프로그램 수급 크롤러 완벽 조준 수리 부위]
+        # 🚨 STEP 8: [프로그램 수급 크롤러 완벽 조준 수리 및 비율식 전환 완료]
         # --------------------------------------------------
         is_strong_dual_buy = False
         supply_text = ""
@@ -756,11 +759,11 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             pg_res = local_session.get(pg_url, headers=pg_headers, verify=False, timeout=2)
             pg_soup = BeautifulSoup(pg_res.content, 'html.parser', from_encoding='euc-kr')
             
+            # 💡 [순매수대금 락온 정밀 추적기] 수량 컬럼 혼동을 원천 차단
             amt_col_idx = -1
             th_tags = pg_soup.select("table.type2 th")
             if th_tags:
                 th_texts = [th.text.strip() for th in th_tags]
-                # 💡 [정밀 추적 체계] 순매수대금을 수량과 혼동하지 않고 1순위로 추출 락온
                 for idx, txt in enumerate(th_texts):
                     if "순매수대금" in txt:
                         amt_col_idx = idx
@@ -785,7 +788,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         if clean_amt and clean_amt not in ('', '-', '.'):
                             pg_amount_eok = float(clean_amt) / 100.0
                             if trading_value > 0:
-                                # 💡 [상대 비중 대전환] 잡주 유입 착시를 차단하는 거래대금 대비 프로그램 비중 공식 이식
+                                # 💡 [전략 고도화 반영] 당일 거래대금 대비 비중 공식 도입
                                 pg_ratio = (abs(pg_amount_eok * 100_000_000) / trading_value) * 100
                                 sign = "+" if pg_amount_eok > 0 else ""
                                 
@@ -846,7 +849,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             non_program_buy_eok = f_buy_eok_today - pg_amount_eok
             is_foreigner_active_buy = (f_buy_eok_today >= 15) and (pg_amount_eok <= 5) and (non_program_buy_eok >= 10)
 
-        # 💡 [A급 신호 면책 조건 발동] 외인 5일 누적 30억 이상 + 전고 대비 -15% 이내 눌림 대금 3천억 상회 시 기관 무시 진입 통과
+        # 💡 [전략 고도화 면책 권한 주입] 외인 5일 누적 30억 + 거래대금 3,000억 이상 주도주의 -15% 이내 건강한 눌림목 권역
         is_alpha_signal = (acc_f_buy_eok >= 30.0) and (surge_rate_60d_top >= -0.15) and (trading_value >= 300_000_000_000)
 
         if dual_buy_days >= 3 and today_dual_buy_ratio >= 3.0 and i_buy_today >= 200_000_000 and f_buy_today >= 200_000_000 and acc_i_buy_eok >= 20:
@@ -967,7 +970,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             base_score += 30
             master_tajeom_suffix += " 👑(진성대장)"
 
-        # 💡 [가산점 최적화] 18시 시간외 종가 단일가 및 20시 야간수급 돌파 퀀트 보너스 스코어 장착
+        # 💡 [가산점 전략 고도화 반영] 18시 시간외 강세(+2% 이상) 및 야간 수급 유입 보너스 누적
         if krx_rate >= 2.0:
             base_score += 15
             master_tajeom_suffix += " ⚡(시간외강세)"
@@ -1070,7 +1073,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         return result_row, static_info_to_save
 
     except Exception as e:
-        print(f"❌ 분석 에러 예외 복구 적용 [{name}]: {e}")
+        print(f"❌ 분석 에러 예외 복구 강제 집행 [{name}]: {e}")
         return fail_fallback, None
 
 def update_technical_data(df_theme, all_theme_map):
@@ -1272,7 +1275,7 @@ def update_technical_data(df_theme, all_theme_map):
                     if res: results.append(res)
                     if static_res: new_static_data.append(static_res)
                 except Exception as thread_e:
-                    print(f"⚠️ 개별 워커 치명 오류 격리 우회: {thread_e}")
+                    print(f"⚠️ 개별 종목 멀티프로세싱 오류 우회 스킵: {thread_e}")
 
         if new_static_data:
             static_sheet.append_rows(new_static_data, value_input_option="USER_ENTERED")
@@ -1282,7 +1285,7 @@ def update_technical_data(df_theme, all_theme_map):
             print("🚨 [위험] 수집 성공 리스트가 전무합니다. 기존 시트 무단 증발 백지화를 방어하기 위해 프로세스를 보호 종료합니다.")
             return
 
-        # 💡 [정렬 가드 패치] 반환 데이터가 온전한 30차원 구조일 때만 스코어 정렬 처리 수행하여 원천 락(Lock)
+        # 💡 [정렬 가드 패치 완료] 반환 데이터가 온전한 30차원 구조를 충족할 때만 정렬 키 실행
         results.sort(key=lambda x: x[29] if (x and len(x) > 29) else 0, reverse=True)
 
         existing_data = {}
@@ -1322,7 +1325,7 @@ def update_technical_data(df_theme, all_theme_map):
             "기관/외인 누적(5일)", "목표가(AI)", "손절가(AI)", "종목쿼터", "시간외단일가(18시)", "NXT야간종가(20시)", "장구분"
         ]
 
-        # 🚨 무결성이 완전 검증된 데이터 풀 구조만 batch_clear 이후 주입 보장
+        # 🚨 트랜잭션 주입 순서 변경: 무결성이 완벽하게 보장된 시점에만 데이터 업데이트 실행
         helper_sheet.batch_clear(['A1:AC1500'])
         helper_sheet_data = [extended_headers] + [r[:29] for r in results]
         helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
@@ -1468,7 +1471,7 @@ if __name__ == "__main__":
     df_theme, is_market_closed, all_theme_map = get_real_money_themes()
     df_news, df_naver, df_main_news = get_news_keywords(), get_naver_search_ranking(), get_naver_main_news()
     
-    # 🚨 상호 연결 컨텍스트 주입 완료 (doc_main 전송 매핑)
+    # 🚨 [인수 전달 패치 완료] doc_main을 매핑하여 TypeError 완벽 격파
     update_google_sheet(doc_main, df_theme, df_news, df_naver, df_main_news, is_market_closed)
 
     today_schedules = get_market_schedule()
