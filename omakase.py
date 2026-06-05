@@ -114,7 +114,7 @@ if KIS_TOKEN: print("✅ KIS 토큰 준비 완료!")
 else: print("⚠️ KIS 토큰 준비 실패")
 
 STOPWORDS = ['코스피', '코스닥', '증시', '주식', '투자', '종목', '시장', '지수', '대형주', '중소형주', '외인', '기관', '개인', '외국인', '매수', '매도', '순매수', '순매도', '거래', '대금', '주가', '펀드', '사모', '상장', '상폐', '공모', '특징주', '테마', '테마주', '관련', '관련주', '수혜', '수혜주', '장세', '개장', '출발', '마감', '초반', '후반', '오전', '오후', '장중', '증권', '증권사', '운용', '자사', '괴리', '프리미어', '가치', '밸류', '공시', '병합', '분할', '상승', '하락', '급등', '급락', '강세', '약세', '폭락', '반등', '조정', '랠리', '위축', '냉각', '훈풍', '안도', '불안', '쇼크', '서프라이즈', '돌파', '경신', '연속', '최고', '최저', '신고가', '신저가', '최고치', '최저치', '최고가', '최저가', '급증', '급감', '확산', '진정', '완화', '악화', '개선', '회복', '최대', '사상', '역대', '최초', '최신', '규모', '수준', '가격', '목표가', '상향', '하향', '박살', '킬러', '대규모', '변동', '오픈', '호재', '연계', '대비', '경제', '금융', '기업', '정부', '자산', '머니', '한국', '미국', '국내', '글로벌', '뉴욕', '회장', '대표', '임원', '주주', '총회', '이유', '때문', '달러', '금리', '인상', '인하', '동결', '연준', '파월', '물가', '지표', '고용', '기름값', '주유소', '석유', '신용', '수익', '매출', '적자', '흑자', '배당', '지분', '인수', '합병', '사업', '추진', '공급', '계약', '체결', '실적', '발표', '이익', '반사이익', '현금', '자회사', '계열사', '지주사', '관계사', '기내식', '서비스', '오늘', '내일', '이번', '주간', '월간', '분기', '시간', '하루', '하루만', '올해', '내년', '지난해', '전일', '전주', '전월', '동기', '내달', '연말', '연초', '이날', '당일', '최근', '현재', '이후', '이전', '상반기', '하반기', '당분간', '예상', '전망', '기대', '우려', '경고', '목표', '분석', '평가', '결정', '검토', '참여', '진출', '포기', '중단', '재개', '완료', '시작', '종료', '영향', '타격', '피해', '직격탄', '부양', '지원', '규제', '단속', '강화', '철폐', '폐지', '유지', '보류', '달성', '기준', '행사', '이사', '의결', '개정', '취지', '적극', '개최', '진행', '예정', '상황', '필요', '대응', '마련', '운영', '관리', '적용', '이용', '사용', '활용', '확보', '제공', '구축', '기반', '중심', '노력', '계획', '정밀', '경우', '이상', '이하', '가운데', '가장', '포함', '제외', '기대감', '우려감', '불확실성', '가능성', '움직임', '분위기', '흐름', '국면', '대목', '차원', '입장', '배경', '결과', '모습', '모멘텀', '현상', '차이', '비중', '비율', '단계', '목적', '대상', '조원', '억원', '만원', '천원', '전문', '현지', '사회', '생산자', '제도', '재고', '면제', '속보', '단독', '기자', '특파원', '앵커', '저작권', '무단', '전재', '재배포', '금지', '뉴스', '보도', '자료', '사진', '관계자', '주장', '설명', '강조', '위원회', '법안', '회의', '통과', '정책', '의원', '장관', '페이지', '주소', '입력', '방문', '삭제', '요청', '정확', '확인', '문의', '사항', '고객', '센터', '안내', '감사', '반대', '선임', '공개', '자본', '공개', '이란', '국민연금', '종전', '전쟁', '트럼프', '제안', '찬성', '대통령', '사내', '협상', '출시', '계좌', '중동', '상품', '체제', '변경', '투자증권', '성장', '시그널', '신규', '정치', '외교', '합의', '수출', '수입', '도입', '본격', '소식', '임박', '부각', '주도']
-AD_FILTER = ['펀드', '투어', '캠페인', '서비스', '최초', '강화', '고객', '연금', '마스터', '코리아', '정책', '개최', '박람회', '전시회', '프로모션', '할인', '기획전', '페стики벌', '출시', '협약', 'MOU', '체결', '선정', '어워드', '스마트픽', '팔자', '사자', '증가', '감소', '목표', '꺾인', '주석', '전망', '우려', '기대', '연내', '내달', '오늘', '내일', '돌파', '연속', '급락', '투자', '매수', '매도', '수익']
+AD_FILTER = ['펀드', '투어', '캠페인', '서비스', '최초', '강화', '고객', '연금', '마스터', '코리아', '정책', '개최', '박람회', '전시회', '프로모션', '할인', '기획전', '페스티벌', '출시', '협약', 'MOU', '체결', '선정', '어워드', '스마트픽', '팔자', '사자', '증가', '감소', '목표', '꺾인', '주석', '전망', '우려', '기대', '연내', '내달', '오늘', '내일', '돌파', '연속', '급락', '투자', '매수', '매도', '수익']
 THEME_BLACKLIST = ['코로나19', '메르스', '지카바이러스', '우한폐렴', '원숭이두창', '엠폭스', '아프리카돼지열병', '구제역', '광우병', '야놀자(Yanolja)', '리비안(RIVIAN)']
 
 def check_warning_market():
@@ -337,10 +337,9 @@ def get_naver_main_news():
         return pd.DataFrame(news_list, columns=['업데이트 시간', '언론사', '기사 제목', '요약 내용', '기사 링크'])
     except: return pd.DataFrame()
 
-def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_closed):
+# 🚨 [버그 패치 2] 위치 인자(doc)를 매개변수 최상단에 바인딩하여 TypeError 완벽 해소
+def update_google_sheet(doc, df_theme, df_news, df_naver, df_main_news, is_market_closed):
     try:
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        doc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)).open_by_url(SHEET_URL)
         if not df_theme.empty:
             try:
                 sheet_rt = doc.worksheet("수급_실시간")
@@ -465,7 +464,7 @@ class ScannerState:
 
 global_state = ScannerState()
 
-# 🚨 [KIS 전용 보안 소켓 엔진 규격 복원] 18시 시간외단일가 종가 수집 (정규 헤더 주입 + output1/output2 가드탑재)
+# 🚨 [18시 단일가 수리 완료] FHPST02310000 엔드포인트 교차 백업 구조 구축
 def fetch_extra_closing_prices_from_kis(code):
     if not KIS_TOKEN or not KIS_APP_KEY or not KIS_APP_SECRET: return 0
     try:
@@ -484,7 +483,6 @@ def fetch_extra_closing_prices_from_kis(code):
         res = requests.get(url, headers=headers, params=params, timeout=4)
         if res.status_code == 200:
             res_json = res.json()
-            # 💡 [18시 복구] output1, output2 구조적 변화 완벽 대응 교차 검증
             output = res_json.get("output") or res_json.get("output1") or res_json.get("output2") or {}
             price_str = str(output.get("stck_prpr", "0"))
             if price_str.isdigit() and int(price_str) > 0:
@@ -505,9 +503,9 @@ def fetch_extra_closing_prices_from_kis(code):
 
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db, theme_historical_max, long_term_stocks):
     local_session = requests.Session()
-    time.sleep(random.uniform(0.1, 0.4)) # 병렬 차단 스캔 회피 딜레이
+    time.sleep(random.uniform(0.1, 0.4))
     
-    # 🚨 [백지화 원천 마킹 가드] 어떤 에러를 만나도 무조건 빈 규격 30개 배열을 리턴하여 ThreadPool 붕괴 방지
+    # 🚨 무결성 30차원 더미 규격 리스트 배정 선언
     fail_fallback = [
         name, f"'{code}", 0, "0.00%", 0, 0, "전일비 100%", "⚡ 관망 (데이터 수집 오류)",
         "0점 (오류)", "⏸️ [대기] 분석 오류 우회", 0, 0, 0, 0, "🟡 일반형", "📉 이격 과다",
@@ -580,11 +578,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     live_success = True
         except Exception: pass
 
-        # 🚨 [시간외 및 20시 NXT 단일가 복구 엔진 전면 업그레이드]
+        # 🚨 [20시 NXT 야간 완벽 복구] 3대 하이브리드 필터 연쇄 추적기 가동
         krx_close = fetch_extra_closing_prices_from_kis(code)
         nxt_close = 0
         market_type = ""
-        시간외종가_display = ""
         nxt_rate = 0.0
         krx_rate = 0.0
         
@@ -593,9 +590,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             nxt_res = local_session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", headers=mobile_headers, verify=False, timeout=2)
             if nxt_res.status_code == 200:
                 nxt_json = nxt_res.json()
-                
-                # 💡 [NXT 복구] 3대 하이브리드 필터링 탐색기 가동 (overPrice/closePrice/price)
-                over_info = nxt_json.get("overMarketPriceInfo") or nxt_json.get("afterMarketPriceInfo") or nxt_json.get("nightMarketPriceInfo") or {}
+                over_info = nxt_json.get("overMarketPriceInfo") or nxt_json.get("nightMarketPriceInfo") or nxt_json.get("afterMarketPriceInfo") or {}
                 if over_info and isinstance(over_info, dict):
                     over_p_str = str(over_info.get("closePrice") or over_info.get("overPrice") or over_info.get("price") or "0").replace(",", "").strip()
                     clean_over_p = re.sub(r'[^0-9]', '', over_p_str)
@@ -739,7 +734,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             static_info_to_save = [f"'{code}", name, market_cap, str(is_junk), str(is_financial_risk), str(is_chronic_loss)]
 
         # --------------------------------------------------
-        # 🚨 STEP 8: [프로그램 수급 크롤러 완벽 수리 및 비율 지표 전환]
+        # 🚨 STEP 8: [프로그램 수급 크롤러 완벽 조준 수리 부위]
         # --------------------------------------------------
         is_strong_dual_buy = False
         supply_text = ""
@@ -761,20 +756,24 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             pg_res = local_session.get(pg_url, headers=pg_headers, verify=False, timeout=2)
             pg_soup = BeautifulSoup(pg_res.content, 'html.parser', from_encoding='euc-kr')
             
-            # 💡 [동적 헤더 스캐너] 컬럼 레이아웃 유동성에 상관없이 금액 열 정밀 조준
             amt_col_idx = -1
             th_tags = pg_soup.select("table.type2 th")
             if th_tags:
                 th_texts = [th.text.strip() for th in th_tags]
+                # 💡 [정밀 추적 체계] 순매수대금을 수량과 혼동하지 않고 1순위로 추출 락온
                 for idx, txt in enumerate(th_texts):
-                    if "금액" in txt or "대금" in txt or "순매수" in txt:
+                    if "순매수대금" in txt:
                         amt_col_idx = idx
                         break
+                if amt_col_idx == -1:
+                    for idx, txt in enumerate(th_texts):
+                        if "순매수금액" in txt or "대금" in txt or "금액" in txt:
+                            amt_col_idx = idx
+                            break
 
             pg_rows = pg_soup.select("table.type2 tr")
             for r_tag in pg_rows:
                 cols = r_tag.select("td")
-                # 💡 [인덱스 패치] 2026 수시 레이아웃 가드 (행 td 6개 매핑 대응 완료)
                 if len(cols) >= 6:
                     first_col = cols[0].text.strip()
                     if first_col and (':' in first_col or '.' in first_col or first_col[0].isdigit()):
@@ -784,9 +783,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         clean_amt = re.sub(r'[^0-9.\-]', '', raw_amt_str)
                         
                         if clean_amt and clean_amt not in ('', '-', '.'):
-                            pg_amount_eok = float(clean_amt) / 100.0  # 백만 -> 억원 스케일링
+                            pg_amount_eok = float(clean_amt) / 100.0
                             if trading_value > 0:
-                                # 💡 [전략 고도화] 절대금액 한계 극복 -> 당일 거래대금 대비 프로그램 순매수 비중 산출
+                                # 💡 [상대 비중 대전환] 잡주 유입 착시를 차단하는 거래대금 대비 프로그램 비중 공식 이식
                                 pg_ratio = (abs(pg_amount_eok * 100_000_000) / trading_value) * 100
                                 sign = "+" if pg_amount_eok > 0 else ""
                                 
@@ -847,7 +846,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             non_program_buy_eok = f_buy_eok_today - pg_amount_eok
             is_foreigner_active_buy = (f_buy_eok_today >= 15) and (pg_amount_eok <= 5) and (non_program_buy_eok >= 10)
 
-        # 💡 [전략 고도화: A급 신호 선별] 외인 5일 누적 30억 이상 + 전고점 대비 -15% 이내 눌림목 권역 면책 진입 허용
+        # 💡 [A급 신호 면책 조건 발동] 외인 5일 누적 30억 이상 + 전고 대비 -15% 이내 눌림 대금 3천억 상회 시 기관 무시 진입 통과
         is_alpha_signal = (acc_f_buy_eok >= 30.0) and (surge_rate_60d_top >= -0.15) and (trading_value >= 300_000_000_000)
 
         if dual_buy_days >= 3 and today_dual_buy_ratio >= 3.0 and i_buy_today >= 200_000_000 and f_buy_today >= 200_000_000 and acc_i_buy_eok >= 20:
@@ -968,7 +967,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             base_score += 30
             master_tajeom_suffix += " 👑(진성대장)"
 
-        # 💡 [전략 고도화: 시간외/NXT 가산점 적용 엔진]
+        # 💡 [가산점 최적화] 18시 시간외 종가 단일가 및 20시 야간수급 돌파 퀀트 보너스 스코어 장착
         if krx_rate >= 2.0:
             base_score += 15
             master_tajeom_suffix += " ⚡(시간외강세)"
@@ -1055,7 +1054,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_seed_tag = "SEED" if is_accumulation_cand or is_long_term_pick else "NORMAL"
         supply_status_col = f"기:{int(acc_i_buy_eok)}/외:{int(acc_f_buy_eok)}"
 
-        # 💡 [정교한 파싱 스트림 구축] 한 종목당 정확히 30개 차원의 고정 배열 생성 보장
         result_row = [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%",
             int(ma5), int(ma20), vol_ratio_text, signal,
@@ -1280,13 +1278,12 @@ def update_technical_data(df_theme, all_theme_map):
             static_sheet.append_rows(new_static_data, value_input_option="USER_ENTERED")
             print(f"✅ 정적 데이터(시가총액/재무) {len(new_static_data)}건 캐시 업데이트 완료")
 
-        # 🚨 [백지화 마킹 해결 가드] 분석 성공 데이터세트 무결성 최종 체크 락(Lock)
         if not results:
             print("🚨 [위험] 수집 성공 리스트가 전무합니다. 기존 시트 무단 증발 백지화를 방어하기 위해 프로세스를 보호 종료합니다.")
             return
 
-        # 💡 인덱스 29번인 quant_score 기준 완전 무결성 역순 정렬 가동
-        results.sort(key=lambda x: x[29], reverse=True)
+        # 💡 [정렬 가드 패치] 반환 데이터가 온전한 30차원 구조일 때만 스코어 정렬 처리 수행하여 원천 락(Lock)
+        results.sort(key=lambda x: x[29] if (x and len(x) > 29) else 0, reverse=True)
 
         existing_data = {}
         try:
@@ -1318,7 +1315,6 @@ def update_technical_data(df_theme, all_theme_map):
         except:
             helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="29")
 
-        # 💡 [정밀 헤더 29 컬럼 정렬]
         extended_headers = [
             "종목명", "종목코드", "현재가", "등락률", "5일평균", "20일평균", "거래량비율", "AI신호",
             "마스터타점", "브리핑상태", "당일고가", "당일저가", "60일고가", "시가총액", "캔들상태",
@@ -1326,7 +1322,7 @@ def update_technical_data(df_theme, all_theme_map):
             "기관/외인 누적(5일)", "목표가(AI)", "손절가(AI)", "종목쿼터", "시간외단일가(18시)", "NXT야간종가(20시)", "장구분"
         ]
 
-        # 🚨 [트랜잭션 쓰기 교정] 데이터 리스트가 확실하게 차 있는 것을 검증한 후 초기화 및 라이팅 순차 실행
+        # 🚨 무결성이 완전 검증된 데이터 풀 구조만 batch_clear 이후 주입 보장
         helper_sheet.batch_clear(['A1:AC1500'])
         helper_sheet_data = [extended_headers] + [r[:29] for r in results]
         helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
@@ -1416,7 +1412,7 @@ def update_technical_data(df_theme, all_theme_map):
         top_20_results.sort(key=get_score_num, reverse=True)
 
         db_scanner_sheet = doc.worksheet("DB_스캐너")
-        db_scanner_sheet.batch_clear(['A2:AC2000'])
+        db_scanner_sheet.batch_clear(['A2:AZ1000'])
         if top_20_results:
             db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
         print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (중장기 쿼터 제어 및 Q, R, S 컴팩트 정렬 안착 완료)")
@@ -1472,7 +1468,7 @@ if __name__ == "__main__":
     df_theme, is_market_closed, all_theme_map = get_real_money_themes()
     df_news, df_naver, df_main_news = get_news_keywords(), get_naver_search_ranking(), get_naver_main_news()
     
-    # 🚨 상호 연결 컨텍스트 주입 락 해제 완료
+    # 🚨 상호 연결 컨텍스트 주입 완료 (doc_main 전송 매핑)
     update_google_sheet(doc_main, df_theme, df_news, df_naver, df_main_news, is_market_closed)
 
     today_schedules = get_market_schedule()
