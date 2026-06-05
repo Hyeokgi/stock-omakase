@@ -716,7 +716,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             static_info_to_save = [f"'{code}", name, market_cap, str(is_junk), str(is_financial_risk), str(is_chronic_loss)]
 
         # --------------------------------------------------
-        # 🚨 STEP 8: [교정 완료] 프로그램 분리 및 외인 집중배팅 추적
+        # 🚨 STEP 8: [완벽 보정판] 프로그램 분리 및 외인 집중배팅 추적
         # --------------------------------------------------
         is_strong_dual_buy = False
         supply_text = ""
@@ -728,26 +728,47 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         program_text = "확인불가"
         pg_amount_eok = 0.0
 
-        # 💡 [버그 수정] 시간 포맷(:) 및 날짜 포맷(.)을 모두 방어하여 당일 최종/장중 프로그램 수급을 완벽하게 파싱합니다.
         try:
             pg_url = f"https://finance.naver.com/item/sise_program.naver?code={code}"
-            pg_res = local_session.get(pg_url, headers=desktop_headers, verify=False, timeout=2)
+            
+            # 💡 [핵심 패치 1] 네이버의 아이프레임 차단을 우회하기 위해 Referer를 완벽하게 주입합니다.
+            pg_headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Referer": f"https://finance.naver.com/item/main.naver?code={code}"
+            }
+            
+            pg_res = local_session.get(pg_url, headers=pg_headers, verify=False, timeout=2)
             pg_soup = BeautifulSoup(pg_res.content, 'html.parser', from_encoding='euc-kr')
             pg_rows = pg_soup.select("table.type2 tr")
+            
             for r_tag in pg_rows:
                 cols = r_tag.select("td")
-                if len(cols) >= 7:
+                if len(cols) >= 4:
                     first_col = cols[0].text.strip()
-                    # 시간(15:30)이든 날짜(2026.06.05)든 첫 글자가 숫자이면 정상 데이터 행으로 인정
                     if first_col and first_col[0].isdigit():
-                        # 💡 인덱스 교정: cols[6]이 정확한 '순매수대금' (단위: 백만) 입니다.
-                        pg_net_amt_str = cols[6].text.strip().replace(',', '').replace('+', '')
-                        if pg_net_amt_str:
-                            pg_amount_eok = float(pg_net_amt_str) / 100.0  # 백만 단위 -> 억원 단위 변환
-                        break  # 최상단 최신 데이터(당일 누적 최종치) 1줄만 정확히 읽고 루프 종료
-        except Exception: pass
+                        
+                        # 💡 [핵심 패치 2] 테이블 레이아웃 변화에 무너지지 않도록 순매수대금 후보 열을 동적으로 탐색합니다.
+                        val_candidates = []
+                        if len(cols) >= 7:
+                            val_candidates.extend([cols[6].text.strip(), cols[3].text.strip()])
+                        val_candidates.append(cols[-1].text.strip()) # 맨 우측 열은 항상 최종 수급 데이터가 위치함
+                        
+                        for raw_val in val_candidates:
+                            clean_amt = raw_val.replace(',', '').replace('+', '').strip()
+                            clean_amt = clean_amt.replace('−', '-') # 유니코드 특수 마이너스 기호 방어
+                            clean_amt = re.sub(r'[^0-9.-]', '', clean_amt) # 숫자, 마이너스, 점 외의 오염물 싹 청소
+                            
+                            if clean_amt and clean_amt != '0' and clean_amt != '':
+                                try:
+                                    pg_amount_eok = float(clean_amt) / 100.0  # 백만 단위 -> 억원 단위 변환
+                                    break # 유효한 값을 찾으면 후보군 탐색 성공 종료
+                                except:
+                                    pass
+                        break # 당일 최종 데이터 1줄을 완벽히 읽었으므로 날짜/시간 루프 종료
+        except Exception:
+            pass
 
-        # 기관/외인 총 순매수 (타임라인 오류 원천 차단)
+        # 기관/외인 총 순매수 (기존 로직 유지)
         is_today_data_in_frgn = False
         today_str_dot = datetime.datetime.now(KST).strftime('%Y.%m.%d')
 
