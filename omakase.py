@@ -508,8 +508,12 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         # STEP 1: fchart 일봉 데이터 수집
         # --------------------------------------------------
         url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=250&requestType=0"
-        res = local_session.get(url, verify=False, timeout=3)
-        root = ET.fromstring(res.text)
+        try:
+            res = local_session.get(url, verify=False, timeout=3)
+            root = ET.fromstring(res.text)
+        except Exception:
+            # 🚨 XML 파싱 에러(상장폐지, 스팩주, 데이터 부족) 원천 차단
+            return None, None
 
         history = []
         high_prices = []
@@ -615,6 +619,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         high_prices_60 = high_prices[-60:] if len(high_prices) >= 60 else high_prices
         high_60d_calc = max(high_prices_60[:-1]) if len(high_prices_60) > 1 else today_high
+        
+        # 🚨 [누락 복구] 52주 신고가 계산 변수 복구
+        high_250d_calc = max(high_prices[:-1]) if len(high_prices) > 1 else today_high
+        
         display_high_60d = max(high_prices_60) if high_prices_60 else today_high
         display_high_250d = max(high_prices) if high_prices else today_high
 
@@ -726,7 +734,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             static_info_to_save = [f"'{code}", name, market_cap, str(is_junk), str(is_financial_risk), str(is_chronic_loss)]
 
         # --------------------------------------------------
-        # 🚨 STEP 8: [핵심 패치] 프로그램 분리 및 외인 집중배팅 추적
+        # STEP 8: 프로그램 분리 및 외인 집중배팅 추적
         # --------------------------------------------------
         is_strong_dual_buy = False
         supply_text = ""
@@ -737,7 +745,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         program_text = "확인불가"
         pg_amount_eok = 0.0
 
-        # 1) 프로그램 순매수 리얼 데이터 파싱
         try:
             pg_url = f"https://finance.naver.com/item/sise_program.naver?code={code}"
             pg_res = local_session.get(pg_url, headers=desktop_headers, verify=False, timeout=2)
@@ -748,11 +755,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 if len(cols) >= 6 and cols[0].text.strip().replace('.', '').isdigit():
                     pg_net_amt_str = cols[5].text.strip().replace(',', '').replace('+', '')
                     if pg_net_amt_str:
-                        pg_amount_eok = int(pg_net_amt_str) / 100.0  # 단위: 백만 -> 억
+                        pg_amount_eok = int(pg_net_amt_str) / 100.0  
                     break
         except Exception: pass
 
-        # 2) 기관/외인 총 순매수 파싱
         try:
             frgn_url = f"https://finance.naver.com/item/frgn.naver?code={code}&_={int(time.time() * 1000)}"
             frgn_res = local_session.get(frgn_url, headers=desktop_headers, verify=False, timeout=3)
@@ -778,7 +784,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         i_buy_today = i_buy_won
                         f_buy_today = f_buy_won
                         
-                        # 프로그램 텍스트 세팅 (이제 리얼 데이터 기반)
                         pg_amount_won = pg_amount_eok * 100_000_000
                         pg_ratio = (abs(pg_amount_won) / trading_value) * 100 if trading_value > 0 else 0.0
                         if pg_amount_eok >= 30 and pg_ratio >= 10.0: program_text = f"🔴 [P.대량유입] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
@@ -798,9 +803,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         f_buy_eok = f_buy_today / 100_000_000
         today_dual_buy_ratio = ((i_buy_today + f_buy_today) / trading_value) * 100 if trading_value > 0 else 0.0
         
-        # 3) 🚨 외인 집중배팅 (Non-Program) 판독기
         non_program_buy_eok = f_buy_eok - pg_amount_eok
-        # 조건: 외인 총 매수 15억 이상인데, 프로그램은 5억 이하(또는 마이너스) 즉, 10억 이상의 '찐매수'가 손으로 들어온 경우
         is_foreigner_active_buy = (f_buy_eok >= 15) and (pg_amount_eok <= 5) and (non_program_buy_eok >= 10)
 
         if dual_buy_days >= 3 and today_dual_buy_ratio >= 3.0 and i_buy_today >= 200_000_000 and f_buy_today >= 200_000_000 and acc_i_buy_eok >= 20:
@@ -911,11 +914,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_breakout_track = current_price >= ma20
         track_type = "눌림" if is_accumulation_cand else ("돌파" if is_breakout_track else "눌림")
 
-        # --------------------------------------------------
-        # STEP 12: 기타 패턴 (플래그, 종베 등)
-        # --------------------------------------------------
-        is_extreme_nulim = False
-        is_overnight_candidate = False
         is_fatal_drop = is_junk or is_financial_risk
 
         # --------------------------------------------------
@@ -1074,27 +1072,176 @@ def update_technical_data(df_theme, all_theme_map):
 
         print("▶️ 기술적 지표 초고속 멀티프로세싱 판독 시작...")
         is_warning_market = check_warning_market()
+        if is_warning_market: print("⚠️ 코스닥 20일선 이탈(하락장) 감지! 스캐너 허들을 대폭 상향합니다.")
+
         kospi_rate = get_kospi_fluctuation_rate()
+        if kospi_rate <= -0.5:
+            print(f"📊 코스피 실시간 등락률: {kospi_rate:.2f}% (해지 프리미엄 발동 대기)")
 
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
-        
-        # (기존 데이터 캐싱 및 변수 선언부 생략 - 기존 코드 구조 유지)
-        static_sheet = doc.worksheet("DB_정적데이터")
-        static_db, theme_rank_dict, past_theme_map = {}, {}, {}
-        # ... (이전 코드의 static_db, 테마맵핑 구조와 동일하게 동작) ...
-        
+
+        try:
+            static_sheet = doc.worksheet("DB_정적데이터")
+        except:
+            print("🚀 [초기 1회] DB_정적데이터 탭을 생성합니다...")
+            static_sheet = doc.add_worksheet(title="DB_정적데이터", rows="1000", cols="6")
+            static_sheet.append_row(["종목코드", "종목명", "시가총액", "관리종목", "재무위험", "만성적자"])
+
+        # 🚨 [누락 복구] 시간 초기화 체크 로직 전체 부활
+        print("🔄 정적 데이터 캐싱 메커니즘 구동")
+        now_time = datetime.datetime.now(KST)
+        is_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50) or len(static_sheet.get_all_values()) <= 5
+        static_db = {}
+
+        if is_reset_time:
+            print("🔄 정적 데이터(시가총액 등) 캐시를 초기화하고 새로 수집합니다.")
+            static_sheet.batch_clear(['A2:F'])
+        else:
+            try:
+                for row in static_sheet.get_all_values()[1:]:
+                    if len(row) >= 6:
+                        code_key = str(row[0]).replace("'", "").strip().zfill(6)
+                        cap_clean = re.sub(r'[^0-9]', '', str(row[2]))
+                        static_db[code_key] = {
+                            'market_cap': int(cap_clean) if cap_clean else 0,
+                            'is_junk': row[3] == 'True',
+                            'is_fin_risk': row[4] == 'True',
+                            'is_chronic_loss': row[5] == 'True'
+                        }
+            except: pass
+
+        theme_rank_dict = {}
+        try:
+            realtime_data = doc.worksheet("수급_실시간").get_all_values()
+            if len(realtime_data) > 1:
+                header = realtime_data[0]
+                date_idx = header.index('날짜') if '날짜' in header else 0
+                rank_idx = header.index('순위') if '순위' in header else 2
+                theme_idx = header.index('테마명') if '테마명' in header else 3
+                name_idx = header.index('종목명') if '종목명' in header else 4
+                latest_date_str = str(realtime_data[1][date_idx]).strip()
+                today_date = datetime.datetime.strptime(latest_date_str, '%Y-%m-%d').date()
+                theme_rank_tracker = {}
+                for row in realtime_data[1:]:
+                    if len(row) > max(date_idx, rank_idx, theme_idx, name_idx):
+                        if str(row[date_idx]).strip() == latest_date_str:
+                            try: t_rank = int(row[rank_idx])
+                            except: continue
+                            t_name = str(row[theme_idx]).strip()
+                            s_name = str(row[name_idx]).strip()
+                            if t_rank not in theme_rank_tracker: theme_rank_tracker[t_rank] = []
+                            theme_rank_tracker[t_rank].append(s_name)
+                            theme_rank_dict[s_name] = {'theme_rank': t_rank, 'theme_name': t_name, 'is_leader': False}
+                            all_theme_map[s_name] = {'theme_name': t_name, 'is_leader': False}
+                for s_name, info in theme_rank_dict.items():
+                    t_rank = info['theme_rank']
+                    is_leader = (theme_rank_tracker[t_rank][0] == s_name)
+                    theme_rank_dict[s_name]['is_leader'] = is_leader
+                    all_theme_map[s_name]['is_leader'] = is_leader
+            else:
+                today_date = datetime.datetime.now(KST).date()
+        except Exception as e:
+            print(f"⚠️ 실시간 데이터 로드 에러: {e}")
+            today_date = datetime.datetime.now(KST).date()
+
+        past_theme_map = {}
+        try:
+            three_months_ago = today_date - datetime.timedelta(days=90)
+            for sheet_name in ["수급_Raw", "수급_실시간"]:
+                try:
+                    raw_data = doc.worksheet(sheet_name).get_all_values()
+                    if len(raw_data) > 1:
+                        header = raw_data[0]
+                        date_idx = header.index('날짜') if '날짜' in header else 0
+                        theme_idx = header.index('테마명') if '테마명' in header else (2 if sheet_name == "수급_Raw" else 3)
+                        name_idx = header.index('종목명') if '종목명' in header else (3 if sheet_name == "수급_Raw" else 4)
+                        for row in raw_data[1:]:
+                            if len(row) > max(date_idx, theme_idx, name_idx):
+                                r_date_str = str(row[date_idx]).strip()
+                                s_name = str(row[name_idx]).strip()
+                                t_name = str(row[theme_idx]).strip()
+                                if s_name and t_name and t_name != "개별주/기타":
+                                    try:
+                                        row_date = datetime.datetime.strptime(r_date_str, '%Y-%m-%d').date()
+                                        if row_date != today_date and row_date >= three_months_ago:
+                                            if s_name not in past_theme_map:
+                                                past_theme_map[s_name] = t_name
+                                    except: pass
+                except: pass
+            try:
+                scanner_data = doc.worksheet("DB_스캐너").get_all_values()
+                for row in scanner_data[1:]:
+                    if len(row) > 5 and row[5]:
+                        if 'HYPERLINK' in str(row[0]):
+                            m = re.search(r', "([^"]+)"\)', str(row[0]))
+                            s_name = m.group(1) if m else str(row[0])
+                        else:
+                            s_name = str(row[0]).strip()
+                        t_name = str(row[5]).replace("🆕[당일]", "").replace("🕰️[과거]", "").strip()
+                        if s_name and t_name and t_name != "개별주/기타" and s_name not in past_theme_map:
+                            if s_name not in theme_rank_dict:
+                                past_theme_map[s_name] = t_name
+            except: pass
+        except Exception as e: print(f"⚠️ 과거 테마 맵핑 에러: {e}")
+
         target_names = set()
+        try:
+            raw_data = doc.worksheet("수급_Raw").get_all_values()
+            for row in raw_data[1:]:
+                if len(row) >= 7:
+                    stock_name = str(row[-4]).strip()
+                    if stock_name and stock_name not in ["#REF!", "로딩중...", "데이터대기", "FALSE"]:
+                        target_names.add(stock_name)
+        except: pass
+
+        if not df_theme.empty:
+            top_10_themes = df_theme[df_theme['순위'] <= 10]['종목명'].tolist()
+            for t in top_10_themes: target_names.add(str(t).strip())
+
         for t_name in all_theme_map.keys(): target_names.add(str(t_name).strip())
-        target_dict = {name: name_to_code.get(name) or search_code_from_naver(name) for name in target_names if name}
 
         theme_historical_max = defaultdict(int)
 
+        if not df_theme.empty:
+            curr_theme_sums = df_theme.groupby('테마명')['거래대금(억원)'].sum().to_dict()
+            for t_name, t_sum in curr_theme_sums.items():
+                clean_t = t_name.split(' (대장:')[0].strip()
+                if t_sum > theme_historical_max[clean_t]:
+                    theme_historical_max[clean_t] = t_sum
+
+        try:
+            raw_data_values = doc.worksheet("수급_Raw").get_all_values()
+            if len(raw_data_values) > 1:
+                header = raw_data_values[0]
+                date_idx = header.index('날짜') if '날짜' in header else 0
+                theme_idx = header.index('테마명') if '테마명' in header else 2
+                val_idx = header.index('거래대금(억원)') if '거래대금(억원)' in header else 6
+                daily_sums = defaultdict(int)
+                for row in raw_data_values[1:]:
+                    if len(row) > max(date_idx, theme_idx, val_idx):
+                        dt = row[date_idx]
+                        th = row[theme_idx].split(' (대장:')[0].strip()
+                        try:
+                            v = int(str(row[val_idx]).replace(',', '').strip())
+                            daily_sums[(dt, th)] += v
+                        except: pass
+                for (dt, th), t_sum in daily_sums.items():
+                    if t_sum > theme_historical_max[th]:
+                        theme_historical_max[th] = t_sum
+        except Exception as e:
+            print(f"⚠️ 수급_Raw 역대 테마 대금 연산 건너뜀 (초기 상태): {e}")
+
+        target_dict = {}
+        for name in list(target_names):
+            code = name_to_code.get(name) or search_code_from_naver(name)
+            if code and code not in target_dict.values():
+                target_dict[name] = code
+
         results = []
         new_static_data = []
-        print(f"⚡ {len(target_dict)}개 고유 종목을 스레드로 동시 타격합니다...")
+        print(f"⚡ {len(target_dict)}개 고유 종목을 30개의 스레드로 동시 타격합니다...")
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
-            # 🚨 새로 추출한 long_term_stocks 세트를 스레드 인자로 던집니다.
             future_to_name = {executor.submit(analyze_single_stock, name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db, theme_historical_max, long_term_stocks): name for name, code in target_dict.items()}
             for future in concurrent.futures.as_completed(future_to_name):
                 res, static_res = future.result()
@@ -1105,7 +1252,6 @@ def update_technical_data(df_theme, all_theme_map):
             static_sheet.append_rows(new_static_data, value_input_option="USER_ENTERED")
             print(f"✅ 정적 데이터(시가총액/재무) {len(new_static_data)}건 캐시 업데이트 완료")
 
-        # 🚨 [인덱스 버그 원천 진압] 문자열 상태 대신 숨겨둔 순수 숫자 스코어 인덱스(29)로 내림차순 정렬 지배
         results.sort(key=lambda x: x[29], reverse=True)
 
         existing_data = {}
@@ -1146,7 +1292,6 @@ def update_technical_data(df_theme, all_theme_map):
         ]
 
         helper_sheet.batch_clear(['A1:AC'])
-        # 전송 시에는 r[:29] 슬라이싱을 걸어 주가데이터_보조 시트의 AC열(장구분)까지만 완벽하게 주입
         helper_sheet_data = [extended_headers] + [r[:29] for r in results]
         helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
         print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 실시간 갱신 및 동기화 완료)")
@@ -1184,11 +1329,10 @@ def update_technical_data(df_theme, all_theme_map):
                     ai_target = existing_data[종목코드]["target"]
                     ai_stop = existing_data[종목코드]["stop"]
 
-                # 🚨 수석님 요청 적극 반영: 가독성을 위해 공란(Q~AA)을 전면 제거하고 Q, R, S열에 다이렉트 주입
                 row_data = [
                     하이퍼링크, 시장구분, f"'{종목코드}", 현재가, 등락률, 테마명, AI신호, 거래량비율,
                     tajeom, ai_briefing, 스코어, 프로그램, 고가_52주, 기관누적수급, ai_target, ai_stop,
-                    r[26], r[27], r[28]                      # 16: Q(KRX시간외), 17: R(NXT종가), 18: S(시장구분)
+                    r[26], r[27], r[28]                      
                 ]
                 all_candidates.append(row_data)
                 processed_codes.add(종목코드)
@@ -1198,7 +1342,6 @@ def update_technical_data(df_theme, all_theme_map):
                 if c_code not in processed_codes:
                     raw_r = data["raw_row"]
                     if len(raw_r) > 28:
-                        # 💡 구형 포맷(AA, AB, AC)의 잔재가 시트에 있다면, 신형 컴팩트 포맷(Q, R, S)으로 자동 시프트 보정
                         krx_val = raw_r[26]
                         nxt_val = raw_r[27]
                         mkt_val = raw_r[28]
@@ -1215,7 +1358,7 @@ def update_technical_data(df_theme, all_theme_map):
 
         for cand in all_candidates:
             tajeom_str = str(cand[8])
-            if "🌱" in tajeom_str or "[중장기/모아가기]" in tajeom_str:
+            if "🌱" in tajeom_str or "[중장기/모아가기]" in tajeom_str or "DB_중장기" in tajeom_str:
                 seed_cands.append(cand)
             else:
                 normal_cands.append(cand)
@@ -1237,7 +1380,7 @@ def update_technical_data(df_theme, all_theme_map):
         top_20_results.sort(key=get_score_num, reverse=True)
 
         db_scanner_sheet = doc.worksheet("DB_스캐너")
-        db_scanner_sheet.batch_clear(['A2:AC']) # 🚨 구형 버전의 흔적인 AC열까지 완전히 청소하여 셀 밀림 버그 차단
+        db_scanner_sheet.batch_clear(['A2:AC'])
         if top_20_results:
             db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
         print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (중장기 쿼터 제어 및 Q, R, S 컴팩트 정렬 안착 완료)")
