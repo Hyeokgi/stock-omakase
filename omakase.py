@@ -716,7 +716,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             static_info_to_save = [f"'{code}", name, market_cap, str(is_junk), str(is_financial_risk), str(is_chronic_loss)]
 
         # --------------------------------------------------
-        # 🚨 STEP 8: 프로그램 분리 및 외인 집중배팅 추적 (수정판)
+        # 🚨 STEP 8: 프로그램 분리 및 외인 집중배팅 추적 (오류 수정 완결판)
         # --------------------------------------------------
         is_strong_dual_buy = False
         supply_text = ""
@@ -742,7 +742,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     break
         except Exception: pass
 
-        # 기관/외인 총 순매수
+        # 기관/외인 총 순매수 (타임라인 오류 원천 차단)
         is_today_data_in_frgn = False
         today_str_dot = datetime.datetime.now(KST).strftime('%Y.%m.%d')
 
@@ -772,7 +772,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         i_buy_today = i_buy_won
                         f_buy_today = f_buy_won
                         if row_date_str == today_str_dot:
-                            is_today_data_in_frgn = True
+                            is_today_data_in_frgn = True # 💡 오늘 날짜의 데이터인지 확인!
                         
                         pg_amount_won = pg_amount_eok * 100_000_000
                         pg_ratio = (abs(pg_amount_won) / trading_value) * 100 if trading_value > 0 else 0.0
@@ -798,7 +798,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         non_program_buy_eok = 0
         is_foreigner_active_buy = False
 
-        # 💡 [핵심 해결] 외인 데이터가 '오늘'일 때만 프로그램(오늘)과 뺄셈하여 비교. 어제 데이터면 계산 안함!
+        # 💡 [핵심 패치] 오늘 날짜의 외인 확정 수급 데이터가 들어왔을 때만 프로그램(오늘)과 뺄셈하여 비교합니다.
         if is_today_data_in_frgn:
             non_program_buy_eok = f_buy_eok - pg_amount_eok
             is_foreigner_active_buy = (f_buy_eok >= 15) and (pg_amount_eok <= 5) and (non_program_buy_eok >= 10)
@@ -1024,7 +1024,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         score_display = f"{quant_score}점 ({track_type})"
         is_seed_tag = "SEED" if is_accumulation_cand or is_long_term_pick else "NORMAL"
 
-        # 💡 [W열 업데이트] 기관 및 외국인의 누적(5일) 순매수액을 나란히 표시
+        # 💡 [핵심 패치] W열 업데이트: 기관 및 외국인의 누적(5일) 순매수액을 나란히 표시
         supply_status_col = f"기:{int(acc_i_buy_eok)}/외:{int(acc_f_buy_eok)}"
 
         result_row = [
