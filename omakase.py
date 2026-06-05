@@ -716,7 +716,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             static_info_to_save = [f"'{code}", name, market_cap, str(is_junk), str(is_financial_risk), str(is_chronic_loss)]
 
         # --------------------------------------------------
-        # 🚨 STEP 8: 프로그램 분리 및 외인 집중배팅 추적 (오류 수정 완결판)
+        # 🚨 STEP 8: [교정 완료] 프로그램 분리 및 외인 집중배팅 추적
         # --------------------------------------------------
         is_strong_dual_buy = False
         supply_text = ""
@@ -728,7 +728,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         program_text = "확인불가"
         pg_amount_eok = 0.0
 
-        # 실시간 프로그램 수급
+        # 💡 [버그 수정] 시간 포맷(:) 및 날짜 포맷(.)을 모두 방어하여 당일 최종/장중 프로그램 수급을 완벽하게 파싱합니다.
         try:
             pg_url = f"https://finance.naver.com/item/sise_program.naver?code={code}"
             pg_res = local_session.get(pg_url, headers=desktop_headers, verify=False, timeout=2)
@@ -736,10 +736,15 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             pg_rows = pg_soup.select("table.type2 tr")
             for r_tag in pg_rows:
                 cols = r_tag.select("td")
-                if len(cols) >= 6 and cols[0].text.strip().replace('.', '').isdigit():
-                    pg_net_amt_str = cols[5].text.strip().replace(',', '').replace('+', '')
-                    if pg_net_amt_str: pg_amount_eok = int(pg_net_amt_str) / 100.0  
-                    break
+                if len(cols) >= 7:
+                    first_col = cols[0].text.strip()
+                    # 시간(15:30)이든 날짜(2026.06.05)든 첫 글자가 숫자이면 정상 데이터 행으로 인정
+                    if first_col and first_col[0].isdigit():
+                        # 💡 인덱스 교정: cols[6]이 정확한 '순매수대금' (단위: 백만) 입니다.
+                        pg_net_amt_str = cols[6].text.strip().replace(',', '').replace('+', '')
+                        if pg_net_amt_str:
+                            pg_amount_eok = float(pg_net_amt_str) / 100.0  # 백만 단위 -> 억원 단위 변환
+                        break  # 최상단 최신 데이터(당일 누적 최종치) 1줄만 정확히 읽고 루프 종료
         except Exception: pass
 
         # 기관/외인 총 순매수 (타임라인 오류 원천 차단)
