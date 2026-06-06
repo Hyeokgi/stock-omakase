@@ -459,61 +459,28 @@ class ScannerState:
 
 global_state = ScannerState()
 
-def fetch_extra_closing_prices_from_kis(code, access_token, session_obj):
+def fetch_extra_closing_prices_from_kis(code, session):
     if not KIS_TOKEN or not KIS_APP_KEY or not KIS_APP_SECRET: return 0
     try:
         headers = {
-            "content-type": "application/json",
-            "authorization": f"Bearer {access_token}",
+            "content-type": "application/json; charset=utf-8",
+            "authorization": f"Bearer {KIS_TOKEN}",
             "appkey": KIS_APP_KEY,
             "appsecret": KIS_APP_SECRET,
-            "tr_id": "FHPST02320000"
+            "tr_id": "FHPST02320000" 
         }
-
-        params = {
-            "FID_COND_MRKT_DIV_CODE": "J",
-            "FID_INPUT_ISCD": code
-        }
-
-        url = (
-            f"{KIS_URL_BASE}"
-            "/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
-        )
-
-        res = session_obj.get(
-            url,
-            headers=headers,
-            params=params,
-            timeout=5
-        )
-
-        if res.status_code != 200:
-            return 0
-
-        j = res.json()
-
-        output = (
-            j.get("output")
-            or j.get("output1")
-            or {}
-        )
-
-        price_str = str(
-            output.get("stck_prpr")
-            or output.get("ovtm_untp_prpr")
-            or "0"
-        )
-
-        clean = re.sub(r"[^0-9]", "", price_str)
-
-        if clean.isdigit():
-            return int(clean)
-
-        return 0
-
-    except Exception as e:
-        print(f"KIS 시간외 오류 {code}: {e}")
-        return 0
+        params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code}
+        url = f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-time-over-price"
+        res = session.get(url, headers=headers, params=params, timeout=3)
+        if res.status_code == 200:
+            j = res.json()
+            output = j.get("output") or j.get("output1") or j.get("output2") or {}
+            price_str = str(output.get("stck_prpr", "0")).replace(",", "").strip()
+            if price_str.isdigit() and int(price_str) > 0:
+                return int(price_str)
+    except Exception:
+        pass
+    return 0
 
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db, theme_historical_max, long_term_stocks):
     local_session = requests.Session()
@@ -608,55 +575,42 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         live_success = True
             except Exception: pass
 
-            # --------------------------------------------------
-            # STEP 2-1: KRX 시간외 (18시) & NXT 야간종가 (20시)
-            # --------------------------------------------------
+        # --------------------------------------------------
+        # STEP 2-1: KRX 시간외 (18시) & NXT 야간종가 (20시) 분리 수집
+        # --------------------------------------------------
+        krx_close = 0
+        nxt_close = 0
+        market_type = "정규장"
 
-            krx_close = 0
-            nxt_close = 0
-            market_type = "정규장"
+        try:
+            krx_close = fetch_extra_closing_prices_from_kis(code, local_session)
+        except Exception: pass
 
-            try:
-                if KIS_TOKEN:
-                    krx_close = fetch_extra_closing_prices_from_kis(
-                        code,
-                        KIS_TOKEN,
-                        local_session
-                    )
-            except Exception as e:
-                print(f"KIS 시간외 오류 [{code}] : {e}")
+        try:
+            nxt_res = local_session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", timeout=2, verify=False)
+            if nxt_res.status_code == 200:
+                nxt_json = nxt_res.json()
+                
+                night_info = nxt_json.get("nightMarketPriceInfo") or {}
+                if night_info:
+                    p_str = str(night_info.get("closePrice") or night_info.get("price") or "0").replace(",", "").strip()
+                    if p_str.isdigit() and int(p_str) > 0:
+                        nxt_close = int(p_str)
+                
+                if krx_close == 0:
+                    over_info = nxt_json.get("overMarketPriceInfo") or nxt_json.get("afterMarketPriceInfo") or {}
+                    if over_info:
+                        p_str = str(over_info.get("closePrice") or over_info.get("overPrice") or "0").replace(",", "").strip()
+                        if p_str.isdigit() and int(p_str) > 0:
+                            krx_close = int(p_str)
+        except Exception: pass
 
-            try:
-                nxt_res = local_session.get(
-                    f"https://m.stock.naver.com/api/stock/{code}/basic",
-                    timeout=2,
-                    verify=False
-                )
+        krx_rate = ((krx_close - current_price) / current_price * 100) if krx_close > 0 and current_price > 0 else 0.0
+        nxt_rate = ((nxt_close - current_price) / current_price * 100) if nxt_close > 0 and current_price > 0 else 0.0
 
-                if nxt_res.status_code == 200:
-                    nxt_json = nxt_res.json()
-
-                    night_info = nxt_json.get("nightMarketPriceInfo") or {}
-
-                    if night_info:
-                        p_str = str(
-                            night_info.get("closePrice")
-                            or night_info.get("price")
-                            or "0"
-                        ).replace(",", "").strip()
-
-                        if p_str.isdigit():
-                            nxt_close = int(p_str)
-
-            except Exception:
-                pass
-
-            if krx_close > 0 and nxt_close > 0:
-                market_type = "KRX+NXT"
-            elif nxt_close > 0:
-                market_type = "NXT"
-            elif krx_close > 0:
-                market_type = "KRX"
+        if krx_close > 0 and nxt_close > 0: market_type = "KRX+NXT"
+        elif nxt_close > 0: market_type = "NXT"
+        elif krx_close > 0: market_type = "KRX"
 
         # --------------------------------------------------
         # STEP 3: 파생 변수 계산
