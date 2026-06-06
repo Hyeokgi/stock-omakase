@@ -459,28 +459,61 @@ class ScannerState:
 
 global_state = ScannerState()
 
-def fetch_extra_closing_prices_from_kis(code, session):
+def fetch_extra_closing_prices_from_kis(code, access_token, session_obj):
     if not KIS_TOKEN or not KIS_APP_KEY or not KIS_APP_SECRET: return 0
     try:
         headers = {
-            "content-type": "application/json; charset=utf-8",
-            "authorization": f"Bearer {KIS_TOKEN}",
+            "content-type": "application/json",
+            "authorization": f"Bearer {access_token}",
             "appkey": KIS_APP_KEY,
             "appsecret": KIS_APP_SECRET,
-            "tr_id": "FHPST02320000" 
+            "tr_id": "FHPST02320000"
         }
-        params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code}
-        url = f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-time-over-price"
-        res = session.get(url, headers=headers, params=params, timeout=3)
-        if res.status_code == 200:
-            j = res.json()
-            output = j.get("output") or j.get("output1") or j.get("output2") or {}
-            price_str = str(output.get("stck_prpr", "0")).replace(",", "").strip()
-            if price_str.isdigit() and int(price_str) > 0:
-                return int(price_str)
-    except Exception:
-        pass
-    return 0
+
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_INPUT_ISCD": code
+        }
+
+        url = (
+            f"{KIS_URL_BASE}"
+            "/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
+        )
+
+        res = session_obj.get(
+            url,
+            headers=headers,
+            params=params,
+            timeout=5
+        )
+
+        if res.status_code != 200:
+            return 0
+
+        j = res.json()
+
+        output = (
+            j.get("output")
+            or j.get("output1")
+            or {}
+        )
+
+        price_str = str(
+            output.get("stck_prpr")
+            or output.get("ovtm_untp_prpr")
+            or "0"
+        )
+
+        clean = re.sub(r"[^0-9]", "", price_str)
+
+        if clean.isdigit():
+            return int(clean)
+
+        return 0
+
+    except Exception as e:
+        print(f"KIS 시간외 오류 {code}: {e}")
+        return 0
 
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db, theme_historical_max, long_term_stocks):
     local_session = requests.Session()
@@ -583,8 +616,13 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         market_type = "정규장"
 
         try:
-            krx_close = fetch_extra_closing_prices_from_kis(code, local_session)
-        except Exception: pass
+            krx_close = fetch_extra_closing_prices_from_kis(
+                code,
+                access_token,
+                local_session
+            )
+        except Exception as e:
+            print(f"KIS 시간외 오류 [{code}] : {e}")
 
         try:
             nxt_res = local_session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", timeout=2, verify=False)
@@ -597,12 +635,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     if p_str.isdigit() and int(p_str) > 0:
                         nxt_close = int(p_str)
                 
-                if krx_close == 0:
-                    over_info = nxt_json.get("overMarketPriceInfo") or nxt_json.get("afterMarketPriceInfo") or {}
-                    if over_info:
-                        p_str = str(over_info.get("closePrice") or over_info.get("overPrice") or "0").replace(",", "").strip()
-                        if p_str.isdigit() and int(p_str) > 0:
-                            krx_close = int(p_str)
+                
         except Exception: pass
 
         krx_rate = ((krx_close - current_price) / current_price * 100) if krx_close > 0 and current_price > 0 else 0.0
