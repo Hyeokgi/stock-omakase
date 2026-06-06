@@ -1295,7 +1295,7 @@ def update_technical_data(df_theme, all_theme_map):
             static_sheet.append_rows(new_static_data, value_input_option="USER_ENTERED")
             print(f"✅ 정적 데이터(시가총액/재무) {len(new_static_data)}건 캐시 업데이트 완료")
 
-        results.sort(key=lambda x: x[29] if len(x) > 29 else 0, reverse=True)
+        results.sort(key=lambda x: x[29], reverse=True)
 
         existing_data = {}
         try:
