@@ -459,7 +459,6 @@ class ScannerState:
 
 global_state = ScannerState()
 
-# 🚨 [수정 1] 0523 버전의 안정적인 KIS 시간외 단일가(18시) 로직 복원
 def fetch_extra_closing_prices_from_kis(code, session):
     if not KIS_TOKEN or not KIS_APP_KEY or not KIS_APP_SECRET: return 0
     try:
@@ -468,7 +467,7 @@ def fetch_extra_closing_prices_from_kis(code, session):
             "authorization": f"Bearer {KIS_TOKEN}",
             "appkey": KIS_APP_KEY,
             "appsecret": KIS_APP_SECRET,
-            "tr_id": "FHPST02320000" # 0523 안정화 TR_ID
+            "tr_id": "FHPST02320000" 
         }
         params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code}
         url = f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-time-over-price"
@@ -483,17 +482,16 @@ def fetch_extra_closing_prices_from_kis(code, session):
         pass
     return 0
 
-# 🚨 [수정 2] 완전 무결점 파싱 및 시트 밀림 방지 로직이 적용된 분석 엔진
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db, theme_historical_max, long_term_stocks):
     local_session = requests.Session()
     time.sleep(random.uniform(0.1, 0.4))
     
-    # 29개의 빈 데이터를 생성하여 에러 발생 시에도 시트 배열이 밀리지 않도록 고정
+    # 💡 [핵심 보정] 데이터 누락/에러 시에도 31개의 배열 인덱스를 완벽하게 맞추어 밀림 방지
     fail_fallback = [
         name, f"'{code}", 0, "0.00%", 0, 0, "전일비 100%", "⚡ 관망 (데이터 수집 오류)",
-        "0점 (오류)", "⏸️ [대기] 분석 오류 우회", 0, 0, 0, 0, "🟡 일반형", "📉 이격 과다",
+        "⏸️ [대기] 분석 오류 우회", "AI 브리핑 대기중", 0, 0, 0, 0, "🟡 일반형", "📉 이격 과다",
         "100.0%", "평범(X)", "🟡 [V.평년수준]", "개별주/기타", "⚪ [P.관망중] 0억", 0,
-        "🏦기:0.0억 / 🌎외:0.0억", 0, 0, "NORMAL", "", "", "정규장", 0
+        "🏦기:0.0억 / 🌎외:0.0억", 0, 0, "NORMAL", "", "", "정규장", 0, "0점 (오류)"
     ]
 
     try:
@@ -578,31 +576,27 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             except Exception: pass
 
         # --------------------------------------------------
-        # 🚨 STEP 2-1: KRX 시간외 (18시) & NXT 야간종가 (20시) 분리 수집
+        # STEP 2-1: KRX 시간외 (18시) & NXT 야간종가 (20시) 분리 수집
         # --------------------------------------------------
         krx_close = 0
         nxt_close = 0
         market_type = "정규장"
 
         try:
-            # 1. 0523버전 KIS API 활용 (18시 시간외단일가)
             krx_close = fetch_extra_closing_prices_from_kis(code, local_session)
         except Exception: pass
 
         try:
-            # 2. 0606버전 네이버 API 활용 (20시 NXT 종가)
             nxt_res = local_session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", timeout=2, verify=False)
             if nxt_res.status_code == 200:
                 nxt_json = nxt_res.json()
                 
-                # NXT는 nightMarketPriceInfo 에 우선 존재
                 night_info = nxt_json.get("nightMarketPriceInfo") or {}
                 if night_info:
                     p_str = str(night_info.get("closePrice") or night_info.get("price") or "0").replace(",", "").strip()
                     if p_str.isdigit() and int(p_str) > 0:
                         nxt_close = int(p_str)
                 
-                # 만약 KIS API가 죽었을 경우를 대비해 overMarketPriceInfo(KRX 시간외)도 수집
                 if krx_close == 0:
                     over_info = nxt_json.get("overMarketPriceInfo") or nxt_json.get("afterMarketPriceInfo") or {}
                     if over_info:
@@ -736,7 +730,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             static_info_to_save = [f"'{code}", name, market_cap, str(is_junk), str(is_financial_risk), str(is_chronic_loss)]
 
         # --------------------------------------------------
-        # 🚨 STEP 8: [완벽 보정판] 프로그램 당일 매매 파싱 (5월 중순 안정화 로직 완전 복구)
+        # STEP 8: 프로그램 및 수급
         # --------------------------------------------------
         program_text = "⚪ [P.관망중] 0억"
         pg_amount_eok = 0.0
@@ -749,14 +743,13 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             rows = pg_soup.select("table.type2 tr")
             for r in rows:
                 cols = r.select("td")
-                # 순매수 대금은 항상 테이블의 맨 마지막 열에 위치함
                 if len(cols) >= 4:
                     date_text = cols[0].text.strip()
                     if date_text and date_text[0].isdigit() and (':' in date_text or '.' in date_text):
                         raw_val = cols[-1].text.strip().replace(',', '').replace('+', '').replace('−', '-')
                         clean_val = re.sub(r'[^0-9.-]', '', raw_val)
                         if clean_val and clean_val not in ('0', '', '-', '.'):
-                            pg_amount_eok = float(clean_val) / 100.0  # 억 단위 변환
+                            pg_amount_eok = float(clean_val) / 100.0
                             sign = "+" if pg_amount_eok > 0 else ""
                             if pg_amount_eok >= 30: program_text = f"🔴 [P.대량유입] {sign}{pg_amount_eok:.1f}억"
                             elif pg_amount_eok > 0: program_text = f"🔴 [P.매수우위] {sign}{pg_amount_eok:.1f}억"
@@ -766,7 +759,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         except Exception:
             pass
 
-        # 기관/외인 총 순매수
         is_today_data_in_frgn = False
         today_str_dot = datetime.datetime.now(KST).strftime('%Y.%m.%d')
 
@@ -934,7 +926,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_fatal_drop = is_junk or is_financial_risk
 
         # --------------------------------------------------
-        # 🚨 STEP 13: 스코어 산출 알고리즘
+        # STEP 13: 스코어 산출 알고리즘
         # --------------------------------------------------
         base_score = 0
         is_long_term_pick = name in long_term_stocks  
@@ -1044,27 +1036,23 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         score_display = f"{quant_score}점 ({track_type})"
         is_seed_tag = "SEED" if is_accumulation_cand or is_long_term_pick else "NORMAL"
 
-        # 🚨 [수정 완료] 수석님의 요청: W열을 합계가 빠진 '🏦기:+0.8억 / 🌎외:+0.6억' 포맷으로만 지정
         i_sign = "+" if acc_i_buy_eok > 0 else ""
         f_sign = "+" if acc_f_buy_eok > 0 else ""
         supply_status_col = f"🏦기:{i_sign}{acc_i_buy_eok:.1f}억 / 🌎외:{f_sign}{acc_f_buy_eok:.1f}억"
 
-        # 🚨 [수정 완료] 시간외 18시 / NXT 야간종가 문자열 포맷팅 (엑셀 수식 파싱 에러 방지용 ' 추가)
         krx_str = f"'{'+' if krx_rate > 0 else ''}{krx_rate:.2f}% ({krx_close:,}원)" if krx_close > 0 else ""
         nxt_str = f"'{'+' if nxt_rate > 0 else ''}{nxt_rate:.2f}% ({nxt_close:,}원)" if nxt_close > 0 else ""
 
-        # 🚨 [결정적 패치] 29차원 배열 크기 절대 고정 (AA:시간외, AB:NXT, AC:장구분)
+        # 💡 [핵심 보정] 0~28번까지는 구글 시트에 들어가는 29칸의 데이터, 29,30번은 스캐너 정렬용/텍스트용으로 완벽 분리 배정!
         result_row = [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%",
             int(ma5), int(ma20), vol_ratio_text, signal,
-            score_display, master_tajeom, today_high, today_low, int(display_high_60d),
+            master_tajeom, "AI 브리핑 대기중", today_high, today_low, int(display_high_60d),
             market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, my_theme_name,
             program_text, int(display_high_250d), supply_status_col,
             target_price, stop_loss, is_seed_tag,
-            krx_str,     # 인덱스 26: 18시 시간외단일가 (AA열)
-            nxt_str,     # 인덱스 27: 20시 NXT야간종가 (AB열)
-            market_type, # 인덱스 28: 장구분 (AC열)
-            quant_score  # 인덱스 29: 정렬키
+            krx_str, nxt_str, market_type, 
+            quant_score, score_display
         ]
 
         return result_row, static_info_to_save
@@ -1275,6 +1263,7 @@ def update_technical_data(df_theme, all_theme_map):
             static_sheet.append_rows(new_static_data, value_input_option="USER_ENTERED")
             print(f"✅ 정적 데이터(시가총액/재무) {len(new_static_data)}건 캐시 업데이트 완료")
 
+        # 💡 [핵심 보정] quant_score는 29번 인덱스에 존재함
         results.sort(key=lambda x: x[29], reverse=True)
 
         existing_data = {}
@@ -1299,6 +1288,7 @@ def update_technical_data(df_theme, all_theme_map):
         for r in results:
             c_code = str(r[1]).replace("'", "").strip().zfill(6)
             if c_code in existing_data:
+                r[9] = existing_data[c_code]["briefing"] # 브리핑상태 업데이트
                 r[23] = existing_data[c_code]["target"]
                 r[24] = existing_data[c_code]["stop"]
 
@@ -1307,7 +1297,6 @@ def update_technical_data(df_theme, all_theme_map):
         except:
             helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="29")
 
-        # 💡 [W열 헤더 변경] W열 명칭을 기관/외인 수급이 함께 보이도록 변경
         extended_headers = [
             "종목명", "종목코드", "현재가", "등락률", "5일평균", "20일평균", "거래량비율", "AI신호",
             "마스터타점", "브리핑상태", "당일고가", "당일저가", "60일고가", "시가총액", "캔들상태",
@@ -1316,19 +1305,21 @@ def update_technical_data(df_theme, all_theme_map):
         ]
 
         helper_sheet.batch_clear(['A1:AC'])
+        
+        # 💡 [핵심 보정] r[:29]를 통해 29개의 엑셀 헤더와 1:1로 정확히 대응시킵니다 (점수는 버림)
         helper_sheet_data = [extended_headers] + [r[:29] for r in results]
         helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
         print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 실시간 갱신 및 동기화 완료)")
 
         # ============================================================
-        # 🚨 하이브리드 독립 풀(Pool) 선별 게이트 (A~S열 19컬럼 컴팩트 포맷)
+        # 🚨 하이브리드 독립 풀(Pool) 선별 게이트 (DB_스캐너용 컴팩트 포맷)
         # ============================================================
         scanner_keywords = ["[종베]", "[스윙/눌림]", "[스윙/추세]", "[당일/단타]", "[관심/수급]", "[중장기/모아가기]"]
         all_candidates = []
         processed_codes = set()
 
         for r in results:
-            tajeom = r[9]
+            tajeom = r[8]  # 인덱스 8은 마스터타점
             if any(kw in tajeom for kw in scanner_keywords):
                 종목명 = r[0]
                 종목코드 = r[1].replace("'", "").zfill(6)
@@ -1339,19 +1330,14 @@ def update_technical_data(df_theme, all_theme_map):
                 테마명 = r[19]
                 AI신호 = r[7]
                 거래량비율 = r[6]
-                스코어 = r[8]
+                스코어 = r[30]  # 인덱스 30은 점수 텍스트 (예: 100점 (눌림))
                 프로그램 = r[20]
                 고가_52주 = r[21]
-                기관누적수급 = r[22] # 이제 🏦기:00/🌎외:00 형태
+                기관누적수급 = r[22] 
 
-                ai_briefing = "AI 브리핑 대기중"
+                ai_briefing = r[9]
                 ai_target = r[23]
                 ai_stop = r[24]
-
-                if 종목코드 in existing_data:
-                    ai_briefing = existing_data[종목코드]["briefing"]
-                    ai_target = existing_data[종목코드]["target"]
-                    ai_stop = existing_data[종목코드]["stop"]
 
                 row_data = [
                     하이퍼링크, 시장구분, f"'{종목코드}", 현재가, 등락률, 테마명, AI신호, 거래량비율,
