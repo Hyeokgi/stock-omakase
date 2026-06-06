@@ -465,7 +465,12 @@ class ScannerState:
 global_state = ScannerState()
 
 # 🚨 [KIS 전용 보안 소켓 엔진 규격 복원] 18시 시간외단일가 종가 수집 (정규 헤더 주입)
-def fetch_extra_closing_prices_from_kis(code, access_token, session_obj):
+def fetch_extra_closing_prices_from_kis(code, access_token=None, session_obj=None):
+    if not access_token:
+        return 0, ""
+
+    if not session_obj:
+        return 0, ""
     try:
         headers = {
             "content-type": "application/json",
