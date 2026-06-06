@@ -569,21 +569,39 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         live_success = True
             except Exception: pass
 
-        # 🚨 [수정 2] 시간외 및 NXT 하이브리드 파싱
-        krx_close = fetch_extra_closing_prices_from_kis(code, local_session)
+        # 🚨 [수정 완료] 시간외 및 NXT 하이브리드 파싱 & 퍼센트 출력 포맷팅
+        krx_close = 0
+        try:
+            # fetch_extra_closing_prices_from_kis 가 2개의 인자를 받는지 1개를 받는지에 따른 에러방지
+            krx_close = fetch_extra_closing_prices_from_kis(code)
+        except TypeError:
+            krx_close = fetch_extra_closing_prices_from_kis(code, local_session)
+            
+        krx_rate = ((krx_close - current_price) / current_price * 100) if krx_close > 0 and current_price > 0 else 0.0
+
         nxt_close = 0
+        nxt_rate = 0.0
         market_type = "정규장"
         
         try:
             nxt_res = local_session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", timeout=2, verify=False)
             if nxt_res.status_code == 200:
                 nxt_json = nxt_res.json()
-                # 0606의 강력한 다중 키 검색 로직 유지
                 over_info = nxt_json.get("overMarketPriceInfo") or nxt_json.get("nightMarketPriceInfo") or nxt_json.get("afterMarketPriceInfo") or {}
                 o_price_str = str(over_info.get("closePrice") or over_info.get("overPrice") or over_info.get("price") or "0").replace(",", "").strip()
                 if o_price_str.isdigit() and int(o_price_str) > 0:
-                    nxt_close = int(o_price_str)
-                    market_type = "NXT"
+                    val_close = int(o_price_str)
+                    mkt_type_str = str(over_info.get("marketType") or over_info.get("stockExchangeType", {}).get("code") or "").upper()
+                    o_rate_str = str(over_info.get("fluctuationsRatio", "0")).replace(",", "").strip()
+                    o_rate = float(o_rate_str) if o_rate_str.lstrip('-').replace('.','').isdigit() else 0.0
+                    
+                    if "NXT" in mkt_type_str or "NIGHT" in mkt_type_str:
+                        nxt_close = val_close
+                        nxt_rate = o_rate
+                    else:
+                        if krx_close == 0:
+                            krx_close = val_close
+                            krx_rate = o_rate
         except: pass
         
         if krx_close > 0 and nxt_close > 0: market_type = "KRX+NXT"
@@ -717,13 +735,13 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         dual_buy_days = 0
         i_buy_today = 0
         f_buy_today = 0
-        program_text = "확인불가"
+        program_text = "⚪ [P.관망중] 0억"
         pg_amount_eok = 0.0
 
-        program_text = "⚪ [P.관망중] 0억"
+        # 🚨 [수정 완료] 프로그램 매매 버그 픽스 - 변수 할당 완벽 복구
         try:
             pg_url = f"https://finance.naver.com/item/sise_program.naver?code={code}"
-            pg_soup = BeautifulSoup(local_session.get(pg_url, timeout=3).content, 'html.parser', from_encoding='euc-kr')
+            pg_soup = BeautifulSoup(local_session.get(pg_url, headers=desktop_headers, timeout=3, verify=False).content, 'html.parser', from_encoding='euc-kr')
             
             # 동적 헤더 탐색
             th_texts = [th.text.strip() for th in pg_soup.select("table.type2 th")]
@@ -732,15 +750,23 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             rows = pg_soup.select("table.type2 tr")
             for r in rows:
                 cols = r.select("td")
-                if len(cols) > 5 and cols[0].text.strip()[0].isdigit():
-                    raw_val = cols[amt_idx if amt_idx != -1 else -1].text.strip().replace(',', '').replace('−', '-')
-                    clean_val = re.sub(r'[^0-9.-]', '', raw_val)
-                    if clean_val and clean_val != '0':
-                        pg_val = float(clean_val) / 100.0
-                        sign = "+" if pg_val > 0 else ""
-                        program_text = f"🔴 [P.매수] {sign}{pg_amount_eok:.1f}억" if pg_val > 0 else f"🔵 [P.매도] {pg_amount_eok:.1f}억"
-                    break
-        except: pass
+                if len(cols) >= 6:
+                    first_col = cols[0].text.strip()
+                    if first_col and (':' in first_col or '.' in first_col or first_col[0].isdigit()):
+                        target_idx = amt_idx if amt_idx != -1 else (len(cols) - 1)
+                        raw_val = cols[target_idx].text.strip().replace(',', '').replace('+', '').replace('−', '-')
+                        clean_val = re.sub(r'[^0-9.-]', '', raw_val)
+                        if clean_val and clean_val != '0' and clean_val != '-':
+                            pg_amount_eok = float(clean_val) / 100.0  # 변수에 정상 할당
+                            sign = "+" if pg_amount_eok > 0 else ""
+                            # 요구하신 0523 텍스트 포맷 (비율 삭제됨)
+                            if pg_amount_eok >= 30: program_text = f"🔴 [P.대량유입] {sign}{pg_amount_eok:.1f}억"
+                            elif pg_amount_eok > 0: program_text = f"🔴 [P.매수우위] {sign}{pg_amount_eok:.1f}억"
+                            elif pg_amount_eok <= -30: program_text = f"🔵 [P.대량출회] {pg_amount_eok:.1f}억"
+                            elif pg_amount_eok < 0: program_text = f"🔵 [P.매도우위] {pg_amount_eok:.1f}억"
+                        break
+        except Exception:
+            pass
 
         # 기관/외인 총 순매수 (기존 로직 유지)
         is_today_data_in_frgn = False
@@ -772,17 +798,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         i_buy_today = i_buy_won
                         f_buy_today = f_buy_won
                         if row_date_str == today_str_dot:
-                            is_today_data_in_frgn = True # 💡 오늘 날짜의 데이터인지 확인!
-                        
-                        pg_amount_won = pg_amount_eok * 100_000_000
-                        pg_ratio = (abs(pg_amount_won) / trading_value) * 100 if trading_value > 0 else 0.0
-                        if pg_amount_eok >= 30 and pg_ratio >= 10.0: program_text = f"🔴 [P.대량유입] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-                        elif pg_amount_eok >= 10 and pg_ratio >= 5.0: program_text = f"🔴 [P.매수우위] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-                        elif pg_amount_eok <= -30 and pg_ratio >= 10.0: program_text = f"🔵 [P.대량출회] {int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-                        elif pg_amount_eok <= -10 and pg_ratio >= 5.0: program_text = f"🔵 [P.매도우위] {int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-                        else:
-                            sign = "+" if pg_amount_eok > 0 else ""
-                            program_text = f"⚪ [P.관망중] {sign}{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+                            is_today_data_in_frgn = True 
                             
                     acc_i_buy_won += i_buy_won
                     acc_f_buy_won += f_buy_won
@@ -798,7 +814,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         non_program_buy_eok = 0
         is_foreigner_active_buy = False
 
-        # 💡 [핵심 패치] 오늘 날짜의 외인 확정 수급 데이터가 들어왔을 때만 프로그램(오늘)과 뺄셈하여 비교합니다.
         if is_today_data_in_frgn:
             non_program_buy_eok = f_buy_eok - pg_amount_eok
             is_foreigner_active_buy = (f_buy_eok >= 15) and (pg_amount_eok <= 5) and (non_program_buy_eok >= 10)
@@ -913,13 +928,12 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_fatal_drop = is_junk or is_financial_risk
 
         # --------------------------------------------------
-        # 🚨 STEP 13: 스코어 산출 알고리즘 (가중치 및 락인)
+        # 🚨 STEP 13: 스코어 산출 알고리즘
         # --------------------------------------------------
         base_score = 0
         is_long_term_pick = name in long_term_stocks  
         master_tajeom_suffix = ""
 
-        # 💡 [개선] 촌스럽지 않고 전문적인 배지 네이밍으로 교체
         if is_long_term_pick:
             base_score += 20  
             master_tajeom_suffix += " 🎖️(코어 포트폴리오)"
@@ -930,14 +944,14 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if is_accumulation_cand:
             base_score += 40
             if is_double_bottom: base_score += 15
-            if "매수우위" in program_text or acc_i_buy_eok >= 10: base_score += 10
+            if "매수" in program_text or acc_i_buy_eok >= 10: base_score += 10
         else:
             if is_near_52w_high: base_score += 20
             elif current_price >= (high_60d_calc * 0.90): base_score += 15
             if vol_ratio_yest >= 300 and vol_ratio_10d >= 200: base_score += 15
             elif vol_ratio_yest >= 150: base_score += 10
             if "대량유입" in program_text: base_score += 25
-            elif "매수우위" in program_text: base_score += 15
+            elif "매수" in program_text: base_score += 15
             if is_strong_dual_buy: base_score += 15
             if acc_i_buy_eok >= 50: base_score += 15
 
@@ -1004,7 +1018,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if secret_tajeom and "관망" not in master_tajeom and "매수금지" not in master_tajeom and not is_upper_limit:
             master_tajeom = f"{master_tajeom} | {secret_tajeom}"
 
-        is_super_leader = (change_rate >= 0.15) and (trading_value >= 100_000_000_000) and ("대량유입" in program_text or "매수우위" in program_text)
+        is_super_leader = (change_rate >= 0.15) and (trading_value >= 100_000_000_000) and ("대량유입" in program_text or "매수" in program_text)
         is_absolute_protected = is_super_leader or is_foreigner_active_buy or is_long_term_pick
 
         if is_absolute_protected:
@@ -1024,9 +1038,16 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         score_display = f"{quant_score}점 ({track_type})"
         is_seed_tag = "SEED" if is_accumulation_cand or is_long_term_pick else "NORMAL"
 
-        # 💡 [핵심 패치] W열 업데이트: 기관 및 외국인의 누적(5일) 순매수액을 나란히 표시
-        supply_status_col = f"🏦기:{int(acc_i_buy_eok)}/🌎외:{int(acc_f_buy_eok)}"
+        # 🚨 [수정 완료] 수석님의 요청: W열을 합계가 빠진 '🏦기:+0.8억 / 🌎외:+0.6억' 포맷으로만 지정
+        i_sign = "+" if acc_i_buy_eok > 0 else ""
+        f_sign = "+" if acc_f_buy_eok > 0 else ""
+        supply_status_col = f"🏦기:{i_sign}{acc_i_buy_eok:.1f}억 / 🌎외:{f_sign}{acc_f_buy_eok:.1f}억"
 
+        # 🚨 [수정 완료] 시간외 18시 / NXT 야간종가 문자열 포맷팅
+        krx_str = f"{'+' if krx_rate > 0 else ''}{krx_rate:.2f}% ({krx_close:,}원)" if krx_close > 0 else ""
+        nxt_str = f"{'+' if nxt_rate > 0 else ''}{nxt_rate:.2f}% ({nxt_close:,}원)" if nxt_close > 0 else ""
+
+        # 🚨 배열 길이(29칸) 절대 보존: 시트 밀림 방지
         result_row = [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%",
             int(ma5), int(ma20), vol_ratio_text, signal,
@@ -1034,10 +1055,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, my_theme_name,
             program_text, int(display_high_250d), supply_status_col,
             target_price, stop_loss, is_seed_tag,
-            krx_close if krx_close > 0 else "",
-            nxt_close if nxt_close > 0 else "",
-            market_type,
-            quant_score
+            krx_str,     # 26번: 18시 시간외단일가
+            nxt_str,     # 27번: 20시 NXT야간종가
+            market_type, # 28번: 장구분
+            quant_score  # 29번: 정렬키
         ]
 
         return result_row, static_info_to_save
