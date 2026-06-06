@@ -1051,7 +1051,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_seed_tag = "SEED" if is_accumulation_cand or is_long_term_pick else "NORMAL"
 
         # 💡 [핵심 패치] W열 업데이트: 기관 및 외국인의 누적(5일) 순매수액을 나란히 표시
-        supply_status_col = f"기:{int(acc_i_buy_eok)}/외:{int(acc_f_buy_eok)}"
+        supply_status_col = f"🏦기:{int(acc_i_buy_eok)}/🌎외:{int(acc_f_buy_eok)}"
 
         result_row = [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%",
@@ -1341,7 +1341,7 @@ def update_technical_data(df_theme, all_theme_map):
                 스코어 = r[8]
                 프로그램 = r[20]
                 고가_52주 = r[21]
-                기관누적수급 = r[22] # 이제 기:00/외:00 형태
+                기관누적수급 = r[22] # 이제 🏦기:00/🌎외:00 형태
 
                 ai_briefing = "AI 브리핑 대기중"
                 ai_target = r[23]
