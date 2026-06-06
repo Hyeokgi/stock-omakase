@@ -465,39 +465,60 @@ class ScannerState:
 global_state = ScannerState()
 
 # 🚨 [KIS 전용 보안 소켓 엔진 규격 복원] 18시 시간외단일가 종가 수집 (정규 헤더 주입)
-def fetch_extra_closing_prices_from_kis(code):
-    if not KIS_TOKEN or not KIS_APP_KEY or not KIS_APP_SECRET: return 0
+def fetch_extra_closing_prices_from_kis(code, access_token, session_obj):
     try:
         headers = {
-            "content-type": "application/json; charset=utf-8",
-            "authorization": f"Bearer {KIS_TOKEN}",
+            "content-type": "application/json",
+            "authorization": f"Bearer {access_token}",
             "appkey": KIS_APP_KEY,
             "appsecret": KIS_APP_SECRET,
-            "tr_id": "FHPST02310000"
+            "tr_id": "FHPST02320000"
         }
+
         params = {
             "FID_COND_MRKT_DIV_CODE": "J",
             "FID_INPUT_ISCD": code
         }
-        url = f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-time-over-price"
-        res = requests.get(url, headers=headers, params=params, timeout=4)
-        if res.status_code == 200:
-            output = res.json().get("output", {})
-            price_str = output.get("stck_prpr", "0")
-            if price_str.isdigit() and int(price_str) > 0:
-                return int(price_str)
-        
-        headers["tr_id"] = "FBDT00100000"
-        url_fb = f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-price"
-        res_fb = requests.get(url_fb, headers=headers, params=params, timeout=3)
-        if res_fb.status_code == 200:
-            output_fb = res_fb.json().get("output", {})
-            price_fb_str = output_fb.get("stck_prpr", "0")
-            if price_fb_str.isdigit():
-                return int(price_fb_str)
-    except Exception:
-        pass
-    return 0
+
+        url = (
+            f"{KIS_URL_BASE}"
+            "/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
+        )
+
+        res = session_obj.get(
+            url,
+            headers=headers,
+            params=params,
+            timeout=5
+        )
+
+        if res.status_code != 200:
+            return 0, ""
+
+        j = res.json()
+
+        output = (
+            j.get("output")
+            or j.get("output1")
+            or {}
+        )
+
+        price_str = str(
+            output.get("stck_prpr")
+            or output.get("ovtm_untp_prpr")
+            or "0"
+        )
+
+        clean = re.sub(r"[^0-9]", "", price_str)
+
+        if clean.isdigit():
+            return int(clean), ""
+
+        return 0, ""
+
+    except Exception as e:
+        print(f"시간외 조회 오류 {code}: {e}")
+        return 0, ""
 
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db, theme_historical_max, long_term_stocks):
     local_session = requests.Session()
@@ -729,7 +750,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         pg_amount_eok = 0.0
 
         try:
-            pg_url = f"https://finance.naver.com/item/sise_program.naver?code={code}"
+            pg_url = f"https://finance.naver.com/item/frgn.naver?code={code}"
             
             # 💡 [핵심 패치 1] 네이버의 아이프레임 차단을 우회하기 위해 Referer를 완벽하게 주입합니다.
             pg_headers = {
@@ -1274,7 +1295,7 @@ def update_technical_data(df_theme, all_theme_map):
             static_sheet.append_rows(new_static_data, value_input_option="USER_ENTERED")
             print(f"✅ 정적 데이터(시가총액/재무) {len(new_static_data)}건 캐시 업데이트 완료")
 
-        results.sort(key=lambda x: x[29], reverse=True)
+        results.sort(key=lambda x: x[29] if len(x) > 29 else 0, reverse=True)
 
         existing_data = {}
         try:
