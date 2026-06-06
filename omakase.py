@@ -7,6 +7,7 @@ from collections import Counter, defaultdict
 import concurrent.futures
 import urllib3
 import pandas as pd
+import random
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -32,7 +33,6 @@ def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
         if len(data) <= 1: return
         header = data[0]
         
-        # 🚨 버그 패치 1: 데이터 풀에 흡수된 유령 제목행 행들을 원천 필터링하여 제거
         rows = [r for r in data[1:] if len(r) > sort_col_idx and str(r[sort_col_idx]).strip() and r[0] != header[0]]
         
         def parse_date(val):
@@ -43,12 +43,9 @@ def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
             return datetime.datetime(1900, 1, 1)
             
         rows.sort(key=lambda x: parse_date(x[sort_col_idx]), reverse=True)
-        
-        # 🚨 버그 패치 2: 하단에 누적된 쓰레기 데이터를 밀어버리기 위해 영역을 넉넉하게 청소
         sheet.batch_clear(['A2:Z10000'])
         
         if rows:
-            # 🚨 버그 패치 3: A2부터 채우므로 [header]를 더하지 않고 순수 수집 데이터(rows)만 전송합니다.
             sheet.update(range_name="A2", values=rows, value_input_option="USER_ENTERED")
         print(f"✅ [{sheet_name}] 최신순 정렬 및 오염 데이터 청소 완료")
     except Exception as e:
@@ -336,10 +333,8 @@ def get_naver_main_news():
         return pd.DataFrame(news_list, columns=['업데이트 시간', '언론사', '기사 제목', '요약 내용', '기사 링크'])
     except: return pd.DataFrame()
 
-def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_closed):
+def update_google_sheet(doc, df_theme, df_news, df_naver, df_main_news, is_market_closed):
     try:
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        doc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)).open_by_url(SHEET_URL)
         if not df_theme.empty:
             try:
                 sheet_rt = doc.worksheet("수급_실시간")
@@ -488,12 +483,19 @@ def fetch_extra_closing_prices_from_kis(code, session):
         pass
     return 0
 
-
 # 🚨 [수정 2] 완전 무결점 파싱 및 시트 밀림 방지 로직이 적용된 분석 엔진
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db, theme_historical_max, long_term_stocks):
     local_session = requests.Session()
     time.sleep(random.uniform(0.1, 0.4))
     
+    # 29개의 빈 데이터를 생성하여 에러 발생 시에도 시트 배열이 밀리지 않도록 고정
+    fail_fallback = [
+        name, f"'{code}", 0, "0.00%", 0, 0, "전일비 100%", "⚡ 관망 (데이터 수집 오류)",
+        "0점 (오류)", "⏸️ [대기] 분석 오류 우회", 0, 0, 0, 0, "🟡 일반형", "📉 이격 과다",
+        "100.0%", "평범(X)", "🟡 [V.평년수준]", "개별주/기타", "⚪ [P.관망중] 0억", 0,
+        "🏦기:0.0억 / 🌎외:0.0억", 0, 0, "NORMAL", "", "", "정규장", 0
+    ]
+
     try:
         desktop_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
 
@@ -505,7 +507,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             res = local_session.get(url, verify=False, timeout=3)
             root = ET.fromstring(res.text)
         except Exception:
-            return None, None
+            return fail_fallback, None
 
         history = []
         high_prices = []
@@ -521,7 +523,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             history.append({"date": data[0], "open": open_p, "high": high_p, "low": low_p, "close": close_p, "volume": vol})
             high_prices.append(high_p)
 
-        if len(history) < 2: return None, None
+        if len(history) < 2: return fail_fallback, None
 
         last_day = history[-1]
         df_hist = pd.DataFrame(history)
@@ -592,17 +594,21 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             nxt_res = local_session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", timeout=2, verify=False)
             if nxt_res.status_code == 200:
                 nxt_json = nxt_res.json()
-                over_info = nxt_json.get("overMarketPriceInfo") or nxt_json.get("nightMarketPriceInfo") or nxt_json.get("afterMarketPriceInfo") or {}
-                o_price_str = str(over_info.get("closePrice") or over_info.get("overPrice") or over_info.get("price") or "0").replace(",", "").strip()
-                if o_price_str.isdigit() and int(o_price_str) > 0:
-                    val_close = int(o_price_str)
-                    mkt_type_str = str(over_info.get("marketType") or over_info.get("stockExchangeType", {}).get("code") or "").upper()
-                    
-                    if "NXT" in mkt_type_str or "NIGHT" in mkt_type_str or "AFTER" in mkt_type_str:
-                        nxt_close = val_close
-                    else:
-                        if krx_close == 0:
-                            krx_close = val_close
+                
+                # NXT는 nightMarketPriceInfo 에 우선 존재
+                night_info = nxt_json.get("nightMarketPriceInfo") or {}
+                if night_info:
+                    p_str = str(night_info.get("closePrice") or night_info.get("price") or "0").replace(",", "").strip()
+                    if p_str.isdigit() and int(p_str) > 0:
+                        nxt_close = int(p_str)
+                
+                # 만약 KIS API가 죽었을 경우를 대비해 overMarketPriceInfo(KRX 시간외)도 수집
+                if krx_close == 0:
+                    over_info = nxt_json.get("overMarketPriceInfo") or nxt_json.get("afterMarketPriceInfo") or {}
+                    if over_info:
+                        p_str = str(over_info.get("closePrice") or over_info.get("overPrice") or "0").replace(",", "").strip()
+                        if p_str.isdigit() and int(p_str) > 0:
+                            krx_close = int(p_str)
         except Exception: pass
 
         krx_rate = ((krx_close - current_price) / current_price * 100) if krx_close > 0 and current_price > 0 else 0.0
@@ -730,7 +736,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             static_info_to_save = [f"'{code}", name, market_cap, str(is_junk), str(is_financial_risk), str(is_chronic_loss)]
 
         # --------------------------------------------------
-        # 🚨 STEP 8: [완벽 보정판] 프로그램 당일 매매 파싱 (5월 중순 안정화 로직)
+        # 🚨 STEP 8: [완벽 보정판] 프로그램 당일 매매 파싱 (5월 중순 안정화 로직 완전 복구)
         # --------------------------------------------------
         program_text = "⚪ [P.관망중] 0억"
         pg_amount_eok = 0.0
@@ -1038,12 +1044,12 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         score_display = f"{quant_score}점 ({track_type})"
         is_seed_tag = "SEED" if is_accumulation_cand or is_long_term_pick else "NORMAL"
 
-        # 🚨 [완벽 수정] W열 수급 텍스트: '합계' 문구를 제거하고 기호 및 소수점 자리 맞춤
+        # 🚨 [수정 완료] 수석님의 요청: W열을 합계가 빠진 '🏦기:+0.8억 / 🌎외:+0.6억' 포맷으로만 지정
         i_sign = "+" if acc_i_buy_eok > 0 else ""
         f_sign = "+" if acc_f_buy_eok > 0 else ""
         supply_status_col = f"🏦기:{i_sign}{acc_i_buy_eok:.1f}억 / 🌎외:{f_sign}{acc_f_buy_eok:.1f}억"
 
-        # 🚨 [완벽 수정] 시간외 18시 / NXT 야간종가 문자열 포맷팅 (엑셀 수식 파싱 에러 방지용 ' 추가)
+        # 🚨 [수정 완료] 시간외 18시 / NXT 야간종가 문자열 포맷팅 (엑셀 수식 파싱 에러 방지용 ' 추가)
         krx_str = f"'{'+' if krx_rate > 0 else ''}{krx_rate:.2f}% ({krx_close:,}원)" if krx_close > 0 else ""
         nxt_str = f"'{'+' if nxt_rate > 0 else ''}{nxt_rate:.2f}% ({nxt_close:,}원)" if nxt_close > 0 else ""
 
@@ -1065,7 +1071,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
     except Exception as e:
         print(f"❌ 분석 에러 [{name}]: {e}")
-        return None, None
+        return fail_fallback, None
 
 def update_technical_data(df_theme, all_theme_map):
     try:
