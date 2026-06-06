@@ -566,7 +566,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     live_success = True
         except Exception: pass
 
-if not live_success:
+
+        if not live_success:
             try:
                 mobile_headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)"}
                 rt_json2 = local_session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", headers=mobile_headers, verify=False, timeout=2).json()
@@ -593,9 +594,11 @@ if not live_success:
                 over_p_str = str(over_info.get("overPrice", "0")).replace(",", "").strip()
                 if over_p_str.isdigit(): nxt_close = int(over_p_str)
         except Exception: pass
+
         if krx_close > 0 and nxt_close > 0: market_type = "KRX+NXT"
         elif nxt_close > 0: market_type = "NXT"
         elif krx_close > 0: market_type = "KRX"
+
         
         # --------------------------------------------------
         # STEP 3: 파생 변수 계산
