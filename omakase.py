@@ -464,66 +464,27 @@ class ScannerState:
 
 global_state = ScannerState()
 
-# 🚨 [KIS 전용 보안 소켓 엔진 규격 복원] 18시 시간외단일가 종가 수집 (정규 헤더 주입)
-def fetch_extra_closing_prices_from_kis(code, access_token=None, session_obj=None):
-    if not access_token:
-        return 0, ""
-
-    if not session_obj:
-        return 0, ""
+def fetch_extra_closing_prices_from_kis(code, session):
+    if not KIS_TOKEN or not KIS_APP_KEY or not KIS_APP_SECRET: return 0
     try:
         headers = {
-            "content-type": "application/json",
-            "authorization": f"Bearer {access_token}",
+            "content-type": "application/json; charset=utf-8",
+            "authorization": f"Bearer {KIS_TOKEN}",
             "appkey": KIS_APP_KEY,
             "appsecret": KIS_APP_SECRET,
-            "tr_id": "FHPST02320000"
+            "tr_id": "FHPST02320000" # 0523 버전의 안정적인 TR ID
         }
-
-        params = {
-            "FID_COND_MRKT_DIV_CODE": "J",
-            "FID_INPUT_ISCD": code
-        }
-
-        url = (
-            f"{KIS_URL_BASE}"
-            "/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice"
-        )
-
-        res = session_obj.get(
-            url,
-            headers=headers,
-            params=params,
-            timeout=5
-        )
-
-        if res.status_code != 200:
-            return 0, ""
-
-        j = res.json()
-
-        output = (
-            j.get("output")
-            or j.get("output1")
-            or {}
-        )
-
-        price_str = str(
-            output.get("stck_prpr")
-            or output.get("ovtm_untp_prpr")
-            or "0"
-        )
-
-        clean = re.sub(r"[^0-9]", "", price_str)
-
-        if clean.isdigit():
-            return int(clean), ""
-
-        return 0, ""
-
-    except Exception as e:
-        print(f"시간외 조회 오류 {code}: {e}")
-        return 0, ""
+        params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code}
+        url = f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-time-over-price"
+        res = session.get(url, headers=headers, params=params, timeout=4)
+        if res.status_code == 200:
+            j = res.json()
+            output = j.get("output") or j.get("output1") or j.get("output2") or {}
+            price_str = str(output.get("stck_prpr", "0")).replace(",", "").strip()
+            if price_str.isdigit() and int(price_str) > 0:
+                return int(price_str)
+    except: pass
+    return 0
 
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db, theme_historical_max, long_term_stocks):
     local_session = requests.Session()
@@ -608,18 +569,23 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         live_success = True
             except Exception: pass
 
-        krx_close = fetch_extra_closing_prices_from_kis(code)
+        # 🚨 [수정 2] 시간외 및 NXT 하이브리드 파싱
+        krx_close = fetch_extra_closing_prices_from_kis(code, local_session)
         nxt_close = 0
-        market_type = ""
+        market_type = "정규장"
+        
         try:
-            mobile_headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)"}
-            nxt_json = local_session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", headers=mobile_headers, verify=False, timeout=2).json()
-            over_info = nxt_json.get("overMarketPriceInfo", {})
-            if over_info:
-                over_p_str = str(over_info.get("overPrice", "0")).replace(",", "").strip()
-                if over_p_str.isdigit(): nxt_close = int(over_p_str)
-        except Exception: pass
-
+            nxt_res = local_session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", timeout=2, verify=False)
+            if nxt_res.status_code == 200:
+                nxt_json = nxt_res.json()
+                # 0606의 강력한 다중 키 검색 로직 유지
+                over_info = nxt_json.get("overMarketPriceInfo") or nxt_json.get("nightMarketPriceInfo") or nxt_json.get("afterMarketPriceInfo") or {}
+                o_price_str = str(over_info.get("closePrice") or over_info.get("overPrice") or over_info.get("price") or "0").replace(",", "").strip()
+                if o_price_str.isdigit() and int(o_price_str) > 0:
+                    nxt_close = int(o_price_str)
+                    market_type = "NXT"
+        except: pass
+        
         if krx_close > 0 and nxt_close > 0: market_type = "KRX+NXT"
         elif nxt_close > 0: market_type = "NXT"
         elif krx_close > 0: market_type = "KRX"
@@ -754,45 +720,27 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         program_text = "확인불가"
         pg_amount_eok = 0.0
 
+        program_text = "⚪ [P.관망중] 0억"
         try:
-            pg_url = f"https://finance.naver.com/item/frgn.naver?code={code}"
+            pg_url = f"https://finance.naver.com/item/sise_program.naver?code={code}"
+            pg_soup = BeautifulSoup(local_session.get(pg_url, timeout=3).content, 'html.parser', from_encoding='euc-kr')
             
-            # 💡 [핵심 패치 1] 네이버의 아이프레임 차단을 우회하기 위해 Referer를 완벽하게 주입합니다.
-            pg_headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Referer": f"https://finance.naver.com/item/main.naver?code={code}"
-            }
+            # 동적 헤더 탐색
+            th_texts = [th.text.strip() for th in pg_soup.select("table.type2 th")]
+            amt_idx = next((i for i, t in enumerate(th_texts) if "순매수대금" in t or "순매수금액" in t), -1)
             
-            pg_res = local_session.get(pg_url, headers=pg_headers, verify=False, timeout=2)
-            pg_soup = BeautifulSoup(pg_res.content, 'html.parser', from_encoding='euc-kr')
-            pg_rows = pg_soup.select("table.type2 tr")
-            
-            for r_tag in pg_rows:
-                cols = r_tag.select("td")
-                if len(cols) >= 4:
-                    first_col = cols[0].text.strip()
-                    if first_col and first_col[0].isdigit():
-                        
-                        # 💡 [핵심 패치 2] 테이블 레이아웃 변화에 무너지지 않도록 순매수대금 후보 열을 동적으로 탐색합니다.
-                        val_candidates = []
-                        if len(cols) >= 7:
-                            val_candidates.extend([cols[6].text.strip(), cols[3].text.strip()])
-                        val_candidates.append(cols[-1].text.strip()) # 맨 우측 열은 항상 최종 수급 데이터가 위치함
-                        
-                        for raw_val in val_candidates:
-                            clean_amt = raw_val.replace(',', '').replace('+', '').strip()
-                            clean_amt = clean_amt.replace('−', '-') # 유니코드 특수 마이너스 기호 방어
-                            clean_amt = re.sub(r'[^0-9.-]', '', clean_amt) # 숫자, 마이너스, 점 외의 오염물 싹 청소
-                            
-                            if clean_amt and clean_amt != '0' and clean_amt != '':
-                                try:
-                                    pg_amount_eok = float(clean_amt) / 100.0  # 백만 단위 -> 억원 단위 변환
-                                    break # 유효한 값을 찾으면 후보군 탐색 성공 종료
-                                except:
-                                    pass
-                        break # 당일 최종 데이터 1줄을 완벽히 읽었으므로 날짜/시간 루프 종료
-        except Exception:
-            pass
+            rows = pg_soup.select("table.type2 tr")
+            for r in rows:
+                cols = r.select("td")
+                if len(cols) > 5 and cols[0].text.strip()[0].isdigit():
+                    raw_val = cols[amt_idx if amt_idx != -1 else -1].text.strip().replace(',', '').replace('−', '-')
+                    clean_val = re.sub(r'[^0-9.-]', '', raw_val)
+                    if clean_val and clean_val != '0':
+                        pg_val = float(clean_val) / 100.0
+                        sign = "+" if pg_val > 0 else ""
+                        program_text = f"🔴 [P.매수] {sign}{pg_amount_eok:.1f}억" if pg_val > 0 else f"🔵 [P.매도] {pg_amount_eok:.1f}억"
+                    break
+        except: pass
 
         # 기관/외인 총 순매수 (기존 로직 유지)
         is_today_data_in_frgn = False
