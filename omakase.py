@@ -740,7 +740,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             static_info_to_save = [f"'{code}", name, market_cap, str(is_junk), str(is_financial_risk), str(is_chronic_loss)]
 
         # --------------------------------------------------
-        # 🚨 STEP 8: [완벽 보정판] 프로그램 독립 탐색 및 기관/외인 입체 분리 표기
+        # 🚨 STEP 8: [완벽 보정판] 프로그램 독립 탐색 및 기관/외인 입체 분리 표기 (교정 완료)
         # --------------------------------------------------
         is_strong_dual_buy = False
         supply_text = ""
@@ -753,17 +753,17 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         pg_amount_eok = 0.0
         pg_ratio = 0.0
 
-        # --- 1차: 프로그램 매매 단독 크롤링 및 동적 열 추적 엔진 (복구완료) ---
+        # --- 1차: 프로그램 매매 단독 크롤링 및 동적 헤더 역추적 엔진 ---
         try:
             pg_url = f"https://finance.naver.com/item/sise_program.naver?code={code}"
             pg_headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 "Referer": f"https://finance.naver.com/item/main.naver?code={code}"
             }
             pg_res = local_session.get(pg_url, headers=pg_headers, verify=False, timeout=2)
             pg_soup = BeautifulSoup(pg_res.content, 'html.parser', from_encoding='euc-kr')
             
-            # '순매수대금' 열 인덱스를 동적으로 역추적하여 네이버의 컬럼 변화 완벽 대응
+            # '순매수대금' 열 인덱스를 동적으로 역추적하여 네이버 테이블 가변 구조 완벽 대응
             amt_col_idx = -1
             th_tags = pg_soup.select("table.type2 th")
             if th_tags:
@@ -788,35 +788,29 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         raw_amt_str = cols[target_col_idx].text.strip().replace(',', '').replace('+', '').replace(' ', '').replace('−', '-')
                         clean_amt = re.sub(r'[^0-9.\-]', '', raw_amt_str)
                         
-                        if clean_amt and clean_amt not in ('', '-', '.'):
-                            pg_amount_eok = float(clean_amt) / 100.0
-                            if trading_value > 0:
-                                # 💡 거래대금 대비 프로그램 비중 공식 산출 (대형주 왜곡 제거)
-                                pg_ratio = (abs(pg_amount_eok * 100_000_000) / trading_value) * 100
-                                sign = "+" if pg_amount_eok > 0 else ""
-                                
-                                if pg_amount_eok >= 10 and pg_ratio >= 10.0: program_text = f"🔴 [P.대량유입] {sign}{pg_amount_eok:.1f}억 ({pg_ratio:.1f}%)"
-                                elif pg_amount_eok > 0 and pg_ratio >= 4.0: program_text = f"🔴 [P.매수우위] {sign}{pg_amount_eok:.1f}억 ({pg_ratio:.1f}%)"
-                                elif pg_amount_eok <= -10 and pg_ratio >= 10.0: program_text = f"🔵 [P.대량출회] {pg_amount_eok:.1f}억 ({pg_ratio:.1f}%)"
-                                elif pg_amount_eok < 0 and pg_ratio >= 4.0: program_text = f"🔵 [P.매도우위] {pg_amount_eok:.1f}억 ({pg_ratio:.1f}%)"
-                                else: program_text = f"⚪ [P.관망중] {sign}{pg_amount_eok:.1f}억 ({pg_ratio:.1f}%)"
-                        break
+                        if clean_amt and clean_amt != '':
+                            try:
+                                pg_amount_eok = float(clean_amt) / 100.0
+                                if pg_amount_eok != 0.0:
+                                    break # 빈 행이나 노이즈가 아닌 정상 값이 확인되면 즉시 크롤링 성공 종료
+                            except:
+                                pass
         except Exception:
             pass
 
-        # --- 2차: 18시 시간외 및 20시 NXT 가산점 최적화 반영 ---
+        # --- 2차: 18시 시간외 및 20시 NXT 단일가 가산점 퀀트 로직 최적화 반영 ---
         for_multiplier_krx_rate = (krx_close - current_price) / current_price if current_price > 0 else 0.0
         if krx_rate == 0.0 and krx_close > 0:
             krx_rate = for_multiplier_krx_rate * 100
 
         if krx_rate >= 2.0:
-            base_score += 15
+            base_score += 10
             master_tajeom_suffix += " ⚡(시간외강세)"
         if nxt_close > current_price:
-            base_score += 10
+            base_score += 5
             master_tajeom_suffix += " 🌙(야간수급 유입)"
 
-        # --- 3차: 기관/외인 누적 수급 트래킹 (5일선 유지) ---
+        # --- 3차: 기관/외인 누적 수급 트래킹 (5일선 연산 엔진 원형 보존) ---
         is_today_data_in_frgn = False
         today_str_dot = datetime.datetime.now(KST).strftime('%Y.%m.%d')
 
@@ -847,6 +841,17 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         f_buy_today = f_buy_won
                         if row_date_str == today_str_dot:
                             is_today_data_in_frgn = True
+                        
+                        # 💡 절대금액 모순 극복 -> 당일 대금 대비 프로그램 순매수 비중 판정식 연동
+                        pg_amount_won = pg_amount_eok * 100_000_000
+                        pg_ratio = (abs(pg_amount_won) / trading_value) * 100 if trading_value > 0 else 0.0
+                        sign = "+" if pg_amount_eok > 0 else ""
+                        
+                        if pg_amount_eok >= 10 and pg_ratio >= 10.0: program_text = f"🔴 [P.대량유입] {sign}{pg_amount_eok:.1f}억 ({pg_ratio:.1f}%)"
+                        elif pg_amount_eok > 0 and pg_ratio >= 4.0: program_text = f"🔴 [P.매수우위] {sign}{pg_amount_eok:.1f}억 ({pg_ratio:.1f}%)"
+                        elif pg_amount_eok <= -10 and pg_ratio >= 10.0: program_text = f"🔵 [P.대량출회] {pg_amount_eok:.1f}억 ({pg_ratio:.1f}%)"
+                        elif pg_amount_eok < 0 and pg_ratio >= 4.0: program_text = f"🔵 [P.매도우위] {pg_amount_eok:.1f}억 ({pg_ratio:.1f}%)"
+                        else: program_text = f"⚪ [P.관망중] {sign}{pg_amount_eok:.1f}억 ({pg_ratio:.1f}%)"
                             
                     acc_i_buy_won += i_buy_won
                     acc_f_buy_won += f_buy_won
@@ -857,22 +862,22 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         acc_i_buy_eok = acc_i_buy_won / 100_000_000
         acc_f_buy_eok = acc_f_buy_won / 100_000_000
-        f_buy_eok_today = f_buy_today / 100_000_000
+        f_buy_eok = f_buy_today / 100_000_000
         today_dual_buy_ratio = ((i_buy_today + f_buy_today) / trading_value) * 100 if trading_value > 0 else 0.0
         
         non_program_buy_eok = 0
         is_foreigner_active_buy = False
         if is_today_data_in_frgn:
-            non_program_buy_eok = f_buy_eok_today - pg_amount_eok
-            is_foreigner_active_buy = (f_buy_eok_today >= 15) and (pg_amount_eok <= 5) and (non_program_buy_eok >= 10)
+            non_program_buy_eok = f_buy_eok - pg_amount_eok
+            is_foreigner_active_buy = (f_buy_eok >= 15) and (pg_amount_eok <= 5) and (non_program_buy_eok >= 10)
 
-        # 💡 외인 5일 누적 30억 이상 + 전고 대비 -15% 이내 눌림목 권역 A급 면책 진입 신호 설정
+        # 💡 [A급 신호 면책 특권 이식] 외인 5일 누적 30억 이상 + 전고 대비 -15% 이내 눌림목 권역 진입 보장
         is_alpha_signal = (acc_f_buy_eok >= 30.0) and (surge_rate_60d_top >= -0.15) and (trading_value >= 300_000_000_000)
         if is_alpha_signal:
             supply_text = " (💎외인 집중배팅)"
             is_foreigner_active_buy = True
 
-        # 💡 [요구사항 반영] 기존 W열 레이아웃 깨짐 없는 기관/외인 입체 분리 시각화 포맷팅
+        # 💡 [핵심 패치] 전체 열 배열 인덱스를 무너뜨리지 않는 단일 칸 내부 분리 시각화 수식
         i_sign = "+" if acc_i_buy_eok > 0 else ""
         f_sign = "+" if acc_f_buy_eok > 0 else ""
         sum_eok = acc_i_buy_eok + acc_f_buy_eok
@@ -882,13 +887,14 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         f_str = f"{f_sign}{acc_f_buy_eok:.1f}억" if acc_f_buy_eok != 0 else "0억"
         s_str = f"{s_sign}{sum_eok:.1f}억" if sum_eok != 0 else "0억"
         
+        # 주가데이터_보조 22번째 컬럼(W열)에 인덱스 변동 없이 안전하게 분리 표기 주입
         supply_status_col = f"🏦기:{i_str} / 🌎외:{f_str} [합:{s_str}]"
 
         if dual_buy_days >= 3 and today_dual_buy_ratio >= 3.0 and i_buy_today >= 200_000_000 and f_buy_today >= 200_000_000 and acc_i_buy_eok >= 20:
             is_strong_dual_buy = True
             supply_text = " (🌟쌍끌이 모아가기)"
         elif is_alpha_signal:
-            pass # 상단 가드링에서 조치 완료
+            pass
         elif is_foreigner_active_buy:
             supply_text = " (💎외인 집중배팅)"
         elif i_buy_today >= 200_000_000 and f_buy_today >= 200_000_000:
