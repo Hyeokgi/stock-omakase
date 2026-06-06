@@ -1439,9 +1439,20 @@ if __name__ == "__main__":
     global_state.super_leader_count = 0
     global_state.platform_leader_count = 0
 
+    # 1. 데이터 수집
     df_theme, is_market_closed, all_theme_map = get_real_money_themes()
     df_news, df_naver, df_main_news = get_news_keywords(), get_naver_search_ranking(), get_naver_main_news()
-    update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_closed)
+
+    # 2. 구글 시트 객체 준비 (인자 전달을 위해 필수)
+    try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
+        doc = gspread.authorize(creds).open_by_url(SHEET_URL)
+        
+        # 3. 인자 6개를 모두 포함하여 올바르게 호출
+        update_google_sheet(doc, df_theme, df_news, df_naver, df_main_news, is_market_closed)
+    except Exception as e:
+        print(f"❌ 메인 실행부 초기화 에러: {e}")
 
     today_schedules = get_market_schedule()
     manage_schedule_sheet(today_schedules)
