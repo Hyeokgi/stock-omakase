@@ -593,7 +593,13 @@ if not live_success:
                 over_p_str = str(over_info.get("overPrice", "0")).replace(",", "").strip()
                 if over_p_str.isdigit(): nxt_close = int(over_p_str)
         except Exception: pass
-
+        if krx_close > 0 and nxt_close > 0: market_type = "KRX+NXT"
+        elif nxt_close > 0: market_type = "NXT"
+        elif krx_close > 0: market_type = "KRX"
+        
+        # --------------------------------------------------
+        # STEP 3: 파생 변수 계산
+        # --------------------------------------------------         
         is_upper_limit = change_rate >= 0.295
         yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) >= 2 else today_vol
         trading_value = current_price * today_vol
