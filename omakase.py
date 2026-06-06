@@ -7,6 +7,7 @@ from collections import Counter, defaultdict
 import concurrent.futures
 import urllib3
 import pandas as pd
+import random
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -32,7 +33,6 @@ def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
         if len(data) <= 1: return
         header = data[0]
         
-        # 🚨 버그 패치 1: 데이터 풀에 흡수된 유령 제목행 행들을 원천 필터링하여 제거
         rows = [r for r in data[1:] if len(r) > sort_col_idx and str(r[sort_col_idx]).strip() and r[0] != header[0]]
         
         def parse_date(val):
@@ -43,12 +43,9 @@ def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
             return datetime.datetime(1900, 1, 1)
             
         rows.sort(key=lambda x: parse_date(x[sort_col_idx]), reverse=True)
-        
-        # 🚨 버그 패치 2: 하단에 누적된 쓰레기 데이터를 밀어버리기 위해 영역을 넉넉하게 청소
         sheet.batch_clear(['A2:Z10000'])
         
         if rows:
-            # 🚨 버그 패치 3: A2부터 채우므로 [header]를 더하지 않고 순수 수집 데이터(rows)만 전송합니다.
             sheet.update(range_name="A2", values=rows, value_input_option="USER_ENTERED")
         print(f"✅ [{sheet_name}] 최신순 정렬 및 오염 데이터 청소 완료")
     except Exception as e:
@@ -336,10 +333,8 @@ def get_naver_main_news():
         return pd.DataFrame(news_list, columns=['업데이트 시간', '언론사', '기사 제목', '요약 내용', '기사 링크'])
     except: return pd.DataFrame()
 
-def update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_closed):
+def update_google_sheet(doc, df_theme, df_news, df_naver, df_main_news, is_market_closed):
     try:
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        doc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)).open_by_url(SHEET_URL)
         if not df_theme.empty:
             try:
                 sheet_rt = doc.worksheet("수급_실시간")
@@ -464,7 +459,7 @@ class ScannerState:
 
 global_state = ScannerState()
 
-# 🚨 [수정완료] 18시 시간외 단일가 KIS 응답 구조 및 콤마 예외 차단 패치
+# 🚨 [패치 1] 시간외단일가 콤마 필터 및 API 유연 응답(output1, output2) 완벽 대응
 def fetch_extra_closing_prices_from_kis(code):
     if not KIS_TOKEN or not KIS_APP_KEY or not KIS_APP_SECRET: return 0
     try:
@@ -503,18 +498,25 @@ def fetch_extra_closing_prices_from_kis(code):
 
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db, theme_historical_max, long_term_stocks):
     local_session = requests.Session()
+    time.sleep(random.uniform(0.1, 0.4))
+    
+    # 🚨 원본과 정확히 동일한 30차원(인덱스 29번) 크기의 예외 복구 배열 유지 (절대 컬럼 밀림 방지)
+    fail_fallback = [
+        name, f"'{code}", 0, "0.00%", 0, 0, "전일비 100%", "⚡ 관망 (데이터 수집 오류)",
+        "0점 (오류)", "⏸️ [대기] 분석 오류 우회", 0, 0, 0, 0, "🟡 일반형", "📉 이격 과다",
+        "100.0%", "평범(X)", "🟡 [V.평년수준]", "개별주/기타", "⚪ [P.관망중] 0억 (0.0%)", 0,
+        "기:0/외:0", 0, 0, "NORMAL", "", "", "정규장", 0
+    ]
+    
     try:
         desktop_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
 
-        # --------------------------------------------------
-        # STEP 1: fchart 일봉 데이터 수집
-        # --------------------------------------------------
         url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=250&requestType=0"
         try:
             res = local_session.get(url, verify=False, timeout=3)
             root = ET.fromstring(res.text)
         except Exception:
-            return None, None
+            return fail_fallback, None
 
         history = []
         high_prices = []
@@ -530,7 +532,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             history.append({"date": data[0], "open": open_p, "high": high_p, "low": low_p, "close": close_p, "volume": vol})
             high_prices.append(high_p)
 
-        if len(history) < 2: return None, None
+        if len(history) < 2: return fail_fallback, None
 
         last_day = history[-1]
         df_hist = pd.DataFrame(history)
@@ -549,9 +551,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         change_rate = (current_price - yest_close) / yest_close if yest_close > 0 else 0.0
 
-        # --------------------------------------------------
-        # STEP 2: 네이버 실시간 API 동기화
-        # --------------------------------------------------
         live_success = False
         try:
             rt_url = f"https://m.stock.naver.com/api/stock/{code}/basic"
@@ -568,26 +567,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     live_success = True
         except Exception: pass
 
-        if not live_success:
-            try:
-                mobile_headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)"}
-                rt_json2 = local_session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", headers=mobile_headers, verify=False, timeout=2).json()
-                if rt_json2 and rt_json2.get('closePrice'):
-                    live_p = int(str(rt_json2['closePrice']).replace(',', '').strip())
-                    if live_p > 0:
-                        current_price = live_p
-                        if rt_json2.get('accumulatedTradingVolume'): today_vol = int(str(rt_json2['accumulatedTradingVolume']).replace(',', '').strip())
-                        if rt_json2.get('highPrice'): today_high = int(str(rt_json2['highPrice']).replace(',', '').strip())
-                        if rt_json2.get('lowPrice'): today_low = int(str(rt_json2['lowPrice']).replace(',', '').strip())
-                        if rt_json2.get('openPrice'): open_price = int(str(rt_json2['openPrice']).replace(',', '').strip())
-                        if rt_json2.get('fluctuationsRatio'): change_rate = float(str(rt_json2['fluctuationsRatio']).replace('%', '').replace('+', '').strip()) / 100.0
-                        live_success = True
-            except Exception: pass
-
-        # 🚨 [수정완료] 20시 NXT 야간 종가 객체 가변 명칭 연쇄 탐색기 반영
+        # 🚨 [패치 2] 20시 NXT 단일가 무결성 크롤러 (이중 키워드 매핑 완료)
         krx_close = fetch_extra_closing_prices_from_kis(code)
         nxt_close = 0
-        market_type = "정규장"
+        market_type = ""
         nxt_rate = 0.0
         krx_rate = 0.0
         
@@ -622,9 +605,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         elif krx_close > 0: market_type = "KRX"
         else: market_type = "정규장"
 
-        # --------------------------------------------------
-        # STEP 3: 파생 변수 계산
-        # --------------------------------------------------
         is_upper_limit = change_rate >= 0.295
         yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) >= 2 else today_vol
         trading_value = current_price * today_vol
@@ -653,6 +633,11 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         upper_shadow_ratio = upper_shadow / current_price if current_price > 0 else 0
         is_today_yangbong = current_price >= open_price
 
+        # [패치 3] 시간외 및 NXT 수익률 스코어 가산점 적용을 위해 미리 계산
+        for_multiplier_krx_rate = (krx_close - current_price) / current_price if current_price > 0 else 0.0
+        if krx_rate == 0.0 and krx_close > 0:
+            krx_rate = for_multiplier_krx_rate * 100
+
         gap_ratio = (open_price - yest_close) / yest_close if yest_close > 0 else 0
         is_huge_gap = gap_ratio >= 0.04
 
@@ -665,9 +650,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             vol_ratio_10d = max(vol_ratio_10d, 500)
             vol_ratio_yest = max(vol_ratio_yest, 500)
 
-        # --------------------------------------------------
-        # STEP 4: 칼만 필터
-        # --------------------------------------------------
         try:
             high_low = df_hist['high'] - df_hist['low']
             high_close = (df_hist['high'] - df_hist['close'].shift()).abs()
@@ -715,9 +697,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             is_kalman_uptrend, kalman_turned_red = False, False
             trend_start_price, secret_tajeom = current_price, ""
 
-        # --------------------------------------------------
-        # STEP 5 & 6 & 7: 윗꼬리, 장도지향, 정적 데이터
-        # --------------------------------------------------
         is_volume_dead = (vol_ratio_yest <= 60) and (vol_ratio_10d <= 60)
         is_long_shadow = (upper_shadow_ratio >= 0.035) or (upper_shadow_ratio >= 0.02 and upper_shadow > real_body * 1.2) if is_warning_market else (upper_shadow_ratio >= 0.05) or (upper_shadow_ratio >= 0.025 and upper_shadow > real_body * 1.5)
         
@@ -740,7 +719,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             static_info_to_save = [f"'{code}", name, market_cap, str(is_junk), str(is_financial_risk), str(is_chronic_loss)]
 
         # --------------------------------------------------
-        # 🚨 STEP 8: [완벽 보정판] 프로그램 독립 탐색 및 기관/외인 단일칸 입체 분리 (인덱스 복구)
+        # 🚨 STEP 8: [완벽 보정판] 프로그램 독립 탐색 및 기관/외인 입체 분리 표기
         # --------------------------------------------------
         is_strong_dual_buy = False
         supply_text = ""
@@ -749,11 +728,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         dual_buy_days = 0
         i_buy_today = 0
         f_buy_today = 0
-        program_text = "확인불가"
+        program_text = "⚪ [P.관망중] 0억 (0.0%)"
         pg_amount_eok = 0.0
         pg_ratio = 0.0
 
-        # --- 1차: 프로그램 매매 단독 크롤링 및 동적 열 탐색 엔진 (수리 완료) ---
         try:
             pg_url = f"https://finance.naver.com/item/sise_program.naver?code={code}"
             pg_headers = {
@@ -788,14 +766,23 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         clean_amt = re.sub(r'[^0-9.\-]', '', raw_amt_str)
                         
                         if clean_amt and clean_amt not in ('', '-', '.'):
-                            pg_amount_eok = float(clean_amt) / 100.0
-                            if trading_value > 0:
-                                pg_ratio = (abs(pg_amount_eok * 100_000_000) / trading_value) * 100
-                        break
+                            try:
+                                pg_amount_eok = float(clean_amt) / 100.0
+                                if trading_value > 0:
+                                    pg_ratio = (abs(pg_amount_eok * 100_000_000) / trading_value) * 100
+                                    sign = "+" if pg_amount_eok > 0 else ""
+                                    
+                                    if pg_amount_eok >= 10 and pg_ratio >= 10.0: program_text = f"🔴 [P.대량유입] {sign}{pg_amount_eok:.1f}억 ({pg_ratio:.1f}%)"
+                                    elif pg_amount_eok > 0 and pg_ratio >= 4.0: program_text = f"🔴 [P.매수우위] {sign}{pg_amount_eok:.1f}억 ({pg_ratio:.1f}%)"
+                                    elif pg_amount_eok <= -10 and pg_ratio >= 10.0: program_text = f"🔵 [P.대량출회] {pg_amount_eok:.1f}억 ({pg_ratio:.1f}%)"
+                                    elif pg_amount_eok < 0 and pg_ratio >= 4.0: program_text = f"🔵 [P.매도우위] {pg_amount_eok:.1f}억 ({pg_ratio:.1f}%)"
+                                    else: program_text = f"⚪ [P.관망중] {sign}{pg_amount_eok:.1f}억 ({pg_ratio:.1f}%)"
+                                break
+                            except:
+                                pass
         except Exception:
             pass
 
-        # --- 2차: 기관/외인 총 순매수 추적 및 오리지널 프로그램 판정식 유지 ---
         is_today_data_in_frgn = False
         today_str_dot = datetime.datetime.now(KST).strftime('%Y.%m.%d')
 
@@ -827,14 +814,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         if row_date_str == today_str_dot:
                             is_today_data_in_frgn = True
                             
-                        # 0606 오리지널 포맷 기준 프로그램 유입 텍스트 매핑 복원
-                        sign = "+" if pg_amount_eok > 0 else ""
-                        if pg_amount_eok >= 30 and pg_ratio >= 10.0: program_text = f"🔴 [P.대량유입] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-                        elif pg_amount_eok >= 10 and pg_ratio >= 5.0: program_text = f"🔴 [P.매수우위] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-                        elif pg_amount_eok <= -30 and pg_ratio >= 10.0: program_text = f"🔵 [P.대량출회] {int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-                        elif pg_amount_eok <= -10 and pg_ratio >= 5.0: program_text = f"🔵 [P.매도우위] {int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-                        else: program_text = f"⚪ [P.관망중] {sign}{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-                            
                     acc_i_buy_won += i_buy_won
                     acc_f_buy_won += f_buy_won
                     valid_days += 1
@@ -853,38 +832,14 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             non_program_buy_eok = f_buy_eok - pg_amount_eok
             is_foreigner_active_buy = (f_buy_eok >= 15) and (pg_amount_eok <= 5) and (non_program_buy_eok >= 10)
 
-        # 💡 [핵심 교정 부위] 리스트 칸을 찢지 않고, 단일 슬롯(W열) 내부에서 기/외/합 분리 표기
-        i_sign = "+" if acc_i_buy_eok > 0 else ""
-        f_sign = "+" if acc_f_buy_eok > 0 else ""
-        sum_eok = acc_i_buy_eok + acc_f_buy_eok
-        s_sign = "+" if sum_eok > 0 else ""
-        
-        i_str = f"{i_sign}{acc_i_buy_eok:.1f}억" if acc_i_buy_eok != 0 else "0억"
-        f_str = f"{f_sign}{acc_f_buy_eok:.1f}억" if acc_f_buy_eok != 0 else "0억"
-        s_str = f"{s_sign}{sum_eok:.1f}억" if sum_eok != 0 else "0억"
-        
-        # 🚨 이 변수가 그대로 원래의 22번 인덱스로 들어가야 뒤쪽 AA열, AB열 정렬 인덱스가 박살나지 않습니다.
-        supply_status_col = f"🏦기:{i_str} / 🌎외:{f_str} [합:{s_str}]"
+        is_near_52w_high = current_price >= (display_high_250d * 0.90)
 
-        if dual_buy_days >= 3 and today_dual_buy_ratio >= 3.0 and i_buy_today >= 200_000_000 and f_buy_today >= 200_000_000 and acc_i_buy_eok >= 20:
-            is_strong_dual_buy = True
-            supply_text = " (🌟쌍끌이 모아가기)"
-        elif i_buy_today >= 200_000_000 and f_buy_today >= 200_000_000:
-            supply_text = " (🟢약한 양매수)"
-        elif acc_i_buy_eok >= 20 or acc_f_buy_eok >= 30:
-            supply_text = " (누적수급 우수)"
-
-        # --------------------------------------------------
-        # STEP 9: 보조지표 연산
-        # --------------------------------------------------
         ma5 = int(df_hist['close'].tail(5).mean()) if len(df_hist) >= 5 else current_price
         ma20 = int(df_hist['close'].tail(20).mean()) if len(df_hist) >= 20 else current_price
         ma60 = int(df_hist['close'].tail(60).mean()) if len(df_hist) >= 60 else current_price
         is_high_altitude = surge_rate_20d >= 0.50
-
         is_leader_history = any((high_prices[i] - history[i-1]['close']) / history[i-1]['close'] >= 0.22 for i in range(1, len(history)) if history[i-1]['close'] > 0)
         leader_text = "🔥대장주(O)" if is_leader_history else "평범(X)"
-
         std20 = df_hist['close'].tail(20).std(ddof=0) if len(df_hist) >= 20 else 0
         disp_20 = (current_price / ma20) * 100 if ma20 > 0 else 100
         disp_text = f"{disp_20:.1f}%"
@@ -904,13 +859,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             max_20d_box, min_20d_box = int(df_hist['high'].tail(20).max()), int(df_hist['low'].tail(20).min())
             if min_20d_box > 0: box_ratio = (max_20d_box - min_20d_box) / min_20d_box
 
-        # --------------------------------------------------
-        # STEP 10: 전략 허들 및 마스터 시그널
-        # --------------------------------------------------
         min_breakout_tv = 50_000_000_000 if is_warning_market else 30_000_000_000
         min_nulim_tv = 10_000_000_000 if is_warning_market else 5_000_000_000
         min_danta_rate = 0.10 if is_warning_market else 0.06
-
         is_converging = (band_width <= 0.20) or (ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035)
         is_platform_breakout = (box_ratio <= 0.15) and (vol_ratio_10d >= 300) and (current_price > ma20) and is_today_yangbong and (trading_value >= min_breakout_tv)
 
@@ -929,19 +880,12 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         elif ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035: signal = ("📈 2차랠리 (이평수렴)" if current_price > ma20 else "⏳ 이평선 저항") + supply_text
         else: signal = ("🟢 낙폭과대 (과매도)" if current_price < lower_band else "⚡ 관망 (이격발생)") + supply_text
 
-        is_near_high = current_price >= (high_60d_calc * 0.90) or yest_close >= (high_60d_calc * 0.90)
-        is_near_52w_high = current_price >= (high_250d_calc * 0.90) or yest_close >= (high_250d_calc * 0.90)
-
         if is_near_52w_high: dist_text = "🎯 52주신고가 턱밑"
-        elif is_near_high: dist_text = "🎯 60일전고 턱밑"
+        elif current_price >= (high_60d_calc * 0.90): dist_text = "🎯 60일전고 턱밑"
         elif current_price >= high_60d_calc * 0.80: dist_text = "🟢 매물대 소화중"
         elif is_deep_correction: dist_text = "📉 고점 대비 큰 폭 조정"
         else: dist_text = "📉 이격 과다"
 
-        # --------------------------------------------------
-        # STEP 11: 테마 맵핑 및 점수화
-        # --------------------------------------------------
-        is_danta_range = min_danta_rate <= change_rate < 0.295
         has_today_theme = False
         has_theme = False
         is_theme_leader_raw = False
@@ -950,62 +894,56 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if name in theme_rank_dict:
             my_theme_name = "🆕[당일] " + theme_rank_dict[name]['theme_name']
             is_theme_leader_raw = theme_rank_dict[name]['is_leader']
-            has_theme = True
-            has_today_theme = True
+            has_theme, has_today_theme = True, True
         elif name in all_theme_map:
             my_theme_name = "🆕[당일] " + all_theme_map[name]['theme_name']
             is_theme_leader_raw = all_theme_map[name]['is_leader']
-            has_theme = True
-            has_today_theme = True
+            has_theme, has_today_theme = True, True
 
-        if not has_today_theme:
-            if name in past_theme_map:
-                my_theme_name = "🕰️[과거] " + past_theme_map[name]
-                is_theme_leader_raw = False
-                has_theme = False
+        if not has_today_theme and name in past_theme_map:
+            my_theme_name = "🕰️[과거] " + past_theme_map[name]
 
         is_true_theme_leader = is_theme_leader_raw and (trading_value >= min_breakout_tv)
-        is_theme_daejang = is_true_theme_leader and is_danta_range and not (is_junk or is_financial_risk)
-        is_real_hubal = has_theme and not is_theme_leader_raw
-        is_theme_hubal = is_real_hubal and is_danta_range and not (is_junk or is_financial_risk)
+        is_theme_daejang = is_true_theme_leader and min_danta_rate <= change_rate < 0.295 and not (is_junk or is_financial_risk)
+        is_theme_hubal = has_theme and not is_theme_leader_raw and min_danta_rate <= change_rate < 0.295 and not (is_junk or is_financial_risk)
 
         is_breakout_track = current_price >= ma20
         track_type = "눌림" if is_accumulation_cand else ("돌파" if is_breakout_track else "눌림")
         is_fatal_drop = is_junk or is_financial_risk
 
-        # --------------------------------------------------
-        # 🚨 STEP 13: 스코어 산출 알고리즘 (가중치 및 락인)
-        # --------------------------------------------------
         base_score = 0
         is_long_term_pick = name in long_term_stocks  
         master_tajeom_suffix = ""
 
-        # 💡 [개선] 촌스럽지 않고 전문적인 배지 네이밍으로 교체
         if is_long_term_pick:
             base_score += 20  
             master_tajeom_suffix += " 🎖️(코어 포트폴리오)"
-
-        if is_foreigner_active_buy:
-            base_score += 30  
+        if is_foreigner_active_buy: base_score += 30  
 
         if is_accumulation_cand:
             base_score += 40
             if is_double_bottom: base_score += 15
-            if "매수우위" in program_text or acc_i_buy_eok >= 10: base_score += 10
+            if "우위" in program_text or acc_i_buy_eok >= 10: base_score += 10
         else:
             if is_near_52w_high: base_score += 20
             elif current_price >= (high_60d_calc * 0.90): base_score += 15
             if vol_ratio_yest >= 300 and vol_ratio_10d >= 200: base_score += 15
             elif vol_ratio_yest >= 150: base_score += 10
             if "대량유입" in program_text: base_score += 25
-            elif "매수우위" in program_text: base_score += 15
-            if is_strong_dual_buy: base_score += 15
+            elif "우위" in program_text: base_score += 15
             if acc_i_buy_eok >= 50: base_score += 15
 
         high_retention = current_price / today_high if today_high > 0 else 0
         if high_retention >= 0.97 and change_rate >= 0.10 and trading_value >= 100_000_000_000:
             base_score += 30
             master_tajeom_suffix += " 👑(진성대장)"
+
+        if krx_rate >= 2.0:
+            base_score += 15
+            master_tajeom_suffix += " ⚡(시간외강세)"
+        if nxt_close > current_price:
+            base_score += 10
+            master_tajeom_suffix += " 🌙(야간수급 유입)"
 
         tajeom_multiplier = 0.0
         master_tajeom_base = "⏸️ [대기] 분석 중"
@@ -1065,38 +1003,48 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if secret_tajeom and "관망" not in master_tajeom and "매수금지" not in master_tajeom and not is_upper_limit:
             master_tajeom = f"{master_tajeom} | {secret_tajeom}"
 
-        is_super_leader = (change_rate >= 0.15) and (trading_value >= 100_000_000_000) and ("대량유입" in program_text or "매수우위" in program_text)
+        is_super_leader = (change_rate >= 0.15) and (trading_value >= 100_000_000_000) and ("유입" in program_text or "우위" in program_text)
         is_absolute_protected = is_super_leader or is_foreigner_active_buy or is_long_term_pick
 
         if is_absolute_protected:
             stop_loss = int(current_price * 0.96)
             target_price = int(current_price * 1.15)
             tajeom_multiplier = max(1.2, tajeom_multiplier)
-            if is_foreigner_active_buy: master_tajeom += " 💎(외인집중/면책)"
+            if is_alpha_signal: master_tajeom += " 💎(외인선별/면책)"
+            elif is_foreigner_active_buy: master_tajeom += " 💎(외인집중/면책)"
             elif is_long_term_pick: master_tajeom += " 🎖️(코어픽/면책)"
             else: master_tajeom += " 🔥(절대대장/면책)"
 
         quant_score = int(max(0, (base_score + 10) * tajeom_multiplier))
         cutoff_score = 40 if is_warning_market else 25
-        
         if quant_score < cutoff_score and not is_absolute_protected:
             master_tajeom = f"👀 [관망] 스코어 미달 (기준:{cutoff_score}점)"
 
         score_display = f"{quant_score}점 ({track_type})"
         is_seed_tag = "SEED" if is_accumulation_cand or is_long_term_pick else "NORMAL"
-
-        # 💡 [핵심 패치] W열 업데이트: 기관 및 외국인의 누적(5일) 순매수액을 나란히 표시
-        supply_status_col = f"기:{int(acc_i_buy_eok)}/외:{int(acc_f_buy_eok)}"
+        
+        # 🚨 [패치 4] 배열 인덱스를 오리지널(30칸)로 강제 고정하여 시간외/NXT 열 밀림 현상 완벽 격파!
+        i_sign = "+" if acc_i_buy_eok > 0 else ""
+        f_sign = "+" if acc_f_buy_eok > 0 else ""
+        sum_eok = acc_i_buy_eok + acc_f_buy_eok
+        s_sign = "+" if sum_eok > 0 else ""
+        
+        i_str = f"{i_sign}{acc_i_buy_eok:.1f}억" if acc_i_buy_eok != 0 else "0"
+        f_str = f"{f_sign}{acc_f_buy_eok:.1f}억" if acc_f_buy_eok != 0 else "0"
+        s_str = f"{s_sign}{sum_eok:.1f}억" if sum_eok != 0 else "0"
+        
+        supply_status_col = f"🏦기:{i_str} / 🌎외:{f_str} [합:{s_str}]"
 
         result_row = [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%",
             int(ma5), int(ma20), vol_ratio_text, signal,
             score_display, master_tajeom, today_high, today_low, int(display_high_60d),
             market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, my_theme_name,
-            program_text, int(display_high_250d), supply_status_col,
+            program_text, int(display_high_250d), 
+            supply_status_col, # 22번 인덱스 (기존 단일 칸 유지 -> 인덱스 붕괴 방어)
             target_price, stop_loss, is_seed_tag,
-            krx_close if krx_close > 0 else "",
-            nxt_close if nxt_close > 0 else "",
+            f"+{krx_rate:.2f}% ({krx_close:,}원)" if krx_close > 0 else "",
+            f"+{nxt_rate:.2f}% ({nxt_close:,}원)" if nxt_close > 0 else "",
             market_type,
             quant_score
         ]
@@ -1104,8 +1052,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         return result_row, static_info_to_save
 
     except Exception as e:
-        print(f"❌ 분석 에러 [{name}]: {e}")
-        return None, None
+        print(f"❌ 분석 엔진 예외 가드 강제 통과 [{name}]: {e}")
+        return fail_fallback, None
 
 def update_technical_data(df_theme, all_theme_map):
     try:
@@ -1152,7 +1100,7 @@ def update_technical_data(df_theme, all_theme_map):
 
         if is_reset_time:
             print("🔄 정적 데이터(시가총액 등) 캐시를 초기화하고 새로 수집합니다.")
-            static_sheet.batch_clear(['A2:F'])
+            static_sheet.batch_clear(['A2:F2000'])
         else:
             try:
                 for row in static_sheet.get_all_values()[1:]:
@@ -1301,15 +1249,22 @@ def update_technical_data(df_theme, all_theme_map):
         with concurrent.futures.ThreadPoolExecutor(max_workers=30) as executor:
             future_to_name = {executor.submit(analyze_single_stock, name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db, theme_historical_max, long_term_stocks): name for name, code in target_dict.items()}
             for future in concurrent.futures.as_completed(future_to_name):
-                res, static_res = future.result()
-                if res: results.append(res)
-                if static_res: new_static_data.append(static_res)
+                try:
+                    res, static_res = future.result()
+                    if res: results.append(res)
+                    if static_res: new_static_data.append(static_res)
+                except Exception as thread_e:
+                    print(f"⚠️ 개별 종목 멀티프로세싱 오류 우회 스킵: {thread_e}")
 
         if new_static_data:
             static_sheet.append_rows(new_static_data, value_input_option="USER_ENTERED")
             print(f"✅ 정적 데이터(시가총액/재무) {len(new_static_data)}건 캐시 업데이트 완료")
 
-        # 💡 [인덱스 방어벽] 반환된 리스트가 정상 크기(30개 필드)를 다 채웠을 때만 정렬하도록 보호
+        if not results:
+            print("🚨 [위험] 수집 성공 리스트가 전무합니다. 기존 시트 무단 증발 백지화를 방어하기 위해 프로세스를 보호 종료합니다.")
+            return
+
+        # 💡 [정렬 보안 패치 완료] 반환 데이터가 온전한 30차원 구조(index 29 존재)일 때만 스코어 역순 정렬 처리 수행
         results.sort(key=lambda x: x[29] if (x and len(x) > 29) else 0, reverse=True)
 
         existing_data = {}
@@ -1342,7 +1297,6 @@ def update_technical_data(df_theme, all_theme_map):
         except:
             helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="29")
 
-        # 💡 [W열 헤더 변경] W열 명칭을 기관/외인 수급이 함께 보이도록 변경
         extended_headers = [
             "종목명", "종목코드", "현재가", "등락률", "5일평균", "20일평균", "거래량비율", "AI신호",
             "마스터타점", "브리핑상태", "당일고가", "당일저가", "60일고가", "시가총액", "캔들상태",
@@ -1350,14 +1304,11 @@ def update_technical_data(df_theme, all_theme_map):
             "기관/외인 누적(5일)", "목표가(AI)", "손절가(AI)", "종목쿼터", "시간외단일가(18시)", "NXT야간종가(20시)", "장구분"
         ]
 
-        helper_sheet.batch_clear(['A1:AC'])
+        helper_sheet.batch_clear(['A1:AD1500'])
         helper_sheet_data = [extended_headers] + [r[:29] for r in results]
         helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
-        print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 실시간 갱신 및 동기화 완료)")
+        print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 동기화 완료)")
 
-        # ============================================================
-        # 🚨 하이브리드 독립 풀(Pool) 선별 게이트 (A~S열 19컬럼 컴팩트 포맷)
-        # ============================================================
         scanner_keywords = ["[종베]", "[스윙/눌림]", "[스윙/추세]", "[당일/단타]", "[관심/수급]", "[중장기/모아가기]"]
         all_candidates = []
         processed_codes = set()
@@ -1377,7 +1328,7 @@ def update_technical_data(df_theme, all_theme_map):
                 스코어 = r[8]
                 프로그램 = r[20]
                 고가_52주 = r[21]
-                기관누적수급 = r[22] # 이제 기:00/외:00 형태
+                기관누적수급 = r[22] 
 
                 ai_briefing = "AI 브리핑 대기중"
                 ai_target = r[23]
@@ -1388,6 +1339,7 @@ def update_technical_data(df_theme, all_theme_map):
                     ai_target = existing_data[종목코드]["target"]
                     ai_stop = existing_data[종목코드]["stop"]
 
+                # 💡 [스캐너 19차원 원래 배열 사이즈 고정 유지 (배열 폭주 원천 차단)]
                 row_data = [
                     하이퍼링크, 시장구분, f"'{종목코드}", 현재가, 등락률, 테마명, AI신호, 거래량비율,
                     tajeom, ai_briefing, 스코어, 프로그램, 고가_52주, 기관누적수급, ai_target, ai_stop,
@@ -1439,10 +1391,10 @@ def update_technical_data(df_theme, all_theme_map):
         top_20_results.sort(key=get_score_num, reverse=True)
 
         db_scanner_sheet = doc.worksheet("DB_스캐너")
-        db_scanner_sheet.batch_clear(['A2:AC'])
+        db_scanner_sheet.batch_clear(['A2:AZ1000'])
         if top_20_results:
             db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
-        print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (중장기 쿼터 제어 및 Q, R, S 컴팩트 정렬 안착 완료)")
+        print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료")
 
         if is_reset_time:
             try:
@@ -1488,9 +1440,14 @@ if __name__ == "__main__":
     global_state.super_leader_count = 0
     global_state.platform_leader_count = 0
 
+    scope_main = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    gc_main = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope_main))
+    doc_main = gc_main.open_by_url(SHEET_URL)
+
     df_theme, is_market_closed, all_theme_map = get_real_money_themes()
     df_news, df_naver, df_main_news = get_news_keywords(), get_naver_search_ranking(), get_naver_main_news()
-    update_google_sheet(df_theme, df_news, df_naver, df_main_news, is_market_closed)
+    
+    update_google_sheet(doc_main, df_theme, df_news, df_naver, df_main_news, is_market_closed)
 
     today_schedules = get_market_schedule()
     manage_schedule_sheet(today_schedules)
@@ -1500,11 +1457,7 @@ if __name__ == "__main__":
     now_kst = datetime.datetime.now(KST)
     if now_kst.hour == 15 and 0 <= now_kst.minute <= 50:
         try:
-            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-            creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
-            gc = gspread.authorize(creds)
-            doc = gc.open_by_url(SHEET_URL)
-            posted_data = doc.worksheet("리포트_게시").get_all_values()
+            posted_data = doc_main.worksheet("리포트_게시").get_all_values()
             today_str = now_kst.strftime('%Y-%m-%d')
             already_posted = any(today_str in str(row[0]) for row in posted_data[:5] if row)
             if not already_posted:
