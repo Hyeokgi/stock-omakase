@@ -608,42 +608,55 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         live_success = True
             except Exception: pass
 
-        # --------------------------------------------------
-        # STEP 2-1: KRX 시간외 (18시) & NXT 야간종가 (20시) 분리 수집
-        # --------------------------------------------------
-        krx_close = 0
-        nxt_close = 0
-        market_type = "정규장"
+            # --------------------------------------------------
+            # STEP 2-1: KRX 시간외 (18시) & NXT 야간종가 (20시)
+            # --------------------------------------------------
 
-        try:
-            krx_close = fetch_extra_closing_prices_from_kis(
-                code,
-                access_token,
-                local_session
-            )
-        except Exception as e:
-            print(f"KIS 시간외 오류 [{code}] : {e}")
+            krx_close = 0
+            nxt_close = 0
+            market_type = "정규장"
 
-        try:
-            nxt_res = local_session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", timeout=2, verify=False)
-            if nxt_res.status_code == 200:
-                nxt_json = nxt_res.json()
-                
-                night_info = nxt_json.get("nightMarketPriceInfo") or {}
-                if night_info:
-                    p_str = str(night_info.get("closePrice") or night_info.get("price") or "0").replace(",", "").strip()
-                    if p_str.isdigit() and int(p_str) > 0:
-                        nxt_close = int(p_str)
-                
-                
-        except Exception: pass
+            try:
+                if KIS_TOKEN:
+                    krx_close = fetch_extra_closing_prices_from_kis(
+                        code,
+                        KIS_TOKEN,
+                        local_session
+                    )
+            except Exception as e:
+                print(f"KIS 시간외 오류 [{code}] : {e}")
 
-        krx_rate = ((krx_close - current_price) / current_price * 100) if krx_close > 0 and current_price > 0 else 0.0
-        nxt_rate = ((nxt_close - current_price) / current_price * 100) if nxt_close > 0 and current_price > 0 else 0.0
+            try:
+                nxt_res = local_session.get(
+                    f"https://m.stock.naver.com/api/stock/{code}/basic",
+                    timeout=2,
+                    verify=False
+                )
 
-        if krx_close > 0 and nxt_close > 0: market_type = "KRX+NXT"
-        elif nxt_close > 0: market_type = "NXT"
-        elif krx_close > 0: market_type = "KRX"
+                if nxt_res.status_code == 200:
+                    nxt_json = nxt_res.json()
+
+                    night_info = nxt_json.get("nightMarketPriceInfo") or {}
+
+                    if night_info:
+                        p_str = str(
+                            night_info.get("closePrice")
+                            or night_info.get("price")
+                            or "0"
+                        ).replace(",", "").strip()
+
+                        if p_str.isdigit():
+                            nxt_close = int(p_str)
+
+            except Exception:
+                pass
+
+            if krx_close > 0 and nxt_close > 0:
+                market_type = "KRX+NXT"
+            elif nxt_close > 0:
+                market_type = "NXT"
+            elif krx_close > 0:
+                market_type = "KRX"
 
         # --------------------------------------------------
         # STEP 3: 파생 변수 계산
