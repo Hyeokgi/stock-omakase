@@ -566,49 +566,33 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     live_success = True
         except Exception: pass
 
-        # 🚨 [완벽 복구] 0606 원본 방식의 통합 시간외 문자열 리턴 로직
-        krx_close = 0
+if not live_success:
+            try:
+                mobile_headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)"}
+                rt_json2 = local_session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", headers=mobile_headers, verify=False, timeout=2).json()
+                if rt_json2 and rt_json2.get('closePrice'):
+                    live_p = int(str(rt_json2['closePrice']).replace(',', '').strip())
+                    if live_p > 0:
+                        current_price = live_p
+                        if rt_json2.get('accumulatedTradingVolume'): today_vol = int(str(rt_json2['accumulatedTradingVolume']).replace(',', '').strip())
+                        if rt_json2.get('highPrice'): today_high = int(str(rt_json2['highPrice']).replace(',', '').strip())
+                        if rt_json2.get('lowPrice'): today_low = int(str(rt_json2['lowPrice']).replace(',', '').strip())
+                        if rt_json2.get('openPrice'): open_price = int(str(rt_json2['openPrice']).replace(',', '').strip())
+                        if rt_json2.get('fluctuationsRatio'): change_rate = float(str(rt_json2['fluctuationsRatio']).replace('%', '').replace('+', '').strip()) / 100.0
+                        live_success = True
+            except Exception: pass
+
+        krx_close = fetch_extra_closing_prices_from_kis(code)
         nxt_close = 0
-        시간외_price = 0
-        시간외_rate = 0.0
         market_type = ""
-        시간외종가_display = ""
-
         try:
-            over_json = local_session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", headers=desktop_headers, verify=False, timeout=3).json()
-            over_info = over_json.get("overMarketPriceInfo", {})
-            if over_info and isinstance(over_info, dict):
-                o_price_str = str(over_info.get("closePrice", "0")).replace(",", "").strip()
-                o_rate_str = str(over_info.get("fluctuationsRatio", "0")).replace(",", "").strip()
-                o_type = str(over_info.get("stockExchangeType", {}).get("code", "") if isinstance(over_info.get("stockExchangeType"), dict) else over_info.get("marketType", ""))
-
-                if o_price_str.lstrip('-').replace('.','').isdigit():
-                    o_price = int(float(o_price_str))
-                    o_rate = float(o_rate_str) if o_rate_str.lstrip('-').replace('.','').isdigit() else 0.0
-
-                    if o_price > 0:
-                        시간외_price = o_price
-                        시간외_rate = o_rate
-                        if "NXT" in o_type.upper() or "AFTER_MARKET" in o_type.upper():
-                            nxt_close = o_price
-                            market_type = "NXT"
-                        else:
-                            krx_close = o_price
-                            market_type = "KRX"
-                        sign = "+" if o_rate >= 0 else ""
-                        시간외종가_display = f"{sign}{o_rate:.2f}% ({o_price:,}원) [{market_type}]"
-
-            if 시간외_price == 0:
-                kis_extra = fetch_extra_closing_prices_from_kis(code)
-                if kis_extra > 0:
-                    krx_close = kis_extra
-                    market_type = "KRX"
-                    reg_close = int(str(over_json.get("closePrice", current_price)).replace(",", ""))
-                    kis_rate = round(((kis_extra - reg_close) / reg_close) * 100, 2) if reg_close > 0 else 0.0
-                    sign = "+" if kis_rate >= 0 else ""
-                    시간외종가_display = f"{sign}{kis_rate:.2f}% ({kis_extra:,}원) [KRX]"
-        except Exception:
-            pass
+            mobile_headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)"}
+            nxt_json = local_session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", headers=mobile_headers, verify=False, timeout=2).json()
+            over_info = nxt_json.get("overMarketPriceInfo", {})
+            if over_info:
+                over_p_str = str(over_info.get("overPrice", "0")).replace(",", "").strip()
+                if over_p_str.isdigit(): nxt_close = int(over_p_str)
+        except Exception: pass
 
         is_upper_limit = change_rate >= 0.295
         yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) >= 2 else today_vol
