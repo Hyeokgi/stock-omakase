@@ -1556,17 +1556,17 @@ def update_technical_data(df_theme, all_theme_map):
                 "종목명", "종목코드", "현재가", "등락률", "5일평균", "20일평균", "거래량비율", "AI신호",
                 "마스터타점", "브리핑상태", "당일고가", "당일저가", "60일고가", "시가총액", "캔들상태",
                 "전고거리", "20일이격", "대장구분", "거래과열", "테마명", "프로그램", "52주고가",
-                "기관수급", "목표가(AI)", "손절가(AI)", "종목쿼터", "시간외단일가(18시)", "NXT야간종가(20시)"
+                "기관수급", "목표가(AI)", "손절가(AI)", "종목쿼터", "시간외단일가(18시)", "NXT야간종가(20시)", "장구분"
             ]
             
             # 수집 데이터 전체(28개 필드 전체)를 주가데이터_보조 시트에 다이렉트로 슬라이싱 다운로드
-            helper_sheet_data = [extended_headers] + [r[:28] for r in results]
+            helper_sheet_data = [extended_headers] + [r[:29] for r in results]
             helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
             print(f"✅ 총 {len(results)}개 종목 판독 완료 (시간외단일가 및 NXT야간종가 포함하여 주가데이터_보조 완료)")
             
             scanner_keywords = ["[종베]", "[스윙/눌림]", "[스윙/추세]", "[당일/단타]", "[관심/수급]", "[중장기/모아가기]"]
-            normal_cands = []
-            seed_cands = []
+            all_candidates = []
+            processed_codes = set()
             
             for r in results:
                 tajeom = r[9]
@@ -1596,82 +1596,99 @@ def update_technical_data(df_theme, all_theme_map):
                         ai_stop = existing_data[종목코드]["stop"]
                         
                     row_data = [
-                        하이퍼링크, 시장구분, f"'{종목코드}", 현재가, 등락률, 테마명, AI신호, 거래량비율, 
-                        tajeom, ai_briefing, 스코어, 프로그램, 고가_52주, 기관누적수급, ai_target, ai_stop
+                    하이퍼링크, 시장구분, f"'{종목코드}", 현재가, 등락률, 테마명, AI신호, 거래량비율,
+                    tajeom, ai_briefing, 스코어, 프로그램, 고가_52주, 기관누적수급, ai_target, ai_stop,
+                    r[26], r[27], r[28]                      
                     ]
                     
-                    if is_seed_tag == "SEED": seed_cands.append(row_data)
-                    else: normal_cands.append(row_data)
+                    all_candidates.append(row_data)
+                    processed_codes.add(종목코드)
+
                     
-            normal_cands.sort(key=lambda x: int(str(x[10]).split('점')[0]) if '점' in str(x[10]) else 0, reverse=True)
-            seed_cands.sort(key=lambda x: int(str(x[10]).split('점')[0]) if '점' in str(x[10]) else 0, reverse=True)
-            
-            MAX_DISPLAY_COUNT = 20
-            MAX_SEED_COUNT = 5
-            
-            final_seed = seed_cands[:MAX_SEED_COUNT]
-            needed_normal = MAX_DISPLAY_COUNT - len(final_seed)
-            final_normal = normal_cands[:needed_normal]
-            
-            top_20_results = final_seed + final_normal
-            top_20_results.sort(key=lambda x: int(str(x[10]).split('점')[0]) if '점' in str(x[10]) else 0, reverse=True)
-            top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results}
+        if not is_reset_time:
+            for c_code, data in existing_data.items():
+                if c_code not in processed_codes:
+                    raw_r = data["raw_row"]
+                    if len(raw_r) > 28:
+                        krx_val = raw_r[26]
+                        nxt_val = raw_r[27]
+                        mkt_val = raw_r[28]
+                        raw_r = raw_r[:16] + [krx_val, nxt_val, mkt_val]
+                    elif len(raw_r) < 19:
+                        while len(raw_r) < 19:
+                            raw_r.append("")
+                    else:
+                        raw_r = raw_r[:19]
+                    all_candidates.append(raw_r)
 
-            if not is_reset_time:
-                for c_code, data in existing_data.items():
-                    if "리포트 발송 완료" in data["briefing"] and c_code not in top_20_codes:
-                        top_20_results.append(data["raw_row"])
-                        top_20_codes.add(c_code)
+        seed_cands = []
+        normal_cands = []
 
-            if is_reset_time:
-                try:
-                    bt_sheet = doc.worksheet("백테스트_로그")
+        for cand in all_candidates:
+            tajeom_str = str(cand[8])
+            if "🌱" in tajeom_str or "[중장기/모아가기]" in tajeom_str or "코어 포트폴리오" in tajeom_str:
+                seed_cands.append(cand)
+            else:
+                normal_cands.append(cand)
+
+        def get_score_num(x):
+            try: return int(str(x[10]).split('점')[0]) if '점' in str(x[10]) else 0
+            except: return 0
+
+        seed_cands.sort(key=get_score_num, reverse=True)
+        normal_cands.sort(key=get_score_num, reverse=True)
+
+        MAX_SEED_COUNT = 5
+        MAX_NORMAL_COUNT = 15
+
+        final_seed = seed_cands[:MAX_SEED_COUNT]
+        final_normal = normal_cands[:MAX_NORMAL_COUNT]
+
+        top_20_results = final_seed + final_normal
+        top_20_results.sort(key=get_score_num, reverse=True)
+
+        db_scanner_sheet = doc.worksheet("DB_스캐너")
+        db_scanner_sheet.batch_clear(['A2:AC'])
+        if top_20_results:
+            db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
+        print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (중장기 쿼터 제어 및 Q, R, S 컴팩트 정렬 안착 완료)")
+
+        if is_reset_time:
+            try:
+                bt_sheet = doc.worksheet("백테스트_로그")
+                bt_data = bt_sheet.get_all_values()
+                if len(bt_data) == 0:
+                    bt_sheet.append_row(["진입일", "종목명", "종목코드", "테마명", "진입가", "타점유형", "퀀트점수", "T+1수익률", "T+3수익률"])
                     bt_data = bt_sheet.get_all_values()
-                    
-                    if len(bt_data) == 0:
-                        bt_sheet.append_row(["진입일", "종목명", "종목코드", "테마명", "진입가", "타점유형", "퀀트점수", "T+1수익률", "T+3수익률"])
-                        bt_data = bt_sheet.get_all_values()
-                    elif "진입" not in str(bt_data[0][0]).replace(" ", ""):
-                        bt_sheet.insert_row(["진입일", "종목명", "종목코드", "테마명", "진입가", "타점유형", "퀀트점수", "T+1수익률", "T+3수익률"], index=1)
-                        bt_data = bt_sheet.get_all_values()
-                    
-                    today_date_bt = datetime.datetime.now(KST).date()
-                    updated = False
-                    
-                    for i in range(1, len(bt_data)):
-                        row = bt_data[i]
-                        while len(row) < 9: row.append("") 
-                        
-                        try:
-                            entry_date = datetime.datetime.strptime(row[0], '%Y-%m-%d').date()
-                            days_elapsed = (today_date_bt - entry_date).days
-                            needs_t1 = (days_elapsed >= 1 and row[7] == "")
-                            needs_t3 = (days_elapsed >= 3 and row[8] == "")
-                            
-                            if needs_t1 or needs_t3:
-                                t_code = str(row[2]).replace("'", "").zfill(6)
-                                entry_p = int(str(row[4]).replace(',', '').replace('원', ''))
-                                rt_res = requests.get(f"https://m.stock.naver.com/api/stock/{t_code}/basic", verify=False, timeout=3).json()
-                                curr_p = int(str(rt_res.get('closePrice', '0')).replace(',', ''))
-                                
-                                if curr_p > 0:
-                                    rtn = ((curr_p - entry_p) / entry_p) * 100
-                                    if needs_t1: row[7] = f"{rtn:.2f}%"
-                                    if needs_t3: row[8] = f"{rtn:.2f}%"
-                                    updated = True
-                        except: pass
-                        
-                    if updated:
-                        bt_sheet.update(range_name="A1", values=bt_data, value_input_option="USER_ENTERED")
-                        print("✅ 아침 백테스트 로그 수익률 자동 갱신 완료!")
-                except Exception as e:
-                    print(f"⚠️ 백테스트 업데이트 에러: {e}")
-
-            db_scanner_sheet = doc.worksheet("DB_스캐너")
-            db_scanner_sheet.batch_clear(['A2:Z'])
-            if top_20_results: 
-                db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
-            print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 (단기/스윙 및 중장기 모아가기 쿼터제 적용 완료)")
+                elif "진입" not in str(bt_data[0][0]).replace(" ", ""):
+                    bt_sheet.insert_row(["진입일", "종목명", "종목코드", "테마명", "진입가", "타점유형", "퀀트점수", "T+1수익률", "T+3수익률"], index=1)
+                    bt_data = bt_sheet.get_all_values()
+                today_date_bt = datetime.datetime.now(KST).date()
+                updated = False
+                for i in range(1, len(bt_data)):
+                    row = bt_data[i]
+                    while len(row) < 9: row.append("")
+                    try:
+                        entry_date = datetime.datetime.strptime(row[0], '%Y-%m-%d').date()
+                        days_elapsed = (today_date_bt - entry_date).days
+                        needs_t1 = (days_elapsed >= 1 and row[7] == "")
+                        needs_t3 = (days_elapsed >= 3 and row[8] == "")
+                        if needs_t1 or needs_t3:
+                            t_code = str(row[2]).replace("'", "").zfill(6)
+                            entry_p = int(str(row[4]).replace(',', '').replace('원', ''))
+                            rt_res = requests.get(f"https://m.stock.naver.com/api/stock/{t_code}/basic", verify=False, timeout=3).json()
+                            curr_p = int(str(rt_res.get('closePrice', '0')).replace(',', ''))
+                            if curr_p > 0:
+                                rtn = ((curr_p - entry_p) / entry_p) * 100
+                                if needs_t1: row[7] = f"{rtn:.2f}%"
+                                if needs_t3: row[8] = f"{rtn:.2f}%"
+                                updated = True
+                    except: pass
+                if updated:
+                    bt_sheet.update(range_name="A1", values=bt_data, value_input_option="USER_ENTERED")
+                    print("✅ 아침 백테스트 로그 수익률 자동 갱신 완료!")
+            except Exception as e:
+                print(f"⚠️ 백테스트 업데이트 에러: {e}")
 
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
