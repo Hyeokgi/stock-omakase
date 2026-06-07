@@ -640,10 +640,13 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         try:
             krx_close, nxt_close = fetch_extra_closing_prices_from_kis(code, session_obj=local_session)
+        except Exception:
+            pass # 에러 발생 시 무시하고 진행
+
         if   krx_close > 0 and nxt_close > 0: market_type = "KRX+NXT"
-        elif nxt_close > 0:                    market_type = "NXT"
-        elif krx_close > 0:                    market_type = "KRX"
-        else:                                  market_type = ""
+        elif nxt_close > 0:                   market_type = "NXT"
+        elif krx_close > 0:                   market_type = "KRX"
+        else:                                 market_type = ""
 
         krx_rate = ((krx_close - current_price) / current_price * 100) if krx_close > 0 and current_price > 0 else 0.0
         nxt_rate = ((nxt_close - current_price) / current_price * 100) if nxt_close > 0 and current_price > 0 else 0.0
@@ -652,7 +655,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         elif nxt_close > 0: market_type = "NXT"
         elif krx_close > 0: market_type = "KRX"
 
-        except Exception: pass
 
         # --------------------------------------------------
         # STEP 3: 파생 변수 계산
