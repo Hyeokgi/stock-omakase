@@ -495,7 +495,6 @@ def find_key(data, key):
 
 # =====================================================
 # 시간외 종가 수집 (KRX 18시 + NXT 20시 통합)
-# - NXT 야간 종가는 제약 조건 없는 모바일 API 기반으로 완벽 구동
 # =====================================================
 def fetch_extra_closing_prices_from_kis(code, session_obj=None):
     if not KIS_TOKEN or not KIS_APP_KEY or not KIS_APP_SECRET:
@@ -514,7 +513,7 @@ def fetch_extra_closing_prices_from_kis(code, session_obj=None):
     krx_close = 0
     nxt_close = 0
 
-    # 1. KRX 시간외단일가 (18시)
+    # 1. KRX 시간외단일가 (18시) ← 💡 롤백 검색 탐색 적용으로 장중 데이터 증발 완벽 해결
     try:
         headers["tr_id"] = "FHPST02320000"
         params = {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}
@@ -524,14 +523,22 @@ def fetch_extra_closing_prices_from_kis(code, session_obj=None):
         )
         if res.status_code == 200:
             data = res.json()
-            overtime_vol   = safe_int(find_key(data, "ovtm_untp_vol"))
-            overtime_price = safe_int(find_key(data, "ovtm_untp_prpr"))
-            if overtime_vol > 10 and overtime_price > 0:
-                krx_close = overtime_price
+            output_list = data.get("output", [])
+            if isinstance(output_list, list) and len(output_list) > 0:
+                # 거래가 집계되지 않은 오늘 자 0원 행을 건너뛰고, 가장 직전 영업일의 확정 시간외 가격을 추출
+                for row in output_list:
+                    price = safe_int(row.get("ovtm_untp_prpr"))
+                    if price > 0:
+                        krx_close = price
+                        break
+            else:
+                overtime_price = safe_int(find_key(data, "ovtm_untp_prpr"))
+                if overtime_price > 0:
+                    krx_close = overtime_price
     except Exception:
         pass
 
-    # 2. NXT 야간종가 (20시) ← 가장 안정적인 모바일 API 파이프라인으로 복구 완료
+    # 2. NXT 야간종가 (20시) ← 가장 안정적인 모바일 API 파이프라인
     try:
         r = req.get(
             f"https://m.stock.naver.com/api/stock/{code}/basic",
@@ -548,6 +555,25 @@ def fetch_extra_closing_prices_from_kis(code, session_obj=None):
                 nxt_close = nxt_price
     except Exception:
         pass
+
+    # 3. 🛡️ [하이브리드 백업] KIS 통신 지연 혹은 0원 반환 시 네이버 모바일 API 2차 매핑망 작동
+    if krx_close == 0:
+        try:
+            r = req.get(
+                f"https://m.stock.naver.com/api/stock/{code}/basic",
+                timeout=3,
+                verify=False
+            )
+            if r.status_code == 200:
+                j = r.json()
+                ot_info = j.get("overTimePriceInfo") or j.get("overMarketPriceInfo") or {}
+                ot_price = safe_int(
+                    ot_info.get("closePrice") or ot_info.get("price") or ot_info.get("overPrice")
+                )
+                if ot_price > 0:
+                    krx_close = ot_price
+        except Exception:
+            pass
 
     return krx_close, nxt_close
 
@@ -625,7 +651,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     if rt_json.get('openPrice'): open_price = int(str(rt_json['openPrice']).replace(',', '').strip())
                     if rt_json.get('fluctuationsRatio'): change_rate = float(str(rt_json['fluctuationsRatio']).replace('%', '').replace('+', '').strip()) / 100.0
                     live_success = True
-        except Exception: pass
+        except: pass
 
         if not live_success:
             try:
@@ -641,7 +667,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         if rt_json2.get('openPrice'): open_price = int(str(rt_json2['openPrice']).replace(',', '').strip())
                         if rt_json2.get('fluctuationsRatio'): change_rate = float(str(rt_json2['fluctuationsRatio']).replace('%', '').replace('+', '').strip()) / 100.0
                         live_success = True
-            except Exception: pass
+            except: pass
 
         # --------------------------------------------------
         # STEP 2-1: KRX 시간외 (18시) & NXT 야간종가 (20시) 분리 수집
@@ -657,7 +683,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if   krx_close > 0 and nxt_close > 0: market_type = "KRX+NXT"
         elif nxt_close > 0:                   market_type = "NXT"
         elif krx_close > 0:                   market_type = "KRX"
-        else:                                 market_type = "정규장" # 💡 공란으로 유실되던 오류 해결
+        else:                                 market_type = "정규장"
 
         krx_rate = ((krx_close - current_price) / current_price * 100) if krx_close > 0 and current_price > 0 else 0.0
         nxt_rate = ((nxt_close - current_price) / current_price * 100) if nxt_close > 0 and current_price > 0 else 0.0
@@ -706,7 +732,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             vol_ratio_yest = max(vol_ratio_yest, 500)
 
         # --------------------------------------------------
-        # STEP 4: 칼만 필터 및 파라미터 동적 조정 설계 수용
+        # STEP 4: 칼만 필터 및 파라미터 동적 조정
         # --------------------------------------------------
         try:
             high_low = df_hist['high'] - df_hist['low']
@@ -783,7 +809,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             static_info_to_save = [f"'{code}", name, market_cap, str(is_junk), str(is_financial_risk), str(is_chronic_loss)]
 
         # --------------------------------------------------
-        # 💎 [단일화 통합 패치 완료] STEP 8: 프로그램 및 투자자별 5일 누적 수급
+        # STEP 8: 프로그램 및 투자자별 5일 누적 수급 파이프라인 단일화
         # --------------------------------------------------
         is_strong_dual_buy = False
         is_weak_dual_buy   = False
@@ -842,22 +868,19 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                             program_text = "⚪ [P.관망중] 0억 (0.0%)"
 
                     acc_i_buy_won += i_buy_won
-                    acc_f_buy_won += f_buy_won  # 🌎외 누적 버그 교정 완료
+                    acc_f_buy_won += f_buy_won
                     valid_days += 1
                     if valid_days >= 5: break
         except Exception:
             program_text = "확인불가"
 
-        acc_i_buy_eok      = acc_i_buy_won / 100_000_000
-        acc_f_buy_eok      = acc_f_buy_won / 100_000_000
-        f_buy_eok          = f_buy_today / 100_000_000
+        acc_i_buy_eok = acc_i_buy_won / 100_000_000
+        acc_f_buy_eok = acc_f_buy_won / 100_000_000
+        f_buy_eok     = f_buy_today / 100_000_000
         today_dual_buy_ratio = ((i_buy_today + f_buy_today) / trading_value) * 100 if trading_value > 0 else 0.0
 
-        non_program_buy_eok = 0
-        is_foreigner_active_buy = False
-        if is_today_data_in_frgn:
-            non_program_buy_eok = f_buy_eok - pg_amount_eok
-            is_foreigner_active_buy = (f_buy_eok >= 15) and (pg_amount_eok <= 5) and (non_program_buy_eok >= 10)
+        non_program_buy_eok = f_buy_eok - pg_amount_eok
+        is_foreigner_active_buy = (f_buy_eok >= 15) and (pg_amount_eok <= 5) and (non_program_buy_eok >= 10)
 
         if dual_buy_days >= 3 and today_dual_buy_ratio >= 3.0 and i_buy_today >= 200_000_000 and f_buy_today >= 200_000_000 and acc_i_buy_eok >= 20:
             is_strong_dual_buy = True
@@ -913,7 +936,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if not is_upper_limit and ((abs(current_price - ma20) / ma20 < 0.03) or (abs(current_price - ma60) / ma60 < 0.03) or is_double_bottom):
                 is_accumulation_cand = True
 
-        # 🎯 신정재 트레이더 M-1 거래량 스퀴즈 눌림목 종가베팅 타점 복구 완료
         is_jongbe_cand = (
             not is_upper_limit
             and not is_long_shadow
@@ -995,7 +1017,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if is_foreigner_active_buy:
             base_score += 30  
 
-        # 💪 하락장 지수 역행 강세주 포획 가점 엔진 추가
+        # 💪 하락장 지수 역행 강세주 포획 가점 엔진
         is_relative_strong = (kospi_rate <= -0.5) and (change_rate >= 0.02)
         if is_relative_strong:
             master_tajeom_suffix += " 💪(하락장 역행)"
@@ -1307,8 +1329,7 @@ def update_technical_data(df_theme, all_theme_map):
                 for (dt, th), t_sum in daily_sums.items():
                     if t_sum > theme_historical_max[th]:
                         theme_historical_max[th] = t_sum
-        except Exception as e:
-            pass
+        except Exception as e: pass
 
         target_dict = {}
         for name in list(target_names):
@@ -1331,7 +1352,6 @@ def update_technical_data(df_theme, all_theme_map):
             static_sheet.append_rows(new_static_data, value_input_option="USER_ENTERED")
             print(f"✅ 정적 데이터(시가총액/재무) {len(new_static_data)}건 캐시 업데이트 완료")
 
-        # 💡 quant_score 정렬 기준 확립
         results.sort(key=lambda x: x[29], reverse=True)
 
         existing_data = {}
@@ -1534,7 +1554,7 @@ if __name__ == "__main__":
         print(f"❌ 메인 실행부 초기화 에러: {e}")
 
     today_schedules = get_market_schedule()
-    manage_schedule_sheet(today_schedules)
+    manage_schedule_sheet(schedules=today_schedules)
 
     update_technical_data(df_theme, all_theme_map)
 
