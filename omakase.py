@@ -1515,23 +1515,46 @@ def update_technical_data(df_theme, all_theme_map):
             try:
                 bt_sheet = doc.worksheet("백테스트_로그")
                 bt_data = bt_sheet.get_all_values()
+                
+                # 💡 [핵심 패치] 헤더 확장 (T+5, T+10 추가)
+                header_row = ["진입일", "종목명", "종목코드", "테마명", "진입가", "타점유형", "퀀트점수", "T+1수익률", "T+3수익률", "T+5수익률", "T+10수익률"]
+                
                 if len(bt_data) == 0:
-                    bt_sheet.append_row(["진입일", "종목명", "종목코드", "테마명", "진입가", "타점유형", "퀀트점수", "T+1수익률", "T+3수익률"])
+                    bt_sheet.append_row(header_row)
                     bt_data = bt_sheet.get_all_values()
                 elif "진입" not in str(bt_data[0][0]).replace(" ", ""):
-                    bt_sheet.insert_row(["진입일", "종목명", "종목코드", "테마명", "진입가", "타점유형", "퀀트점수", "T+1수익률", "T+3수익률"], index=1)
+                    bt_sheet.insert_row(header_row, index=1)
                     bt_data = bt_sheet.get_all_values()
+                elif len(bt_data[0]) < 11:
+                    # 기존 헤더가 짧은 경우 동적 확장 업데이트
+                    bt_sheet.update(range_name="A1:K1", values=[header_row])
+                    bt_data[0] = header_row
+
                 today_date_bt = datetime.datetime.now(KST).date()
                 updated = False
                 for i in range(1, len(bt_data)):
                     row = bt_data[i]
-                    while len(row) < 9: row.append("")
+                    while len(row) < 11: row.append("") # 11칸으로 빈칸 채우기 (패딩)
                     try:
                         entry_date = datetime.datetime.strptime(row[0], '%Y-%m-%d').date()
                         days_elapsed = (today_date_bt - entry_date).days
-                        needs_t1 = (days_elapsed >= 1 and row[7] == "")
-                        needs_t3 = (days_elapsed >= 3 and row[8] == "")
-                        if needs_t1 or needs_t3:
+                        
+                        tajeom_type = str(row[5])
+                        # 중장기 시드 종목 식별
+                        is_seed = "SEED" in tajeom_type or "중장기" in tajeom_type or "모아가기" in tajeom_type
+                        
+                        # 💡 [채점 로직 분리] 단기와 중장기의 성과 측정 기간 차별화
+                        needs_t1  = (days_elapsed >= 1 and row[7] == "" and not is_seed)  # 단기만 T+1 기록
+                        needs_t3  = (days_elapsed >= 3 and row[8] == "")                  # 공통
+                        needs_t5  = (days_elapsed >= 5 and row[9] == "")                  # 공통
+                        needs_t10 = (days_elapsed >= 10 and row[10] == "" and is_seed)    # 중장기만 T+10 기록
+                        
+                        # 중장기 종목의 T+1일차 빈칸은 노이즈 방지를 위해 하이픈(-) 처리
+                        if is_seed and days_elapsed >= 1 and row[7] == "":
+                            row[7] = "-"
+                            updated = True
+
+                        if needs_t1 or needs_t3 or needs_t5 or needs_t10:
                             t_code = str(row[2]).replace("'", "").zfill(6)
                             entry_p = int(str(row[4]).replace(',', '').replace('원', ''))
                             rt_res = requests.get(f"https://m.stock.naver.com/api/stock/{t_code}/basic", verify=False, timeout=3).json()
@@ -1540,11 +1563,13 @@ def update_technical_data(df_theme, all_theme_map):
                                 rtn = ((curr_p - entry_p) / entry_p) * 100
                                 if needs_t1: row[7] = f"{rtn:.2f}%"
                                 if needs_t3: row[8] = f"{rtn:.2f}%"
+                                if needs_t5: row[9] = f"{rtn:.2f}%"
+                                if needs_t10: row[10] = f"{rtn:.2f}%"
                                 updated = True
                     except: pass
                 if updated:
                     bt_sheet.update(range_name="A1", values=bt_data, value_input_option="USER_ENTERED")
-                    print("✅ 아침 백테스트 로그 수익률 자동 갱신 완료!")
+                    print("✅ 아침 백테스트 로그 수익률 자동 갱신 완료 (단기/중장기 하이브리드 트래킹 적용)!")
             except Exception as e:
                 print(f"⚠️ 백테스트 업데이트 에러: {e}")
 
