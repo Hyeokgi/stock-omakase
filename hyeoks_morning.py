@@ -128,6 +128,10 @@ def get_yesterday_korean_context():
             current_price, score_str, tajeom = str(r[2]).strip(), str(r[8]).strip(), str(r[9]).strip()
             theme, vol_status, program_text = str(r[19]).strip(), str(r[18]).strip(), str(r[20]).strip()
             
+            # 💡 [데이터 파이프라인 추가] 시간외 및 NXT 데이터 매핑
+            krx_after = str(r[26]).strip() if len(r) > 26 else ""
+            nxt_after = str(r[27]).strip() if len(r) > 27 else ""
+            
             if name == "시장관망" or "000000" in code_str: continue
             if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|적자', tajeom): continue
             if "저항 출회" in str(r[14]) or "윗꼬리" in tajeom: continue
@@ -139,15 +143,10 @@ def get_yesterday_korean_context():
             if num_score < 35: continue
 
             valid_candidates.append({
-                'name': name,
-                'code': code_str,
-                'price': current_price,
-                'theme': theme,
-                'tajeom': tajeom,
-                'score_str': score_str,
-                'num_score': num_score,
-                'vol_status': vol_status,
-                'program_text': program_text
+                'name': name, 'code': code_str, 'price': current_price, 'theme': theme,
+                'tajeom': tajeom, 'score_str': score_str, 'num_score': num_score,
+                'vol_status': vol_status, 'program_text': program_text,
+                'krx_after': krx_after, 'nxt_after': nxt_after
             })
 
     if not valid_candidates:
@@ -160,10 +159,10 @@ def get_yesterday_korean_context():
         code = name_to_code.get(cand['name']) or search_code_from_naver(cand['name'])
         vip_data = "VIP 데이터 확인불가"
         if code:
-            print(f"🔍 [{cand['name']} ({code})] VIP 데이터 수집 중...")
             vip_data = get_vip_deep_dive_data(code, kis_token)
 
-        picks_info.append(f"▪️ [{cand['name']}] 종가: {cand['price']}원 | 테마: {cand['theme']}\n  [마스터타점] {cand['tajeom']} ({cand['score_str']})\n  [프로그램] {cand['program_text']}\n  [거래량] {cand['vol_status']}\n  [펀더멘털] {vip_data}")
+        # 💡 [프롬프트 주입] 야간장 가격 변동을 AI가 볼 수 있도록 추가
+        picks_info.append(f"▪️ [{cand['name']}] 정규종가: {cand['price']}원 | 테마: {cand['theme']}\n  [야간/시간외] KRX: {cand['krx_after']} / NXT: {cand['nxt_after']}\n  [마스터타점] {cand['tajeom']} ({cand['score_str']})\n  [프로그램] {cand['program_text']}\n  [거래량] {cand['vol_status']}\n  [펀더멘털] {vip_data}")
 
     return "\n\n".join(picks_info)
 
@@ -177,27 +176,26 @@ def generate_morning_briefing(market_data, news_data, kor_context, liquidity_dat
         stock_prompt_instruction = """
    [파트 2: 종목별 심층 분석 (파란색 뱃지)]
    🚨 [관망 권고 및 리스크 관리]
-   ▫️ (전일 시장에서 강력한 주도주나 수급 유입 종목이 부재했음을 알리고, 현금 보존의 중요성과 다음 타점을 기다려야 하는 이유를 트레이더 관점에서 정중하게 서술하십시오.)
-   ▫️ (억지로 특정 종목을 추천하거나 지어내지 마십시오.)
+   ▫️ (전일 시장에서 강력한 주도주나 수급 유입 종목이 부재했음을 알리고, 현금 보존의 중요성과 다음 타점을 기다려야 하는 이유를 서술하십시오.)
 """
     else:
         stock_prompt_instruction = """
    [파트 2: 당일 주도주 능동 선정 및 심층 분석 (파란색 뱃지)]
-   🚨 (핵심 지시: 귀하에게 제공된 '[어제 포착된 퀀트 필터 통과 후보 풀]'을 면밀히 분석하십시오. 단순 나열이 절대 아닙니다! 
-   오늘 분석한 매크로 및 뉴스 내러티브와 완벽히 일치하며, 당장 오늘 아침 투자하기에 '가장 완벽한 승률'을 보여줄 것으로 판단되는 종목을 단기/스윙 상관없이 1개~3개만 귀하가 직접 '엄선'하십시오. 이미 시세가 과열된 고가(단기) 종목보다는, 횡보를 끝내고 박스권을 갓 탈출하려는 '급등 초입' 단계의 종목을 최우선으로 엄선하십시오.
-   선택받지 못한 종목은 과감히 버리십시오.)
+   🚨 (핵심 지시: 귀하에게 제공된 '[어제 포착된 퀀트 필터 통과 후보 풀]'을 분석하십시오. 
+   특히 **[야간/시간외] (KRX 및 NXT)** 가격 변동 데이터를 반드시 읽고, 오늘 정규장 개장 시 발생할 '시가 갭(Gap)'을 예측하여 그에 따른 진입 시나리오를 구체적으로 제시해야 합니다.
+   단기/스윙 상관없이 가장 완벽한 1개~3개만 '엄선'하십시오.)
    
    🟦 [귀하가 엄선한 종목명]
-   🔹 핵심 모멘텀 & 타점 딥리딩
-   ▫️ [🤖프로그램: 제공된 프로그램 데이터] [📈거래량: 제공된 거래량 배지] [🎯타점: 제공된 마스터타점 및 점수]
-   ▫️ (왜 이 종목을 오늘 아침 최우선 픽으로 '선정'했는지, 제공된 데이터와 뉴스를 융합하여 세력의 의도와 주도주 논리를 날카롭게 분석하십시오.)
-   🔹 실전 액션 플랜
-   ▫️ 진입: (마스터타점의 전략(돌파/눌림/종가베팅 등)에 맞는 시가 갭 및 장중 대응 전략)
+   🔹 핵심 모멘텀 & 수급 딥리딩
+   ▫️ [🤖프로그램: 제공된 데이터] [🌙야간/시간외: KRX/NXT 데이터 요약] [🎯타점: 제공된 마스터타점]
+   ▫️ (왜 이 종목을 선정했는지, 정규장 수급과 야간장 흐름을 연결하여 날카롭게 분석하십시오.)
+   🔹 시가 갭 대응 및 실전 액션 플랜
+   ▫️ 진입: (야간장 변동분(상승/하락)을 고려한 시초가 갭 대응 전략 및 매수 타점 제시)
    ▫️ 대응: (리스크 관리 및 비중 조절 팁)
 """
 
-    prompt = f"""너는 대한민국 최상위 1% 실전 트레이더를 위한 HYEOKS 리서치 센터의 헤드 퀀트 매니저(Head Quant Manager)야.
-아래의 데이터를 융합하여 오늘 아침 장 개장 전 트레이더가 읽을 '유연하고 통찰력 있는 모닝 브리핑 리포트'를 작성해라.
+    prompt = f"""너는 대한민국 최상위 1% 실전 트레이더를 위한 HYEOKS 리서치 센터의 헤드 퀀트 매니저야.
+아래 데이터를 융합하여 오늘 아침 장 개장 전 트레이더가 읽을 '통찰력 있는 모닝 브리핑 리포트'를 작성해라.
 
 [글로벌 매크로 유동성 지표 (FRED)]
 {liquidity_data}
@@ -208,23 +206,17 @@ def generate_morning_briefing(market_data, news_data, kor_context, liquidity_dat
 [어제 포착된 퀀트 필터 통과 후보 풀 (최대 10종목)]
 {kor_context}
 
-[HYEOKS 리서치 작성 지침 - 가독성 및 보고서 통일성 절대 규칙]
-1. 🚨 볼드체 전면 금지: 텍스트에 별표 기호(**)를 절대 쓰지 마라. 모바일 가독성을 해친다.
-2. 보고서 계층 구조(Hierarchy) 및 전용 아이콘 엄수 (임의 변형 금지):
+[HYEOKS 리서치 작성 지침]
+1. 별표 기호(**) 전면 금지.
+2. 아래 계층 구조(Hierarchy) 및 전용 아이콘 엄수:
    
    [파트 1: 종합 시황 및 매크로 (녹색 뱃지)]
    🟩 [HYEOKS 매크로 & 뉴스 종합 시황]
    🟢 유동성 환경 분석
-   ▫️ (FRED 지표가 증시 자금에 미치는 영향 짧게 해석)
+   ▫️ (내용)
    🟢 핵심 뉴스 & 시장 내러티브 진단
-   ▫️ (제공된 뉴스들을 깊이 있게 분석하여 오늘 시장의 쏠림 방향성을 분석해라.)
+   ▫️ (내용)
    {stock_prompt_instruction}
-
-3. 🚨 데이터 뱃지(Badge) 작성 절대 규칙:
-   - 내가 제공한 [프로그램], [거래량], [마스터타점] 텍스트를 한 글자도 바꾸지 말고 괄호 안에 그대로 넣어라. 
-   - 없는 데이터를 억지로 지어내지 마라.
-
-4. 군더더기 인사말은 생략.
 """
     for i in range(10):
         try:
@@ -232,7 +224,6 @@ def generate_morning_briefing(market_data, news_data, kor_context, liquidity_dat
             return response.text
         except Exception as e:
             if "503" in str(e) or "429" in str(e) or "quota" in str(e).lower(): 
-                print(f"⚠️ 구글 서버 혼잡. {30 * (i + 1)}초 대기 후 재시도...")
                 time.sleep(30 * (i + 1))
             else: raise e
     raise Exception("서버 응답 불가")
