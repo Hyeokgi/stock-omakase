@@ -1024,10 +1024,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if is_foreigner_active_buy:
             base_score += 30  
 
-        is_relative_strong = (kospi_rate <= -0.5) and (change_rate >= 0.02)
+        is_relative_strong = (kospi_rate <= -1.5) and (change_rate >= 0.03)
         if is_relative_strong:
             master_tajeom_suffix += " 💪(하락장 역행)"
-            base_score += 20
+            base_score += 10
 
         if is_accumulation_cand:
             base_score += 40
