@@ -20,7 +20,7 @@ TARGET_PERCENT = 3.0
 KST = datetime.timezone(datetime.timedelta(hours=9))
 KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
-KIS_URL_BASE = "https://openapi.koreainvestom.com:9443" or "https://openapi.koreainvestment.com:9443"
+KIS_URL_BASE = "https://openapi.koreainvestment.com:9443"
 
 now_kst_check = datetime.datetime.now(KST)
 if 4 <= now_kst_check.hour < 7:
@@ -679,7 +679,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             krx_close, nxt_close = fetch_extra_closing_prices_from_kis(code, session_obj=local_session)
         except Exception: pass
 
-        # 💡 [앱시트 최적화 교정] NXT 데이터 존재 시, 시간외단일가(KRX) 변수를 강제 0으로 리셋하여 컬럼 완전 비우기
+        # 💡 [앱시트 최적화 교정 수용] NXT 데이터 존재 시, 시간외단일가(KRX) 변수를 강제 0으로 리셋하여 컬럼 완전 비우기
         if nxt_close > 0:
             krx_close = 0
             market_type = "NXT"
@@ -794,7 +794,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_long_shadow = (upper_shadow_ratio >= 0.035) or (upper_shadow_ratio >= 0.02 and upper_shadow > real_body * 1.2) if is_warning_market else (upper_shadow_ratio >= 0.05) or (upper_shadow_ratio >= 0.025 and upper_shadow > real_body * 1.5)
         
         is_bottom_accumulation_shadow = False
-        if is_long_shadow and is_today_yangbong && surge_rate_20d <= 0.15 and vol_ratio_yest >= 200:
+        # 🐛 [문법오류 완벽교정] && 기호를 파이썬 표준 연산자인 and로 수정 완료
+        if is_long_shadow and is_today_yangbong and surge_rate_20d <= 0.15 and vol_ratio_yest >= 200:
             is_long_shadow = False
             is_bottom_accumulation_shadow = True
 
