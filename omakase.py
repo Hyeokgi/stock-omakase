@@ -519,23 +519,35 @@ def fetch_extra_closing_prices_from_kis(code, session_obj=None):
     except Exception:
         pass
 
-    # 2. NXT 야간종가 (20시) ← 20260606 방식
-    # fid_cond_mrkt_div_code: "N" 이 핵심
+    # 2. NXT 야간종가 (20시) ← 네이버 방식 복구
     try:
-        headers["tr_id"] = "FNPST01010100"
-        params = {"fid_cond_mrkt_div_code": "N", "fid_input_iscd": code}
-        res = req.get(
-            f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-nextrade-price",
-            headers=headers, params=params, verify=False, timeout=5
+        r = req.get(
+            f"https://m.stock.naver.com/api/stock/{code}/basic",
+            timeout=3,
+            verify=False
         )
-        if res.status_code == 200:
-            data = res.json()
-            nxt_price = safe_int(find_key(data, "stck_prpr"))
+
+        if r.status_code == 200:
+            j = r.json()
+
+            night_info = (
+                j.get("nightMarketPriceInfo")
+                or j.get("overMarketPriceInfo")
+                or {}
+            )
+
+            nxt_price = safe_int(
+                night_info.get("closePrice")
+                or night_info.get("price")
+                or night_info.get("overPrice")
+            )
+
             if nxt_price > 0:
                 nxt_close = nxt_price
+
     except Exception:
         pass
-
+    
     return krx_close, nxt_close
 
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db, theme_historical_max, long_term_stocks):
