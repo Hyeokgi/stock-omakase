@@ -506,7 +506,7 @@ def fetch_extra_closing_prices_from_kis(code, session_obj=None):
         headers["tr_id"] = "FHPST02320000"
         params = {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}
         res = req.get(
-            f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-time-over-price", # 🚨 URL 환각 수정 완료
+            f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-time-over-price",
             headers=headers, params=params, verify=False, timeout=5
         )
         if res.status_code == 200:
@@ -559,7 +559,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             res = local_session.get(url, verify=False, timeout=3)
             root = ET.fromstring(res.text)
         except Exception:
-            return fail_fallback, None
+            return fail_fallback[:29] + [0, "0점 (오류)"], None
 
         history = []
         high_prices = []
@@ -575,7 +575,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             history.append({"date": data[0], "open": open_p, "high": high_p, "low": low_p, "close": close_p, "volume": vol})
             high_prices.append(high_p)
 
-        if len(history) < 2: return fail_fallback, None
+        if len(history) < 2: return fail_fallback[:29] + [0, "0점 (오류)"], None
 
         last_day = history[-1]
         df_hist = pd.DataFrame(history)
@@ -613,13 +613,29 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     live_success = True
         except Exception: pass
 
+        if not live_success:
+            try:
+                mobile_headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)"}
+                rt_json2 = local_session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", headers=mobile_headers, verify=False, timeout=2).json()
+                if rt_json2 and rt_json2.get('closePrice'):
+                    live_p = int(str(rt_json2['closePrice']).replace(',', '').strip())
+                    if live_p > 0:
+                        current_price = live_p
+                        if rt_json2.get('accumulatedTradingVolume'): today_vol = int(str(rt_json2['accumulatedTradingVolume']).replace(',', '').strip())
+                        if rt_json2.get('highPrice'): today_high = int(str(rt_json2['highPrice']).replace(',', '').strip())
+                        if rt_json2.get('lowPrice'): today_low = int(str(rt_json2['lowPrice']).replace(',', '').strip())
+                        if rt_json2.get('openPrice'): open_price = int(str(rt_json2['openPrice']).replace(',', '').strip())
+                        if rt_json2.get('fluctuationsRatio'): change_rate = float(str(rt_json2['fluctuationsRatio']).replace('%', '').replace('+', '').strip()) / 100.0
+                        live_success = True
+            except Exception: pass
+
         # --------------------------------------------------
         # STEP 2-1: KRX 시간외 (18시) & NXT 야간종가 (20시) 통합 수집
         # --------------------------------------------------
         # local_session 재사용하여 KRX(18시) + NXT(20시) 동시 수집
         krx_close, nxt_close = fetch_extra_closing_prices_from_kis(code, session_obj=local_session)
         
-        # 🚨 [방어막 복구] KIS API 장애 시 네이버 API로 NXT 종가 이중 검증
+        # [방어막 복구] KIS API 장애 시 네이버 API로 NXT 종가 이중 검증
         if nxt_close == 0:
             try:
                 mobile_headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)"}
@@ -628,43 +644,18 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     nxt_json = nxt_res.json()
                     night_info = nxt_json.get("nightMarketPriceInfo") or {}
                     if night_info and night_info.get("closePrice"):
-                        nxt_close = int(str(night_info["closePrice"]).replace(",", ""))
+                        nxt_p = str(night_info["closePrice"]).replace(",", "").strip()
+                        if nxt_p.isdigit() and int(nxt_p) > 0:
+                            nxt_close = int(nxt_p)
             except Exception: pass
-
-        if   krx_close > 0 and nxt_close > 0: market_type = "KRX+NXT"
-        elif nxt_close > 0:                   market_type = "NXT"
-        elif krx_close > 0:                   market_type = "KRX"
-        else:                                 market_type = "정규장" # 🚨 공백 대신 정규장 기본값 처리
-
-        try:
-            krx_close = fetch_extra_closing_prices_from_kis(code, local_session)
-        except Exception: pass
-
-        try:
-            nxt_res = local_session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", timeout=2, verify=False)
-            if nxt_res.status_code == 200:
-                nxt_json = nxt_res.json()
-                
-                night_info = nxt_json.get("nightMarketPriceInfo") or {}
-                if night_info:
-                    p_str = str(night_info.get("closePrice") or night_info.get("price") or "0").replace(",", "").strip()
-                    if p_str.isdigit() and int(p_str) > 0:
-                        nxt_close = int(p_str)
-                
-                if krx_close == 0:
-                    over_info = nxt_json.get("overMarketPriceInfo") or nxt_json.get("afterMarketPriceInfo") or {}
-                    if over_info:
-                        p_str = str(over_info.get("closePrice") or over_info.get("overPrice") or "0").replace(",", "").strip()
-                        if p_str.isdigit() and int(p_str) > 0:
-                            krx_close = int(p_str)
-        except Exception: pass
 
         krx_rate = ((krx_close - current_price) / current_price * 100) if krx_close > 0 and current_price > 0 else 0.0
         nxt_rate = ((nxt_close - current_price) / current_price * 100) if nxt_close > 0 and current_price > 0 else 0.0
 
-        if krx_close > 0 and nxt_close > 0: market_type = "KRX+NXT"
-        elif nxt_close > 0: market_type = "NXT"
-        elif krx_close > 0: market_type = "KRX"
+        if   krx_close > 0 and nxt_close > 0: market_type = "KRX+NXT"
+        elif nxt_close > 0:                   market_type = "NXT"
+        elif krx_close > 0:                   market_type = "KRX"
+        else:                                 market_type = "정규장"
 
         # --------------------------------------------------
         # STEP 3: 파생 변수 계산
@@ -784,43 +775,13 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             static_info_to_save = [f"'{code}", name, market_cap, str(is_junk), str(is_financial_risk), str(is_chronic_loss)]
 
         # --------------------------------------------------
-        # STEP 8: 프로그램 및 수급
-        # --------------------------------------------------
-        program_text = "⚪ [P.관망중] 0억"
-        pg_amount_eok = 0.0
-
-        try:
-            pg_url = f"https://finance.naver.com/item/sise_program.naver?code={code}"
-            pg_res = local_session.get(pg_url, headers=desktop_headers, timeout=3, verify=False)
-            pg_soup = BeautifulSoup(pg_res.content, 'html.parser', from_encoding='euc-kr')
-            
-            rows = pg_soup.select("table.type2 tr")
-            for r in rows:
-                cols = r.select("td")
-                if len(cols) >= 4:
-                    date_text = cols[0].text.strip()
-                    if date_text and date_text[0].isdigit() and (':' in date_text or '.' in date_text):
-                        raw_val = cols[-1].text.strip().replace(',', '').replace('+', '').replace('−', '-')
-                        clean_val = re.sub(r'[^0-9.-]', '', raw_val)
-                        if clean_val and clean_val not in ('0', '', '-', '.'):
-                            pg_amount_eok = float(clean_val) / 100.0
-                            sign = "+" if pg_amount_eok > 0 else ""
-                            if pg_amount_eok >= 30: program_text = f"🔴 [P.대량유입] {sign}{pg_amount_eok:.1f}억"
-                            elif pg_amount_eok > 0: program_text = f"🔴 [P.매수우위] {sign}{pg_amount_eok:.1f}억"
-                            elif pg_amount_eok <= -30: program_text = f"🔵 [P.대량출회] {pg_amount_eok:.1f}억"
-                            elif pg_amount_eok < 0: program_text = f"🔵 [P.매도우위] {pg_amount_eok:.1f}억"
-                        break
-        except Exception:
-            pass
-
-        # --------------------------------------------------
         # STEP 8: 프로그램 수급 우회 (frgn.naver 활용) + 기관/외인 5일 누적
         # --------------------------------------------------
         is_strong_dual_buy = False
         is_weak_dual_buy   = False
         supply_text        = ""
         acc_i_buy_won      = 0
-        acc_f_buy_won      = 0   # 🚨 누락되었던 외인 누적 매수금액 변수 선언
+        acc_f_buy_won      = 0   
         dual_buy_days      = 0
         i_buy_today        = 0
         f_buy_today        = 0
@@ -866,23 +827,33 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                                 program_text = f"⚪ [P.관망중] {sign}{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
 
                     acc_i_buy_won += i_buy_won
-                    acc_f_buy_won += f_buy_won  # 🚨 누락되었던 외인 5일치 합산 적용
+                    acc_f_buy_won += f_buy_won
                     valid_days += 1
                     if valid_days >= 5: break
         except Exception: pass
 
-        acc_i_buy_eok      = acc_i_buy_won / 100_000_000
-        acc_f_buy_eok      = acc_f_buy_won / 100_000_000  # 🚨 외인 누적 억 단위 변환
+        acc_i_buy_eok = acc_i_buy_won / 100_000_000
+        acc_f_buy_eok = acc_f_buy_won / 100_000_000
+        f_buy_eok = f_buy_today / 100_000_000
         today_dual_buy_ratio = ((i_buy_today + f_buy_today) / trading_value) * 100 if trading_value > 0 else 0.0
+        
+        non_program_buy_eok = 0
+        is_foreigner_active_buy = False
+
+        if is_today_data_in_frgn:
+            non_program_buy_eok = f_buy_eok - pg_amount_eok
+            is_foreigner_active_buy = (f_buy_eok >= 15) and (pg_amount_eok <= 5) and (non_program_buy_eok >= 10)
 
         if dual_buy_days >= 3 and today_dual_buy_ratio >= 3.0 and i_buy_today >= 200_000_000 and f_buy_today >= 200_000_000 and acc_i_buy_eok >= 20:
             is_strong_dual_buy = True
             supply_text = " (🌟쌍끌이 모아가기)"
+        elif is_foreigner_active_buy:
+            supply_text = " (💎외인 집중배팅)"
         elif i_buy_today >= 200_000_000 and f_buy_today >= 200_000_000:
             is_weak_dual_buy = True
             supply_text = " (🟢약한 양매수)"
-        elif acc_i_buy_eok >= 20:
-            supply_text = " (기관 누적매집)"
+        elif acc_i_buy_eok >= 20 or acc_f_buy_eok >= 30:
+            supply_text = " (누적수급 우수)"
 
         # --------------------------------------------------
         # STEP 9: 보조지표 연산
@@ -1101,7 +1072,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         krx_str = f"'{'+' if krx_rate > 0 else ''}{krx_rate:.2f}% ({krx_close:,}원)" if krx_close > 0 else ""
         nxt_str = f"'{'+' if nxt_rate > 0 else ''}{nxt_rate:.2f}% ({nxt_close:,}원)" if nxt_close > 0 else ""
 
-        # 💡 [핵심 보정] 0~28번까지는 구글 시트에 들어가는 29칸의 데이터, 29,30번은 스캐너 정렬용/텍스트용으로 완벽 분리 배정!
+        # 💡 [핵심 보정] 29칸 고정 맵핑 + 내부 2칸 = 총 31칸 완벽 유지
         result_row = [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%",
             int(ma5), int(ma20), vol_ratio_text, signal,
@@ -1117,7 +1088,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
     except Exception as e:
         print(f"❌ 분석 에러 [{name}]: {e}")
-        return fail_fallback, None
+        return fail_fallback[:29] + [0, "0점 (오류)"], None
 
 def update_technical_data(df_theme, all_theme_map):
     try:
@@ -1321,7 +1292,6 @@ def update_technical_data(df_theme, all_theme_map):
             static_sheet.append_rows(new_static_data, value_input_option="USER_ENTERED")
             print(f"✅ 정적 데이터(시가총액/재무) {len(new_static_data)}건 캐시 업데이트 완료")
 
-        # 💡 [핵심 보정] quant_score는 29번 인덱스에 존재함
         results.sort(key=lambda x: x[29], reverse=True)
 
         existing_data = {}
@@ -1346,7 +1316,7 @@ def update_technical_data(df_theme, all_theme_map):
         for r in results:
             c_code = str(r[1]).replace("'", "").strip().zfill(6)
             if c_code in existing_data:
-                r[9] = existing_data[c_code]["briefing"] # 브리핑상태 업데이트
+                r[9] = existing_data[c_code]["briefing"]
                 r[23] = existing_data[c_code]["target"]
                 r[24] = existing_data[c_code]["stop"]
 
@@ -1363,8 +1333,6 @@ def update_technical_data(df_theme, all_theme_map):
         ]
 
         helper_sheet.batch_clear(['A1:AC'])
-        
-        # 💡 [핵심 보정] r[:29]를 통해 29개의 엑셀 헤더와 1:1로 정확히 대응시킵니다 (점수는 버림)
         helper_sheet_data = [extended_headers] + [r[:29] for r in results]
         helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
         print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 실시간 갱신 및 동기화 완료)")
@@ -1377,7 +1345,7 @@ def update_technical_data(df_theme, all_theme_map):
         processed_codes = set()
 
         for r in results:
-            tajeom = r[8]  # 인덱스 8은 마스터타점
+            tajeom = r[8]
             if any(kw in tajeom for kw in scanner_keywords):
                 종목명 = r[0]
                 종목코드 = r[1].replace("'", "").zfill(6)
@@ -1388,7 +1356,7 @@ def update_technical_data(df_theme, all_theme_map):
                 테마명 = r[19]
                 AI신호 = r[7]
                 거래량비율 = r[6]
-                스코어 = r[30]  # 인덱스 30은 점수 텍스트 (예: 100점 (눌림))
+                스코어 = r[30]
                 프로그램 = r[20]
                 고가_52주 = r[21]
                 기관누적수급 = r[22] 
@@ -1497,20 +1465,17 @@ if __name__ == "__main__":
     global_state.super_leader_count = 0
     global_state.platform_leader_count = 0
 
-    # 1. 데이터 수집
     df_theme, is_market_closed, all_theme_map = get_real_money_themes()
     df_news, df_naver, df_main_news = get_news_keywords(), get_naver_search_ranking(), get_naver_main_news()
-
-    # 2. 구글 시트 객체 준비 (인자 전달을 위해 필수)
+    
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
         doc = gspread.authorize(creds).open_by_url(SHEET_URL)
-        
-        # 3. 인자 6개를 모두 포함하여 올바르게 호출
         update_google_sheet(doc, df_theme, df_news, df_naver, df_main_news, is_market_closed)
     except Exception as e:
-        print(f"❌ 메인 실행부 초기화 에러: {e}")
+        print(f"❌ 구글 인증 에러: {e}")
+        doc = None
 
     today_schedules = get_market_schedule()
     manage_schedule_sheet(today_schedules)
@@ -1520,10 +1485,11 @@ if __name__ == "__main__":
     now_kst = datetime.datetime.now(KST)
     if now_kst.hour == 15 and 0 <= now_kst.minute <= 50:
         try:
-            scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-            creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
-            gc = gspread.authorize(creds)
-            doc = gc.open_by_url(SHEET_URL)
+            if doc is None:
+                scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+                creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
+                gc = gspread.authorize(creds)
+                doc = gc.open_by_url(SHEET_URL)
             posted_data = doc.worksheet("리포트_게시").get_all_values()
             today_str = now_kst.strftime('%Y-%m-%d')
             already_posted = any(today_str in str(row[0]) for row in posted_data[:5] if row)
