@@ -559,7 +559,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             res = local_session.get(url, verify=False, timeout=3)
             root = ET.fromstring(res.text)
         except Exception:
-            return fail_fallback[:29] + [0, "0점 (오류)"], None
+            return fail_fallback, None
 
         history = []
         high_prices = []
@@ -575,7 +575,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             history.append({"date": data[0], "open": open_p, "high": high_p, "low": low_p, "close": close_p, "volume": vol})
             high_prices.append(high_p)
 
-        if len(history) < 2: return fail_fallback[:29] + [0, "0점 (오류)"], None
+        if len(history) < 2: return fail_fallback, None
 
         last_day = history[-1]
         df_hist = pd.DataFrame(history)
@@ -652,10 +652,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         krx_rate = ((krx_close - current_price) / current_price * 100) if krx_close > 0 and current_price > 0 else 0.0
         nxt_rate = ((nxt_close - current_price) / current_price * 100) if nxt_close > 0 and current_price > 0 else 0.0
 
-        if   krx_close > 0 and nxt_close > 0: market_type = "KRX+NXT"
-        elif nxt_close > 0:                   market_type = "NXT"
-        elif krx_close > 0:                   market_type = "KRX"
-        else:                                 market_type = "정규장"
+        if krx_close > 0 and nxt_close > 0: market_type = "KRX+NXT"
+        elif nxt_close > 0: market_type = "NXT"
+        elif krx_close > 0: market_type = "KRX"
+        else: market_type = "정규장"
 
         # --------------------------------------------------
         # STEP 3: 파생 변수 계산
@@ -781,12 +781,15 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_weak_dual_buy   = False
         supply_text        = ""
         acc_i_buy_won      = 0
-        acc_f_buy_won      = 0   
+        acc_f_buy_won      = 0
         dual_buy_days      = 0
         i_buy_today        = 0
         f_buy_today        = 0
         program_text       = "⚪ [P.관망중] 0억 (0.0%)"
         pg_amount_eok      = 0.0
+
+        is_today_data_in_frgn = False
+        today_str_dot = datetime.datetime.now(KST).strftime('%Y.%m.%d')
 
         try:
             frgn_url  = f"https://finance.naver.com/item/frgn.naver?code={code}&_={int(time.time() * 1000)}"
@@ -798,6 +801,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             for r_tag in rows:
                 cols = r_tag.select("td")
                 if len(cols) >= 7 and cols[0].text.strip().replace('.', '').isdigit():
+                    row_date_str = cols[0].text.strip()
                     try: close_price_day = int(cols[1].text.strip().replace(',', ''))
                     except: close_price_day = current_price
                     try: i_vol = int(cols[5].text.strip().replace(',', '').replace('+', '').replace(' ', ''))
@@ -814,6 +818,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     if valid_days == 0:
                         i_buy_today = i_buy_won
                         f_buy_today = f_buy_won
+                        if row_date_str == today_str_dot:
+                            is_today_data_in_frgn = True
+
                         if f_vol != 0:
                             pg_amount_won = f_vol * current_price
                             pg_amount_eok = pg_amount_won / 100_000_000
@@ -825,6 +832,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                             else:
                                 sign = "+" if pg_amount_eok > 0 else ""
                                 program_text = f"⚪ [P.관망중] {sign}{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+                        else:
+                            program_text = "⚪ [P.관망중] 0억 (0.0%)"
 
                     acc_i_buy_won += i_buy_won
                     acc_f_buy_won += f_buy_won
@@ -832,11 +841,11 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     if valid_days >= 5: break
         except Exception: pass
 
-        acc_i_buy_eok = acc_i_buy_won / 100_000_000
-        acc_f_buy_eok = acc_f_buy_won / 100_000_000
-        f_buy_eok = f_buy_today / 100_000_000
+        acc_i_buy_eok      = acc_i_buy_won / 100_000_000
+        acc_f_buy_eok      = acc_f_buy_won / 100_000_000
+        f_buy_eok          = f_buy_today / 100_000_000
         today_dual_buy_ratio = ((i_buy_today + f_buy_today) / trading_value) * 100 if trading_value > 0 else 0.0
-        
+
         non_program_buy_eok = 0
         is_foreigner_active_buy = False
 
@@ -854,6 +863,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             supply_text = " (🟢약한 양매수)"
         elif acc_i_buy_eok >= 20 or acc_f_buy_eok >= 30:
             supply_text = " (누적수급 우수)"
+
+        i_sign = "+" if acc_i_buy_eok > 0 else ""
+        f_sign = "+" if acc_f_buy_eok > 0 else ""
+        supply_status_col = f"🏦기:{i_sign}{acc_i_buy_eok:.1f}억 / 🌎외:{f_sign}{acc_f_buy_eok:.1f}억"
 
         # --------------------------------------------------
         # STEP 9: 보조지표 연산
@@ -1065,14 +1078,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         score_display = f"{quant_score}점 ({track_type})"
         is_seed_tag = "SEED" if is_accumulation_cand or is_long_term_pick else "NORMAL"
 
-        i_sign = "+" if acc_i_buy_eok > 0 else ""
-        f_sign = "+" if acc_f_buy_eok > 0 else ""
-        supply_status_col = f"🏦기:{i_sign}{acc_i_buy_eok:.1f}억 / 🌎외:{f_sign}{acc_f_buy_eok:.1f}억"
-
-        krx_str = f"'{'+' if krx_rate > 0 else ''}{krx_rate:.2f}% ({krx_close:,}원)" if krx_close > 0 else ""
-        nxt_str = f"'{'+' if nxt_rate > 0 else ''}{nxt_rate:.2f}% ({nxt_close:,}원)" if nxt_close > 0 else ""
-
-        # 💡 [핵심 보정] 29칸 고정 맵핑 + 내부 2칸 = 총 31칸 완벽 유지
+        # --------------------------------------------------
+        # 🚨 [가장 중요한 29칸 뼈대 조립]
+        # --------------------------------------------------
         result_row = [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%",
             int(ma5), int(ma20), vol_ratio_text, signal,
@@ -1080,15 +1088,18 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, my_theme_name,
             program_text, int(display_high_250d), supply_status_col,
             target_price, stop_loss, is_seed_tag,
-            krx_str, nxt_str, market_type, 
-            quant_score, score_display
+            krx_str,       # [인덱스 26 / AA열] 시간외단일가(18시)
+            nxt_str,       # [인덱스 27 / AB열] NXT야간종가(20시)
+            market_type,   # [인덱스 28 / AC열] 장구분
+            quant_score,   # [인덱스 29 / 정렬용 내부 데이터]
+            score_display  # [인덱스 30 / 정렬용 내부 데이터]
         ]
 
         return result_row, static_info_to_save
 
     except Exception as e:
         print(f"❌ 분석 에러 [{name}]: {e}")
-        return fail_fallback[:29] + [0, "0점 (오류)"], None
+        return fail_fallback, None
 
 def update_technical_data(df_theme, all_theme_map):
     try:
@@ -1471,7 +1482,8 @@ if __name__ == "__main__":
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
-        doc = gspread.authorize(creds).open_by_url(SHEET_URL)
+        gc = gspread.authorize(creds)
+        doc = gc.open_by_url(SHEET_URL)
         update_google_sheet(doc, df_theme, df_news, df_naver, df_main_news, is_market_closed)
     except Exception as e:
         print(f"❌ 구글 인증 에러: {e}")
