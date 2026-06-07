@@ -459,28 +459,82 @@ class ScannerState:
 
 global_state = ScannerState()
 
-def fetch_extra_closing_prices_from_kis(code, session):
-    if not KIS_TOKEN or not KIS_APP_KEY or not KIS_APP_SECRET: return 0
+# =====================================================
+# 시간외 종가 수집 (KRX 18시 + NXT 20시 통합)
+# - KRX: FHPST02320000 (안정화 URL 적용)
+# - NXT: FNPST01010100 
+# - session_obj: local_session 재사용으로 연결 비용 절감
+# =====================================================
+def fetch_extra_closing_prices_from_kis(code, session_obj=None):
+    if not KIS_TOKEN or not KIS_APP_KEY or not KIS_APP_SECRET:
+        return 0, 0
+
+    req = session_obj if session_obj else requests.Session()
+
+    headers = {
+        "Content-Type": "application/json",
+        "authorization": f"Bearer {KIS_TOKEN}",
+        "appkey": KIS_APP_KEY,
+        "appsecret": KIS_APP_SECRET,
+        "custtype": "P"
+    }
+
+    def safe_int(v, default=0):
+        try:
+            if v in [None, "", "null"]: return default
+            return int(str(v).replace(",", "").strip())
+        except:
+            return default
+
+    def find_key(data, key):
+        if isinstance(data, dict):
+            if key in data: return data[key]
+            for v in data.values():
+                res = find_key(v, key)
+                if res is not None: return res
+        elif isinstance(data, list):
+            for item in data:
+                res = find_key(item, key)
+                if res is not None: return res
+        return None
+
+    krx_close = 0
+    nxt_close = 0
+
+    # 1. KRX 시간외단일가 (18시)
     try:
-        headers = {
-            "content-type": "application/json; charset=utf-8",
-            "authorization": f"Bearer {KIS_TOKEN}",
-            "appkey": KIS_APP_KEY,
-            "appsecret": KIS_APP_SECRET,
-            "tr_id": "FHPST02320000" 
-        }
-        params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code}
-        url = f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-time-over-price"
-        res = session.get(url, headers=headers, params=params, timeout=3)
+        headers["tr_id"] = "FHPST02320000"
+        params = {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}
+        res = req.get(
+            f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-time-over-price", # 🚨 URL 환각 수정 완료
+            headers=headers, params=params, verify=False, timeout=5
+        )
         if res.status_code == 200:
-            j = res.json()
-            output = j.get("output") or j.get("output1") or j.get("output2") or {}
-            price_str = str(output.get("stck_prpr", "0")).replace(",", "").strip()
-            if price_str.isdigit() and int(price_str) > 0:
-                return int(price_str)
+            data = res.json()
+            overtime_vol   = safe_int(find_key(data, "ovtm_untp_vol"))
+            overtime_price = safe_int(find_key(data, "ovtm_untp_prpr"))
+            if overtime_vol > 10 and overtime_price > 0:
+                krx_close = overtime_price
     except Exception:
         pass
-    return 0
+
+    # 2. NXT 야간종가 (20시)
+    try:
+        headers["tr_id"] = "FNPST01010100"
+        params = {"fid_cond_mrkt_div_code": "N", "fid_input_iscd": code}
+        res = req.get(
+            f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-nextrade-price",
+            headers=headers, params=params, verify=False, timeout=5
+        )
+        if res.status_code == 200:
+            data = res.json()
+            nxt_price = safe_int(find_key(data, "stck_prpr"))
+            if nxt_price > 0:
+                nxt_close = nxt_price
+    except Exception:
+        pass
+
+    return krx_close, nxt_close
 
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db, theme_historical_max, long_term_stocks):
     local_session = requests.Session()
@@ -559,28 +613,28 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     live_success = True
         except Exception: pass
 
-        if not live_success:
+        # --------------------------------------------------
+        # STEP 2-1: KRX 시간외 (18시) & NXT 야간종가 (20시) 통합 수집
+        # --------------------------------------------------
+        # local_session 재사용하여 KRX(18시) + NXT(20시) 동시 수집
+        krx_close, nxt_close = fetch_extra_closing_prices_from_kis(code, session_obj=local_session)
+        
+        # 🚨 [방어막 복구] KIS API 장애 시 네이버 API로 NXT 종가 이중 검증
+        if nxt_close == 0:
             try:
                 mobile_headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)"}
-                rt_json2 = local_session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", headers=mobile_headers, verify=False, timeout=2).json()
-                if rt_json2 and rt_json2.get('closePrice'):
-                    live_p = int(str(rt_json2['closePrice']).replace(',', '').strip())
-                    if live_p > 0:
-                        current_price = live_p
-                        if rt_json2.get('accumulatedTradingVolume'): today_vol = int(str(rt_json2['accumulatedTradingVolume']).replace(',', '').strip())
-                        if rt_json2.get('highPrice'): today_high = int(str(rt_json2['highPrice']).replace(',', '').strip())
-                        if rt_json2.get('lowPrice'): today_low = int(str(rt_json2['lowPrice']).replace(',', '').strip())
-                        if rt_json2.get('openPrice'): open_price = int(str(rt_json2['openPrice']).replace(',', '').strip())
-                        if rt_json2.get('fluctuationsRatio'): change_rate = float(str(rt_json2['fluctuationsRatio']).replace('%', '').replace('+', '').strip()) / 100.0
-                        live_success = True
+                nxt_res = local_session.get(f"https://m.stock.naver.com/api/stock/{code}/basic", headers=mobile_headers, verify=False, timeout=2)
+                if nxt_res.status_code == 200:
+                    nxt_json = nxt_res.json()
+                    night_info = nxt_json.get("nightMarketPriceInfo") or {}
+                    if night_info and night_info.get("closePrice"):
+                        nxt_close = int(str(night_info["closePrice"]).replace(",", ""))
             except Exception: pass
 
-        # --------------------------------------------------
-        # STEP 2-1: KRX 시간외 (18시) & NXT 야간종가 (20시) 분리 수집
-        # --------------------------------------------------
-        krx_close = 0
-        nxt_close = 0
-        market_type = "정규장"
+        if   krx_close > 0 and nxt_close > 0: market_type = "KRX+NXT"
+        elif nxt_close > 0:                   market_type = "NXT"
+        elif krx_close > 0:                   market_type = "KRX"
+        else:                                 market_type = "정규장" # 🚨 공백 대신 정규장 기본값 처리
 
         try:
             krx_close = fetch_extra_closing_prices_from_kis(code, local_session)
@@ -759,72 +813,76 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         except Exception:
             pass
 
-        is_today_data_in_frgn = False
-        today_str_dot = datetime.datetime.now(KST).strftime('%Y.%m.%d')
-
-        acc_i_buy_won = 0
-        acc_f_buy_won = 0
-        dual_buy_days = 0
-        i_buy_today = 0
-        f_buy_today = 0
+        # --------------------------------------------------
+        # STEP 8: 프로그램 수급 우회 (frgn.naver 활용) + 기관/외인 5일 누적
+        # --------------------------------------------------
+        is_strong_dual_buy = False
+        is_weak_dual_buy   = False
+        supply_text        = ""
+        acc_i_buy_won      = 0
+        acc_f_buy_won      = 0   # 🚨 누락되었던 외인 누적 매수금액 변수 선언
+        dual_buy_days      = 0
+        i_buy_today        = 0
+        f_buy_today        = 0
+        program_text       = "⚪ [P.관망중] 0억 (0.0%)"
+        pg_amount_eok      = 0.0
 
         try:
-            frgn_url = f"https://finance.naver.com/item/frgn.naver?code={code}&_={int(time.time() * 1000)}"
-            frgn_res = local_session.get(frgn_url, headers=desktop_headers, verify=False, timeout=3)
+            frgn_url  = f"https://finance.naver.com/item/frgn.naver?code={code}&_={int(time.time() * 1000)}"
+            frgn_res  = local_session.get(frgn_url, headers=desktop_headers, verify=False, timeout=3)
             frgn_soup = BeautifulSoup(frgn_res.content, 'html.parser', from_encoding='euc-kr')
-            rows = frgn_soup.select("table.type2 tr")
+            rows      = frgn_soup.select("table.type2 tr")
             valid_days = 0
+
             for r_tag in rows:
                 cols = r_tag.select("td")
                 if len(cols) >= 7 and cols[0].text.strip().replace('.', '').isdigit():
-                    row_date_str = cols[0].text.strip()
-                    close_price_day = int(cols[1].text.strip().replace(',', ''))
+                    try: close_price_day = int(cols[1].text.strip().replace(',', ''))
+                    except: close_price_day = current_price
                     try: i_vol = int(cols[5].text.strip().replace(',', '').replace('+', '').replace(' ', ''))
                     except: i_vol = 0
                     try: f_vol = int(cols[6].text.strip().replace(',', '').replace('+', '').replace(' ', ''))
                     except: f_vol = 0
-                    
+
                     i_buy_won = i_vol * close_price_day
                     f_buy_won = f_vol * close_price_day
-                    
+
                     if i_buy_won >= 50_000_000 and f_buy_won >= 50_000_000:
                         dual_buy_days += 1
-                        
+
                     if valid_days == 0:
                         i_buy_today = i_buy_won
                         f_buy_today = f_buy_won
-                        if row_date_str == today_str_dot:
-                            is_today_data_in_frgn = True 
-                            
+                        if f_vol != 0:
+                            pg_amount_won = f_vol * current_price
+                            pg_amount_eok = pg_amount_won / 100_000_000
+                            pg_ratio = (abs(pg_amount_won) / trading_value) * 100 if trading_value > 0 else 0.0
+                            if   pg_amount_eok >= 30  and pg_ratio >= 10.0: program_text = f"🔴 [P.대량유입] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+                            elif pg_amount_eok >= 10  and pg_ratio >= 5.0:  program_text = f"🔴 [P.매수우위] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+                            elif pg_amount_eok <= -30 and pg_ratio >= 10.0: program_text = f"🔵 [P.대량출회] {int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+                            elif pg_amount_eok <= -10 and pg_ratio >= 5.0:  program_text = f"🔵 [P.매도우위] {int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+                            else:
+                                sign = "+" if pg_amount_eok > 0 else ""
+                                program_text = f"⚪ [P.관망중] {sign}{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+
                     acc_i_buy_won += i_buy_won
-                    acc_f_buy_won += f_buy_won
+                    acc_f_buy_won += f_buy_won  # 🚨 누락되었던 외인 5일치 합산 적용
                     valid_days += 1
                     if valid_days >= 5: break
         except Exception: pass
 
-        acc_i_buy_eok = acc_i_buy_won / 100_000_000
-        acc_f_buy_eok = acc_f_buy_won / 100_000_000
-        f_buy_eok = f_buy_today / 100_000_000
+        acc_i_buy_eok      = acc_i_buy_won / 100_000_000
+        acc_f_buy_eok      = acc_f_buy_won / 100_000_000  # 🚨 외인 누적 억 단위 변환
         today_dual_buy_ratio = ((i_buy_today + f_buy_today) / trading_value) * 100 if trading_value > 0 else 0.0
-        
-        non_program_buy_eok = 0
-        is_foreigner_active_buy = False
 
-        if is_today_data_in_frgn:
-            non_program_buy_eok = f_buy_eok - pg_amount_eok
-            is_foreigner_active_buy = (f_buy_eok >= 15) and (pg_amount_eok <= 5) and (non_program_buy_eok >= 10)
-
-        is_strong_dual_buy = False
-        supply_text = ""
         if dual_buy_days >= 3 and today_dual_buy_ratio >= 3.0 and i_buy_today >= 200_000_000 and f_buy_today >= 200_000_000 and acc_i_buy_eok >= 20:
             is_strong_dual_buy = True
             supply_text = " (🌟쌍끌이 모아가기)"
-        elif is_foreigner_active_buy:
-            supply_text = " (💎외인 집중배팅)"
         elif i_buy_today >= 200_000_000 and f_buy_today >= 200_000_000:
+            is_weak_dual_buy = True
             supply_text = " (🟢약한 양매수)"
-        elif acc_i_buy_eok >= 20 or acc_f_buy_eok >= 30:
-            supply_text = " (누적수급 우수)"
+        elif acc_i_buy_eok >= 20:
+            supply_text = " (기관 누적매집)"
 
         # --------------------------------------------------
         # STEP 9: 보조지표 연산
