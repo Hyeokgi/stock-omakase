@@ -652,6 +652,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         elif nxt_close > 0: market_type = "NXT"
         elif krx_close > 0: market_type = "KRX"
 
+        except Exception: pass
+
         # --------------------------------------------------
         # STEP 3: 파생 변수 계산
         # --------------------------------------------------
