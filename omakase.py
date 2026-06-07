@@ -20,7 +20,7 @@ TARGET_PERCENT = 3.0
 KST = datetime.timezone(datetime.timedelta(hours=9))
 KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
-KIS_URL_BASE = "https://openapi.koreainvestment.com:9443"
+KIS_URL_BASE = "https://openapi.koreainvestom.com:9443" or "https://openapi.koreainvestment.com:9443"
 
 now_kst_check = datetime.datetime.now(KST)
 if 4 <= now_kst_check.hour < 7:
@@ -513,7 +513,7 @@ def fetch_extra_closing_prices_from_kis(code, session_obj=None):
     krx_close = 0
     nxt_close = 0
 
-    # 1. KRX 시간외단일가 (18시) ← 💡 롤백 검색 탐색 적용으로 장중 데이터 증발 완벽 해결
+    # 1. KRX 시간외단일가 (18시)
     try:
         headers["tr_id"] = "FHPST02320000"
         params = {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}
@@ -525,7 +525,6 @@ def fetch_extra_closing_prices_from_kis(code, session_obj=None):
             data = res.json()
             output_list = data.get("output", [])
             if isinstance(output_list, list) and len(output_list) > 0:
-                # 거래가 집계되지 않은 오늘 자 0원 행을 건너뛰고, 가장 직전 영업일의 확정 시간외 가격을 추출
                 for row in output_list:
                     price = safe_int(row.get("ovtm_untp_prpr"))
                     if price > 0:
@@ -538,7 +537,7 @@ def fetch_extra_closing_prices_from_kis(code, session_obj=None):
     except Exception:
         pass
 
-    # 2. NXT 야간종가 (20시) ← 가장 안정적인 모바일 API 파이프라인
+    # 2. NXT 야간종가 (20시)
     try:
         r = req.get(
             f"https://m.stock.naver.com/api/stock/{code}/basic",
@@ -680,10 +679,14 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             krx_close, nxt_close = fetch_extra_closing_prices_from_kis(code, session_obj=local_session)
         except Exception: pass
 
-        if   krx_close > 0 and nxt_close > 0: market_type = "KRX+NXT"
-        elif nxt_close > 0:                   market_type = "NXT"
-        elif krx_close > 0:                   market_type = "KRX"
-        else:                                 market_type = "정규장"
+        # 💡 [앱시트 최적화 교정] NXT 데이터 존재 시, 시간외단일가(KRX) 변수를 강제 0으로 리셋하여 컬럼 완전 비우기
+        if nxt_close > 0:
+            krx_close = 0
+            market_type = "NXT"
+        elif krx_close > 0:
+            market_type = "KRX"
+        else:
+            market_type = "정규장"
 
         krx_rate = ((krx_close - current_price) / current_price * 100) if krx_close > 0 and current_price > 0 else 0.0
         nxt_rate = ((nxt_close - current_price) / current_price * 100) if nxt_close > 0 and current_price > 0 else 0.0
@@ -791,7 +794,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_long_shadow = (upper_shadow_ratio >= 0.035) or (upper_shadow_ratio >= 0.02 and upper_shadow > real_body * 1.2) if is_warning_market else (upper_shadow_ratio >= 0.05) or (upper_shadow_ratio >= 0.025 and upper_shadow > real_body * 1.5)
         
         is_bottom_accumulation_shadow = False
-        if is_long_shadow and is_today_yangbong and surge_rate_20d <= 0.15 and vol_ratio_yest >= 200:
+        if is_long_shadow and is_today_yangbong && surge_rate_20d <= 0.15 and vol_ratio_yest >= 200:
             is_long_shadow = False
             is_bottom_accumulation_shadow = True
 
@@ -879,8 +882,11 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         f_buy_eok     = f_buy_today / 100_000_000
         today_dual_buy_ratio = ((i_buy_today + f_buy_today) / trading_value) * 100 if trading_value > 0 else 0.0
 
-        non_program_buy_eok = f_buy_eok - pg_amount_eok
-        is_foreigner_active_buy = (f_buy_eok >= 15) and (pg_amount_eok <= 5) and (non_program_buy_eok >= 10)
+        non_program_buy_eok = 0
+        is_foreigner_active_buy = False
+        if is_today_data_in_frgn:
+            non_program_buy_eok = f_buy_eok - pg_amount_eok
+            is_foreigner_active_buy = (f_buy_eok >= 15) and (pg_amount_eok <= 5) and (non_program_buy_eok >= 10)
 
         if dual_buy_days >= 3 and today_dual_buy_ratio >= 3.0 and i_buy_today >= 200_000_000 and f_buy_today >= 200_000_000 and acc_i_buy_eok >= 20:
             is_strong_dual_buy = True
@@ -1017,7 +1023,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if is_foreigner_active_buy:
             base_score += 30  
 
-        # 💪 하락장 지수 역행 강세주 포획 가점 엔진
         is_relative_strong = (kospi_rate <= -0.5) and (change_rate >= 0.02)
         if is_relative_strong:
             master_tajeom_suffix += " 💪(하락장 역행)"
@@ -1412,7 +1417,6 @@ def update_technical_data(df_theme, all_theme_map):
                 종목코드 = r[1].replace("'", "").zfill(6)
                 하이퍼링크 = f'=HYPERLINK("https://m.stock.naver.com/domestic/stock/{종목코드}/total", "{종목명}")'
                 
-                # 💡 [버그 교정] "확인불가" 강제 하드코딩 문구를 실제 가공된 실시간 장구분 값으로 대체 매핑
                 시장구분 = r[28] if r[28] else "정규장"
                 현재가 = r[2]
                 등락률 = r[3]
