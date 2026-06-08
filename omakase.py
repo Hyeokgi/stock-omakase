@@ -707,6 +707,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         surge_rate_60d_top = (current_price - high_60d_calc) / high_60d_calc if high_60d_calc > 0 else 0
         is_deep_correction = surge_rate_60d_top <= -0.15
 
+        # 💡 [신규 패치] 최근 60일 바닥 대비 상승률 검증기 (상승 초입 여부 판독)
+        surge_rate_60d_bottom = (current_price - recent_60d_min) / recent_60d_min if recent_60d_min > 0 else 0
+        is_recent_overheated = surge_rate_60d_bottom >= 0.50 # 50% 이상 상승 시 고점 횡보 및 설거지 리스크 경고 발동
+
         min_250d = int(df_hist['close'].min())
         surge_rate_250d = (current_price - min_250d) / min_250d if min_250d > 0 else 0
         is_true_history_leader = 0.5 <= surge_rate_250d < 2.0
@@ -770,7 +774,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     break
             price_climb = current_price - trend_start_price
 
-            if kalman_turned_green: secret_tajeom = "🟢 [시크릿] 추 추세 전환 (1차 매수 타점)"
+            if kalman_turned_green: secret_tajeom = "🟢 [시크릿] 추세 전환 (1차 매수 타점)"
             elif is_kalman_uptrend:
                 if price_climb >= atr_14 * 3.0: secret_tajeom = "🔴 [시크릿] 3차 파동 도달 (전량 익절)"
                 elif price_climb >= atr_14 * 2.0: secret_tajeom = "🟡 [시크릿] 2차 파동 진행 (본절 스탑 상향)"
@@ -934,7 +938,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_platform_breakout = (box_ratio <= 0.15) and (vol_ratio_10d >= 300) and (current_price > ma20) and is_today_yangbong and (trading_value >= min_breakout_tv)
 
         is_accumulation_cand = False
-        if is_true_history_leader and is_deep_correction and is_volume_dead and not is_long_shadow and not is_financial_risk:
+        # 💡 [핵심 패치 적용] 이미 60일 바닥 대비 50% 이상 오른 과열 종목은 바닥 모아가기(SEED) 자격 영구 박탈
+        if is_true_history_leader and is_deep_correction and not is_recent_overheated and is_volume_dead and not is_long_shadow and not is_financial_risk:
             if not is_upper_limit and ((abs(current_price - ma20) / ma20 < 0.03) or (abs(current_price - ma60) / ma60 < 0.03) or is_double_bottom):
                 is_accumulation_cand = True
 
@@ -1009,7 +1014,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         # STEP 13: 스코어 산출 알고리즘 및 지수헷지 팩터
         # --------------------------------------------------
         base_score = 0
-        is_long_term_pick = name in long_term_stocks  
+        # 💡 [핵심 패치 적용] DB_중장기 리스트에 있더라도 50% 과열 상태라면 가점 및 배지를 강제로 일시 회수
+        is_long_term_pick = (name in long_term_stocks) and not is_recent_overheated  
         master_tajeom_suffix = ""
 
         if is_long_term_pick:
@@ -1194,9 +1200,7 @@ def update_technical_data(df_theme, all_theme_map):
         now_time = datetime.datetime.now(KST)
         is_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50) or len(static_sheet.get_all_values()) <= 5
         
-        # 💡 [핵심 패치 1] 심야~아침 8시 50분까지는 어제 종가 기준 시간외/NXT 데이터를 무조건 보존
         is_preserve_time = now_time.hour < 8 or (now_time.hour == 8 and now_time.minute < 50)
-        # 💡 [핵심 패치 2] 09:00 ~ 15:40 정규장 시간대 정의
         is_regular_market = (9 <= now_time.hour < 15) or (now_time.hour == 15 and now_time.minute <= 40)
         
         static_db = {}
@@ -1366,7 +1370,6 @@ def update_technical_data(df_theme, all_theme_map):
             db_scanner_sheet = doc.worksheet("DB_스캐너")
             old_data = db_scanner_sheet.get_all_values()
             
-            # 💡 [핵심 패치 3] 기존 데이터를 모조리 긁어와서 심야/새벽 데이터 소실을 완벽 차단
             for row in old_data[1:]:
                 if len(row) > 15:
                     saved_code = str(row[2]).replace("'", "").strip().zfill(6)
@@ -1383,22 +1386,19 @@ def update_technical_data(df_theme, all_theme_map):
         for r in results:
             c_code = str(r[1]).replace("'", "").strip().zfill(6)
             
-            # 정규장 중에는 무조건 "정규장 진행중" 및 0원/빈칸 처리
             if is_regular_market:
                 r[26] = ""
                 r[27] = ""
                 r[28] = "정규장 진행중"
             
             if c_code in existing_data:
-                # 07시~08시50분 사이의 '리셋 타임'이 아닐 때만 기존 브리핑을 유지 (리셋 타임엔 갱신되도록)
                 if not is_reset_time:
                     r[9] = existing_data[c_code]["briefing"]
                     r[23] = existing_data[c_code]["target"]
                     r[24] = existing_data[c_code]["stop"]
                 
-                # 심야(00시)부터 아침 개장 전(08:50)까지는 API가 0으로 초기화되므로 이전 데이터를 복구 보존!
                 if is_preserve_time and not is_regular_market:
-                    if not r[26] and not r[27]: # 방금 가져온 데이터가 빈칸(0원)일 경우
+                    if not r[26] and not r[27]:
                         old_krx = str(existing_data[c_code]["raw_row"][16]).strip() if len(existing_data[c_code]["raw_row"]) > 16 else ""
                         old_nxt = str(existing_data[c_code]["raw_row"][17]).strip() if len(existing_data[c_code]["raw_row"]) > 17 else ""
                         old_mkt = str(existing_data[c_code]["raw_row"][18]).strip() if len(existing_data[c_code]["raw_row"]) > 18 else "정규장"
@@ -1436,7 +1436,6 @@ def update_technical_data(df_theme, all_theme_map):
             종목명 = r[0]
             종목코드 = str(r[1]).replace("'", "").zfill(6)
             
-            # 💡 [핵심 패치 4] 쏠리드 좀비 에러 완벽 해결: 새롭게 분석한 모든 코드를 '처리완료'로 등록하여 구형 에러 데이터 부활 원천 차단
             processed_codes.add(종목코드) 
             
             tajeom = r[8]
@@ -1505,7 +1504,7 @@ def update_technical_data(df_theme, all_theme_map):
         db_scanner_sheet.batch_clear(['A2:AC'])
         if top_20_results:
             db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
-        print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (중장기 쿼터 제어 및 Q, R, S 컴팩트 정렬 안착 완료)")
+        print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (중장기 상승초입 필터 및 쿼터 제어 적용 완료)")
 
         if is_reset_time:
             try:
