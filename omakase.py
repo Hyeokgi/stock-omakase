@@ -115,6 +115,12 @@ AD_FILTER = ['펀드', '투어', '캠페인', '서비스', '최초', '강화', '
 THEME_BLACKLIST = ['코로나19', '메르스', '지카바이러스', '우한폐렴', '원숭이두창', '엠폭스', '아프리카돼지열병', '구제역', '광우병', '야놀자(Yanolja)', '리비안(RIVIAN)']
 
 def check_warning_market():
+    """
+    🔮 [3중 가변 필터링] 하락장 돌입 감지 엔진
+    1. 코스닥 현재가 < 20일선 이동평균
+    2. 코스닥 5일 이동평균 < 20일 이동평균 (데드크로스 조기 포착)
+    3. 코스피 당일 변동률 <= -1.0% (지수 쇼크 패닉 셀 감지)
+    """
     local_session = requests.Session()
     headers = {'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36'}
     warning_count = 0
@@ -707,9 +713,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         surge_rate_60d_top = (current_price - high_60d_calc) / high_60d_calc if high_60d_calc > 0 else 0
         is_deep_correction = surge_rate_60d_top <= -0.15
 
-        # 💡 [신규 패치] 최근 60일 바닥 대비 상승률 검증기 (상승 초입 여부 판독)
         surge_rate_60d_bottom = (current_price - recent_60d_min) / recent_60d_min if recent_60d_min > 0 else 0
-        is_recent_overheated = surge_rate_60d_bottom >= 0.50 # 50% 이상 상승 시 고점 횡보 및 설거지 리스크 경고 발동
+        is_recent_overheated = surge_rate_60d_bottom >= 0.50
 
         min_250d = int(df_hist['close'].min())
         surge_rate_250d = (current_price - min_250d) / min_250d if min_250d > 0 else 0
@@ -938,7 +943,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_platform_breakout = (box_ratio <= 0.15) and (vol_ratio_10d >= 300) and (current_price > ma20) and is_today_yangbong and (trading_value >= min_breakout_tv)
 
         is_accumulation_cand = False
-        # 💡 [핵심 패치 적용] 이미 60일 바닥 대비 50% 이상 오른 과열 종목은 바닥 모아가기(SEED) 자격 영구 박탈
         if is_true_history_leader and is_deep_correction and not is_recent_overheated and is_volume_dead and not is_long_shadow and not is_financial_risk:
             if not is_upper_limit and ((abs(current_price - ma20) / ma20 < 0.03) or (abs(current_price - ma60) / ma60 < 0.03) or is_double_bottom):
                 is_accumulation_cand = True
@@ -1014,10 +1018,15 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         # STEP 13: 스코어 산출 알고리즘 및 지수헷지 팩터
         # --------------------------------------------------
         base_score = 0
-        # 💡 [핵심 패치 적용] DB_중장기 리스트에 있더라도 50% 과열 상태라면 가점 및 배지를 강제로 일시 회수
-        is_long_term_pick = (name in long_term_stocks) and not is_recent_overheated  
         master_tajeom_suffix = ""
 
+        # 💡 [핵심 패치 적용] DB_중장기 리스트에 있더라도 아래의 '엄격한 차트/등락률 타점'을 만족해야만 코어픽 배지 부여
+        # 1. 단기 과열 방지: 20일 저점 대비 25% 이상 급등한 상태가 아닐 것
+        # 2. 당일 슈팅 방지: 당일 등락률이 7% 미만으로 얌전할 것
+        # 3. 차트 붕괴 방지: 60일 이평선 대비 15% 이상 폭락한 상태가 아닐 것 (현재가 >= 60일선 * 0.85)
+        is_core_buy_zone = (surge_rate_20d <= 0.25) and (change_rate < 0.07) and (current_price >= ma60 * 0.85)
+        is_long_term_pick = (name in long_term_stocks) and not is_recent_overheated and is_core_buy_zone
+        
         if is_long_term_pick:
             base_score += 20  
             master_tajeom_suffix += " 🎖️(코어 포트폴리오)"
@@ -1504,7 +1513,7 @@ def update_technical_data(df_theme, all_theme_map):
         db_scanner_sheet.batch_clear(['A2:AC'])
         if top_20_results:
             db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
-        print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (중장기 상승초입 필터 및 쿼터 제어 적용 완료)")
+        print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (중장기 깐깐한 타점 필터 및 쿼터 제어 적용 완료)")
 
         if is_reset_time:
             try:
