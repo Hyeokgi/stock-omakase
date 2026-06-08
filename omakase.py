@@ -115,12 +115,6 @@ AD_FILTER = ['펀드', '투어', '캠페인', '서비스', '최초', '강화', '
 THEME_BLACKLIST = ['코로나19', '메르스', '지카바이러스', '우한폐렴', '원숭이두창', '엠폭스', '아프리카돼지열병', '구제역', '광우병', '야놀자(Yanolja)', '리비안(RIVIAN)']
 
 def check_warning_market():
-    """
-    🔮 [3중 가변 필터링] 하락장 돌입 감지 엔진
-    1. 코스닥 현재가 < 20일선 이동평균
-    2. 코스닥 5일 이동평균 < 20일 이동평균 (데드크로스 조기 포착)
-    3. 코스피 당일 변동률 <= -1.0% (지수 쇼크 패닉 셀 감지)
-    """
     local_session = requests.Session()
     headers = {'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36'}
     warning_count = 0
@@ -669,24 +663,26 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             except: pass
 
         # --------------------------------------------------
-        # STEP 2-1: KRX 시간외 (18시) & NXT 야간종가 (20시) 분리 수집
+        # STEP 2-1: KRX 시간외 (18시) & NXT 야간종가 (20시) 분리 수집 (정규장 시간 패싱 로직 추가)
         # --------------------------------------------------
         krx_close = 0
         nxt_close = 0
-        market_type = "정규장"
+        
+        now_kst_api = datetime.datetime.now(KST)
+        is_regular_market = (9 <= now_kst_api.hour < 15) or (now_kst_api.hour == 15 and now_kst_api.minute <= 40)
+        
+        market_type = "정규장 진행중" if is_regular_market else "정규장"
 
-        try:
-            krx_close, nxt_close = fetch_extra_closing_prices_from_kis(code, session_obj=local_session)
-        except Exception: pass
+        if not is_regular_market:
+            try:
+                krx_close, nxt_close = fetch_extra_closing_prices_from_kis(code, session_obj=local_session)
+            except Exception: pass
 
-        # 💡 [앱시트 최적화 교정 수용] NXT 데이터 존재 시, 시간외단일가(KRX) 변수를 강제 0으로 리셋하여 컬럼 완전 비우기
-        if nxt_close > 0:
-            krx_close = 0
-            market_type = "NXT"
-        elif krx_close > 0:
-            market_type = "KRX"
-        else:
-            market_type = "정규장"
+            if nxt_close > 0:
+                krx_close = 0
+                market_type = "NXT"
+            elif krx_close > 0:
+                market_type = "KRX"
 
         krx_rate = ((krx_close - current_price) / current_price * 100) if krx_close > 0 and current_price > 0 else 0.0
         nxt_rate = ((nxt_close - current_price) / current_price * 100) if nxt_close > 0 and current_price > 0 else 0.0
@@ -774,7 +770,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     break
             price_climb = current_price - trend_start_price
 
-            if kalman_turned_green: secret_tajeom = "🟢 [시크릿] 추세 전환 (1차 매수 타점)"
+            if kalman_turned_green: secret_tajeom = "🟢 [시크릿] 추 추세 전환 (1차 매수 타점)"
             elif is_kalman_uptrend:
                 if price_climb >= atr_14 * 3.0: secret_tajeom = "🔴 [시크릿] 3차 파동 도달 (전량 익절)"
                 elif price_climb >= atr_14 * 2.0: secret_tajeom = "🟡 [시크릿] 2차 파동 진행 (본절 스탑 상향)"
@@ -794,7 +790,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_long_shadow = (upper_shadow_ratio >= 0.035) or (upper_shadow_ratio >= 0.02 and upper_shadow > real_body * 1.2) if is_warning_market else (upper_shadow_ratio >= 0.05) or (upper_shadow_ratio >= 0.025 and upper_shadow > real_body * 1.5)
         
         is_bottom_accumulation_shadow = False
-        # 🐛 [문법오류 완벽교정] && 기호를 파이썬 표준 연산자인 and로 수정 완료
         if is_long_shadow and is_today_yangbong and surge_rate_20d <= 0.15 and vol_ratio_yest >= 200:
             is_long_shadow = False
             is_bottom_accumulation_shadow = True
@@ -1024,7 +1019,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if is_foreigner_active_buy:
             base_score += 30  
 
-        is_relative_strong = (kospi_rate <= -1.5) and (change_rate >= 0.03)
+        is_relative_strong = (kospi_rate <= -1.0) and (change_rate >= 0.03)
         if is_relative_strong:
             master_tajeom_suffix += " 💪(하락장 역행)"
             base_score += 10
@@ -1198,6 +1193,12 @@ def update_technical_data(df_theme, all_theme_map):
         print("🔄 정적 데이터 캐싱 메커니즘 구동")
         now_time = datetime.datetime.now(KST)
         is_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50) or len(static_sheet.get_all_values()) <= 5
+        
+        # 💡 [핵심 패치 1] 심야~아침 8시 50분까지는 어제 종가 기준 시간외/NXT 데이터를 무조건 보존
+        is_preserve_time = now_time.hour < 8 or (now_time.hour == 8 and now_time.minute < 50)
+        # 💡 [핵심 패치 2] 09:00 ~ 15:40 정규장 시간대 정의
+        is_regular_market = (9 <= now_time.hour < 15) or (now_time.hour == 15 and now_time.minute <= 40)
+        
         static_db = {}
 
         if is_reset_time:
@@ -1364,27 +1365,47 @@ def update_technical_data(df_theme, all_theme_map):
         try:
             db_scanner_sheet = doc.worksheet("DB_스캐너")
             old_data = db_scanner_sheet.get_all_values()
-            if not is_reset_time:
-                for row in old_data[1:]:
-                    if len(row) > 15:
-                        saved_code = str(row[2]).replace("'", "").strip().zfill(6)
-                        briefing = str(row[9]).strip()
-                        if any(key in briefing for key in ["리포트 발송 완료", "간단 브리핑"]) and "계산중" not in str(row[14]):
-                            existing_data[saved_code] = {
-                                "briefing": briefing,
-                                "target": row[14],
-                                "stop": row[15],
-                                "raw_row": row
-                            }
+            
+            # 💡 [핵심 패치 3] 기존 데이터를 모조리 긁어와서 심야/새벽 데이터 소실을 완벽 차단
+            for row in old_data[1:]:
+                if len(row) > 15:
+                    saved_code = str(row[2]).replace("'", "").strip().zfill(6)
+                    briefing = str(row[9]).strip()
+                    existing_data[saved_code] = {
+                        "briefing": briefing,
+                        "target": row[14],
+                        "stop": row[15],
+                        "raw_row": row
+                    }
         except:
-            db_scanner_sheet = doc.worksheet("DB_스캐너")
+            pass
 
         for r in results:
             c_code = str(r[1]).replace("'", "").strip().zfill(6)
+            
+            # 정규장 중에는 무조건 "정규장 진행중" 및 0원/빈칸 처리
+            if is_regular_market:
+                r[26] = ""
+                r[27] = ""
+                r[28] = "정규장 진행중"
+            
             if c_code in existing_data:
-                r[9] = existing_data[c_code]["briefing"]
-                r[23] = existing_data[c_code]["target"]
-                r[24] = existing_data[c_code]["stop"]
+                # 07시~08시50분 사이의 '리셋 타임'이 아닐 때만 기존 브리핑을 유지 (리셋 타임엔 갱신되도록)
+                if not is_reset_time:
+                    r[9] = existing_data[c_code]["briefing"]
+                    r[23] = existing_data[c_code]["target"]
+                    r[24] = existing_data[c_code]["stop"]
+                
+                # 심야(00시)부터 아침 개장 전(08:50)까지는 API가 0으로 초기화되므로 이전 데이터를 복구 보존!
+                if is_preserve_time and not is_regular_market:
+                    if not r[26] and not r[27]: # 방금 가져온 데이터가 빈칸(0원)일 경우
+                        old_krx = str(existing_data[c_code]["raw_row"][16]).strip() if len(existing_data[c_code]["raw_row"]) > 16 else ""
+                        old_nxt = str(existing_data[c_code]["raw_row"][17]).strip() if len(existing_data[c_code]["raw_row"]) > 17 else ""
+                        old_mkt = str(existing_data[c_code]["raw_row"][18]).strip() if len(existing_data[c_code]["raw_row"]) > 18 else "정규장"
+                        
+                        r[26] = old_krx
+                        r[27] = old_nxt
+                        r[28] = old_mkt
 
         try:
             helper_sheet = doc.worksheet("주가데이터_보조")
@@ -1412,10 +1433,14 @@ def update_technical_data(df_theme, all_theme_map):
         processed_codes = set()
 
         for r in results:
+            종목명 = r[0]
+            종목코드 = str(r[1]).replace("'", "").zfill(6)
+            
+            # 💡 [핵심 패치 4] 쏠리드 좀비 에러 완벽 해결: 새롭게 분석한 모든 코드를 '처리완료'로 등록하여 구형 에러 데이터 부활 원천 차단
+            processed_codes.add(종목코드) 
+            
             tajeom = r[8]
             if any(kw in tajeom for kw in scanner_keywords):
-                종목명 = r[0]
-                종목코드 = r[1].replace("'", "").zfill(6)
                 하이퍼링크 = f'=HYPERLINK("https://m.stock.naver.com/domestic/stock/{종목코드}/total", "{종목명}")'
                 
                 시장구분 = r[28] if r[28] else "정규장"
@@ -1439,7 +1464,6 @@ def update_technical_data(df_theme, all_theme_map):
                     r[26], r[27], r[28]                      
                 ]
                 all_candidates.append(row_data)
-                processed_codes.add(종목코드)
 
         if not is_reset_time:
             for c_code, data in existing_data.items():
