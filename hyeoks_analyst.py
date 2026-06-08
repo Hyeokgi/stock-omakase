@@ -193,7 +193,7 @@ try:
     def get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys, is_warning_market):
         is_seed = "🌱" in tajeom_badge or "모아가기" in tajeom_badge or "DB_중장기" in tajeom_badge
         is_active_buy = "외인집중" in tajeom_badge
-        market_context = "🚨 현재 시장은 변동성이 큰 하락/횡보장입니다. 안정성을 최우선으로 고려하십시오." if is_warning_market else "현재 시장은 정상적인 스윙/돌파가 가능한 장세입니다."
+        market_context = "🚨 현재 시장은 변동성이 큰 하락/횡보장입니다. 안정성을 최우선으로 고려하십시오." if is_warning_market else "현재 시장은 정상적인 스윙/돌파가 불가능한 장세입니다."
         
         if is_active_buy:
             guide_text = f"""
