@@ -669,7 +669,21 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             except: pass
 
         # --------------------------------------------------
-        # STEP 2-1: KRX 시간외 (18시) & NXT 야간종가 (20시) 분리 수집 (정규장 시간 패싱 로직 추가)
+        # 🟢 [개선] STEP 2-0: 정적 데이터(static_info) 및 치명적 하락(is_fatal_drop) 선행 판독
+        # --------------------------------------------------
+        static_info = static_db.get(code)
+        static_info_to_save = None
+        if static_info:
+            market_cap, is_junk, is_financial_risk, is_chronic_loss = static_info['market_cap'], static_info['is_junk'], static_info['is_fin_risk'], static_info['is_chronic_loss']
+        else:
+            market_cap, is_junk, is_financial_risk, is_chronic_loss = get_market_cap(code), False, False, False
+            static_info_to_save = [f"'{code}", name, market_cap, str(is_junk), str(is_financial_risk), str(is_chronic_loss)]
+            
+        # 💡 NameError 방지를 위해 STEP 10의 is_jongbe_cand 보다 먼저 정의되도록 상단 배치
+        is_fatal_drop = is_junk or is_financial_risk
+
+        # --------------------------------------------------
+        # STEP 2-1: KRX 시간외 (18시) & NXT 야간종가 (20시) 분리 수집
         # --------------------------------------------------
         krx_close = 0
         nxt_close = 0
@@ -740,7 +754,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             vol_ratio_yest = max(vol_ratio_yest, 500)
 
         # --------------------------------------------------
-        # STEP 4: 칼만 필터 및 파라미터 동적 조정
+        # 🟢 [개선] STEP 4: 칼만 필터 및 파라미터 동적 조정
         # --------------------------------------------------
         try:
             high_low = df_hist['high'] - df_hist['low']
@@ -750,6 +764,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             atr_14 = tr.rolling(14).mean().iloc[-1]
             if pd.isna(atr_14) or atr_14 == 0: atr_14 = current_price * 0.03
 
+            # 변동성 비율에 따른 동적 노이즈 스케일링
             volatility_ratio = atr_14 / current_price if current_price > 0 else 0.03
             Q = max(1e-5, min(1e-3, volatility_ratio * 0.01))
             R = max(5e-3, min(5e-2, volatility_ratio * 0.3))
@@ -793,7 +808,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             trend_start_price, secret_tajeom = current_price, ""
 
         # --------------------------------------------------
-        # STEP 5 & 6 & 7: 윗꼬리, 장도지향, 정적 데이터
+        # STEP 5 & 6 & 7: 윗꼬리, 장도지향 (정적 데이터는 위로 이동됨)
         # --------------------------------------------------
         is_volume_dead = (vol_ratio_yest <= 60) and (vol_ratio_10d <= 60)
         is_long_shadow = (upper_shadow_ratio >= 0.035) or (upper_shadow_ratio >= 0.02 and upper_shadow > real_body * 1.2) if is_warning_market else (upper_shadow_ratio >= 0.05) or (upper_shadow_ratio >= 0.025 and upper_shadow > real_body * 1.5)
@@ -808,16 +823,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         elif upper_shadow_ratio <= 0.015: shadow_text = "👑 [캔들] 몸통 마감"
         else: shadow_text = "🟡 [캔들] 일반형"
 
-        static_info = static_db.get(code)
-        static_info_to_save = None
-        if static_info:
-            market_cap, is_junk, is_financial_risk, is_chronic_loss = static_info['market_cap'], static_info['is_junk'], static_info['is_fin_risk'], static_info['is_chronic_loss']
-        else:
-            market_cap, is_junk, is_financial_risk, is_chronic_loss = get_market_cap(code), False, False, False
-            static_info_to_save = [f"'{code}", name, market_cap, str(is_junk), str(is_financial_risk), str(is_chronic_loss)]
-
         # --------------------------------------------------
-        # STEP 8: 프로그램 및 투자자별 5일 누적 수급 파이프라인 단일화
+        # STEP 8: 프로그램 및 투자자별 5일 누적 수급 파이프라인
         # --------------------------------------------------
         is_strong_dual_buy = False
         is_weak_dual_buy   = False
@@ -947,6 +954,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if not is_upper_limit and ((abs(current_price - ma20) / ma20 < 0.03) or (abs(current_price - ma60) / ma60 < 0.03) or is_double_bottom):
                 is_accumulation_cand = True
 
+        # 🎯 [개선] 종베 타점 조건 (거래량 및 윗꼬리 조건 포함)
         is_jongbe_cand = (
             not is_upper_limit
             and not is_long_shadow
@@ -1012,7 +1020,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         is_breakout_track = current_price >= ma20
         track_type = "눌림" if (is_accumulation_cand or is_jongbe_cand) else ("돌파" if is_breakout_track else "눌림")
-        is_fatal_drop = is_junk or is_financial_risk
 
         # --------------------------------------------------
         # STEP 13: 스코어 산출 알고리즘 및 지수헷지 팩터
@@ -1020,10 +1027,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         base_score = 0
         master_tajeom_suffix = ""
 
-        # 💡 [핵심 패치 적용] DB_중장기 리스트에 있더라도 아래의 '엄격한 차트/등락률 타점'을 만족해야만 코어픽 배지 부여
-        # 1. 단기 과열 방지: 20일 저점 대비 25% 이상 급등한 상태가 아닐 것
-        # 2. 당일 슈팅 방지: 당일 등락률이 7% 미만으로 얌전할 것
-        # 3. 차트 붕괴 방지: 60일 이평선 대비 15% 이상 폭락한 상태가 아닐 것 (현재가 >= 60일선 * 0.85)
         is_core_buy_zone = (surge_rate_20d <= 0.25) and (change_rate < 0.07) and (current_price >= ma60 * 0.85)
         is_long_term_pick = (name in long_term_stocks) and not is_recent_overheated and is_core_buy_zone
         
@@ -1039,14 +1042,16 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             master_tajeom_suffix += " 💪(하락장 역행)"
             base_score += 10
 
-        if is_accumulation_cand:
+        # 🟢 [개선] 종베 타점 점수 산출 로직 완벽 분리 (볼륨 페널티 회피)
+        if is_jongbe_cand:
+            base_score += 35
+            if is_near_52w_high: base_score += 10
+            if "매수" in program_text: base_score += 15
+            if is_strong_dual_buy: base_score += 10
+        elif is_accumulation_cand:
             base_score += 40
             if is_double_bottom: base_score += 15
             if "매수" in program_text or acc_i_buy_eok >= 10: base_score += 10
-        elif is_jongbe_cand:
-            base_score += 35
-            if "매수" in program_text: base_score += 15
-            if is_strong_dual_buy: base_score += 10
         else:
             if is_near_52w_high: base_score += 20
             elif current_price >= (high_60d_calc * 0.90): base_score += 15
@@ -1113,7 +1118,11 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 tajeom_multiplier = 0.0
                 master_tajeom = "👀 [관망] 3차 파동 고점 리스크"
 
-        if is_kalman_uptrend:
+        # 🟢 [개선] SEED (중장기) 전용 구조적 방어선 손절가 로직 도입
+        if is_accumulation_cand or is_long_term_pick:
+            stop_loss = int(min(ma60 * 0.95, recent_60d_min * 0.98))
+            target_price = int(display_high_60d) if display_high_60d > current_price else int(current_price * 1.15)
+        elif is_kalman_uptrend:
             target_price = int(current_price + (atr_14 * 2.0))
             stop_loss = int(current_price - (atr_14 * 1.0))
         else:
@@ -1127,8 +1136,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_absolute_protected = is_super_leader or is_foreigner_active_buy or is_long_term_pick
 
         if is_absolute_protected:
-            stop_loss = int(current_price * 0.96)
-            target_price = int(current_price * 1.15)
+            # 절대대장은 손절가 재조정 보장
+            stop_loss = int(current_price * 0.96) if not (is_accumulation_cand or is_long_term_pick) else stop_loss
+            target_price = int(current_price * 1.15) if not (is_accumulation_cand or is_long_term_pick) else target_price
             tajeom_multiplier = max(1.2, tajeom_multiplier)
             if is_foreigner_active_buy: master_tajeom += " 💎(외인집중/면책)"
             elif is_long_term_pick: master_tajeom += " 🎖️(코어픽/면책)"
@@ -1513,7 +1523,7 @@ def update_technical_data(df_theme, all_theme_map):
         db_scanner_sheet.batch_clear(['A2:AC'])
         if top_20_results:
             db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
-        print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (중장기 깐깐한 타점 필터 및 쿼터 제어 적용 완료)")
+        print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (모든 분석 제안 패치본 반영 완료)")
 
         if is_reset_time:
             try:
