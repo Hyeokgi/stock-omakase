@@ -31,7 +31,7 @@ current_hour = now_kst.hour
 print(f"🤖 [HYEOKS 리서치 센터] 봇 가동 (현재 KST {now_kst.strftime('%H:%M:%S')})")
 
 try:
-    # API 400 에러(타임아웃) 셧다운을 막기 위한 안전장치
+    # 💡 400 타임아웃 접속 에러 방지용 (이것만 유지)
     client = genai.Client(
         api_key=GEMINI_API_KEY, 
         http_options=types.HttpOptions(timeout=120000) 
@@ -44,7 +44,6 @@ def clean_emojis(text):
     for e in emojis: text = text.replace(e, '')
     return text.replace('  ', ' ').strip()
 
-# 원본 방식대로 복구 완료
 def safe_generate_content(contents, is_fast=False):
     model_name = 'gemini-2.5-flash' if is_fast else 'gemini-2.5-pro'
     for i in range(3):
@@ -56,7 +55,7 @@ def safe_generate_content(contents, is_fast=False):
         except Exception as e:
             err = str(e)
             if "503" in err or "429" in err or "quota" in err.lower() or "timeout" in err.lower():
-                wait_time = 15 * (i + 1)
+                wait_time = 10 * (i + 1)
                 print(f"⚠️ API 지연({i+1}/3). {wait_time}초 대기 후 재시도...")
                 time.sleep(wait_time)
             else:
@@ -124,10 +123,11 @@ def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
     except Exception as e:
         print(f"⚠️ [{sheet_name}] 정렬 실패: {e}")
 
-# 💡 오킨스전자 등 주도주의 억울한 탈락을 방지하는 로직 유지
 def validate_stock_historical_dna(cand, raw_theme_daily_map, is_warning_market):
     code = cand['code']
     name = cand['name']
+    theme_raw = cand.get('theme_name', '')
+    clean_theme = theme_raw.replace("🆕[당일]", "").replace("🕰️[과거]", "").split(' (대장:')[0].strip()
     
     min_tv_threshold = 30_000_000_000 if is_warning_market else 50_000_000_000
     
@@ -151,7 +151,7 @@ def validate_stock_historical_dna(cand, raw_theme_daily_map, is_warning_market):
                     
         return cand, has_qualified_day
     except Exception as e:
-        print(f"⚠️ [{name}] 역사적 DNA 검증 스킵 (통과 처리): {e}")
+        print(f"⚠️ [{name}] 역사적 DNA 검증 스킵 (통과): {e}")
         return cand, True
 
 # ==========================================
@@ -248,9 +248,8 @@ try:
         }}
         """
 
-    # 💡 트레이더님의 원본 로직 100% 복구 (time.sleep만 5초로 늘려 한도 초과 원천 차단)
+    # 🟡 [모드 2] 오전장, 저녁장: 간단 브리핑 산출 로직 (트레이더님 원본 로직 100% 복구)
     if current_hour != 15:
-        # 🟡 [모드 2] 오전장, 저녁장: 간단 브리핑 산출 로직
         print(f"▶ [{current_hour}시 모드] 브리핑 로직 가동...")
         for i, row in enumerate(db_rows[1:], start=2):
             # 상태값 읽기 (디버깅을 위해 strip()으로 공백 제거)
@@ -279,7 +278,7 @@ try:
                     briefing_text = parsed_data.get("briefing", "브리핑 생성 에러")
                     # ✅ 상태 업데이트
                     db_sheet.update_cell(i, 10, f"✅ [간단 브리핑] {briefing_text}")
-                    time.sleep(5.0) # 💡 핵심: 3.5초를 5.0초로 늘려 분당 12회 호출 (15회 제한 회피)
+                    time.sleep(3.5)
                 except Exception as e:
                     print(f"❌ [{stock_name}] 브리핑 에러: {e}")
                     db_sheet.update_cell(i, 10, "⚠️ 브리핑 에러")
@@ -538,6 +537,7 @@ try:
     short_summary = extract_summary(report_short) if best_short else ""
     mid_summary = extract_summary(report_mid) if best_mid else ""
 
+    # 원본 15시 모드 update_cell 로직 100% 유지
     for i, r in enumerate(latest_db_data[1:], start=2):
         if len(r) > 9:
             code       = str(r[2]).replace("'", "").strip().zfill(6)
@@ -584,7 +584,7 @@ try:
                     db_sheet.update_cell(i, 10, briefing_text)
                     db_sheet.update_cell(i, 15, target_val)
                     db_sheet.update_cell(i, 16, stop_val)
-                    time.sleep(5.0) # 💡 안전장치 1.5초 연장
+                    time.sleep(3.5)
                 except Exception as e:
                     print(f"[{stock_name}] 브리핑 에러 (건너뜀): {e}")
 
