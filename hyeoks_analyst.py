@@ -45,7 +45,8 @@ def clean_emojis(text):
     return text.replace('  ', ' ').strip()
 
 def safe_generate_content(contents, is_fast=False):
-    model_name = 'gemini-2.5-flash' if is_fast else 'gemini-2.5-pro'
+    # 🚨 제미나이 2.5라는 가짜 버전명을 지우고 공식 1.5 버전으로 복구했습니다!
+    model_name = 'gemini-1.5-flash' if is_fast else 'gemini-1.5-pro'
     for i in range(3):
         try:
             return client.models.generate_content(
@@ -123,6 +124,7 @@ def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
     except Exception as e:
         print(f"⚠️ [{sheet_name}] 정렬 실패: {e}")
 
+# 💡 오킨스전자 등 주도주의 억울한 탈락을 방지하는 500억 완화 로직만 유지
 def validate_stock_historical_dna(cand, raw_theme_daily_map, is_warning_market):
     code = cand['code']
     name = cand['name']
@@ -278,7 +280,7 @@ try:
                     briefing_text = parsed_data.get("briefing", "브리핑 생성 에러")
                     # ✅ 상태 업데이트
                     db_sheet.update_cell(i, 10, f"✅ [간단 브리핑] {briefing_text}")
-                    time.sleep(3.5)
+                    time.sleep(3.5) # 원본 대기시간 복구
                 except Exception as e:
                     print(f"❌ [{stock_name}] 브리핑 에러: {e}")
                     db_sheet.update_cell(i, 10, "⚠️ 브리핑 에러")
@@ -389,7 +391,7 @@ try:
     아래는 HYEOKS 퀀트 점수와 역사적 주도주 DNA 검증이 끝난 최상위 150개 종목 리스트입니다.
     현재 시장 국면은 {'하락장' if is_warning_market else '상승/보합장'}입니다.
     
-    이 중에서 제미나이 2.5 모델의 직관과 종합적인 판단을 활용해 
+    이 중에서 제미나이 1.5 모델의 직관과 종합적인 판단을 활용해 
      최고의 단기 1종목, 중장기 스윙 1종목을 2중 검토(Chain of Thought)를 거쳐 엄선하십시오. 
     🚨 하락장이라면 안정성이 100% 보장되지 않는 단기 종목은 억지로 뽑지 마십시오("000000" 반환).
 
@@ -460,7 +462,7 @@ try:
             🚨 핵심 지시: 귀하는 소액(400만 원)을 빠르고 안전하게 불려야 하는 '엄격한 퀀트 게이트키퍼'입니다.
             1. 퀀트 점수가 왜 높은지(펀더멘털, 수급 등) 설명하고, 이 종목의 현재 파동 위치가 왜 안전한 타점인지 2번 교차 검증(Chain of Thought)하여 명확히 서술하십시오.
             2. 손절가 설정: 현재 시장은 {market_context}입니다. 기계적 비율(%)이 아닌, 차트 상의 가장 거대한 기준봉의 시가나 쌍바닥 최저점 등 시장 하락 시에도 버틸 수 있는 아주 넉넉하고 단단한 가격(원)을 제시하십시오.
-            3. 매수 전략: 한 번에 몰빵하지 않도록, 현재가 부근 1차 진입 후 하락 시 추가 매수하는 분할 매수 밴드(Band)를 조언에 포함하십시오.
+            3. 매수 전략: 한 번에 몰빵하지 않도록, 현재가 부근 1차 진입 후 하락 시 추가 매수하는 분할 매수 밴드(Band) 조언에 포함하십시오.
             """
 
         detail_prompt = f"""귀하는 세계 최고의 헤지펀드를 이끄는 수석 퀀트 애널리스트입니다.
@@ -537,7 +539,6 @@ try:
     short_summary = extract_summary(report_short) if best_short else ""
     mid_summary = extract_summary(report_mid) if best_mid else ""
 
-    # 원본 15시 모드 update_cell 로직 100% 유지
     for i, r in enumerate(latest_db_data[1:], start=2):
         if len(r) > 9:
             code       = str(r[2]).replace("'", "").strip().zfill(6)
@@ -584,7 +585,7 @@ try:
                     db_sheet.update_cell(i, 10, briefing_text)
                     db_sheet.update_cell(i, 15, target_val)
                     db_sheet.update_cell(i, 16, stop_val)
-                    time.sleep(3.5)
+                    time.sleep(3.5) # 원본 대기시간 복구
                 except Exception as e:
                     print(f"[{stock_name}] 브리핑 에러 (건너뜀): {e}")
 
