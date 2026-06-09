@@ -242,8 +242,8 @@ def get_real_money_themes():
                 type_5_table = soup.find('table', {'class': 'type_5'})
                 if not type_5_table: continue
                 
-               # ====================================================
-                # 💡 [거래대금 및 속도 개선] 복잡한 탐색 다 지우고 하드코딩
+                # ====================================================
+                # 💡 [거래대금 및 속도 개선] 복잡한 탐색/시총 조회 다 지우고 하드코딩
                 # 네이버 테마 페이지 고정 열: 종목명(0), 등락률(4), 거래대금(8)
                 # ====================================================
                 name_idx, rate_idx, val_idx = 0, 4, 8
@@ -265,10 +265,9 @@ def get_real_money_themes():
                             val_num  = int(val_str.replace(',', '').strip())
 
                             # 💡 거래대금 50억(5000백만원) 이상인 종목만 1차 통과 (잡주 차단)
+                            # 🚨 속도 저하의 주범인 get_market_cap 실시간 조회를 여기서는 삭제합니다!
                             if rate_num >= TARGET_PERCENT and val_num >= 5000:
-                                market_cap_num = get_market_cap(s_code.replace("'", ""))
-                                if market_cap_num >= 1000:
-                                    stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
+                                stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
                         except: continue
                         
                 stocks_val = sorted(stocks, key=lambda x: x['value'], reverse=True)[:5]
