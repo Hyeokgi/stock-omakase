@@ -88,6 +88,14 @@ def get_us_market_summary():
         return "글로벌 및 국내 주요 금융 뉴스 헤드라인", "\n".join(news_items)
     except Exception as e: return f"뉴스 수집 에러: {e}", ""
 
+# 💡 [우선순위 2 도입] 시간외/NXT 퍼센트 추출용 헬퍼 함수
+def extract_fluctuation_rate(text):
+    try:
+        match = re.search(r'([-+]?\d+\.\d+)%', text)
+        if match: return float(match.group(1))
+    except: pass
+    return 0.0
+
 def get_yesterday_korean_context():
     print("🇰🇷 어제 한국장 퀀트 타겟 종목 및 심층 데이터 수집 중...")
     try:
@@ -117,11 +125,13 @@ def get_yesterday_korean_context():
 
         scanner_data = doc.worksheet("주가데이터_보조").get_all_values()[1:]
 
-    except Exception as e: return f"🚨 파싱 오류: {e}"
+    except Exception as e: return f"🚨 파싱 오류: {e}", []
 
-    if not scanner_data or len(scanner_data[0]) < 21: return "구글 시트 데이터가 비어있습니다."
+    if not scanner_data or len(scanner_data[0]) < 21: return "구글 시트 데이터가 비어있습니다.", []
 
     valid_candidates = []
+    emergency_alerts = [] # 💡 시가 갭 대응 긴급 알림 리스트
+
     for r in scanner_data:
         if len(r) > 20 and r[0]:
             name, code_str = str(r[0]).strip(), str(r[1]).replace("'", "").strip()
@@ -142,15 +152,27 @@ def get_yesterday_korean_context():
             
             if num_score < 35: continue
 
+            # 💡 [우선순위 2 실행] 보유/관심 종목의 NXT 종가가 -2% 이하일 경우 기계적 손절 알림 생성
+            nxt_rate = extract_fluctuation_rate(nxt_after)
+            krx_rate = extract_fluctuation_rate(krx_after)
+            emergency_tag = ""
+            
+            if nxt_rate <= -2.0:
+                emergency_tag = f"\n  🚨 [긴급] NXT {nxt_rate}% 급락! 시가 확인 후 기계적 손절 준비 요망!"
+                emergency_alerts.append(f"⚠️ {name}: 야간 NXT {nxt_rate}% 하락 (시가 갭하락 주의)")
+            elif krx_rate <= -2.0:
+                emergency_tag = f"\n  🚨 [주의] 시간외 단일가 {krx_rate}% 하락! 시가 흐름 확인 요망."
+                emergency_alerts.append(f"⚠️ {name}: 시간외 {krx_rate}% 하락")
+
             valid_candidates.append({
                 'name': name, 'code': code_str, 'price': current_price, 'theme': theme,
                 'tajeom': tajeom, 'score_str': score_str, 'num_score': num_score,
                 'vol_status': vol_status, 'program_text': program_text,
-                'krx_after': krx_after, 'nxt_after': nxt_after
+                'krx_after': krx_after, 'nxt_after': nxt_after, 'emergency_tag': emergency_tag
             })
 
     if not valid_candidates:
-        return "🚨 [전일 기준 부합 종목 부재]\n시스템의 엄격한 'HYEOKS 퀀트 총합 스코어(최소 35점 이상)' 및 '적자 기업 제외' 필터를 통과한 주도주가 없습니다. 무리한 매매를 지양하고 시장 관망을 유지하십시오."
+        return "🚨 [전일 기준 부합 종목 부재]\n시스템의 엄격한 'HYEOKS 퀀트 총합 스코어(최소 35점 이상)' 및 '적자 기업 제외' 필터를 통과한 주도주가 없습니다. 무리한 매매를 지양하고 시장 관망을 유지하십시오.", []
 
     valid_candidates.sort(key=lambda x: x['num_score'], reverse=True)
 
@@ -161,17 +183,23 @@ def get_yesterday_korean_context():
         if code:
             vip_data = get_vip_deep_dive_data(code, kis_token)
 
-        # 💡 [프롬프트 주입] 야간장 가격 변동을 AI가 볼 수 있도록 추가
-        picks_info.append(f"▪️ [{cand['name']}] 정규종가: {cand['price']}원 | 테마: {cand['theme']}\n  [야간/시간외] KRX: {cand['krx_after']} / NXT: {cand['nxt_after']}\n  [마스터타점] {cand['tajeom']} ({cand['score_str']})\n  [프로그램] {cand['program_text']}\n  [거래량] {cand['vol_status']}\n  [펀더멘털] {vip_data}")
+        # 💡 [프롬프트 주입] 야간장 가격 변동과 AI 긴급 태그를 볼 수 있도록 추가
+        picks_info.append(f"▪️ [{cand['name']}] 정규종가: {cand['price']}원 | 테마: {cand['theme']}\n  [야간/시간외] KRX: {cand['krx_after']} / NXT: {cand['nxt_after']}{cand['emergency_tag']}\n  [마스터타점] {cand['tajeom']} ({cand['score_str']})\n  [프로그램] {cand['program_text']}\n  [거래량] {cand['vol_status']}\n  [펀더멘털] {vip_data}")
 
-    return "\n\n".join(picks_info)
+    return "\n\n".join(picks_info), emergency_alerts
 
-def generate_morning_briefing(market_data, news_data, kor_context, liquidity_data):
+def generate_morning_briefing(market_data, news_data, kor_context, liquidity_data, emergency_alerts):
     print("🤖 AI 매크로 분석 및 능동형 리포트 작성 중...")
     client = genai.Client(api_key=GEMINI_API_KEY)
     
     is_empty_market = "기준 부합 종목 부재" in kor_context
     
+    # AI가 긴급 경고를 인지하고 브리핑에 반영하도록 지시
+    alert_instruction = ""
+    if emergency_alerts:
+        alert_text = "\n".join(emergency_alerts)
+        alert_instruction = f"\n   🚨 [최우선 분석 지시사항]\n   다음 종목들의 야간장 급락이 포착되었습니다. 반드시 브리핑 서두에 '시가 갭 대응 전략(손절선 타이트하게 잡기 등)'을 경고하십시오:\n   {alert_text}\n"
+
     if is_empty_market:
         stock_prompt_instruction = """
    [파트 2: 종목별 심층 분석 (파란색 뱃지)]
@@ -179,8 +207,8 @@ def generate_morning_briefing(market_data, news_data, kor_context, liquidity_dat
    ▫️ (전일 시장에서 강력한 주도주나 수급 유입 종목이 부재했음을 알리고, 현금 보존의 중요성과 다음 타점을 기다려야 하는 이유를 서술하십시오.)
 """
     else:
-        stock_prompt_instruction = """
-   [파트 2: 당일 주도주 능동 선정 및 심층 분석 (파란색 뱃지)]
+        stock_prompt_instruction = f"""
+   [파트 2: 당일 주도주 능동 선정 및 심층 분석 (파란색 뱃지)]{alert_instruction}
    🚨 (핵심 지시: 귀하에게 제공된 '[어제 포착된 퀀트 필터 통과 후보 풀]'을 분석하십시오. 
    특히 **[야간/시간외] (KRX 및 NXT)** 가격 변동 데이터를 반드시 읽고, 오늘 정규장 개장 시 발생할 '시가 갭(Gap)'을 예측하여 그에 따른 진입 시나리오를 구체적으로 제시해야 합니다.
    단기/스윙 상관없이 가장 완벽한 1개~3개만 '엄선'하십시오.)
@@ -218,15 +246,15 @@ def generate_morning_briefing(market_data, news_data, kor_context, liquidity_dat
    ▫️ (내용)
    {stock_prompt_instruction}
 """
-    for i in range(10):
+    # 💡 무한 루프 방지: 재시도 횟수 제한 및 대기 시간 축소 (10분 로딩 방지)
+    for i in range(3):
         try:
             response = client.models.generate_content(model='gemini-2.5-pro', contents=prompt)
             return response.text
         except Exception as e:
-            if "503" in str(e) or "429" in str(e) or "quota" in str(e).lower(): 
-                time.sleep(30 * (i + 1))
-            else: raise e
-    raise Exception("서버 응답 불가")
+            print(f"⚠️ 제미나이 API 호출 지연. 재시도 {i+1}/3... ({e})")
+            time.sleep(5) 
+    return "🚨 AI 리포트 생성 서버 응답 시간 초과로 작성에 실패했습니다."
 
 def parse_ai_json(text):
     try:
@@ -278,10 +306,13 @@ def batch_generate_briefings():
                 'name': name, 'code': code, 'curr_p': curr_p, 'tajeom': tajeom_clean, 'type': seed_tag
             })
 
+        # 💡 [무한 루핑 방지] 새벽 배치 시 종목 개수 20개로 컷오프 제한 (Timeout 방어)
+        cands_list = cands_list[:20] 
+
         client_gemini = genai.Client(api_key=GEMINI_API_KEY)
         results_to_save = [["종목코드", "브리핑", "목표가", "손절가"]]
         
-        print(f"총 {len(cands_list)}개 타점 유효 종목 브리핑 생성 시작...")
+        print(f"총 {len(cands_list)}개 타점 유효 종목 브리핑 생성 시작 (안정성을 위해 상위 20개 제한)...")
         
         for cand in cands_list:
             print(f" - [{cand['name']}] 브리핑 굽는 중...")
@@ -317,7 +348,7 @@ def batch_generate_briefings():
                 s_price = f"{int(data.get('stop_loss', 0)):,}원" if data.get('stop_loss') else "관망"
                 
                 results_to_save.append([f"'{cand['code']}", b_text, t_price, s_price])
-                time.sleep(2) 
+                time.sleep(1) # 대기 시간 축소
             except Exception as e:
                 print(f"   에러: {e}")
                 results_to_save.append([f"'{cand['code']}", "⚠️ 분석 오류", "0", "0"])
@@ -335,23 +366,28 @@ def batch_generate_briefings():
 if __name__ == "__main__":
     now_obj = datetime.datetime.now(KST)
     
-    # 💡 [구조 수정] 새벽 6시 대에는 시트용 종목 브리핑을 일괄적으로 먼저 구운 뒤, 텔레그램 발송까지 물 흐르듯 이어집니다.
     if now_obj.hour == 6:
         batch_generate_briefings()
         
-    # 배치 작업 완료 후 (혹은 6시 외의 정기 호출 시간대) 텔레그램 모닝 시황 발송 시스템 가동
     print("🚀 HYEOKS 능동형 모닝 브리핑 시스템 가동 시작...")
     liquidity_data = get_global_liquidity_data()
     market_data, news_data = get_us_market_summary()
-    kor_context = get_yesterday_korean_context()
     
-    # 💡 [안정성 보완] 데이터 수집 실패 시 구조적 예외 처리가 튕기지 않도록 단일화 처리
+    # 💡 튜플(Tuple) 구조 해제 수정
+    kor_context, emergency_alerts = get_yesterday_korean_context()
+    
     if "실패" in market_data or "에러" in kor_context or "에러" in liquidity_data:
         final_briefing = f"🚨 [HYEOKS 시스템 경고] 모닝 데이터 수집 에러\n\n[에러 내용]\n- 유동성(FRED): {liquidity_data}\n- 뉴스 수집: {market_data}\n- 한국장: {kor_context}\n\n※ 문제를 수정해주세요."
     else:
-        briefing_text = generate_morning_briefing(market_data, news_data, kor_context, liquidity_data)
+        briefing_text = generate_morning_briefing(market_data, news_data, kor_context, liquidity_data, emergency_alerts)
         today_str = now_obj.strftime('%Y년 %m월 %d일')
-        final_briefing = f"🌅 [HYEOKS 모닝 브리핑] - {today_str}\n\n{briefing_text}"
+        
+        # 💡 [긴급 알림 삽입] NXT 급락 종목이 있을 경우 텔레그램 메시지 최상단에 붉은색 경고 노출
+        if emergency_alerts:
+            alert_header = "🚨 [긴급] 시가 갭하락 대응 알림 🚨\n" + "\n".join(emergency_alerts) + "\n\n"
+            final_briefing = f"🌅 [HYEOKS 모닝 브리핑] - {today_str}\n\n{alert_header}{briefing_text}"
+        else:
+            final_briefing = f"🌅 [HYEOKS 모닝 브리핑] - {today_str}\n\n{briefing_text}"
     
     print("📲 텔레그램 발송 중...")
     clean_briefing = final_briefing.replace('**', '')       
