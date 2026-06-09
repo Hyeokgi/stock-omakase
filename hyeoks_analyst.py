@@ -41,16 +41,19 @@ def clean_emojis(text):
 
 def safe_generate_content(contents, is_fast=False):
     model_name = 'gemini-2.5-flash' if is_fast else 'gemini-2.5-pro'
-    for i in range(5): 
-        try: 
+    # 재시도 3회, 대기 최대 30초 (기존 5회 × 최대 50초 = 250초 → 3회 × 최대 30초 = 60초)
+    for i in range(3):
+        try:
             return client.models.generate_content(model=model_name, contents=contents)
         except Exception as e:
-            if "503" in str(e) or "429" in str(e) or "quota" in str(e).lower():
-                wait_time = 10 * (i + 1)
-                print(f"⚠️ 구글 API 지연. {wait_time}초 대기 후 재시도...")
+            err = str(e)
+            if "503" in err or "429" in err or "quota" in err.lower():
+                wait_time = 10 * (i + 1)  # 10초, 20초, 30초
+                print(f"⚠️ 구글 API 지연({i+1}/3). {wait_time}초 대기 후 재시도...")
                 time.sleep(wait_time)
-            else: raise e 
-    raise Exception("❌ 구글 서버 할당량 초과 또는 무응답으로 최종 실패")
+            else:
+                raise e
+    raise Exception("❌ 구글 API 3회 재시도 실패 - 다음 종목으로 진행")
 
 def parse_ai_json(text):
     try:
@@ -191,27 +194,36 @@ try:
         exit(0)
 
     def get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys, is_warning_market):
-        is_seed = "🌱" in tajeom_badge or "모아가기" in tajeom_badge
-        market_context = "🚨 현재 시장은 변동성이 큰 하락/횡보장입니다. 안정성을 최우선으로 고려하십시오." if is_warning_market else "현재 시장은 정상적인 스윙/돌파가 불가능한 장세입니다."
+        is_seed = "🌱" in tajeom_badge or "모아가기" in tajeom_badge or "DB_중장기" in tajeom_badge
+        is_active_buy = "외인집중" in tajeom_badge
+        market_context = "🚨 현재 시장은 변동성이 큰 하락/횡보장입니다. 안정성을 최우선으로 고려하십시오." if is_warning_market else "현재 시장은 정상적인 스윙/돌파가 가능한 장세입니다."
         
-        if is_seed:
+        if is_active_buy:
             guide_text = f"""
-            💡 [AI 매매 보류(Veto) 및 가격 결정 가이드: 중장기 모아가기(Accumulation) 전략]
+            💡 [AI 매매 보류(Veto) 및 가격 결정 가이드: 외인 집중배팅(Non-Program) 역발상 전략]
+            {market_context}
+            🚨 귀하는 세계 최고의 월스트리트 퀀트 애널리스트 집단입니다. 
+            1. 이 종목은 기계적인 프로그램 매도 폭탄 속에서도 외국인 액티브 자금이 강력하게 '개별 종목으로 집중 매집'하고 있는 보석 같은 종목입니다. (💎 외인집중 배지)
+            2. 지수 하락에 흔들리지 말고, 세력의 매집 단가를 유추하여 손절가를 넉넉하게 잡고, 1차/2차 분할 매수 타점을 제시하십시오.
+            3. "프로그램 매도에도 불구하고 찐외인 수급이 유입 중"이라는 역발상 논리를 브리핑에 반드시 포함하십시오.
+            """
+        elif is_seed:
+            guide_text = f"""
+            💡 [AI 매매 보류(Veto) 및 가격 결정 가이드: 중장기 모아가기(Accumulation) & DB_중장기 픽 전략]
             {market_context}
             🚨 귀하는 세계 최고의 월스트리트 퀀트 애널리스트 집단입니다. 
             1. 이 종목은 현재 고점 대비 조정을 받고 거래량이 마른 '씨앗(SEED)' 종목입니다. 시스템 기준가에 얽매이지 마십시오.
-            2. 손절가 설정: -3% 같은 짧은 비율이 아니라, 차트 상의 아주 넉넉하고 의미 있는 하단 바운더리(예: 이전 거대한 기준봉의 시가, 60일선, 쌍바닥 최저점)를 유추하여 단단하게 설정하십시오. 하락장일수록 지지선을 보수적으로(깊게) 잡으십시오.
+            2. 손절가 설정: -3% 같은 짧은 비율이 아니라, 차트 상의 아주 넉넉하고 의미 있는 하단 바운더리(예: 이전 거대한 기준봉의 시가, 60일선, 쌍바닥 최저점)를 유추하여 단단하게 설정하십시오.
             3. 매수 전략: 한 번에 몰빵하는 것이 아니라 "현재가 부근 1차 매수 후, ~원 부근(손절가 위)에서 2차 분할 매수"하는 시나리오를 브리핑에 포함하십시오.
-            4. 2중 검토(Chain of Thought): 이 종목이 정말 모아갈 가치가 있는지 두 번 생각하십시오. 만약 조정을 가장한 '완전한 우하향 폭포수' 이탈 차트라고 판단되면 목표가/손절가를 0으로 처리하고 관망(Veto)을 지시하십시오.
             """
         else:
             guide_text = f"""
             💡 [AI 매매 보류(Veto) 및 가격 결정 가이드: 단기/스윙 히트앤런 전략]
             {market_context}
             🚨 귀하는 세계 최고의 월스트리트 퀀트 애널리스트 집단입니다. 
-            1. 2중 검토(Chain of Thought) 거부권 행사: 제공된 데이터를 분석했을 때, 하락장에서 단기 모멘텀이 빠르게 소멸할 위험이 있거나, 윗꼬리가 너무 길거나(리스크), 거래대금이 빈약하여 상승 동력이 부족하다고 판단되면 억지로 매수 추천을 하지 마십시오.
+            1. 제공된 데이터를 분석했을 때, 하락장에서 단기 모멘텀이 빠르게 소멸할 위험이 있거나, 윗꼬리가 너무 길면 관망(Veto)을 지시하십시오.
                - 이 경우 briefing에 "⚠️ [매수 보류] {market_context} 단기 상승 동력 부족 및 리스크 과다로 관망 권장"이라고 적고, target_price와 stop_loss는 0으로 처리하십시오.
-            2. 가격 튜닝: 시스템 기준가를 참고하되, 하락장일 경우 손절을 매우 타이트하게(짧게) 잡고, 익절(목표가) 역시 짧게 끊어치는 보수적인 타점을 제시하십시오.
+            2. 가격 튜닝: 시스템 기준가를 참고하되, 하락장일 경우 손절을 매우 타이트하게 잡고, 익절(목표가) 역시 짧게 끊어치는 보수적인 타점을 제시하십시오.
             """
 
         return f"""
@@ -237,39 +249,39 @@ try:
         """
 
     if current_hour != 15:
-        print(f"▶ [{current_hour}시 모드] 메인 리포트 시간이 아니므로, 대기 중인 종목의 브리핑 및 가격 산출을 진행합니다.")
+        print(f"▶ [{current_hour}시 모드] 대기 중인 종목의 브리핑 및 가격 산출을 진행합니다.")
+        batch_updates = []
         for i, row in enumerate(db_rows[1:], start=2):
-            if len(row) > 9 and "리포트 발송 완료" not in str(row[9]):  
+            if len(row) > 9 and "리포트 발송 완료" not in str(row[9]):
                 stock_name = row[0] if len(row) > 0 else "알수없음"
                 print(f" - [{stock_name}] AI 전략 및 가격 산출 중...")
-                
-                curr_p = row[3] if len(row) > 3 else ''
-                tajeom_badge = row[8] if len(row) > 8 else ''
-                sugeup = row[11] if len(row) > 11 else ''
-                high_52 = row[12] if len(row) > 12 else ''
-                theme = row[5] if len(row) > 5 else ''
-                target_sys = row[14] if len(row) > 14 else ''
-                stop_sys = row[15] if len(row) > 15 else ''
-                
+                curr_p      = row[3]  if len(row) > 3  else ''
+                tajeom_badge= row[8]  if len(row) > 8  else ''
+                sugeup      = row[11] if len(row) > 11 else ''
+                high_52     = row[12] if len(row) > 12 else ''
+                theme       = row[5]  if len(row) > 5  else ''
+                target_sys  = row[14] if len(row) > 14 else ''
+                stop_sys    = row[15] if len(row) > 15 else ''
                 prompt = get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys, is_warning_market)
-                
                 try:
-                    res_text = safe_generate_content(prompt, is_fast=True).text
+                    res_text    = safe_generate_content(prompt, is_fast=True).text
                     parsed_data = parse_ai_json(res_text)
-                    
                     briefing_text = parsed_data.get("briefing", "브리핑 생성 에러")
-                    if not briefing_text.startswith("✅") and not briefing_text.startswith("⚠️"): 
+                    if not briefing_text.startswith("✅") and not briefing_text.startswith("⚠️"):
                         briefing_text = f"✅ [간단 브리핑] {briefing_text}"
-                    
                     target_val = f"{int(parsed_data.get('target_price', 0)):,}원" if parsed_data.get('target_price') else "관망"
-                    stop_val = f"{int(parsed_data.get('stop_loss', 0)):,}원" if parsed_data.get('stop_loss') else "관망"
-                    
-                    db_sheet.update_cell(i, 10, briefing_text)
-                    db_sheet.update_cell(i, 15, target_val)
-                    db_sheet.update_cell(i, 16, stop_val)
-                    time.sleep(3.5)
+                    stop_val   = f"{int(parsed_data.get('stop_loss',   0)):,}원" if parsed_data.get('stop_loss')   else "관망"
+                    # batch_update용 누적 (API 호출 최소화)
+                    batch_updates.append({'range': f'J{i}', 'values': [[briefing_text]]})
+                    batch_updates.append({'range': f'O{i}', 'values': [[target_val]]})
+                    batch_updates.append({'range': f'P{i}', 'values': [[stop_val]]})
+                    time.sleep(1.5)  # Gemini API 간격만 유지 (3.5초 → 1.5초)
                 except Exception as e:
-                    print(f"[{stock_name}] 브리핑/가격 산출 에러 발생 (건너뜀): {e}")
+                    print(f"[{stock_name}] 브리핑 에러 (건너뜀): {e}")
+        # 누적된 업데이트를 한 번에 전송 (개별 60회 → 1회)
+        if batch_updates:
+            db_sheet.batch_update(batch_updates)
+            print(f"✅ {len(batch_updates)//3}개 종목 batch_update 완료 (API 1회 호출)")
         print(f"🌅 {current_hour}시 전략 브리핑 완료! 프로그램 종료.")
         exit(0)
 
@@ -490,9 +502,6 @@ try:
     if best_short: time.sleep(15)
     report_mid, pick_mid = generate_deep_report("mid", best_mid, is_warning_market)
 
-    # ==========================================
-    # 6. 3시 마감 최신 DB_스캐너 동기화 및 브리핑 일괄 덮어쓰기
-    # ==========================================
     print("\n▶ [3단계] 최신 DB_스캐너 동기화 및 리포트 종목/나머지 종목 갱신...")
     latest_db_data = db_sheet.get_all_values()
 
@@ -508,64 +517,61 @@ try:
         return briefing_summary
 
     short_summary = extract_summary(report_short) if best_short else ""
-    mid_summary = extract_summary(report_mid) if best_mid else ""
+    mid_summary   = extract_summary(report_mid)   if best_mid   else ""
 
+    batch_updates_15 = []
     for i, r in enumerate(latest_db_data[1:], start=2):
         if len(r) > 9:
-            code = str(r[2]).replace("'", "").strip().zfill(6)
+            code       = str(r[2]).replace("'", "").strip().zfill(6)
             stock_name = r[0] if len(r) > 0 else "알수없음"
 
             if best_short and code == best_short['code']:
-                print(f" - [{stock_name}] 리포트 정보 및 가격 시트에 업데이트 중...")
-                db_sheet.update_cell(i, 10, short_summary)
+                print(f" - [{stock_name}] 리포트 정보 업데이트...")
+                batch_updates_15.append({'range': f'J{i}', 'values': [[short_summary]]})
                 if pick_short:
-                    db_sheet.update_cell(i, 15, f"{pick_short['target']:,}원")
-                    db_sheet.update_cell(i, 16, f"{pick_short['stop']:,}원")
-                time.sleep(3.5)
+                    batch_updates_15.append({'range': f'O{i}', 'values': [[f"{pick_short['target']:,}원"]]})
+                    batch_updates_15.append({'range': f'P{i}', 'values': [[f"{pick_short['stop']:,}원"]]})
                 continue
-            
+
             if best_mid and code == best_mid['code']:
-                print(f" - [{stock_name}] 리포트 정보 및 가격 시트에 업데이트 중...")
-                db_sheet.update_cell(i, 10, mid_summary)
+                print(f" - [{stock_name}] 리포트 정보 업데이트...")
+                batch_updates_15.append({'range': f'J{i}', 'values': [[mid_summary]]})
                 if pick_mid:
-                    db_sheet.update_cell(i, 15, f"{pick_mid['target']:,}원")
-                    db_sheet.update_cell(i, 16, f"{pick_mid['stop']:,}원")
-                time.sleep(3.5)
+                    batch_updates_15.append({'range': f'O{i}', 'values': [[f"{pick_mid['target']:,}원"]]})
+                    batch_updates_15.append({'range': f'P{i}', 'values': [[f"{pick_mid['stop']:,}원"]]})
                 continue
-            
+
             if "리포트 발송 완료" not in str(r[9]):
-                print(f" - [{stock_name}] AI 전략 및 가격 산출 중...")
-                
-                curr_p = r[3] if len(r) > 3 else ''
-                tajeom_badge = r[8] if len(r) > 8 else ''
-                sugeup = r[11] if len(r) > 11 else ''
-                high_52 = r[12] if len(r) > 12 else ''
-                theme = r[5] if len(r) > 5 else ''
-                target_sys = r[14] if len(r) > 14 else ''
-                stop_sys = r[15] if len(r) > 15 else ''
-                
+                print(f" - [{stock_name}] AI 전략 산출 중...")
+                curr_p       = r[3]  if len(r) > 3  else ''
+                tajeom_badge = r[8]  if len(r) > 8  else ''
+                sugeup       = r[11] if len(r) > 11 else ''
+                high_52      = r[12] if len(r) > 12 else ''
+                theme        = r[5]  if len(r) > 5  else ''
+                target_sys   = r[14] if len(r) > 14 else ''
+                stop_sys     = r[15] if len(r) > 15 else ''
                 prompt = get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys, is_warning_market)
-                
                 try:
-                    res_text = safe_generate_content(prompt, is_fast=True).text
+                    res_text    = safe_generate_content(prompt, is_fast=True).text
                     parsed_data = parse_ai_json(res_text)
-                    
                     briefing_text = parsed_data.get("briefing", "브리핑 생성 에러")
-                    if not briefing_text.startswith("✅") and not briefing_text.startswith("⚠️"): 
+                    if not briefing_text.startswith("✅") and not briefing_text.startswith("⚠️"):
                         briefing_text = f"✅ [간단 브리핑] {briefing_text}"
-                    
                     raw_target = str(parsed_data.get('target_price', '0')).replace(',', '').replace('원', '')
-                    raw_stop = str(parsed_data.get('stop_loss', '0')).replace(',', '').replace('원', '')
-                    
+                    raw_stop   = str(parsed_data.get('stop_loss',   '0')).replace(',', '').replace('원', '')
                     target_val = f"{int(raw_target):,}원" if raw_target.isdigit() and int(raw_target) > 0 else "관망"
-                    stop_val = f"{int(raw_stop):,}원" if raw_stop.isdigit() and int(raw_stop) > 0 else "관망"
-                    
-                    db_sheet.update_cell(i, 10, briefing_text)
-                    db_sheet.update_cell(i, 15, target_val)
-                    db_sheet.update_cell(i, 16, stop_val)
-                    time.sleep(3.5)
+                    stop_val   = f"{int(raw_stop):,}원"   if raw_stop.isdigit()   and int(raw_stop)   > 0 else "관망"
+                    batch_updates_15.append({'range': f'J{i}', 'values': [[briefing_text]]})
+                    batch_updates_15.append({'range': f'O{i}', 'values': [[target_val]]})
+                    batch_updates_15.append({'range': f'P{i}', 'values': [[stop_val]]})
+                    time.sleep(1.5)  # Gemini API 간격
                 except Exception as e:
-                    print(f"[{stock_name}] 브리핑/가격 산출 에러 발생 (건너뜀): {e}")
+                    print(f"[{stock_name}] 브리핑 에러 (건너뜀): {e}")
+
+    # 모든 DB_스캐너 업데이트를 한 번에 전송
+    if batch_updates_15:
+        db_sheet.batch_update(batch_updates_15)
+        print(f"✅ DB_스캐너 batch_update 완료 ({len(batch_updates_15)//3}개 종목, API 1회)")
 
     # ==========================================
     # 7. 가상계좌 업데이트
