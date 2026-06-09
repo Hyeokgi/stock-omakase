@@ -238,18 +238,25 @@ def get_real_money_themes():
                 stocks = []
                 type_5_table = soup.find('table', {'class': 'type_5'})
                 if not type_5_table: continue
+                # 💡 [거래대금 버그 근본 수정] 부분 문자열 매칭으로 컬럼 인덱스 탐색
+                # 폴백은 5월 14일 실전 검증된 값(등락률=4, 거래대금=8) 사용
+                # ⚠️ 이전 패치의 폴백 val_idx=7 은 '고가' 컬럼을 읽는 치명적 오류였음
+                name_idx, rate_idx, val_idx = 0, 4, 8  # 5월 14일 검증된 안전 기본값
                 thead = type_5_table.find('thead')
                 if thead:
                     headers_text = [th.text.strip() for th in thead.find_all('th')]
-                    try:
-                        name_idx = headers_text.index('종목명')
-                        rate_idx = headers_text.index('등락률')
-                        val_idx = headers_text.index('거래대금')
-                    except ValueError:
-                        # 💡 네이버 실제 컬럼 인덱스에 맞게 매핑 오류 해결 (거래대금=7)
-                        name_idx, rate_idx, val_idx = 0, 3, 7
-                else:
-                    name_idx, rate_idx, val_idx = 0, 3, 7
+                    # 부분 문자열 매칭: '등락률(%)', '등락률' 모두 대응
+                    def find_col(headers, keyword):
+                        for i, h in enumerate(headers):
+                            if keyword in h:
+                                return i
+                        return None
+                    n = find_col(headers_text, '종목명')
+                    r = find_col(headers_text, '등락률')
+                    v = find_col(headers_text, '거래대금')
+                    if n is not None and r is not None and v is not None:
+                        name_idx, rate_idx, val_idx = n, r, v
+                    # thead는 있지만 컬럼 탐색 실패 시 → 안전 기본값 유지
                 for tr in type_5_table.find_all('tr'):
                     tds = tr.find_all('td')
                     if len(tds) > max(name_idx, rate_idx, val_idx):
@@ -260,12 +267,18 @@ def get_real_money_themes():
                             s_code = f"'{a_tag['href'].split('code=')[-1]}"
                             rate_str = tds[rate_idx].text.strip()
                             val_str = tds[val_idx].text.strip()
-                            
+
                             if '%' not in rate_str or '-' in rate_str or '0.00' in rate_str: continue
                             rate_num = float(rate_str.replace('%', '').replace('+', '').replace(',', '').strip())
                             val_num = int(val_str.replace(',', '').strip())
-                            
-                            # 💡 등락률과 거래대금을 먼저 확인 후 통과한 종목만 시가총액을 조회하도록 하여 속도 수십 배 향상 및 데이터 꼬임 방지
+
+                            # 💡 val_num 이상값 방어: 거래대금이 아닌 컬럼(고가 등)을 읽으면
+                            # 수천~수만 단위의 주가값이 들어옴 → 억 단위로 변환 시 비정상적으로 작아짐
+                            # 거래대금(백만원 단위)은 통상 1,000 이상이므로 1,000 미만이면 컬럼 오독으로 간주
+                            if val_num < 1000:
+                                continue  # 거래대금 오독(고가/저가 등) 방어
+
+                            # 등락률과 거래대금을 먼저 확인 후 통과한 종목만 시가총액 조회 (속도 향상)
                             if rate_num >= TARGET_PERCENT and val_num > 0:
                                 market_cap_num = get_market_cap(s_code.replace("'", ""))
                                 if market_cap_num >= 1000:
