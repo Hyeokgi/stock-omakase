@@ -1,4 +1,4 @@
-import requests, gspread, time
+import requests, gspread, time, re
 import xml.etree.ElementTree as ET
 from oauth2client.service_account import ServiceAccountCredentials
 import urllib3
@@ -13,19 +13,19 @@ doc = gc.open_by_url(SHEET_URL)
 raw_sheet = doc.worksheet("수급_Raw")
 data = raw_sheet.get_all_values()
 
-print("🚑 [긴급 복구] 5월 14일 이후 수급_Raw 거래대금 강제 복원 시작...")
+print("🚑 [긴급 복구] 5/14 이후 꼬인 수급_Raw 거래대금(억원) 정밀 복원 시작...")
 
 rows = data[1:]
-target_date = "2026-05-14"
 session = requests.Session()
 cache = {}
 updated_count = 0
 
-for i, row in enumerate(rows):
+for row in rows:
     if len(row) < 7: continue
-    r_date = row[0].strip()
+    # 눈에 보이지 않는 공백, 특수기호 싹 다 날리고 숫자(YYYYMMDD)만 추출
+    raw_date = re.sub(r'[^0-9]', '', row[0]) 
     
-    if r_date >= target_date:
+    if raw_date >= "20260514": # 5월 14일 이후 데이터면 무조건 작동
         code = row[4].replace("'", "").strip().zfill(6)
         
         if code not in cache:
@@ -36,10 +36,12 @@ for i, row in enumerate(rows):
                 history = {}
                 for item in root.findall(".//item"):
                     d = item.get("data").split("|")
-                    f_date = f"{d[0][:4]}-{d[0][4:6]}-{d[0][6:8]}"
+                    f_date = d[0] # YYYYMMDD 형태
                     close_p = int(d[4])
                     vol = int(d[5])
-                    tv_eok = (close_p * vol) // 100_000_000 # 억원 단위 환산
+                    
+                    # 억원 단위 거래대금 계산 (종가 * 거래량 / 1억)
+                    tv_eok = (close_p * vol) // 100_000_000
                     history[f_date] = tv_eok
                 cache[code] = history
                 time.sleep(0.1)
@@ -47,17 +49,16 @@ for i, row in enumerate(rows):
                 print(f"⚠️ {row[3]} 데이터 수집 실패: {e}")
                 cache[code] = {}
 
-        correct_val = cache[code].get(r_date)
+        correct_val = cache[code].get(raw_date)
         if correct_val is not None and correct_val > 0:
-            old_val = row[6]
-            # [핵심] 기존 조건 무시하고 강제로 무조건 덮어씌움
-            row[6] = str(correct_val)
-            if str(old_val) != str(correct_val):
+            old_val = str(row[6]).replace(',', '') # 기존 데이터
+            row[6] = str(correct_val) # 무조건 덮어쓰기
+            if old_val != str(correct_val):
                 updated_count += 1
-                print(f"✅ [{r_date}] {row[3]} : 비정상({old_val}) -> 정상({correct_val}억) 복구 완료")
+                print(f"✅ [{raw_date}] {row[3]} : 비정상({old_val}) -> 정상({correct_val}억) 복구 완료")
 
 if updated_count > 0:
-    # 안전하게 덮어쓰기
+    # 가장 안전한 구글 시트 업데이트 방식
     raw_sheet.update(values=rows, range_name="A2", value_input_option="USER_ENTERED")
     print(f"\n🎉 총 {updated_count}건의 거래대금 데이터가 완벽하게 복구되었습니다!")
 else:
