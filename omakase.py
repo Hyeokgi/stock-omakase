@@ -238,51 +238,102 @@ def get_real_money_themes():
                 stocks = []
                 type_5_table = soup.find('table', {'class': 'type_5'})
                 if not type_5_table: continue
-                # 💡 [거래대금 버그 근본 수정] 부분 문자열 매칭 + 이중 안전 방어
-                # 폴백은 0608 원본 실전 검증값: name=0, rate=4, val=6
-                # ⚠️ 제미나이 패치(val=7)는 고가 컬럼을 읽는 오류, 내 이전 패치(val=8)는 현재가를 읽는 오류
-                name_idx, rate_idx, val_idx = 0, 4, 6  # 0608 원본 검증된 안전 기본값
+                # ====================================================
+                # 💡 [거래대금 컬럼 근본 수정] thead 텍스트 우선 탐색
+                # GitHub Actions에서 네이버 직접 접근 불가로 인덱스 추측이
+                # 반복 실패함 → thead 텍스트 기반 탐색을 1순위로 사용
+                # 폴백은 숫자 크기 기반 자동 추론 (인덱스 하드코딩 완전 제거)
+                # ====================================================
+                name_idx, rate_idx, val_idx = None, None, None
+
+                # 1순위: thead 텍스트 부분 매칭
                 thead = type_5_table.find('thead')
                 if thead:
                     headers_text = [th.text.strip() for th in thead.find_all('th')]
-                    # 부분 문자열 매칭: '등락률(%)', '등락률', '거래대금(백만)' 등 모두 대응
-                    def find_col(headers, keyword):
-                        for i, h in enumerate(headers):
-                            if keyword in h:
-                                return i
-                        return None
-                    n = find_col(headers_text, '종목명')
-                    r = find_col(headers_text, '등락률')
-                    v = find_col(headers_text, '거래대금')
-                    if n is not None and r is not None and v is not None:
-                        name_idx, rate_idx, val_idx = n, r, v
-                    # 탐색 실패 시 → 안전 기본값 유지
+                    for i, h in enumerate(headers_text):
+                        if '종목명' in h: name_idx = i
+                        if '등락률' in h: rate_idx = i
+                        if '거래대금' in h: val_idx = i
+
+                # 2순위: tbody에 th행이 있는 경우 (thead 없는 구조)
+                if val_idx is None:
+                    for tr in type_5_table.find_all('tr'):
+                        ths = tr.find_all('th')
+                        if len(ths) >= 3:
+                            for i, th in enumerate(ths):
+                                txt = th.text.strip()
+                                if '종목명' in txt: name_idx = i
+                                if '등락률' in txt: rate_idx = i
+                                if '거래대금' in txt: val_idx = i
+                            if val_idx is not None:
+                                break
+
+                # 3순위: 첫 번째 데이터 행의 td값 크기로 거래대금 컬럼 자동 추론
+                # 거래대금(백만원) 수십만~수백만 >> 주가(수천~수십만) >> 등락률(한 자리)
+                if val_idx is None:
+                    name_idx = name_idx if name_idx is not None else 0
+                    rate_idx = rate_idx if rate_idx is not None else None
+                    for tr in type_5_table.find_all('tr'):
+                        tds = tr.find_all('td')
+                        if len(tds) < 4: continue
+                        a_tag_check = tds[name_idx].find('a') if len(tds) > name_idx else None
+                        if not a_tag_check: continue
+                        # 각 td의 숫자 크기 확인: 가장 큰 숫자 컬럼 = 거래대금
+                        td_nums = {}
+                        for ci, td in enumerate(tds):
+                            raw_txt = td.text.strip().replace(',', '')
+                            if raw_txt.replace('.', '').isdigit():
+                                td_nums[ci] = float(raw_txt)
+                        if td_nums:
+                            # 등락률: % 포함 컬럼 탐색
+                            if rate_idx is None:
+                                for ci, td in enumerate(tds):
+                                    if '%' in td.text:
+                                        rate_idx = ci
+                                        break
+                            # 거래대금: 숫자 중 가장 큰 값 (단, 등락률/현재가 컬럼 제외)
+                            exclude = {rate_idx} if rate_idx is not None else set()
+                            candidates = {ci: v for ci, v in td_nums.items() if ci not in exclude and v > 10000}
+                            if candidates:
+                                val_idx = max(candidates, key=lambda ci: candidates[ci])
+                                print(f"  🔍 [거래대금 자동탐색] 헤더 없음 → td[{val_idx}] 자동선정 (값: {candidates[val_idx]:,.0f})")
+                        break
+
+                # 최후 보루: 탐색 완전 실패 시 경고 출력 후 해당 테마 skip
+                if val_idx is None or rate_idx is None:
+                    print(f"  ⚠️ [{theme['name']}] 거래대금/등락률 컬럼 탐색 실패 → skip")
+                    continue
+
+                # 디버그: 첫 실행 시 컬럼 구조 확인용 (첫 번째 테마만 출력)
+                if not theme_data_list:
+                    print(f"  📋 [컬럼 탐색 결과] 종목명={name_idx}, 등락률={rate_idx}, 거래대금={val_idx}")
+
                 for tr in type_5_table.find_all('tr'):
                     tds = tr.find_all('td')
-                    if len(tds) > max(name_idx, rate_idx, val_idx):
-                        try:
-                            a_tag = tds[name_idx].find('a')
-                            if not a_tag: continue
-                            s_name = a_tag.text.strip()
-                            s_code = f"'{a_tag['href'].split('code=')[-1]}"
-                            rate_str = tds[rate_idx].text.strip()
-                            val_str = tds[val_idx].text.strip()
+                    if len(tds) <= max(name_idx, rate_idx, val_idx): continue
+                    try:
+                        a_tag = tds[name_idx].find('a')
+                        if not a_tag: continue
+                        s_name = a_tag.text.strip()
+                        s_code = f"'{a_tag['href'].split('code=')[-1]}"
+                        rate_str = tds[rate_idx].text.strip()
+                        val_str  = tds[val_idx].text.strip()
 
-                            if '%' not in rate_str or '-' in rate_str or '0.00' in rate_str: continue
-                            rate_num = float(rate_str.replace('%', '').replace('+', '').replace(',', '').strip())
-                            val_num = int(val_str.replace(',', '').strip())
+                        if '%' not in rate_str or '-' in rate_str or '0.00' in rate_str: continue
+                        rate_num = float(rate_str.replace('%', '').replace('+', '').replace(',', '').strip())
+                        val_num  = int(val_str.replace(',', '').strip())
 
-                            # 💡 이상값 방어: 거래대금(백만원)은 통상 1,000 이상
-                            # 주가(수백~수만원)가 들어오면 val_num < 1000 → 컬럼 오독 차단
-                            if val_num < 1000:
-                                continue
+                        # 거래대금 이상값 방어:
+                        # - 거래대금(백만원)은 최소 수만 이상 (소형주도 10,000백만=100억 이상)
+                        # - 주가·등락률 수치(수백~수만)가 들어오면 차단
+                        if val_num < 10_000:
+                            continue
 
-                            # 등락률+거래대금 확인 후 통과 종목만 시가총액 조회
-                            if rate_num >= TARGET_PERCENT and val_num > 0:
-                                market_cap_num = get_market_cap(s_code.replace("'", ""))
-                                if market_cap_num >= 1000:
-                                    stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
-                        except: continue
+                        if rate_num >= TARGET_PERCENT and val_num > 0:
+                            market_cap_num = get_market_cap(s_code.replace("'", ""))
+                            if market_cap_num >= 1000:
+                                stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
+                    except: continue
                 stocks_val = sorted(stocks, key=lambda x: x['value'], reverse=True)[:5]
                 if len(stocks_val) >= 2:
                     stocks_rate = sorted(stocks_val, key=lambda x: x['rate'], reverse=True)
