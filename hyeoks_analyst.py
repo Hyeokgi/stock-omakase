@@ -31,8 +31,12 @@ current_hour = now_kst.hour
 print(f"🤖 [HYEOKS 리서치 센터] 봇 가동 (현재 KST {now_kst.strftime('%H:%M:%S')})")
 
 try:
-    # 💡 [구조 변경] 초기화 시 timeout 분쟁을 피하기 위해 순수하게 API 키만 전달하여 클라이언트를 생성합니다.
-    client = genai.Client(api_key=GEMINI_API_KEY)
+    # 💡 [핵심 해결] google-genai 최신 SDK의 timeout 단위는 '초(s)'가 아니라 '밀리초(ms)'입니다!
+    # 120초(120,000ms)로 넉넉하게 설정하여 데드라인 400 에러를 완전히 차단합니다.
+    client = genai.Client(
+        api_key=GEMINI_API_KEY, 
+        http_options=types.HttpOptions(timeout=120000)
+    )
 except Exception as e:
     print(f"❌ API 초기화 실패: {e}"); exit(1)
 
@@ -44,17 +48,11 @@ def clean_emojis(text):
 def safe_generate_content(contents, is_fast=False):
     model_name = 'gemini-2.5-flash' if is_fast else 'gemini-2.5-pro'
     
-    # 💡 [핵심 픽스] API 호출 시 안전하게 작동하도록 types.GenerateContentConfig를 통해 120초 타점 타임아웃을 주입합니다.
-    timeout_config = types.GenerateContentConfig(
-        http_options={"timeout": 120.0}
-    )
-    
     for i in range(3):
         try:
             return client.models.generate_content(
                 model=model_name,
-                contents=contents,
-                config=timeout_config
+                contents=contents
             )
         except Exception as e:
             err = str(e)
@@ -97,7 +95,7 @@ def get_vip_deep_dive_data(code, kis_token):
     if not (kis_token and KIS_APP_KEY and KIS_APP_SECRET): return "PER: N/A / PBR: N/A"
     try:
         headers = {"authorization": f"Bearer {kis_token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "custtype": "P", "tr_id": "FHKST01010100"}
-        res = requests.get("https://openapi.koreainwestment.com:9443/uapi/dynamic-stock/v1/quotations/inquire-price", 
+        res = requests.get("https://openapi.koreainvestment.com:9443/uapi/dynamic-stock/v1/quotations/inquire-price", 
                           headers=headers, params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}, verify=False, timeout=3).json()
         out = res.get("output", {})
         return f"PER: {out.get('per', 'N/A')} / PBR: {out.get('pbr', 'N/A')}"
