@@ -242,8 +242,10 @@ def get_real_money_themes():
                 type_5_table = soup.find('table', {'class': 'type_5'})
                 if not type_5_table: continue
                 
-                # 💡 [핵심 픽스] 네이버 테마 페이지 고정 인덱스 (편입사유 열 추가 반영)
-                # 0:종목명, 4:등락률, 8:거래대금(백만)
+               # ====================================================
+                # 💡 [거래대금 및 속도 개선] 복잡한 탐색 다 지우고 하드코딩
+                # 네이버 테마 페이지 고정 열: 종목명(0), 등락률(4), 거래대금(8)
+                # ====================================================
                 name_idx, rate_idx, val_idx = 0, 4, 8
                 
                 for tr in type_5_table.find_all('tr'):
@@ -256,13 +258,13 @@ def get_real_money_themes():
                             s_code = f"'{a_tag['href'].split('code=')[-1]}"
                             
                             rate_str = tds[rate_idx].text.strip()
-                            val_str  = tds[val_idx].text.strip() # 무조건 거래대금 타격
+                            val_str  = tds[val_idx].text.strip() # td[8] 무조건 거래대금(백만) 타격
 
                             if '%' not in rate_str or '-' in rate_str or '0.00' in rate_str: continue
                             rate_num = float(rate_str.replace('%', '').replace('+', '').replace(',', '').strip())
                             val_num  = int(val_str.replace(',', '').strip())
 
-                            # 💡 거래대금 최소 50억(5000백만원) 이상인 진짜 종목만 선별 (잡주 사전 차단)
+                            # 💡 거래대금 50억(5000백만원) 이상인 종목만 1차 통과 (잡주 차단)
                             if rate_num >= TARGET_PERCENT and val_num >= 5000:
                                 market_cap_num = get_market_cap(s_code.replace("'", ""))
                                 if market_cap_num >= 1000:
@@ -293,7 +295,7 @@ def get_real_money_themes():
             # 💡 [핵심 픽스] 1등 거래대금이 2등보다 5배 이상 크면 '개별주'로 간주하여 테마 무효화
             if len(merged_stocks_val) >= 2:
                 if merged_stocks_val[0]['value'] >= merged_stocks_val[1]['value'] * 5:
-                    print(f"⚠️ [{merged_name}] 1등이 2등보다 5배 이상 커서 개별주로 강등(테마 배제)합니다.")
+                    print(f"⚠️ [{merged_name}] 1등 대장주가 2등보다 거래대금이 5배 이상 커서 개별주로 강등(테마 배제)합니다.")
                     continue
             
             merged_stocks_rate = sorted(merged_stocks_val, key=lambda x: x['rate'], reverse=True)
