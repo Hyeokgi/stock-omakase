@@ -1591,16 +1591,23 @@ if __name__ == "__main__":
     global_state.super_leader_count = 0
     global_state.platform_leader_count = 0
 
-    df_theme, is_market_closed, all_theme_map = get_real_money_themes()
+    # 💡 [핵심] 장 종료 여부와 상관없이 무조건 True로 강제하여 분석 진행
+    is_market_closed = False 
+    
+    # 💡 [필수] 테마 분석 로직에서 수동으로 False를 강제하여 진행
+    df_theme, _, all_theme_map = get_real_money_themes()
+    
     df_news, df_naver, df_main_news = get_news_keywords(), get_naver_search_ranking(), get_naver_main_news()
-
-    try:
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
-        doc = gspread.authorize(creds).open_by_url(SHEET_URL)
-        update_google_sheet(doc, df_theme, df_news, df_naver, df_main_news, is_market_closed)
-    except Exception as e:
-        print(f"❌ 메인 실행부 초기화 에러: {e}")
+    
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
+    doc = gspread.authorize(creds).open_by_url(SHEET_URL)
+    
+    update_google_sheet(doc, df_theme, df_news, df_naver, df_main_news, is_market_closed)
+    update_technical_data(df_theme, all_theme_map)
+    manage_schedule_sheet(schedules=get_market_schedule())
+    
+    print(f"🎉 작업 완료! (현재 KST {datetime.datetime.now(KST).strftime('%H:%M:%S')})")
 
     today_schedules = get_market_schedule()
     manage_schedule_sheet(schedules=today_schedules)
