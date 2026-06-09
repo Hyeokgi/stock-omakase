@@ -1,11 +1,14 @@
-# 파일명: recovery_raw.py (딱 한 번만 실행하세요)
 import requests, gspread, time
 import xml.etree.ElementTree as ET
 from oauth2client.service_account import ServiceAccountCredentials
+import urllib3
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit"
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-gc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope))
+creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
+gc = gspread.authorize(creds)
 doc = gc.open_by_url(SHEET_URL)
 raw_sheet = doc.worksheet("수급_Raw")
 data = raw_sheet.get_all_values()
@@ -19,6 +22,7 @@ cache = {}
 updated_count = 0
 
 for row in rows:
+    # row 포맷: [0]날짜, [1]순위, [2]테마명, [3]종목명, [4]종목코드, [5]등락률, [6]거래대금
     if len(row) < 7: continue
     r_date = row[0].strip()
     
@@ -27,9 +31,8 @@ for row in rows:
         
         if code not in cache:
             try:
-                # 네이버 과거 차트 API를 통해 해당 종목의 과거 시세/거래량 추출
                 url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=60&requestType=0"
-                res = session.get(url, verify=False, timeout=3)
+                res = session.get(url, verify=False, timeout=5)
                 root = ET.fromstring(res.text)
                 history = {}
                 for item in root.findall(".//item"):
@@ -38,7 +41,7 @@ for row in rows:
                     close_p = int(d[4])
                     vol = int(d[5])
                     
-                    # HYEOKS 퀀트와 동일한 거래대금 산출 (종가 * 거래량 / 1억)
+                    # 억원 단위 거래대금 계산 (종가 * 거래량 / 1억)
                     tv_eok = (close_p * vol) // 100_000_000
                     history[f_date] = tv_eok
                 cache[code] = history
@@ -48,16 +51,16 @@ for row in rows:
                 cache[code] = {}
 
         correct_val = cache[code].get(r_date)
-        if correct_val is not None:
+        if correct_val is not None and correct_val > 0:
             old_val = row[6]
             if str(old_val) != str(correct_val):
-                row[6] = str(correct_val) # 인덱스 6 (거래대금) 업데이트
+                row[6] = str(correct_val)
                 updated_count += 1
-                print(f"✅ [{r_date}] {row[3]} ({code}) : 비정상 데이터({old_val}) -> 정상 거래대금({correct_val}억) 복구 완료")
+                print(f"✅ [{r_date}] {row[3]} ({code}) : 비정상({old_val}) -> 정상({correct_val}억) 복구 완료")
 
 if updated_count > 0:
-    raw_sheet.batch_clear(['A2:Z'])
-    raw_sheet.update(range_name="A2", values=rows, value_input_option="USER_ENTERED")
-    print(f"\n🎉 총 {updated_count}건의 거래대금 데이터가 완벽하게 복구되어 구글 시트에 저장되었습니다!")
+    # 가장 안전한 구글 시트 업데이트 방식
+    raw_sheet.update(values=rows, range_name="A2", value_input_option="USER_ENTERED")
+    print(f"\n🎉 총 {updated_count}건의 거래대금 데이터가 완벽하게 복구되었습니다!")
 else:
     print("\n✅ 수정할 데이터가 없거나 이미 모두 정상입니다.")
