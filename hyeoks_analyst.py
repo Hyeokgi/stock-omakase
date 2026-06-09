@@ -30,7 +30,8 @@ current_hour = now_kst.hour
 print(f"🤖 [HYEOKS 리서치 센터] 봇 가동 (현재 KST {now_kst.strftime('%H:%M:%S')})")
 
 try:
-    client = genai.Client(api_key=GEMINI_API_KEY)
+    # 💡 [문법 교정] http_options(타임아웃) 설정을 클라이언트 초기화 단계로 이동하여 전역 적용 및 TypeError 완전 차단
+    client = genai.Client(api_key=GEMINI_API_KEY, http_options={"timeout": 120})
 except Exception as e:
     print(f"❌ API 초기화 실패: {e}"); exit(1)
 
@@ -41,20 +42,17 @@ def clean_emojis(text):
 
 def safe_generate_content(contents, is_fast=False):
     model_name = 'gemini-2.5-flash' if is_fast else 'gemini-2.5-pro'
-    # 재시도 3회 / 대기 최대 30초 / 전체 응답 타임아웃 120초
-    import httpx
     for i in range(3):
         try:
             return client.models.generate_content(
                 model=model_name,
-                contents=contents,
-                http_options={"timeout": 120}   # 120초 무응답이면 즉시 예외
+                contents=contents
             )
         except Exception as e:
             err = str(e)
             if "503" in err or "429" in err or "quota" in err.lower() or "timeout" in err.lower():
-                wait_time = 10 * (i + 1)   # 10초, 20초, 30초
-                print(f"⚠️ API 지연({i+1}/3). {wait_time}초 대기...")
+                wait_time = 10 * (i + 1)
+                print(f"⚠️ API 지연({i+1}/3). {wait_time}초 대기 후 재시도...")
                 time.sleep(wait_time)
             else:
                 raise e
@@ -91,7 +89,7 @@ def get_vip_deep_dive_data(code, kis_token):
     if not (kis_token and KIS_APP_KEY and KIS_APP_SECRET): return "PER: N/A / PBR: N/A"
     try:
         headers = {"authorization": f"Bearer {kis_token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "custtype": "P", "tr_id": "FHKST01010100"}
-        res = requests.get("https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price", 
+        res = requests.get("https://openapi.koreainvestment.com:9443/uapi/dynamic-stock/v1/quotations/inquire-price", 
                           headers=headers, params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}, verify=False, timeout=3).json()
         out = res.get("output", {})
         return f"PER: {out.get('per', 'N/A')} / PBR: {out.get('pbr', 'N/A')}"
@@ -122,13 +120,16 @@ def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
         print(f"⚠️ [{sheet_name}] 정렬 실패: {e}")
 
 # ==========================================
-# 💡 역사적 수급 DNA 검증 함수 (개별 최고 700억 / 당시 테마 2000억)
+# 💡 역사적 수급 DNA 검증 함수 (하락장 유연화 장착)
 # ==========================================
-def validate_stock_historical_dna(cand, raw_theme_daily_map):
+def validate_stock_historical_dna(cand, raw_theme_daily_map, is_warning_market):
     code = cand['code']
     name = cand['name']
     theme_raw = cand.get('theme_name', '')
     clean_theme = theme_raw.replace("🆕[당일]", "").replace("🕰️[과거]", "").split(' (대장:')[0].strip()
+    
+    # 💡 [하락장 고갈 방지 가드] 하락세나 조정 장세일 때는 역사적 대금 허들을 700억에서 300억으로 낮춰 정예주 실종을 방어합니다.
+    min_tv_threshold = 30_000_000_000 if is_warning_market else 70_000_000_000
     
     local_session = requests.Session()
     try:
@@ -146,11 +147,9 @@ def validate_stock_historical_dna(cand, raw_theme_daily_map):
             vol = int(data[5])
             
             day_tv_krw = close_p * vol
-            if day_tv_krw >= 70_000_000_000:  # 1. 역사적 일일 최고 거래대금 700억 이상 조건 충증
-                # 2. 당일 소속 테마 전체 거래대금 누적 합산 2000억 이상 검증
+            if day_tv_krw >= min_tv_threshold:  # 역사적 일일 최고 거래대금 가변 충족 조건
                 theme_val_eok = raw_theme_daily_map.get((f_date, clean_theme), 0)
                 if theme_val_eok >= 2000 or theme_val_eok == 0:
-                    # 누적 데이터가 미처 없는 날이거나 조건 충족 시 패스 허용
                     has_qualified_day = True
                     break
                     
@@ -317,18 +316,47 @@ try:
     except Exception as e:
         print(f"⚠️ 역사적 주도 테마 대금 연산 보조맵 생성 누락: {e}")
 
-    tech_data = doc.worksheet("주가데이터_보조").get_all_values()[1:]
+    helper_data = doc.worksheet("주가데이터_보조").get_all_values()
+    tech_data_headers = [h.strip() for h in helper_data[0]]
+    tech_data = helper_data[1:]
+    
+    # ============================================================
+    # 🔍 [핵심 보완] 명칭 기반 인덱스 자동 검색기 (열 밀림 파괴 가드 장착)
+    # ============================================================
+    def find_column_index(keywords, default_idx):
+        for kw in keywords:
+            for idx, h in enumerate(tech_data_headers):
+                if kw in h: return idx
+        return default_idx
+
+    name_idx = find_column_index(["종목명"], 0)
+    code_idx = find_column_index(["종목코드", "코드"], 1)
+    price_idx = find_column_index(["현재가"], 2)
+    change_idx = find_column_index(["등락률"], 3)
+    theme_idx = find_column_index(["테마명", "테마"], 19)
+    prog_idx = find_column_index(["프로그램"], 20)
+    seed_idx = find_column_index(["종목쿼터", "쿼터", "유형"], 25)
     
     cands_list = []
     for r in tech_data:
-        if len(r) < 21: continue
-        name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
-        curr_p, chg, score_str, tajeom_raw = str(r[2]).strip(), str(r[3]).strip(), str(r[8]).strip(), str(r[9]).strip()
-        theme_name = str(r[19]).strip()  # 19번 열 테마명 구조 확보
-        prog = str(r[20]).strip()
-        seed_tag = str(r[25]).strip() if len(r) > 25 else "NORMAL"
+        if len(r) < max(name_idx, code_idx, price_idx, change_idx, theme_idx, prog_idx, seed_idx) + 1: continue
         
-        try: num_score = int(re.findall(r'-?\d+', score_str)[0])
+        name = str(r[name_idx]).strip()
+        code = str(r[code_idx]).replace("'", "").strip().zfill(6)
+        curr_p = str(r[price_idx]).strip()
+        chg = str(r[change_idx]).strip()
+        theme_name = str(r[theme_idx]).strip()
+        prog = str(r[prog_idx]).strip()
+        seed_tag = str(r[seed_idx]).strip() if seed_idx < len(r) else "NORMAL"
+        
+        # 💡 [버전 파편화 극복 시스템] 8번 열과 9번 열의 순서 혼선을 데이터를 읽을 때 실시간 자가 판독 처리합니다.
+        val_col8 = str(r[8]).strip() if len(r) > 8 else ""
+        val_col9 = str(r[9]).strip() if len(r) > 9 else ""
+        
+        score_display = val_col8 if '점' in val_col8 else (val_col9 if '점' in val_col9 else "0점")
+        tajeom_raw = val_col9 if '점' in val_col8 else (val_col8 if '점' in val_col9 else val_col9)
+        
+        try: num_score = int(re.findall(r'-?\d+', score_display)[0])
         except: num_score = 0
         
         if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|3년적자|스코어 미달|과거 주도주 이력 미달', tajeom_raw): continue 
@@ -336,13 +364,17 @@ try:
         tajeom_clean = tajeom_raw.split('⚠️')[0].strip()
         tajeom_clean = tajeom_clean.split('🎯')[0].strip()
         
+        # 금액 데이터 파싱의 무결성 보장 가드
+        clean_curr_p = re.sub(r'[^0-9]', '', curr_p)
+        int_curr_p = int(clean_curr_p) if clean_curr_p else 0
+        
         info = f"종목:{name}({code}) | 현재가:{curr_p}원({chg}) | 퀀트점수:{num_score}점 | 타점:{tajeom_clean} | 수급:{prog} | 유형:{seed_tag}"
         cands_list.append({
             'name': name, 
             'code': code, 
             'score': num_score, 
             'info': info, 
-            'curr_p': int(curr_p.replace(',','').replace('원','')), 
+            'curr_p': int_curr_p, 
             'type': seed_tag,
             'theme_name': theme_name
         })
@@ -355,11 +387,11 @@ try:
         high_score_cands.sort(key=lambda x: x['score'], reverse=True)
         pre_pool = high_score_cands[:100]
 
-    # 💡 [역사적 DNA 동시 검증 실행]
-    print(f"🧬 후보군 {len(pre_pool)}개 종목의 역사적 수급 DNA(개별 700억 / 테마 2000억) 검증 돌입...")
+    # 💡 [역사적 DNA 유연한 동시 검증 실행]
+    print(f"🧬 후보군 {len(pre_pool)}개 종목의 역사적 수급 DNA(개별 최고액 / 테마대금) 검증 돌입...")
     validated_pool = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
-        future_to_dna = {executor.submit(validate_stock_historical_dna, c, raw_theme_daily_map): c for c in pre_pool}
+        future_to_dna = {executor.submit(validate_stock_historical_dna, c, raw_theme_daily_map, is_warning_market): c for c in pre_pool}
         for future in concurrent.futures.as_completed(future_to_dna):
             cand, is_qualified = future.result()
             if is_qualified:
@@ -391,7 +423,7 @@ try:
     {pool_str}
     
     [출력 형식]
-    반드시 아래 JSON 형식으로만 응답하세요. 다른 설명은 절대 추가하지 마세요.
+    Refuse any text output format except JSON code block.
     {{
         "short_term_code": "종목코드6자리",
         "swing_code": "종목코드6자리"
@@ -553,7 +585,7 @@ try:
                 tajeom_badge = r[8]  if len(r) > 8  else ''
                 sugeup       = r[11] if len(r) > 11 else ''
                 high_52      = r[12] if len(r) > 12 else ''
-                theme        = r[5]  if len(r) > 5  else ''
+                theme        = r[5]  if len(row) > 5  else ''
                 target_sys   = r[14] if len(r) > 14 else ''
                 stop_sys     = r[15] if len(r) > 15 else ''
                 prompt = get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys, is_warning_market)
@@ -667,7 +699,7 @@ try:
         print("✅ 텔레그램 발송 완료!")
 
     # ==========================================
-    # 9. 백테스트 로그 스냅샷 저장 (V9 패치)
+    # 9. 백테스트 로그 스냅샷 저장
     # ==========================================
     try:
         print("▶ 백테스트 로그 스냅샷 기록 중...")
