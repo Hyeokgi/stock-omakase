@@ -13,7 +13,7 @@ doc = gc.open_by_url(SHEET_URL)
 raw_sheet = doc.worksheet("수급_Raw")
 data = raw_sheet.get_all_values()
 
-print("🚑 [긴급 복구] 5월 14일 이후 수급_Raw 거래대금(억원) 정밀 복원 시작...")
+print("🚑 [긴급 복구] 5월 14일 이후 수급_Raw 거래대금 강제 복원 시작...")
 
 rows = data[1:]
 target_date = "2026-05-14"
@@ -21,8 +21,7 @@ session = requests.Session()
 cache = {}
 updated_count = 0
 
-for row in rows:
-    # row 포맷: [0]날짜, [1]순위, [2]테마명, [3]종목명, [4]종목코드, [5]등락률, [6]거래대금
+for i, row in enumerate(rows):
     if len(row) < 7: continue
     r_date = row[0].strip()
     
@@ -40,9 +39,7 @@ for row in rows:
                     f_date = f"{d[0][:4]}-{d[0][4:6]}-{d[0][6:8]}"
                     close_p = int(d[4])
                     vol = int(d[5])
-                    
-                    # 억원 단위 거래대금 계산 (종가 * 거래량 / 1억)
-                    tv_eok = (close_p * vol) // 100_000_000
+                    tv_eok = (close_p * vol) // 100_000_000 # 억원 단위 환산
                     history[f_date] = tv_eok
                 cache[code] = history
                 time.sleep(0.1)
@@ -53,13 +50,14 @@ for row in rows:
         correct_val = cache[code].get(r_date)
         if correct_val is not None and correct_val > 0:
             old_val = row[6]
+            # [핵심] 기존 조건 무시하고 강제로 무조건 덮어씌움
+            row[6] = str(correct_val)
             if str(old_val) != str(correct_val):
-                row[6] = str(correct_val)
                 updated_count += 1
-                print(f"✅ [{r_date}] {row[3]} ({code}) : 비정상({old_val}) -> 정상({correct_val}억) 복구 완료")
+                print(f"✅ [{r_date}] {row[3]} : 비정상({old_val}) -> 정상({correct_val}억) 복구 완료")
 
 if updated_count > 0:
-    # 가장 안전한 구글 시트 업데이트 방식
+    # 안전하게 덮어쓰기
     raw_sheet.update(values=rows, range_name="A2", value_input_option="USER_ENTERED")
     print(f"\n🎉 총 {updated_count}건의 거래대금 데이터가 완벽하게 복구되었습니다!")
 else:
