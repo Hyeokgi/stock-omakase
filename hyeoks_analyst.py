@@ -31,11 +31,9 @@ current_hour = now_kst.hour
 print(f"🤖 [HYEOKS 리서치 센터] 봇 가동 (현재 KST {now_kst.strftime('%H:%M:%S')})")
 
 try:
-    # 💡 [핵심 해결] google-genai 최신 SDK의 timeout 단위는 '초(s)'가 아니라 '밀리초(ms)'입니다!
-    # 120초(120,000ms)로 넉넉하게 설정하여 데드라인 400 에러를 완전히 차단합니다.
     client = genai.Client(
         api_key=GEMINI_API_KEY, 
-        http_options=types.HttpOptions(timeout=120000)
+        http_options=types.HttpOptions(timeout=120000) # 120,000ms (120초) 대기시간 보장
     )
 except Exception as e:
     print(f"❌ API 초기화 실패: {e}"); exit(1)
@@ -46,23 +44,26 @@ def clean_emojis(text):
     return text.replace('  ', ' ').strip()
 
 def safe_generate_content(contents, is_fast=False):
-    model_name = 'gemini-2.5-flash' if is_fast else 'gemini-2.5-pro'
+    primary_model = 'gemini-2.5-flash' if is_fast else 'gemini-2.5-pro'
+    fallback_model = 'gemini-2.5-flash'
     
     for i in range(3):
+        # 💡 [오토 폴백 시스템] 1차 시도는 지정된 모델, 2~3차 시도는 제한이 널널한 flash 모델로 자동 전환하여 셧다운 방지
+        model_to_use = primary_model if i == 0 else fallback_model
         try:
             return client.models.generate_content(
-                model=model_name,
+                model=model_to_use,
                 contents=contents
             )
         except Exception as e:
             err = str(e)
             if "503" in err or "429" in err or "quota" in err.lower() or "timeout" in err.lower():
-                wait_time = 10 * (i + 1)
-                print(f"⚠️ API 지연({i+1}/3). {wait_time}초 대기 후 재시도...")
+                wait_time = 15 * (i + 1)
+                print(f"⚠️ API 지연/초과({i+1}/3). [{model_to_use}] {wait_time}초 대기 후 재시도...")
                 time.sleep(wait_time)
             else:
                 raise e
-    raise Exception("❌ Gemini API 3회 실패 - 건너뜀")
+    raise Exception("❌ Gemini API 3회 연속 실패 - 쿼터 초과 또는 서버 응답 없음")
 
 def parse_ai_json(text):
     try:
@@ -126,15 +127,14 @@ def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
         print(f"⚠️ [{sheet_name}] 정렬 실패: {e}")
 
 # ==========================================
-# 역사적 수급 DNA 검증 함수 (하락장 유연화 장착)
+# 💡 역사적 수급 DNA 검증 함수 (논리 오류 완벽 교정)
 # ==========================================
 def validate_stock_historical_dna(cand, raw_theme_daily_map, is_warning_market):
     code = cand['code']
     name = cand['name']
-    theme_raw = cand.get('theme_name', '')
-    clean_theme = theme_raw.replace("🆕[당일]", "").replace("🕰️[과거]", "").split(' (대장:')[0].strip()
     
-    min_tv_threshold = 30_000_000_000 if is_warning_market else 70_000_000_000
+    # 💡 [문턱값 현실화] 하락장 300억, 평시 500억으로 기준 완화. 
+    min_tv_threshold = 30_000_000_000 if is_warning_market else 50_000_000_000
     
     local_session = requests.Session()
     try:
@@ -146,21 +146,20 @@ def validate_stock_historical_dna(cand, raw_theme_daily_map, is_warning_market):
         has_qualified_day = False
         for item in items:
             data = item.get("data").split("|")
-            f_date_raw = data[0]  # YYYYMMDD
-            f_date = f"{f_date_raw[:4]}-{f_date_raw[4:6]}-{f_date_raw[6:8]}"
             close_p = int(data[4])
             vol = int(data[5])
             
             day_tv_krw = close_p * vol
+            
+            # 💡 [핵심 픽스] 억울한 탈락의 주범이었던 '테마 대금 2000억' 병목 조건을 삭제.
+            # 개별 종목이 충분한 거래대금(500억/300억)을 터뜨렸다면 주도주 이력을 증명한 것으로 판단합니다.
             if day_tv_krw >= min_tv_threshold:
-                theme_val_eok = raw_theme_daily_map.get((f_date, clean_theme), 0)
-                if theme_val_eok >= 2000 or theme_val_eok == 0:
-                    has_qualified_day = True
-                    break
+                has_qualified_day = True
+                break
                     
         return cand, has_qualified_day
     except Exception as e:
-        print(f"⚠️ [{name}] 역사적 DNA 검증 스킵 (통과): {e}")
+        print(f"⚠️ [{name}] 역사적 DNA 검증 스킵 (통과 처리): {e}")
         return cand, True
 
 # ==========================================
