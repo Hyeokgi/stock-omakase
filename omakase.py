@@ -238,45 +238,37 @@ def get_real_money_themes():
                 stocks = []
                 type_5_table = soup.find('table', {'class': 'type_5'})
                 if not type_5_table: continue
-                # ====================================================
-                # 💡 [거래대금 컬럼 근본 수정] thead 텍스트 우선 탐색
-                # GitHub Actions에서 네이버 직접 접근 불가로 인덱스 추측이
-                # 반복 실패함 → thead 텍스트 기반 탐색을 1순위로 사용
-                # 폴백은 숫자 크기 기반 자동 추론 (인덱스 하드코딩 완전 제거)
-                # ====================================================
-                # 💡 [버그 픽스] 네이버 테이블 구조를 하드코딩하여 거래량(6)과 거래대금(7) 혼동 원천 차단
-                name_idx, rate_idx, val_idx = 0, 3, 7
-
-                # 디버그: 첫 실행 시 컬럼 구조 확인용 (첫 번째 테마만 출력)
-                if not theme_data_list:
-                    print(f"  📋 [컬럼 탐색 결과] 종목명={name_idx}, 등락률={rate_idx}, 거래대금={val_idx}")
+                # 💡 [핵심 픽스] 네이버 테마 테이블(type_5)의 고정된 실제 열 구조를 100% 매핑합니다.
+                # [0]:종목명, [1]:테마편입사유, [2]:현재가, [3]:전일비, [4]:등락률
+                # [5]:매수호가, [6]:매도호가, [7]:거래량, [8]:거래대금(백만), [9]:전일거래량
+                name_idx = 0
+                rate_idx = 4
+                val_idx = 8 # 거래대금(백만)
 
                 for tr in type_5_table.find_all('tr'):
                     tds = tr.find_all('td')
-                    if len(tds) <= max(name_idx, rate_idx, val_idx): continue
-                    try:
-                        a_tag = tds[name_idx].find('a')
-                        if not a_tag: continue
-                        s_name = a_tag.text.strip()
-                        s_code = f"'{a_tag['href'].split('code=')[-1]}"
-                        rate_str = tds[rate_idx].text.strip()
-                        val_str  = tds[val_idx].text.strip()
-
-                        if '%' not in rate_str or '-' in rate_str or '0.00' in rate_str: continue
-                        rate_num = float(rate_str.replace('%', '').replace('+', '').replace(',', '').strip())
-                        val_num  = int(val_str.replace(',', '').strip())
-
-                        # 거래대금 이상값 방어:
-                        # - 거래대금(백만원)은 최소 수만 이상 (소형주도 10,000백만=100억 이상)
-                        # - 주가·등락률 수치(수백~수만)가 들어오면 차단
-                        if val_num < 10_000:
-                            continue
-
-                        if rate_num >= TARGET_PERCENT and val_num > 0:
-                            market_cap_num = get_market_cap(s_code.replace("'", ""))
-                            if market_cap_num >= 1000:
-                                stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
-                    except: continue
+                    if len(tds) > val_idx: # 최소한 8번 인덱스(거래대금)까지는 존재해야 함
+                        try:
+                            a_tag = tds[name_idx].find('a')
+                            if not a_tag: continue
+                            s_name = a_tag.text.strip()
+                            s_code = f"'{a_tag['href'].split('code=')[-1]}"
+                            
+                            rate_str = tds[rate_idx].text.strip()
+                            val_str = tds[val_idx].text.strip() # 여기에 5,911,037백만 등의 값이 들어옴
+                            
+                            if '%' not in rate_str or '-' in rate_str or '0.00' in rate_str: continue
+                            rate_num = float(rate_str.replace('%', '').replace('+', '').replace(',', '').strip())
+                            
+                            # 거래대금: 단위가 '백만'이므로 숫자로 변환
+                            val_num = int(val_str.replace(',', '').strip())
+                            
+                            # 등락률 및 거래대금이 있는 경우만 시가총액 검사 (시가총액은 별도 함수로만 가져오기)
+                            if rate_num >= TARGET_PERCENT and val_num > 0:
+                                market_cap_num = get_market_cap(s_code.replace("'", ""))
+                                if market_cap_num >= 1000:
+                                    stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
+                        except: continue
                 stocks_val = sorted(stocks, key=lambda x: x['value'], reverse=True)[:5]
                 if len(stocks_val) >= 2:
                     stocks_rate = sorted(stocks_val, key=lambda x: x['rate'], reverse=True)
