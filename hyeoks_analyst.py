@@ -114,7 +114,7 @@ def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
         print(f"⚠️ [{sheet_name}] 정렬 실패: {e}")
 
 # ==========================================
-# 💡 역사적 수급 DNA 검증 함수 (개별 최고 700억 / 당시 테마 2000억)
+# 💡 역사적 수급 DNA 검증 함수 
 # ==========================================
 def validate_stock_historical_dna(cand, raw_theme_daily_map):
     code = cand['code']
@@ -138,11 +138,9 @@ def validate_stock_historical_dna(cand, raw_theme_daily_map):
             vol = int(data[5])
             
             day_tv_krw = close_p * vol
-            if day_tv_krw >= 70_000_000_000:  # 1. 역사적 일일 최고 거래대금 700억 이상 조건 충증
-                # 2. 당일 소속 테마 전체 거래대금 누적 합산 2000억 이상 검증
+            if day_tv_krw >= 70_000_000_000:  
                 theme_val_eok = raw_theme_daily_map.get((f_date, clean_theme), 0)
                 if theme_val_eok >= 2000 or theme_val_eok == 0:
-                    # 누적 데이터가 미처 없는 날이거나 조건 충족 시 패스 허용
                     has_qualified_day = True
                     break
                     
@@ -245,10 +243,19 @@ try:
         }}
         """
 
+    # 🟡 [모드 2] 15시 이외 모드 (배치 통신 최적화 적용)
     if current_hour != 15:
         print(f"▶ [{current_hour}시 모드] 메인 리포트 시간이 아니므로, 대기 중인 종목의 브리핑 및 가격 산출을 진행합니다.")
+        updates = []
+        briefing_count = 0
+        
         for i, row in enumerate(db_rows[1:], start=2):
-            if len(row) > 9 and "리포트 발송 완료" not in str(row[9]):  
+            if len(row) > 9 and "리포트 발송 완료" not in str(row[9]) and "분석 생략" not in str(row[9]):  
+                # 💡 [최적화 핵심] 제미나이 429 에러 방지를 위해 상위 25종목까지만 브리핑
+                if briefing_count >= 25:
+                    updates.append({'range': f'J{i}', 'values': [['⚠️ 분석 생략 (처리 한도 초과)']]})
+                    continue
+                
                 stock_name = row[0] if len(row) > 0 else "알수없음"
                 print(f" - [{stock_name}] AI 전략 및 가격 산출 중...")
                 
@@ -273,14 +280,23 @@ try:
                     target_val = f"{int(parsed_data.get('target_price', 0)):,}원" if parsed_data.get('target_price') else "관망"
                     stop_val = f"{int(parsed_data.get('stop_loss', 0)):,}원" if parsed_data.get('stop_loss') else "관망"
                     
-                    db_sheet.update_cell(i, 10, briefing_text)
-                    db_sheet.update_cell(i, 15, target_val)
-                    db_sheet.update_cell(i, 16, stop_val)
-                    time.sleep(3.5)
+                    # 💡 [최적화 핵심] 셀을 개별적으로 통신하지 않고 배열에 모읍니다.
+                    updates.append({'range': f'J{i}', 'values': [[briefing_text]]})
+                    updates.append({'range': f'O{i}', 'values': [[target_val]]})
+                    updates.append({'range': f'P{i}', 'values': [[stop_val]]})
+                    
+                    briefing_count += 1
+                    time.sleep(3.5) # 제미나이 분당 요청 한도(15 RPM) 방어
                 except Exception as e:
                     print(f"[{stock_name}] 브리핑/가격 산출 에러 발생 (건너뜀): {e}")
-        print(f"🌅 {current_hour}시 전략 브리핑 완료! 프로그램 종료.")
+        
+        # 모아둔 업데이트를 구글 서버에 1번의 통신으로 덮어씁니다.
+        if updates:
+            db_sheet.batch_update(updates)
+            
+        print(f"🌅 {current_hour}시 전략 브리핑 일괄 저장 완료! 프로그램 종료.")
         exit(0)
+
 
     # 🔴 [모드 3] 15시 모드 (메인 리포트 생성 및 풀 코스)
     print("\n▶ [15시 메인 리포트 모드] 주가데이터_보조 상위 150개 풀에서 HYEOKS 알파 종목 발굴 시작...")
@@ -289,7 +305,7 @@ try:
     nasdaq, exchange, oil = clean_emojis(macro_data[1][4]), clean_emojis(macro_data[1][6]), clean_emojis(macro_data[1][7])
     news_keywords = clean_emojis("\n".join([f"{r[2]}({r[3]}회)" for r in doc.worksheet("뉴스_키워드").get_all_values()[1:6]]))
     
-    # 💡 [역사적 수급 DNA 필터용] 수급_Raw 일자별/테마별 거래대금 통계 마스터 맵 빌드
+    # [역사적 수급 DNA 필터용] 수급_Raw 일자별/테마별 거래대금 통계 마스터 맵 빌드
     raw_theme_daily_map = {}
     try:
         raw_sheet = doc.worksheet("수급_Raw")
@@ -318,7 +334,7 @@ try:
         if len(r) < 21: continue
         name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
         curr_p, chg, score_str, tajeom_raw = str(r[2]).strip(), str(r[3]).strip(), str(r[8]).strip(), str(r[9]).strip()
-        theme_name = str(r[19]).strip()  # 19번 열 테마명 구조 확보
+        theme_name = str(r[19]).strip() 
         prog = str(r[20]).strip()
         seed_tag = str(r[25]).strip() if len(r) > 25 else "NORMAL"
         
@@ -349,7 +365,7 @@ try:
         high_score_cands.sort(key=lambda x: x['score'], reverse=True)
         pre_pool = high_score_cands[:100]
 
-    # 💡 [역사적 DNA 동시 검증 실행]
+    # [역사적 DNA 동시 검증 실행]
     print(f"🧬 후보군 {len(pre_pool)}개 종목의 역사적 수급 DNA(개별 700억 / 테마 2000억) 검증 돌입...")
     validated_pool = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
@@ -500,7 +516,7 @@ try:
     report_mid, pick_mid = generate_deep_report("mid", best_mid, is_warning_market)
 
     # ==========================================
-    # 6. 3시 마감 최신 DB_스캐너 동기화 및 브리핑 일괄 덮어쓰기
+    # 6. 15시 마감 최신 DB_스캐너 동기화 및 브리핑 일괄 덮어쓰기 (배치 통신 최적화 적용)
     # ==========================================
     print("\n▶ [3단계] 최신 DB_스캐너 동기화 및 리포트 종목/나머지 종목 갱신...")
     latest_db_data = db_sheet.get_all_values()
@@ -519,30 +535,36 @@ try:
     short_summary = extract_summary(report_short) if best_short else ""
     mid_summary = extract_summary(report_mid) if best_mid else ""
 
+    updates = []
+    briefing_count = 0
+
     for i, r in enumerate(latest_db_data[1:], start=2):
         if len(r) > 9:
             code = str(r[2]).replace("'", "").strip().zfill(6)
             stock_name = r[0] if len(r) > 0 else "알수없음"
 
             if best_short and code == best_short['code']:
-                print(f" - [{stock_name}] 리포트 정보 및 가격 시트에 업데이트 중...")
-                db_sheet.update_cell(i, 10, short_summary)
+                print(f" - [{stock_name}] 리포트 정보 업데이트 중...")
+                updates.append({'range': f'J{i}', 'values': [[short_summary]]})
                 if pick_short:
-                    db_sheet.update_cell(i, 15, f"{pick_short['target']:,}원")
-                    db_sheet.update_cell(i, 16, f"{pick_short['stop']:,}원")
-                time.sleep(3.5)
+                    updates.append({'range': f'O{i}', 'values': [[f"{pick_short['target']:,}원"]]})
+                    updates.append({'range': f'P{i}', 'values': [[f"{pick_short['stop']:,}원"]]})
                 continue
             
             if best_mid and code == best_mid['code']:
-                print(f" - [{stock_name}] 리포트 정보 및 가격 시트에 업데이트 중...")
-                db_sheet.update_cell(i, 10, mid_summary)
+                print(f" - [{stock_name}] 리포트 정보 업데이트 중...")
+                updates.append({'range': f'J{i}', 'values': [[mid_summary]]})
                 if pick_mid:
-                    db_sheet.update_cell(i, 15, f"{pick_mid['target']:,}원")
-                    db_sheet.update_cell(i, 16, f"{pick_mid['stop']:,}원")
-                time.sleep(3.5)
+                    updates.append({'range': f'O{i}', 'values': [[f"{pick_mid['target']:,}원"]]})
+                    updates.append({'range': f'P{i}', 'values': [[f"{pick_mid['stop']:,}원"]]})
                 continue
             
-            if "리포트 발송 완료" not in str(r[9]):
+            if "리포트 발송 완료" not in str(r[9]) and "분석 생략" not in str(r[9]):
+                # 💡 [최적화 핵심] 제미나이 429 에러 방지를 위해 상위 25종목까지만 브리핑
+                if briefing_count >= 25:
+                    updates.append({'range': f'J{i}', 'values': [['⚠️ 분석 생략 (처리 한도 초과)']]})
+                    continue
+
                 print(f" - [{stock_name}] AI 전략 및 가격 산출 중...")
                 
                 curr_p = r[3] if len(r) > 3 else ''
@@ -569,12 +591,19 @@ try:
                     target_val = f"{int(raw_target):,}원" if raw_target.isdigit() and int(raw_target) > 0 else "관망"
                     stop_val = f"{int(raw_stop):,}원" if raw_stop.isdigit() and int(raw_stop) > 0 else "관망"
                     
-                    db_sheet.update_cell(i, 10, briefing_text)
-                    db_sheet.update_cell(i, 15, target_val)
-                    db_sheet.update_cell(i, 16, stop_val)
-                    time.sleep(3.5)
+                    # 💡 [최적화 핵심] 일괄 업데이트 배열에 추가
+                    updates.append({'range': f'J{i}', 'values': [[briefing_text]]})
+                    updates.append({'range': f'O{i}', 'values': [[target_val]]})
+                    updates.append({'range': f'P{i}', 'values': [[stop_val]]})
+                    
+                    briefing_count += 1
+                    time.sleep(3.5) # 제미나이 분당 요청 한도(15 RPM) 방어
                 except Exception as e:
                     print(f"[{stock_name}] 브리핑/가격 산출 에러 발생 (건너뜀): {e}")
+
+    # 모아둔 업데이트를 구글 서버에 1번의 통신으로 덮어씁니다.
+    if updates:
+        db_sheet.batch_update(updates)
 
     # ==========================================
     # 7. 가상계좌 업데이트
