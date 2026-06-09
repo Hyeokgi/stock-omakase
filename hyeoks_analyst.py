@@ -39,18 +39,35 @@ def clean_emojis(text):
     for e in emojis: text = text.replace(e, '')
     return text.replace('  ', ' ').strip()
 
+# 💡 [핵심] 무한 대기를 막는 서킷 브레이커 설정
+global_api_quota_exhausted = False
+
 def safe_generate_content(contents, is_fast=False):
+    global global_api_quota_exhausted
+    if global_api_quota_exhausted:
+        raise Exception("🚨 서버 과부하 누적으로 분석 원천 차단됨")
+
+    # 💡 수석님의 요청대로 최신 2.5 모델명으로 완벽 원복! (플래시는 간단 브리핑, 프로는 딥리딩)
     model_name = 'gemini-2.5-flash' if is_fast else 'gemini-2.5-pro'
-    for i in range(5): 
+    
+    for i in range(3): # 재시도 횟수 제한 (무한 로딩 방지)
         try: 
             return client.models.generate_content(model=model_name, contents=contents)
         except Exception as e:
-            if "503" in str(e) or "429" in str(e) or "quota" in str(e).lower():
+            err_str = str(e).lower()
+            if "429" in err_str or "quota" in err_str or "exhausted" in err_str:
                 wait_time = 10 * (i + 1)
-                print(f"⚠️ 구글 API 지연. {wait_time}초 대기 후 재시도...")
+                print(f"⚠️ 구글 API 트래픽 초과. {wait_time}초 대기 후 재시도...")
                 time.sleep(wait_time)
-            else: raise e 
-    raise Exception("❌ 구글 서버 할당량 초과 또는 무응답으로 최종 실패")
+            elif "503" in err_str:
+                print("⚠️ 구글 서버 일시적 과부하 (503 에러). 5초 대기...")
+                time.sleep(5)
+            else: 
+                raise e 
+                
+    # 3번 다 실패하면 그 즉시 해당 모델 호출을 멈추고 스킵합니다.
+    global_api_quota_exhausted = True
+    raise Exception(f"❌ 구글 서버({model_name}) 무응답으로 최종 실패")
 
 def parse_ai_json(text):
     try:
@@ -243,7 +260,7 @@ try:
         }}
         """
 
-    # 🟡 [모드 2] 15시 이외 모드 (배치 통신 최적화 적용)
+    # 🟡 [모드 2] 15시 이외 모드 (배치 통신 최적화 유지)
     if current_hour != 15:
         print(f"▶ [{current_hour}시 모드] 메인 리포트 시간이 아니므로, 대기 중인 종목의 브리핑 및 가격 산출을 진행합니다.")
         updates = []
@@ -251,7 +268,6 @@ try:
         
         for i, row in enumerate(db_rows[1:], start=2):
             if len(row) > 9 and "리포트 발송 완료" not in str(row[9]) and "분석 생략" not in str(row[9]):  
-                # 💡 [최적화 핵심] 제미나이 429 에러 방지를 위해 상위 25종목까지만 브리핑
                 if briefing_count >= 25:
                     updates.append({'range': f'J{i}', 'values': [['⚠️ 분석 생략 (처리 한도 초과)']]})
                     continue
@@ -280,17 +296,17 @@ try:
                     target_val = f"{int(parsed_data.get('target_price', 0)):,}원" if parsed_data.get('target_price') else "관망"
                     stop_val = f"{int(parsed_data.get('stop_loss', 0)):,}원" if parsed_data.get('stop_loss') else "관망"
                     
-                    # 💡 [최적화 핵심] 셀을 개별적으로 통신하지 않고 배열에 모읍니다.
                     updates.append({'range': f'J{i}', 'values': [[briefing_text]]})
                     updates.append({'range': f'O{i}', 'values': [[target_val]]})
                     updates.append({'range': f'P{i}', 'values': [[stop_val]]})
                     
                     briefing_count += 1
-                    time.sleep(3.5) # 제미나이 분당 요청 한도(15 RPM) 방어
+                    time.sleep(2) # 유료 티어의 속도를 믿고 대기시간을 2초로 단축!
                 except Exception as e:
-                    print(f"[{stock_name}] 브리핑/가격 산출 에러 발생 (건너뜀): {e}")
+                    err_msg = str(e)
+                    print(f"[{stock_name}] 브리핑/가격 산출 에러 발생 (건너뜀): {err_msg}")
+                    updates.append({'range': f'J{i}', 'values': [[f"⚠️ 분석 실패: {err_msg[:20]}"]]})
         
-        # 모아둔 업데이트를 구글 서버에 1번의 통신으로 덮어씁니다.
         if updates:
             db_sheet.batch_update(updates)
             
@@ -305,7 +321,6 @@ try:
     nasdaq, exchange, oil = clean_emojis(macro_data[1][4]), clean_emojis(macro_data[1][6]), clean_emojis(macro_data[1][7])
     news_keywords = clean_emojis("\n".join([f"{r[2]}({r[3]}회)" for r in doc.worksheet("뉴스_키워드").get_all_values()[1:6]]))
     
-    # [역사적 수급 DNA 필터용] 수급_Raw 일자별/테마별 거래대금 통계 마스터 맵 빌드
     raw_theme_daily_map = {}
     try:
         raw_sheet = doc.worksheet("수급_Raw")
@@ -365,7 +380,6 @@ try:
         high_score_cands.sort(key=lambda x: x['score'], reverse=True)
         pre_pool = high_score_cands[:100]
 
-    # [역사적 DNA 동시 검증 실행]
     print(f"🧬 후보군 {len(pre_pool)}개 종목의 역사적 수급 DNA(개별 700억 / 테마 2000억) 검증 돌입...")
     validated_pool = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
@@ -386,7 +400,7 @@ try:
     아래는 HYEOKS 퀀트 점수와 역사적 주도주 DNA 검증이 끝난 최상위 150개 종목 리스트입니다.
     현재 시장 국면은 {'하락장' if is_warning_market else '상승/보합장'}입니다.
     
-    이 중에서 제미나이 2.5 모델의 직관과 종합적인 판단을 활용해 
+    이 중에서 제미나이 모델의 직관과 종합적인 판단을 활용해 
     최고의 단기 1종목, 중장기 스윙 1종목을 2중 검토(Chain of Thought)를 거쳐 엄선하십시오. 
     🚨 하락장이라면 안정성이 100% 보장되지 않는 단기 종목은 억지로 뽑지 마십시오("000000" 반환).
 
@@ -512,11 +526,11 @@ try:
         return report_txt, pick_data
 
     report_short, pick_short = generate_deep_report("short", best_short, is_warning_market)
-    if best_short: time.sleep(15)
+    if best_short: time.sleep(5)
     report_mid, pick_mid = generate_deep_report("mid", best_mid, is_warning_market)
 
     # ==========================================
-    # 6. 15시 마감 최신 DB_스캐너 동기화 및 브리핑 일괄 덮어쓰기 (배치 통신 최적화 적용)
+    # 6. 15시 마감 최신 DB_스캐너 동기화 및 브리핑 일괄 덮어쓰기
     # ==========================================
     print("\n▶ [3단계] 최신 DB_스캐너 동기화 및 리포트 종목/나머지 종목 갱신...")
     latest_db_data = db_sheet.get_all_values()
@@ -560,7 +574,6 @@ try:
                 continue
             
             if "리포트 발송 완료" not in str(r[9]) and "분석 생략" not in str(r[9]):
-                # 💡 [최적화 핵심] 제미나이 429 에러 방지를 위해 상위 25종목까지만 브리핑
                 if briefing_count >= 25:
                     updates.append({'range': f'J{i}', 'values': [['⚠️ 분석 생략 (처리 한도 초과)']]})
                     continue
@@ -591,17 +604,17 @@ try:
                     target_val = f"{int(raw_target):,}원" if raw_target.isdigit() and int(raw_target) > 0 else "관망"
                     stop_val = f"{int(raw_stop):,}원" if raw_stop.isdigit() and int(raw_stop) > 0 else "관망"
                     
-                    # 💡 [최적화 핵심] 일괄 업데이트 배열에 추가
                     updates.append({'range': f'J{i}', 'values': [[briefing_text]]})
                     updates.append({'range': f'O{i}', 'values': [[target_val]]})
                     updates.append({'range': f'P{i}', 'values': [[stop_val]]})
                     
                     briefing_count += 1
-                    time.sleep(3.5) # 제미나이 분당 요청 한도(15 RPM) 방어
+                    time.sleep(2) 
                 except Exception as e:
-                    print(f"[{stock_name}] 브리핑/가격 산출 에러 발생 (건너뜀): {e}")
+                    err_msg = str(e)
+                    print(f"[{stock_name}] 브리핑/가격 산출 에러 발생 (건너뜀): {err_msg}")
+                    updates.append({'range': f'J{i}', 'values': [[f"⚠️ 분석 실패: {err_msg[:20]}"]]})
 
-    # 모아둔 업데이트를 구글 서버에 1번의 통신으로 덮어씁니다.
     if updates:
         db_sheet.batch_update(updates)
 
