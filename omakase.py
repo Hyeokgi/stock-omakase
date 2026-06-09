@@ -245,14 +245,14 @@ def get_real_money_themes():
                         name_idx = headers_text.index('종목명')
                         rate_idx = headers_text.index('등락률')
                         val_idx = headers_text.index('거래대금')
-                        cap_idx = headers_text.index('시가총액')
                     except ValueError:
-                        name_idx, rate_idx, val_idx, cap_idx = 0, 4, 6, 7
+                        # 💡 네이버 실제 컬럼 인덱스에 맞게 매핑 오류 해결 (거래대금=7)
+                        name_idx, rate_idx, val_idx = 0, 3, 7
                 else:
-                    name_idx, rate_idx, val_idx, cap_idx = 0, 4, 6, 7
+                    name_idx, rate_idx, val_idx = 0, 3, 7
                 for tr in type_5_table.find_all('tr'):
                     tds = tr.find_all('td')
-                    if len(tds) > max(name_idx, rate_idx, val_idx, cap_idx):
+                    if len(tds) > max(name_idx, rate_idx, val_idx):
                         try:
                             a_tag = tds[name_idx].find('a')
                             if not a_tag: continue
@@ -260,14 +260,16 @@ def get_real_money_themes():
                             s_code = f"'{a_tag['href'].split('code=')[-1]}"
                             rate_str = tds[rate_idx].text.strip()
                             val_str = tds[val_idx].text.strip()
-                            cap_str = tds[cap_idx].text.strip()
+                            
                             if '%' not in rate_str or '-' in rate_str or '0.00' in rate_str: continue
                             rate_num = float(rate_str.replace('%', '').replace('+', '').replace(',', '').strip())
                             val_num = int(val_str.replace(',', '').strip())
-                            cap_clean = cap_str.replace(',', '').strip()
-                            market_cap_num = int(cap_clean) if cap_clean.isdigit() else get_market_cap(s_code.replace("'", ""))
-                            if rate_num >= TARGET_PERCENT and val_num > 0 and market_cap_num >= 1000:
-                                stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
+                            
+                            # 💡 등락률과 거래대금을 먼저 확인 후 통과한 종목만 시가총액을 조회하도록 하여 속도 수십 배 향상 및 데이터 꼬임 방지
+                            if rate_num >= TARGET_PERCENT and val_num > 0:
+                                market_cap_num = get_market_cap(s_code.replace("'", ""))
+                                if market_cap_num >= 1000:
+                                    stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
                         except: continue
                 stocks_val = sorted(stocks, key=lambda x: x['value'], reverse=True)[:5]
                 if len(stocks_val) >= 2:
