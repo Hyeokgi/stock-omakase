@@ -3,6 +3,7 @@ import os, re, time, base64, warnings, datetime, requests, markdown, pdfkit, gsp
 from bs4 import BeautifulSoup  
 from oauth2client.service_account import ServiceAccountCredentials
 from google import genai
+from google.genai import types
 import urllib3
 import json
 import xml.etree.ElementTree as ET
@@ -30,8 +31,8 @@ current_hour = now_kst.hour
 print(f"🤖 [HYEOKS 리서치 센터] 봇 가동 (현재 KST {now_kst.strftime('%H:%M:%S')})")
 
 try:
-    # 💡 [문법 교정] http_options(타임아웃) 설정을 클라이언트 초기화 단계로 이동하여 전역 적용 및 TypeError 완전 차단
-    client = genai.Client(api_key=GEMINI_API_KEY, http_options={"timeout": 120})
+    # 💡 [구조 변경] 초기화 시 timeout 분쟁을 피하기 위해 순수하게 API 키만 전달하여 클라이언트를 생성합니다.
+    client = genai.Client(api_key=GEMINI_API_KEY)
 except Exception as e:
     print(f"❌ API 초기화 실패: {e}"); exit(1)
 
@@ -42,11 +43,18 @@ def clean_emojis(text):
 
 def safe_generate_content(contents, is_fast=False):
     model_name = 'gemini-2.5-flash' if is_fast else 'gemini-2.5-pro'
+    
+    # 💡 [핵심 픽스] API 호출 시 안전하게 작동하도록 types.GenerateContentConfig를 통해 120초 타점 타임아웃을 주입합니다.
+    timeout_config = types.GenerateContentConfig(
+        http_options={"timeout": 120.0}
+    )
+    
     for i in range(3):
         try:
             return client.models.generate_content(
                 model=model_name,
-                contents=contents
+                contents=contents,
+                config=timeout_config
             )
         except Exception as e:
             err = str(e)
@@ -89,7 +97,7 @@ def get_vip_deep_dive_data(code, kis_token):
     if not (kis_token and KIS_APP_KEY and KIS_APP_SECRET): return "PER: N/A / PBR: N/A"
     try:
         headers = {"authorization": f"Bearer {kis_token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "custtype": "P", "tr_id": "FHKST01010100"}
-        res = requests.get("https://openapi.koreainvestment.com:9443/uapi/dynamic-stock/v1/quotations/inquire-price", 
+        res = requests.get("https://openapi.koreainwestment.com:9443/uapi/dynamic-stock/v1/quotations/inquire-price", 
                           headers=headers, params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}, verify=False, timeout=3).json()
         out = res.get("output", {})
         return f"PER: {out.get('per', 'N/A')} / PBR: {out.get('pbr', 'N/A')}"
@@ -120,7 +128,7 @@ def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
         print(f"⚠️ [{sheet_name}] 정렬 실패: {e}")
 
 # ==========================================
-# 💡 역사적 수급 DNA 검증 함수 (하락장 유연화 장착)
+# 역사적 수급 DNA 검증 함수 (하락장 유연화 장착)
 # ==========================================
 def validate_stock_historical_dna(cand, raw_theme_daily_map, is_warning_market):
     code = cand['code']
@@ -128,7 +136,6 @@ def validate_stock_historical_dna(cand, raw_theme_daily_map, is_warning_market):
     theme_raw = cand.get('theme_name', '')
     clean_theme = theme_raw.replace("🆕[당일]", "").replace("🕰️[과거]", "").split(' (대장:')[0].strip()
     
-    # 💡 [하락장 고갈 방지 가드] 하락세나 조정 장세일 때는 역사적 대금 허들을 700억에서 300억으로 낮춰 정예주 실종을 방어합니다.
     min_tv_threshold = 30_000_000_000 if is_warning_market else 70_000_000_000
     
     local_session = requests.Session()
@@ -147,7 +154,7 @@ def validate_stock_historical_dna(cand, raw_theme_daily_map, is_warning_market):
             vol = int(data[5])
             
             day_tv_krw = close_p * vol
-            if day_tv_krw >= min_tv_threshold:  # 역사적 일일 최고 거래대금 가변 충족 조건
+            if day_tv_krw >= min_tv_threshold:
                 theme_val_eok = raw_theme_daily_map.get((f_date, clean_theme), 0)
                 if theme_val_eok >= 2000 or theme_val_eok == 0:
                     has_qualified_day = True
@@ -172,6 +179,7 @@ try:
     cleanup_and_reorder(doc, "접속로그", 1)
     cleanup_and_reorder(doc, "DB_중장기", 0)
 
+    # KIS_TOKEN 추출 안전장치
     KIS_TOKEN = ""
     try:
         for row in doc.worksheet("⚙️설정").get_all_values():
@@ -294,7 +302,6 @@ try:
     nasdaq, exchange, oil = clean_emojis(macro_data[1][4]), clean_emojis(macro_data[1][6]), clean_emojis(macro_data[1][7])
     news_keywords = clean_emojis("\n".join([f"{r[2]}({r[3]}회)" for r in doc.worksheet("뉴스_키워드").get_all_values()[1:6]]))
     
-    # 💡 [역사적 수급 DNA 필터용] 수급_Raw 일자별/테마별 거래대금 통계 마스터 맵 빌드
     raw_theme_daily_map = {}
     try:
         raw_sheet = doc.worksheet("수급_Raw")
@@ -320,9 +327,6 @@ try:
     tech_data_headers = [h.strip() for h in helper_data[0]]
     tech_data = helper_data[1:]
     
-    # ============================================================
-    # 🔍 [핵심 보완] 명칭 기반 인덱스 자동 검색기 (열 밀림 파괴 가드 장착)
-    # ============================================================
     def find_column_index(keywords, default_idx):
         for kw in keywords:
             for idx, h in enumerate(tech_data_headers):
@@ -349,7 +353,6 @@ try:
         prog = str(r[prog_idx]).strip()
         seed_tag = str(r[seed_idx]).strip() if seed_idx < len(r) else "NORMAL"
         
-        # 💡 [버전 파편화 극복 시스템] 8번 열과 9번 열의 순서 혼선을 데이터를 읽을 때 실시간 자가 판독 처리합니다.
         val_col8 = str(r[8]).strip() if len(r) > 8 else ""
         val_col9 = str(r[9]).strip() if len(r) > 9 else ""
         
@@ -361,22 +364,13 @@ try:
         
         if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|3년적자|스코어 미달|과거 주도주 이력 미달', tajeom_raw): continue 
         
-        tajeom_clean = tajeom_raw.split('⚠️')[0].strip()
-        tajeom_clean = tajeom_clean.split('🎯')[0].strip()
-        
-        # 금액 데이터 파싱의 무결성 보장 가드
+        tajeom_clean = tajeom_raw.split('⚠️')[0].strip().split('🎯')[0].strip()
         clean_curr_p = re.sub(r'[^0-9]', '', curr_p)
         int_curr_p = int(clean_curr_p) if clean_curr_p else 0
         
         info = f"종목:{name}({code}) | 현재가:{curr_p}원({chg}) | 퀀트점수:{num_score}점 | 타점:{tajeom_clean} | 수급:{prog} | 유형:{seed_tag}"
         cands_list.append({
-            'name': name, 
-            'code': code, 
-            'score': num_score, 
-            'info': info, 
-            'curr_p': int_curr_p, 
-            'type': seed_tag,
-            'theme_name': theme_name
+            'name': name, 'code': code, 'score': num_score, 'info': info, 'curr_p': int_curr_p, 'type': seed_tag, 'theme_name': theme_name
         })
 
     high_score_cands = [c for c in cands_list if c['score'] >= 30]
@@ -387,17 +381,14 @@ try:
         high_score_cands.sort(key=lambda x: x['score'], reverse=True)
         pre_pool = high_score_cands[:100]
 
-    # 💡 [역사적 DNA 유연한 동시 검증 실행]
     print(f"🧬 후보군 {len(pre_pool)}개 종목의 역사적 수급 DNA(개별 최고액 / 테마대금) 검증 돌입...")
     validated_pool = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
         future_to_dna = {executor.submit(validate_stock_historical_dna, c, raw_theme_daily_map, is_warning_market): c for c in pre_pool}
         for future in concurrent.futures.as_completed(future_to_dna):
             cand, is_qualified = future.result()
-            if is_qualified:
-                validated_pool.append(cand)
-            else:
-                print(f"❌ [{cand['name']}] 역대 최고거래대금 기준 미달로 최종 리포트 및 스캐너 풀에서 완전 배제")
+            if is_qualified: validated_pool.append(cand)
+            else: print(f"❌ [{cand['name']}] 역대 최고거래대금 기준 미달로 최종 리포트 및 스캐너 풀에서 완전 배제")
 
     validated_pool.sort(key=lambda x: x['score'], reverse=True)
     pool_150 = validated_pool[:150]
@@ -409,12 +400,11 @@ try:
     현재 시장 국면은 {'하락장' if is_warning_market else '상승/보합장'}입니다.
     
     이 중에서 제미나이 2.5 모델의 직관과 종합적인 판단을 활용해 
-    최고의 단기 1종목, 중장기 스윙 1종목을 2중 검토(Chain of Thought)를 거쳐 엄선하십시오. 
+     최고의 단기 1종목, 중장기 스윙 1종목을 2중 검토(Chain of Thought)를 거쳐 엄선하십시오. 
     🚨 하락장이라면 안정성이 100% 보장되지 않는 단기 종목은 억지로 뽑지 마십시오("000000" 반환).
 
     [종목 선정 절대 기준]
     1. 단기 슈팅 공략주 (short_term_code): 당일 수급이 몰리며 '유형:NORMAL' 인 종목 중 전고점 돌파를 목전에 둔 파괴력 있는 종목 1개. (적절한 종목이 없으면 "000000" 반환)
-    
     2. 중장기 모아가기주 (swing_code): 
        - 🚨 '🔴 3차 파동 (전량 익절)' 등 과열 배지가 붙은 종목은 절대 배제하십시오.
        - '유형:SEED' 인 종목 중 차트상 확실한 바닥 지지가 예상되고 거래량이 마른 최적의 1개를 선별하십시오. (적절한 종목이 없으면 NORMAL 종목 중 스윙 타점 종목으로 대체 가능)
@@ -454,7 +444,7 @@ try:
 작성일: {today_korean}
 매크로: 나스닥 {nasdaq}, 환율 {exchange}, 국내증시 {status_txt}
 뉴스 키워드: {news_keywords}
-(종목 추천 없이 시황과 트레이더의 스탠스만 서술하십시오.)"""
+(종목 추천 없이 시황 and 트레이더의 스탠스만 서술하십시오.)"""
     
     market_summary = safe_generate_content(macro_prompt).text
 
