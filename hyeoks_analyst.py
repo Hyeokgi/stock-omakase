@@ -41,19 +41,24 @@ def clean_emojis(text):
 
 def safe_generate_content(contents, is_fast=False):
     model_name = 'gemini-2.5-flash' if is_fast else 'gemini-2.5-pro'
-    # 재시도 3회, 대기 최대 30초 (기존 5회 × 최대 50초 = 250초 → 3회 × 최대 30초 = 60초)
+    # 재시도 3회 / 대기 최대 30초 / 전체 응답 타임아웃 120초
+    import httpx
     for i in range(3):
         try:
-            return client.models.generate_content(model=model_name, contents=contents)
+            return client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                http_options={"timeout": 120}   # 120초 무응답이면 즉시 예외
+            )
         except Exception as e:
             err = str(e)
-            if "503" in err or "429" in err or "quota" in err.lower():
-                wait_time = 10 * (i + 1)  # 10초, 20초, 30초
-                print(f"⚠️ 구글 API 지연({i+1}/3). {wait_time}초 대기 후 재시도...")
+            if "503" in err or "429" in err or "quota" in err.lower() or "timeout" in err.lower():
+                wait_time = 10 * (i + 1)   # 10초, 20초, 30초
+                print(f"⚠️ API 지연({i+1}/3). {wait_time}초 대기...")
                 time.sleep(wait_time)
             else:
                 raise e
-    raise Exception("❌ 구글 API 3회 재시도 실패 - 다음 종목으로 진행")
+    raise Exception("❌ Gemini API 3회 실패 - 건너뜀")
 
 def parse_ai_json(text):
     try:
@@ -253,8 +258,7 @@ try:
         batch_updates = []
         for i, row in enumerate(db_rows[1:], start=2):
             if len(row) > 9 and "리포트 발송 완료" not in str(row[9]):
-                stock_name = row[0] if len(row) > 0 else "알수없음"
-                print(f" - [{stock_name}] AI 전략 및 가격 산출 중...")
+                stock_name  = row[0]  if len(row) > 0  else "알수없음"
                 curr_p      = row[3]  if len(row) > 3  else ''
                 tajeom_badge= row[8]  if len(row) > 8  else ''
                 sugeup      = row[11] if len(row) > 11 else ''
@@ -262,6 +266,7 @@ try:
                 theme       = row[5]  if len(row) > 5  else ''
                 target_sys  = row[14] if len(row) > 14 else ''
                 stop_sys    = row[15] if len(row) > 15 else ''
+                print(f" - [{stock_name}] 브리핑 생성 중...")
                 prompt = get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys, is_warning_market)
                 try:
                     res_text    = safe_generate_content(prompt, is_fast=True).text
@@ -271,18 +276,16 @@ try:
                         briefing_text = f"✅ [간단 브리핑] {briefing_text}"
                     target_val = f"{int(parsed_data.get('target_price', 0)):,}원" if parsed_data.get('target_price') else "관망"
                     stop_val   = f"{int(parsed_data.get('stop_loss',   0)):,}원" if parsed_data.get('stop_loss')   else "관망"
-                    # batch_update용 누적 (API 호출 최소화)
                     batch_updates.append({'range': f'J{i}', 'values': [[briefing_text]]})
                     batch_updates.append({'range': f'O{i}', 'values': [[target_val]]})
                     batch_updates.append({'range': f'P{i}', 'values': [[stop_val]]})
-                    time.sleep(1.5)  # Gemini API 간격만 유지 (3.5초 → 1.5초)
+                    time.sleep(1.0)
                 except Exception as e:
                     print(f"[{stock_name}] 브리핑 에러 (건너뜀): {e}")
-        # 누적된 업데이트를 한 번에 전송 (개별 60회 → 1회)
         if batch_updates:
             db_sheet.batch_update(batch_updates)
-            print(f"✅ {len(batch_updates)//3}개 종목 batch_update 완료 (API 1회 호출)")
-        print(f"🌅 {current_hour}시 전략 브리핑 완료! 프로그램 종료.")
+            print(f"✅ {len(batch_updates)//3}개 종목 일괄 업데이트 완료")
+        print(f"🌅 {current_hour}시 브리핑 완료! 종료.")
         exit(0)
 
     # 🔴 [모드 3] 15시 모드 (메인 리포트 생성 및 풀 코스)
@@ -502,6 +505,9 @@ try:
     if best_short: time.sleep(15)
     report_mid, pick_mid = generate_deep_report("mid", best_mid, is_warning_market)
 
+    # ==========================================
+    # 6. 3시 마감 최신 DB_스캐너 동기화 및 브리핑 일괄 덮어쓰기
+    # ==========================================
     print("\n▶ [3단계] 최신 DB_스캐너 동기화 및 리포트 종목/나머지 종목 갱신...")
     latest_db_data = db_sheet.get_all_values()
 
@@ -517,7 +523,7 @@ try:
         return briefing_summary
 
     short_summary = extract_summary(report_short) if best_short else ""
-    mid_summary   = extract_summary(report_mid)   if best_mid   else ""
+    mid_summary = extract_summary(report_mid) if best_mid else ""
 
     batch_updates_15 = []
     for i, r in enumerate(latest_db_data[1:], start=2):
@@ -526,7 +532,7 @@ try:
             stock_name = r[0] if len(r) > 0 else "알수없음"
 
             if best_short and code == best_short['code']:
-                print(f" - [{stock_name}] 리포트 정보 업데이트...")
+                print(f" - [{stock_name}] 리포트 업데이트...")
                 batch_updates_15.append({'range': f'J{i}', 'values': [[short_summary]]})
                 if pick_short:
                     batch_updates_15.append({'range': f'O{i}', 'values': [[f"{pick_short['target']:,}원"]]})
@@ -534,7 +540,7 @@ try:
                 continue
 
             if best_mid and code == best_mid['code']:
-                print(f" - [{stock_name}] 리포트 정보 업데이트...")
+                print(f" - [{stock_name}] 리포트 업데이트...")
                 batch_updates_15.append({'range': f'J{i}', 'values': [[mid_summary]]})
                 if pick_mid:
                     batch_updates_15.append({'range': f'O{i}', 'values': [[f"{pick_mid['target']:,}원"]]})
@@ -564,14 +570,13 @@ try:
                     batch_updates_15.append({'range': f'J{i}', 'values': [[briefing_text]]})
                     batch_updates_15.append({'range': f'O{i}', 'values': [[target_val]]})
                     batch_updates_15.append({'range': f'P{i}', 'values': [[stop_val]]})
-                    time.sleep(1.5)  # Gemini API 간격
+                    time.sleep(1.0)
                 except Exception as e:
                     print(f"[{stock_name}] 브리핑 에러 (건너뜀): {e}")
 
-    # 모든 DB_스캐너 업데이트를 한 번에 전송
     if batch_updates_15:
         db_sheet.batch_update(batch_updates_15)
-        print(f"✅ DB_스캐너 batch_update 완료 ({len(batch_updates_15)//3}개 종목, API 1회)")
+        print(f"✅ DB_스캐너 일괄 업데이트 완료 ({len(batch_updates_15)//3}개 종목)")
 
     # ==========================================
     # 7. 가상계좌 업데이트
