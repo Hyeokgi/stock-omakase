@@ -222,32 +222,33 @@ def get_real_money_themes():
         now = datetime.datetime.now(KST)
         is_market_closed = now.hour > 15 or (now.hour == 15 and now.minute >= 30)
         time_str = now.strftime('%H:%M')
+        
         res = local_session.get("https://finance.naver.com/sise/theme.naver", headers=headers, verify=False, timeout=5)
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
         table = soup.find('table', {'class': 'theme_area'}) or soup.find('table', {'class': 'type_1'})
         if not table:
-            print("⚠️ 네이버 테마 페이지 테이블을 찾을 수 없습니다.")
             return pd.DataFrame(), is_market_closed, {}
+
         raw_themes = [{'name': a.text.strip(), 'url': "https://finance.naver.com" + a['href']} for tds in [tr.find_all('td') for tr in table.find_all('tr')] if len(tds) > 1 for a in [tds[0].find('a')] if a]
         themes = [t for t in raw_themes if not any(b in t['name'] for b in THEME_BLACKLIST)][:20]
+        
         theme_data_list = []
-        print("▶️ 실시간 주도 테마 수집 시작 (동적 인덱스 및 시총 다이렉트 필터링)...")
+        print("▶️ 실시간 주도 테마 수집 시작 (1등 독식 5배수 필터 적용)...")
+        
         for theme in themes:
             try:
                 soup = BeautifulSoup(local_session.get(theme['url'], headers=headers, verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
                 stocks = []
                 type_5_table = soup.find('table', {'class': 'type_5'})
                 if not type_5_table: continue
-                # 💡 [핵심 픽스] 네이버 테마 테이블(type_5)의 고정된 실제 열 구조를 100% 매핑합니다.
-                # [0]:종목명, [1]:테마편입사유, [2]:현재가, [3]:전일비, [4]:등락률
-                # [5]:매수호가, [6]:매도호가, [7]:거래량, [8]:거래대금(백만), [9]:전일거래량
-                name_idx = 0
-                rate_idx = 4
-                val_idx = 8 # 거래대금(백만)
-
+                
+                # 💡 [핵심 픽스] 네이버 테마 페이지 고정 인덱스 (편입사유 열 추가 반영)
+                # 0:종목명, 4:등락률, 8:거래대금(백만)
+                name_idx, rate_idx, val_idx = 0, 4, 8
+                
                 for tr in type_5_table.find_all('tr'):
                     tds = tr.find_all('td')
-                    if len(tds) > val_idx: # 최소한 8번 인덱스(거래대금)까지는 존재해야 함
+                    if len(tds) > val_idx:
                         try:
                             a_tag = tds[name_idx].find('a')
                             if not a_tag: continue
@@ -255,51 +256,67 @@ def get_real_money_themes():
                             s_code = f"'{a_tag['href'].split('code=')[-1]}"
                             
                             rate_str = tds[rate_idx].text.strip()
-                            val_str = tds[val_idx].text.strip() # 여기에 5,911,037백만 등의 값이 들어옴
-                            
+                            val_str  = tds[val_idx].text.strip() # 무조건 거래대금 타격
+
                             if '%' not in rate_str or '-' in rate_str or '0.00' in rate_str: continue
                             rate_num = float(rate_str.replace('%', '').replace('+', '').replace(',', '').strip())
-                            
-                            # 거래대금: 단위가 '백만'이므로 숫자로 변환
-                            val_num = int(val_str.replace(',', '').strip())
-                            
-                            # 등락률 및 거래대금이 있는 경우만 시가총액 검사 (시가총액은 별도 함수로만 가져오기)
-                            if rate_num >= TARGET_PERCENT and val_num > 0:
+                            val_num  = int(val_str.replace(',', '').strip())
+
+                            # 💡 거래대금 최소 50억(5000백만원) 이상인 진짜 종목만 선별 (잡주 사전 차단)
+                            if rate_num >= TARGET_PERCENT and val_num >= 5000:
                                 market_cap_num = get_market_cap(s_code.replace("'", ""))
                                 if market_cap_num >= 1000:
                                     stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
                         except: continue
+                        
                 stocks_val = sorted(stocks, key=lambda x: x['value'], reverse=True)[:5]
                 if len(stocks_val) >= 2:
                     stocks_rate = sorted(stocks_val, key=lambda x: x['rate'], reverse=True)
                     theme_data_list.append({'theme_name': theme['name'], 'stocks': stocks_rate})
             except: continue
+            
         if not theme_data_list:
             print("⚠️ 조건을 만족하는 테마 종목이 하나도 없습니다. (시가총액/등락률 필터 확인)")
             return pd.DataFrame(), is_market_closed, {}
+            
         grouped_themes = {}
         for t_data in theme_data_list: grouped_themes.setdefault(t_data['stocks'][0]['code'], []).append(t_data)
+        
         merged_themes = []
         for top_code, t_list in grouped_themes.items():
             theme_names = list(dict.fromkeys(t['theme_name'] for t in t_list))
             merged_name = " / ".join(theme_names) + f" (대장: {t_list[0]['stocks'][0]['name']})" if len(theme_names) > 1 else theme_names[0]
+            
             unique_stocks = {s['code']: s for t in t_list for s in t['stocks']}
             merged_stocks_val = sorted(unique_stocks.values(), key=lambda x: x['value'], reverse=True)[:5]
+            
+            # 💡 [핵심 픽스] 1등 거래대금이 2등보다 5배 이상 크면 '개별주'로 간주하여 테마 무효화
+            if len(merged_stocks_val) >= 2:
+                if merged_stocks_val[0]['value'] >= merged_stocks_val[1]['value'] * 5:
+                    print(f"⚠️ [{merged_name}] 1등이 2등보다 5배 이상 커서 개별주로 강등(테마 배제)합니다.")
+                    continue
+            
             merged_stocks_rate = sorted(merged_stocks_val, key=lambda x: x['rate'], reverse=True)
             merged_themes.append({'theme_name': merged_name, 'theme_sum': sum(s['value'] for s in merged_stocks_val), 'stocks': merged_stocks_rate})
+            
         merged_themes = sorted(merged_themes, key=lambda x: x['theme_sum'], reverse=True)
+        
         all_theme_map = {}
         for m_data in merged_themes:
             for idx, s in enumerate(m_data['stocks']):
                 if s['name'] not in all_theme_map:
                     all_theme_map[s['name']] = {'theme_name': m_data['theme_name'], 'is_leader': (idx == 0)}
+                    
         final_themes = []
         for m_data in merged_themes:
             if not any(len(set(s['code'] for s in m_data['stocks']).intersection(set(s['code'] for s in f_data['stocks']))) >= 2 for f_data in final_themes):
                 final_themes.append(m_data)
             if len(final_themes) >= 10: break
+            
         final_rows = [{'날짜': now.strftime('%Y-%m-%d'), '시간': time_str, '순위': rank, '테마명': t_data['theme_name'], '종목명': s['name'], '종목코드': s['code'], '등락률(%)': s['rate'], '거래대금(억원)': int(s['value']/100)} for rank, t_data in enumerate(final_themes, 1) for s in t_data['stocks']]
+        
         return pd.DataFrame(final_rows), is_market_closed, all_theme_map
+        
     except Exception as e:
         print(f"❌ 테마 수집 에러: {e}")
         return pd.DataFrame(), False, {}
