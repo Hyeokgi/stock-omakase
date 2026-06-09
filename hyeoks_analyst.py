@@ -31,9 +31,10 @@ current_hour = now_kst.hour
 print(f"🤖 [HYEOKS 리서치 센터] 봇 가동 (현재 KST {now_kst.strftime('%H:%M:%S')})")
 
 try:
+    # API 오류 방지용 타임아웃 유지 (필수)
     client = genai.Client(
         api_key=GEMINI_API_KEY, 
-        http_options=types.HttpOptions(timeout=120000) # 120,000ms (120초) 대기시간 보장
+        http_options=types.HttpOptions(timeout=120000) 
     )
 except Exception as e:
     print(f"❌ API 초기화 실패: {e}"); exit(1)
@@ -43,27 +44,24 @@ def clean_emojis(text):
     for e in emojis: text = text.replace(e, '')
     return text.replace('  ', ' ').strip()
 
+# 💡 [복구] 기존의 안정적인 단일 모델 호출 로직으로 원상복구
 def safe_generate_content(contents, is_fast=False):
-    primary_model = 'gemini-2.5-flash' if is_fast else 'gemini-2.5-pro'
-    fallback_model = 'gemini-2.5-flash'
-    
+    model_name = 'gemini-2.5-flash' if is_fast else 'gemini-2.5-pro'
     for i in range(3):
-        # 💡 [오토 폴백 시스템] 1차 시도는 지정된 모델, 2~3차 시도는 제한이 널널한 flash 모델로 자동 전환하여 셧다운 방지
-        model_to_use = primary_model if i == 0 else fallback_model
         try:
             return client.models.generate_content(
-                model=model_to_use,
+                model=model_name,
                 contents=contents
             )
         except Exception as e:
             err = str(e)
             if "503" in err or "429" in err or "quota" in err.lower() or "timeout" in err.lower():
-                wait_time = 15 * (i + 1)
-                print(f"⚠️ API 지연/초과({i+1}/3). [{model_to_use}] {wait_time}초 대기 후 재시도...")
+                wait_time = 10 * (i + 1)
+                print(f"⚠️ API 지연({i+1}/3). {wait_time}초 대기 후 재시도...")
                 time.sleep(wait_time)
             else:
                 raise e
-    raise Exception("❌ Gemini API 3회 연속 실패 - 쿼터 초과 또는 서버 응답 없음")
+    raise Exception("❌ Gemini API 3회 실패 - 건너뜀")
 
 def parse_ai_json(text):
     try:
@@ -126,14 +124,11 @@ def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
     except Exception as e:
         print(f"⚠️ [{sheet_name}] 정렬 실패: {e}")
 
-# ==========================================
-# 💡 역사적 수급 DNA 검증 함수 (논리 오류 완벽 교정)
-# ==========================================
+# 💡 오킨스전자 등 억울한 탈락 방지 기준은 유지
 def validate_stock_historical_dna(cand, raw_theme_daily_map, is_warning_market):
     code = cand['code']
     name = cand['name']
     
-    # 💡 [문턱값 현실화] 하락장 300억, 평시 500억으로 기준 완화. 
     min_tv_threshold = 30_000_000_000 if is_warning_market else 50_000_000_000
     
     local_session = requests.Session()
@@ -148,11 +143,7 @@ def validate_stock_historical_dna(cand, raw_theme_daily_map, is_warning_market):
             data = item.get("data").split("|")
             close_p = int(data[4])
             vol = int(data[5])
-            
             day_tv_krw = close_p * vol
-            
-            # 💡 [핵심 픽스] 억울한 탈락의 주범이었던 '테마 대금 2000억' 병목 조건을 삭제.
-            # 개별 종목이 충분한 거래대금(500억/300억)을 터뜨렸다면 주도주 이력을 증명한 것으로 판단합니다.
             if day_tv_krw >= min_tv_threshold:
                 has_qualified_day = True
                 break
@@ -176,7 +167,6 @@ try:
     cleanup_and_reorder(doc, "접속로그", 1)
     cleanup_and_reorder(doc, "DB_중장기", 0)
 
-    # KIS_TOKEN 추출 안전장치
     KIS_TOKEN = ""
     try:
         for row in doc.worksheet("⚙️설정").get_all_values():
@@ -257,38 +247,41 @@ try:
         }}
         """
 
+    # 💡 [복구] 트레이더님이 제공해주신 원본 'update_cell' + 'time.sleep(3.5)' 로직으로 100% 복원
     if current_hour != 15:
-        print(f"▶ [{current_hour}시 모드] 대기 중인 종목의 브리핑 및 가격 산출을 진행합니다.")
-        batch_updates = []
+        # 🟡 [모드 2] 오전장, 저녁장: 간단 브리핑 산출 로직
+        print(f"▶ [{current_hour}시 모드] 브리핑 로직 가동...")
         for i, row in enumerate(db_rows[1:], start=2):
-            if len(row) > 9 and "리포트 발송 완료" not in str(row[9]):
-                stock_name  = row[0]  if len(row) > 0  else "알수없음"
-                curr_p      = row[3]  if len(row) > 3  else ''
-                tajeom_badge= row[8]  if len(row) > 8  else ''
-                sugeup      = row[11] if len(row) > 11 else ''
-                high_52     = row[12] if len(row) > 12 else ''
-                theme       = row[5]  if len(row) > 5  else ''
-                target_sys  = row[14] if len(row) > 14 else ''
-                stop_sys    = row[15] if len(row) > 15 else ''
-                print(f" - [{stock_name}] 브리핑 생성 중...")
-                prompt = get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys, is_warning_market)
+            # 상태값 읽기 (디버깅을 위해 strip()으로 공백 제거)
+            status = str(row[9]).strip() if len(row) > 9 else ""
+            
+            # "AI 브리핑 대기중" 인 경우에만 작업 수행
+            if "AI 브리핑 대기중" in status:
+                stock_name = row[0] if len(row) > 0 else "알수없음"
+                print(f" - [{stock_name}] AI 전략 산출 중... (현재상태: {status})")
+                
                 try:
-                    res_text    = safe_generate_content(prompt, is_fast=True).text
+                    # 데이터 안전하게 가져오기
+                    curr_p = row[3] if len(row) > 3 else '0'
+                    tajeom_badge = row[8] if len(row) > 8 else ''
+                    sugeup = row[11] if len(row) > 11 else ''
+                    high_52 = row[12] if len(row) > 12 else ''
+                    theme = row[5] if len(row) > 5 else ''
+                    
+                    # 프롬프트 생성
+                    prompt = get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, "관망", "관망", is_warning_market)
+                    
+                    # AI 호출
+                    res_text = safe_generate_content(prompt, is_fast=True).text
                     parsed_data = parse_ai_json(res_text)
+                    
                     briefing_text = parsed_data.get("briefing", "브리핑 생성 에러")
-                    if not briefing_text.startswith("✅") and not briefing_text.startswith("⚠️"):
-                        briefing_text = f"✅ [간단 브리핑] {briefing_text}"
-                    target_val = f"{int(parsed_data.get('target_price', 0)):,}원" if parsed_data.get('target_price') else "관망"
-                    stop_val   = f"{int(parsed_data.get('stop_loss',   0)):,}원" if parsed_data.get('stop_loss')   else "관망"
-                    batch_updates.append({'range': f'J{i}', 'values': [[briefing_text]]})
-                    batch_updates.append({'range': f'O{i}', 'values': [[target_val]]})
-                    batch_updates.append({'range': f'P{i}', 'values': [[stop_val]]})
-                    time.sleep(1.0)
+                    # ✅ 상태 업데이트
+                    db_sheet.update_cell(i, 10, f"✅ [간단 브리핑] {briefing_text}")
+                    time.sleep(3.5) # 트래픽 보호용 대기시간
                 except Exception as e:
-                    print(f"[{stock_name}] 브리핑 에러 (건너뜀): {e}")
-        if batch_updates:
-            db_sheet.batch_update(batch_updates)
-            print(f"✅ {len(batch_updates)//3}개 종목 일괄 업데이트 완료")
+                    print(f"❌ [{stock_name}] 브리핑 에러: {e}")
+                    db_sheet.update_cell(i, 10, "⚠️ 브리핑 에러")
         print(f"🌅 {current_hour}시 브리핑 완료! 종료.")
         exit(0)
 
@@ -544,7 +537,7 @@ try:
     short_summary = extract_summary(report_short) if best_short else ""
     mid_summary = extract_summary(report_mid) if best_mid else ""
 
-    batch_updates_15 = []
+    # 💡 [복구] 15시 모드의 나머지 종목 브리핑 시에도 원본 방식(update_cell & sleep 3.5) 유지
     for i, r in enumerate(latest_db_data[1:], start=2):
         if len(r) > 9:
             code       = str(r[2]).replace("'", "").strip().zfill(6)
@@ -552,18 +545,18 @@ try:
 
             if best_short and code == best_short['code']:
                 print(f" - [{stock_name}] 리포트 업데이트...")
-                batch_updates_15.append({'range': f'J{i}', 'values': [[short_summary]]})
+                db_sheet.update_cell(i, 10, short_summary)
                 if pick_short:
-                    batch_updates_15.append({'range': f'O{i}', 'values': [[f"{pick_short['target']:,}원"]]})
-                    batch_updates_15.append({'range': f'P{i}', 'values': [[f"{pick_short['stop']:,}원"]]})
+                    db_sheet.update_cell(i, 15, f"{pick_short['target']:,}원")
+                    db_sheet.update_cell(i, 16, f"{pick_short['stop']:,}원")
                 continue
 
             if best_mid and code == best_mid['code']:
                 print(f" - [{stock_name}] 리포트 업데이트...")
-                batch_updates_15.append({'range': f'J{i}', 'values': [[mid_summary]]})
+                db_sheet.update_cell(i, 10, mid_summary)
                 if pick_mid:
-                    batch_updates_15.append({'range': f'O{i}', 'values': [[f"{pick_mid['target']:,}원"]]})
-                    batch_updates_15.append({'range': f'P{i}', 'values': [[f"{pick_mid['stop']:,}원"]]})
+                    db_sheet.update_cell(i, 15, f"{pick_mid['target']:,}원")
+                    db_sheet.update_cell(i, 16, f"{pick_mid['stop']:,}원")
                 continue
 
             if "리포트 발송 완료" not in str(r[9]):
@@ -572,7 +565,7 @@ try:
                 tajeom_badge = r[8]  if len(r) > 8  else ''
                 sugeup       = r[11] if len(r) > 11 else ''
                 high_52      = r[12] if len(r) > 12 else ''
-                theme        = r[5]  if len(row) > 5  else ''
+                theme        = r[5]  if len(r) > 5  else ''
                 target_sys   = r[14] if len(r) > 14 else ''
                 stop_sys     = r[15] if len(r) > 15 else ''
                 prompt = get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys, is_warning_market)
@@ -582,20 +575,18 @@ try:
                     briefing_text = parsed_data.get("briefing", "브리핑 생성 에러")
                     if not briefing_text.startswith("✅") and not briefing_text.startswith("⚠️"):
                         briefing_text = f"✅ [간단 브리핑] {briefing_text}"
+                    
                     raw_target = str(parsed_data.get('target_price', '0')).replace(',', '').replace('원', '')
                     raw_stop   = str(parsed_data.get('stop_loss',   '0')).replace(',', '').replace('원', '')
                     target_val = f"{int(raw_target):,}원" if raw_target.isdigit() and int(raw_target) > 0 else "관망"
                     stop_val   = f"{int(raw_stop):,}원"   if raw_stop.isdigit()   and int(raw_stop)   > 0 else "관망"
-                    batch_updates_15.append({'range': f'J{i}', 'values': [[briefing_text]]})
-                    batch_updates_15.append({'range': f'O{i}', 'values': [[target_val]]})
-                    batch_updates_15.append({'range': f'P{i}', 'values': [[stop_val]]})
-                    time.sleep(1.0)
+                    
+                    db_sheet.update_cell(i, 10, briefing_text)
+                    db_sheet.update_cell(i, 15, target_val)
+                    db_sheet.update_cell(i, 16, stop_val)
+                    time.sleep(3.5) # 트래픽 보호용 대기시간
                 except Exception as e:
                     print(f"[{stock_name}] 브리핑 에러 (건너뜀): {e}")
-
-    if batch_updates_15:
-        db_sheet.batch_update(batch_updates_15)
-        print(f"✅ DB_스캐너 일괄 업데이트 완료 ({len(batch_updates_15)//3}개 종목)")
 
     # ==========================================
     # 7. 가상계좌 업데이트
