@@ -39,35 +39,18 @@ def clean_emojis(text):
     for e in emojis: text = text.replace(e, '')
     return text.replace('  ', ' ').strip()
 
-# 💡 [핵심] 무한 대기를 막는 서킷 브레이커 설정
-global_api_quota_exhausted = False
-
 def safe_generate_content(contents, is_fast=False):
-    global global_api_quota_exhausted
-    if global_api_quota_exhausted:
-        raise Exception("🚨 서버 과부하 누적으로 분석 원천 차단됨")
-
-    # 💡 수석님의 요청대로 최신 2.5 모델명으로 완벽 원복! (플래시는 간단 브리핑, 프로는 딥리딩)
     model_name = 'gemini-2.5-flash' if is_fast else 'gemini-2.5-pro'
-    
-    for i in range(3): # 재시도 횟수 제한 (무한 로딩 방지)
+    for i in range(5): 
         try: 
             return client.models.generate_content(model=model_name, contents=contents)
         except Exception as e:
-            err_str = str(e).lower()
-            if "429" in err_str or "quota" in err_str or "exhausted" in err_str:
+            if "503" in str(e) or "429" in str(e) or "quota" in str(e).lower():
                 wait_time = 10 * (i + 1)
-                print(f"⚠️ 구글 API 트래픽 초과. {wait_time}초 대기 후 재시도...")
+                print(f"⚠️ 구글 API 지연. {wait_time}초 대기 후 재시도...")
                 time.sleep(wait_time)
-            elif "503" in err_str:
-                print("⚠️ 구글 서버 일시적 과부하 (503 에러). 5초 대기...")
-                time.sleep(5)
-            else: 
-                raise e 
-                
-    # 3번 다 실패하면 그 즉시 해당 모델 호출을 멈추고 스킵합니다.
-    global_api_quota_exhausted = True
-    raise Exception(f"❌ 구글 서버({model_name}) 무응답으로 최종 실패")
+            else: raise e 
+    raise Exception("❌ 구글 서버 할당량 초과 또는 무응답으로 최종 실패")
 
 def parse_ai_json(text):
     try:
@@ -131,7 +114,7 @@ def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
         print(f"⚠️ [{sheet_name}] 정렬 실패: {e}")
 
 # ==========================================
-# 💡 역사적 수급 DNA 검증 함수 
+# 💡 역사적 수급 DNA 검증 함수 (개별 최고 700억 / 당시 테마 2000억)
 # ==========================================
 def validate_stock_historical_dna(cand, raw_theme_daily_map):
     code = cand['code']
@@ -155,9 +138,11 @@ def validate_stock_historical_dna(cand, raw_theme_daily_map):
             vol = int(data[5])
             
             day_tv_krw = close_p * vol
-            if day_tv_krw >= 70_000_000_000:  
+            if day_tv_krw >= 70_000_000_000:  # 1. 역사적 일일 최고 거래대금 700억 이상 조건 충증
+                # 2. 당일 소속 테마 전체 거래대금 누적 합산 2000억 이상 검증
                 theme_val_eok = raw_theme_daily_map.get((f_date, clean_theme), 0)
                 if theme_val_eok >= 2000 or theme_val_eok == 0:
+                    # 누적 데이터가 미처 없는 날이거나 조건 충족 시 패스 허용
                     has_qualified_day = True
                     break
                     
@@ -206,36 +191,27 @@ try:
         exit(0)
 
     def get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys, is_warning_market):
-        is_seed = "🌱" in tajeom_badge or "모아가기" in tajeom_badge or "DB_중장기" in tajeom_badge
-        is_active_buy = "외인집중" in tajeom_badge
+        is_seed = "🌱" in tajeom_badge or "모아가기" in tajeom_badge
         market_context = "🚨 현재 시장은 변동성이 큰 하락/횡보장입니다. 안정성을 최우선으로 고려하십시오." if is_warning_market else "현재 시장은 정상적인 스윙/돌파가 불가능한 장세입니다."
         
-        if is_active_buy:
+        if is_seed:
             guide_text = f"""
-            💡 [AI 매매 보류(Veto) 및 가격 결정 가이드: 외인 집중배팅(Non-Program) 역발상 전략]
-            {market_context}
-            🚨 귀하는 세계 최고의 월스트리트 퀀트 애널리스트 집단입니다. 
-            1. 이 종목은 기계적인 프로그램 매도 폭탄 속에서도 외국인 액티브 자금이 강력하게 '개별 종목으로 집중 매집'하고 있는 보석 같은 종목입니다. (💎 외인집중 배지)
-            2. 지수 하락에 흔들리지 말고, 세력의 매집 단가를 유추하여 손절가를 넉넉하게 잡고, 1차/2차 분할 매수 타점을 제시하십시오.
-            3. "프로그램 매도에도 불구하고 찐외인 수급이 유입 중"이라는 역발상 논리를 브리핑에 반드시 포함하십시오.
-            """
-        elif is_seed:
-            guide_text = f"""
-            💡 [AI 매매 보류(Veto) 및 가격 결정 가이드: 중장기 모아가기(Accumulation) & DB_중장기 픽 전략]
+            💡 [AI 매매 보류(Veto) 및 가격 결정 가이드: 중장기 모아가기(Accumulation) 전략]
             {market_context}
             🚨 귀하는 세계 최고의 월스트리트 퀀트 애널리스트 집단입니다. 
             1. 이 종목은 현재 고점 대비 조정을 받고 거래량이 마른 '씨앗(SEED)' 종목입니다. 시스템 기준가에 얽매이지 마십시오.
-            2. 손절가 설정: -3% 같은 짧은 비율이 아니라, 차트 상의 아주 넉넉하고 의미 있는 하단 바운더리(예: 이전 거대한 기준봉의 시가, 60일선, 쌍바닥 최저점)를 유추하여 단단하게 설정하십시오.
+            2. 손절가 설정: -3% 같은 짧은 비율이 아니라, 차트 상의 아주 넉넉하고 의미 있는 하단 바운더리(예: 이전 거대한 기준봉의 시가, 60일선, 쌍바닥 최저점)를 유추하여 단단하게 설정하십시오. 하락장일수록 지지선을 보수적으로(깊게) 잡으십시오.
             3. 매수 전략: 한 번에 몰빵하는 것이 아니라 "현재가 부근 1차 매수 후, ~원 부근(손절가 위)에서 2차 분할 매수"하는 시나리오를 브리핑에 포함하십시오.
+            4. 2중 검토(Chain of Thought): 이 종목이 정말 모아갈 가치가 있는지 두 번 생각하십시오. 만약 조정을 가장한 '완전한 우하향 폭포수' 이탈 차트라고 판단되면 목표가/손절가를 0으로 처리하고 관망(Veto)을 지시하십시오.
             """
         else:
             guide_text = f"""
             💡 [AI 매매 보류(Veto) 및 가격 결정 가이드: 단기/스윙 히트앤런 전략]
             {market_context}
             🚨 귀하는 세계 최고의 월스트리트 퀀트 애널리스트 집단입니다. 
-            1. 제공된 데이터를 분석했을 때, 하락장에서 단기 모멘텀이 빠르게 소멸할 위험이 있거나, 윗꼬리가 너무 길면 관망(Veto)을 지시하십시오.
+            1. 2중 검토(Chain of Thought) 거부권 행사: 제공된 데이터를 분석했을 때, 하락장에서 단기 모멘텀이 빠르게 소멸할 위험이 있거나, 윗꼬리가 너무 길거나(리스크), 거래대금이 빈약하여 상승 동력이 부족하다고 판단되면 억지로 매수 추천을 하지 마십시오.
                - 이 경우 briefing에 "⚠️ [매수 보류] {market_context} 단기 상승 동력 부족 및 리스크 과다로 관망 권장"이라고 적고, target_price와 stop_loss는 0으로 처리하십시오.
-            2. 가격 튜닝: 시스템 기준가를 참고하되, 하락장일 경우 손절을 매우 타이트하게 잡고, 익절(목표가) 역시 짧게 끊어치는 보수적인 타점을 제시하십시오.
+            2. 가격 튜닝: 시스템 기준가를 참고하되, 하락장일 경우 손절을 매우 타이트하게(짧게) 잡고, 익절(목표가) 역시 짧게 끊어치는 보수적인 타점을 제시하십시오.
             """
 
         return f"""
@@ -260,18 +236,10 @@ try:
         }}
         """
 
-    # 🟡 [모드 2] 15시 이외 모드 (배치 통신 최적화 유지)
     if current_hour != 15:
         print(f"▶ [{current_hour}시 모드] 메인 리포트 시간이 아니므로, 대기 중인 종목의 브리핑 및 가격 산출을 진행합니다.")
-        updates = []
-        briefing_count = 0
-        
         for i, row in enumerate(db_rows[1:], start=2):
-            if len(row) > 9 and "리포트 발송 완료" not in str(row[9]) and "분석 생략" not in str(row[9]):  
-                if briefing_count >= 25:
-                    updates.append({'range': f'J{i}', 'values': [['⚠️ 분석 생략 (처리 한도 초과)']]})
-                    continue
-                
+            if len(row) > 9 and "리포트 발송 완료" not in str(row[9]):  
                 stock_name = row[0] if len(row) > 0 else "알수없음"
                 print(f" - [{stock_name}] AI 전략 및 가격 산출 중...")
                 
@@ -296,23 +264,14 @@ try:
                     target_val = f"{int(parsed_data.get('target_price', 0)):,}원" if parsed_data.get('target_price') else "관망"
                     stop_val = f"{int(parsed_data.get('stop_loss', 0)):,}원" if parsed_data.get('stop_loss') else "관망"
                     
-                    updates.append({'range': f'J{i}', 'values': [[briefing_text]]})
-                    updates.append({'range': f'O{i}', 'values': [[target_val]]})
-                    updates.append({'range': f'P{i}', 'values': [[stop_val]]})
-                    
-                    briefing_count += 1
-                    time.sleep(2) # 유료 티어의 속도를 믿고 대기시간을 2초로 단축!
+                    db_sheet.update_cell(i, 10, briefing_text)
+                    db_sheet.update_cell(i, 15, target_val)
+                    db_sheet.update_cell(i, 16, stop_val)
+                    time.sleep(3.5)
                 except Exception as e:
-                    err_msg = str(e)
-                    print(f"[{stock_name}] 브리핑/가격 산출 에러 발생 (건너뜀): {err_msg}")
-                    updates.append({'range': f'J{i}', 'values': [[f"⚠️ 분석 실패: {err_msg[:20]}"]]})
-        
-        if updates:
-            db_sheet.batch_update(updates)
-            
-        print(f"🌅 {current_hour}시 전략 브리핑 일괄 저장 완료! 프로그램 종료.")
+                    print(f"[{stock_name}] 브리핑/가격 산출 에러 발생 (건너뜀): {e}")
+        print(f"🌅 {current_hour}시 전략 브리핑 완료! 프로그램 종료.")
         exit(0)
-
 
     # 🔴 [모드 3] 15시 모드 (메인 리포트 생성 및 풀 코스)
     print("\n▶ [15시 메인 리포트 모드] 주가데이터_보조 상위 150개 풀에서 HYEOKS 알파 종목 발굴 시작...")
@@ -321,6 +280,7 @@ try:
     nasdaq, exchange, oil = clean_emojis(macro_data[1][4]), clean_emojis(macro_data[1][6]), clean_emojis(macro_data[1][7])
     news_keywords = clean_emojis("\n".join([f"{r[2]}({r[3]}회)" for r in doc.worksheet("뉴스_키워드").get_all_values()[1:6]]))
     
+    # 💡 [역사적 수급 DNA 필터용] 수급_Raw 일자별/테마별 거래대금 통계 마스터 맵 빌드
     raw_theme_daily_map = {}
     try:
         raw_sheet = doc.worksheet("수급_Raw")
@@ -349,7 +309,7 @@ try:
         if len(r) < 21: continue
         name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
         curr_p, chg, score_str, tajeom_raw = str(r[2]).strip(), str(r[3]).strip(), str(r[8]).strip(), str(r[9]).strip()
-        theme_name = str(r[19]).strip() 
+        theme_name = str(r[19]).strip()  # 19번 열 테마명 구조 확보
         prog = str(r[20]).strip()
         seed_tag = str(r[25]).strip() if len(r) > 25 else "NORMAL"
         
@@ -380,6 +340,7 @@ try:
         high_score_cands.sort(key=lambda x: x['score'], reverse=True)
         pre_pool = high_score_cands[:100]
 
+    # 💡 [역사적 DNA 동시 검증 실행]
     print(f"🧬 후보군 {len(pre_pool)}개 종목의 역사적 수급 DNA(개별 700억 / 테마 2000억) 검증 돌입...")
     validated_pool = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
@@ -400,7 +361,7 @@ try:
     아래는 HYEOKS 퀀트 점수와 역사적 주도주 DNA 검증이 끝난 최상위 150개 종목 리스트입니다.
     현재 시장 국면은 {'하락장' if is_warning_market else '상승/보합장'}입니다.
     
-    이 중에서 제미나이 모델의 직관과 종합적인 판단을 활용해 
+    이 중에서 제미나이 2.5 모델의 직관과 종합적인 판단을 활용해 
     최고의 단기 1종목, 중장기 스윙 1종목을 2중 검토(Chain of Thought)를 거쳐 엄선하십시오. 
     🚨 하락장이라면 안정성이 100% 보장되지 않는 단기 종목은 억지로 뽑지 마십시오("000000" 반환).
 
@@ -526,11 +487,11 @@ try:
         return report_txt, pick_data
 
     report_short, pick_short = generate_deep_report("short", best_short, is_warning_market)
-    if best_short: time.sleep(5)
+    if best_short: time.sleep(15)
     report_mid, pick_mid = generate_deep_report("mid", best_mid, is_warning_market)
 
     # ==========================================
-    # 6. 15시 마감 최신 DB_스캐너 동기화 및 브리핑 일괄 덮어쓰기
+    # 6. 3시 마감 최신 DB_스캐너 동기화 및 브리핑 일괄 덮어쓰기
     # ==========================================
     print("\n▶ [3단계] 최신 DB_스캐너 동기화 및 리포트 종목/나머지 종목 갱신...")
     latest_db_data = db_sheet.get_all_values()
@@ -549,35 +510,30 @@ try:
     short_summary = extract_summary(report_short) if best_short else ""
     mid_summary = extract_summary(report_mid) if best_mid else ""
 
-    updates = []
-    briefing_count = 0
-
     for i, r in enumerate(latest_db_data[1:], start=2):
         if len(r) > 9:
             code = str(r[2]).replace("'", "").strip().zfill(6)
             stock_name = r[0] if len(r) > 0 else "알수없음"
 
             if best_short and code == best_short['code']:
-                print(f" - [{stock_name}] 리포트 정보 업데이트 중...")
-                updates.append({'range': f'J{i}', 'values': [[short_summary]]})
+                print(f" - [{stock_name}] 리포트 정보 및 가격 시트에 업데이트 중...")
+                db_sheet.update_cell(i, 10, short_summary)
                 if pick_short:
-                    updates.append({'range': f'O{i}', 'values': [[f"{pick_short['target']:,}원"]]})
-                    updates.append({'range': f'P{i}', 'values': [[f"{pick_short['stop']:,}원"]]})
+                    db_sheet.update_cell(i, 15, f"{pick_short['target']:,}원")
+                    db_sheet.update_cell(i, 16, f"{pick_short['stop']:,}원")
+                time.sleep(3.5)
                 continue
             
             if best_mid and code == best_mid['code']:
-                print(f" - [{stock_name}] 리포트 정보 업데이트 중...")
-                updates.append({'range': f'J{i}', 'values': [[mid_summary]]})
+                print(f" - [{stock_name}] 리포트 정보 및 가격 시트에 업데이트 중...")
+                db_sheet.update_cell(i, 10, mid_summary)
                 if pick_mid:
-                    updates.append({'range': f'O{i}', 'values': [[f"{pick_mid['target']:,}원"]]})
-                    updates.append({'range': f'P{i}', 'values': [[f"{pick_mid['stop']:,}원"]]})
+                    db_sheet.update_cell(i, 15, f"{pick_mid['target']:,}원")
+                    db_sheet.update_cell(i, 16, f"{pick_mid['stop']:,}원")
+                time.sleep(3.5)
                 continue
             
-            if "리포트 발송 완료" not in str(r[9]) and "분석 생략" not in str(r[9]):
-                if briefing_count >= 25:
-                    updates.append({'range': f'J{i}', 'values': [['⚠️ 분석 생략 (처리 한도 초과)']]})
-                    continue
-
+            if "리포트 발송 완료" not in str(r[9]):
                 print(f" - [{stock_name}] AI 전략 및 가격 산출 중...")
                 
                 curr_p = r[3] if len(r) > 3 else ''
@@ -604,19 +560,12 @@ try:
                     target_val = f"{int(raw_target):,}원" if raw_target.isdigit() and int(raw_target) > 0 else "관망"
                     stop_val = f"{int(raw_stop):,}원" if raw_stop.isdigit() and int(raw_stop) > 0 else "관망"
                     
-                    updates.append({'range': f'J{i}', 'values': [[briefing_text]]})
-                    updates.append({'range': f'O{i}', 'values': [[target_val]]})
-                    updates.append({'range': f'P{i}', 'values': [[stop_val]]})
-                    
-                    briefing_count += 1
-                    time.sleep(2) 
+                    db_sheet.update_cell(i, 10, briefing_text)
+                    db_sheet.update_cell(i, 15, target_val)
+                    db_sheet.update_cell(i, 16, stop_val)
+                    time.sleep(3.5)
                 except Exception as e:
-                    err_msg = str(e)
-                    print(f"[{stock_name}] 브리핑/가격 산출 에러 발생 (건너뜀): {err_msg}")
-                    updates.append({'range': f'J{i}', 'values': [[f"⚠️ 분석 실패: {err_msg[:20]}"]]})
-
-    if updates:
-        db_sheet.batch_update(updates)
+                    print(f"[{stock_name}] 브리핑/가격 산출 에러 발생 (건너뜀): {e}")
 
     # ==========================================
     # 7. 가상계좌 업데이트
