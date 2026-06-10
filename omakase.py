@@ -376,7 +376,10 @@ def update_google_sheet(doc, df_theme, df_news, df_naver, df_main_news, is_marke
                 sheet_rt.update(range_name="A2", values=df_theme.values.tolist(), value_input_option="USER_ENTERED")
                 print("✅ [수급_실시간] 시트 갱신 완료")
             except Exception as e: print(f"❌ [수급_실시간] 업데이트 실패: {e}")
-            if is_market_closed:
+            now_check = datetime.datetime.now(KST)
+            is_real_closing = now_check.hour > 15 or (now_check.hour == 15 and now_check.minute >= 30) or now_check.hour < 9
+            
+            if is_market_closed or is_real_closing:
                 try:
                     sheet_raw = doc.worksheet("수급_Raw")
                     today_str = df_theme.iloc[0]['날짜']
