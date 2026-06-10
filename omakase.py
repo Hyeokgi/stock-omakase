@@ -772,58 +772,130 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             vol_ratio_yest = max(vol_ratio_yest, 500)
 
         # --------------------------------------------------
-        # 🟢 [개선] STEP 4: 칼만 필터 및 파라미터 동적 조정
+        # 👑 [HYEOKS Core Upgrade] STEP 4: Adaptive 칼만 필터 및 가속도 추세 엔진
         # --------------------------------------------------
         try:
-            high_low = df_hist['high'] - df_hist['low']
+            # 1. ATR(Average True Range) 계산 및 기초 변동성 비율 산출
+            high_low   = df_hist['high'] - df_hist['low']
             high_close = (df_hist['high'] - df_hist['close'].shift()).abs()
-            low_close = (df_hist['low'] - df_hist['close'].shift()).abs()
-            tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-            atr_14 = tr.rolling(14).mean().iloc[-1]
-            if pd.isna(atr_14) or atr_14 == 0: atr_14 = current_price * 0.03
+            low_close  = (df_hist['low']  - df_hist['close'].shift()).abs()
+            tr         = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+            atr_14     = tr.rolling(14).mean().iloc[-1]
+            if pd.isna(atr_14) or atr_14 == 0: 
+                atr_14 = current_price * 0.03
 
-            # 변동성 비율에 따른 동적 노이즈 스케일링
             volatility_ratio = atr_14 / current_price if current_price > 0 else 0.03
-            Q = max(1e-5, min(1e-3, volatility_ratio * 0.01))
-            R = max(5e-3, min(5e-2, volatility_ratio * 0.3))
+            Q_base = max(1e-5, min(1e-3, volatility_ratio * 0.01))
+            R      = max(5e-3, min(5e-2, volatility_ratio * 0.3))
 
             prices = df_hist['close'].values
-            kalman_ma = []
-            x_hat, p = prices[0], 1.0
+
+            # 2. Adaptive 칼만 시그널 프로세싱 (Innovation 실시간 추적형 필터)
+            kalman_ma        = []
+            innovation_hist  = []
+            x_hat, p         = float(prices[0]), 1.0
+
             for z in prices:
-                p_hat = p + Q
-                K = p_hat / (p_hat + R)
-                x_hat = x_hat + K * (z - x_hat)
-                p = (1 - K) * p_hat
+                p_hat = p + Q_base
+                K_init = p_hat / (p_hat + R)
+                innovation = abs(float(z) - x_hat)
+                innovation_hist.append(innovation)
+
+                if len(innovation_hist) >= 5:
+                    recent_innov = sum(innovation_hist[-5:]) / 5
+                    Q_adaptive   = Q_base * (1 + recent_innov / max(x_hat * 0.01, 1e-6))
+                    Q_adaptive   = max(1e-5, min(5e-3, Q_adaptive))
+                    p_hat        = p + Q_adaptive
+                    K            = p_hat / (p_hat + R)
+                else:
+                    K = K_init
+
+                x_hat = x_hat + K * (float(z) - x_hat)
+                p     = (1 - K) * p_hat
                 kalman_ma.append(x_hat)
 
-            curr_kalman = kalman_ma[-1]
-            prev_kalman = kalman_ma[-2] if len(kalman_ma) > 1 else curr_kalman
-            pprev_kalman = kalman_ma[-3] if len(kalman_ma) > 2 else prev_kalman
+            # 3. 3차원 미분 연산 (기울기 및 가속도 벡터 정규화)
+            if len(kalman_ma) >= 11:
+                slope_1  = kalman_ma[-1] - kalman_ma[-2]
+                slope_3  = (kalman_ma[-1] - kalman_ma[-4]) / 3
+                accel    = slope_1 - slope_3
+            else:
+                slope_1 = slope_3 = accel = 0.0
 
-            is_kalman_uptrend = curr_kalman > prev_kalman
-            kalman_turned_green = (curr_kalman > prev_kalman) and (prev_kalman <= pprev_kalman)
-            kalman_turned_red = (curr_kalman < prev_kalman) and (prev_kalman >= pprev_kalman)
+            slope_pct = slope_1 / current_price * 100 if current_price > 0 else 0
+            accel_pct = accel   / current_price * 100 if current_price > 0 else 0
 
-            trend_start_price = current_price
-            for i in range(len(kalman_ma) - 1, 1, -1):
-                if kalman_ma[i] <= kalman_ma[i - 1]:
-                    trend_start_price = prices[i]
+            # 4. 추세 국면 4단계 분류 Matrix 적용
+            if   slope_pct > 0.3  and accel_pct >  0.05:  trend_phase = "ACCELERATION"   # 상승 급가속 (불타기 영역)
+            elif slope_pct > 0.1  and accel_pct >= -0.05: trend_phase = "STEADY"         # 안정적 우상향 (찐홀딩 구간)
+            elif slope_pct > 0    and accel_pct <  -0.05: trend_phase = "DECELERATION"   # 추세 감속 (익절 대기)
+            else:                                          trend_phase = "REVERSAL"       # 추세 파괴 및 하락 국면
+
+            is_kalman_uptrend   = slope_pct > 0.05
+            is_kalman_downtrend = slope_pct < -0.05
+
+            # 5. 휩쏘 원천 차단형 전환 신호 필터 (2봉 연속 검증 구조)
+            min_slope_th = current_price * 0.0008 # 최소 0.08% 이상의 유의미한 기울기 진동만 허용
+            if len(kalman_ma) >= 4:
+                s_now  = kalman_ma[-1] - kalman_ma[-2]
+                s_prev = kalman_ma[-2] - kalman_ma[-3]
+                kalman_turned_green = (s_now > min_slope_th and s_prev > 0 and kalman_ma[-2] >= kalman_ma[-3] and kalman_ma[-3] <= kalman_ma[-4])
+                kalman_turned_red   = (s_now < -min_slope_th and s_prev < 0 and kalman_ma[-2] <= kalman_ma[-3] and kalman_ma[-3] >= kalman_ma[-4])
+            else:
+                kalman_turned_green = kalman_turned_red = False
+
+            # 6. 추세 지속 기간 카운팅
+            trend_length       = 0
+            trend_start_kalman = kalman_ma[-1]
+            for i in range(len(kalman_ma) - 1, 0, -1):
+                if kalman_ma[i] > kalman_ma[i - 1]:
+                    trend_length      += 1
+                    trend_start_kalman = kalman_ma[i - 1]
+                else:
                     break
-            price_climb = current_price - trend_start_price
 
-            if kalman_turned_green: secret_tajeom = "🟢 [시크릿] 추세 전환 (1차 매수 타점)"
+            # 💡 [HYEOKS 맞춤 튜닝] 종목별 고유 변동성(ATR)을 반영한 정규화 파동 도출 연산
+            # 가격 차이가 아니라 "추세 저점 대비 현재 몇 배의 ATR만큼 올라왔는가"를 계산합니다.
+            atr_climb = (kalman_ma[-1] - trend_start_kalman) / atr_14 if atr_14 > 0 else 0.0
+
+            # 7. 시크릿 최우선 배지 트리거 분기문
+            if kalman_turned_green:
+                secret_tajeom = "🟢 [시크릿] 추세 전환 (1차 매수 타점)"
             elif is_kalman_uptrend:
-                if price_climb >= atr_14 * 3.0: secret_tajeom = "🔴 [시크릿] 3차 파동 도달 (전량 익절)"
-                elif price_climb >= atr_14 * 2.0: secret_tajeom = "🟡 [시크릿] 2차 파동 진행 (본절 스탑 상향)"
-                elif price_climb >= atr_14 * 1.0: secret_tajeom = "🟢 [시크릿] 1차 파동 진행 (추세 홀딩)"
-                else: secret_tajeom = "🟢 [시크릿] 상승 추세 유지"
-            elif kalman_turned_red: secret_tajeom = "📉 [시크릿] 하락 추세 전환 (전량 매도)"
-            else: secret_tajeom = "📉 [시크릿] 노이즈 및 하락장 (관망)"
-        except Exception:
-            atr_14 = current_price * 0.03
-            is_kalman_uptrend, kalman_turned_red = False, False
-            trend_start_price, secret_tajeom = current_price, ""
+                if trend_phase == "ACCELERATION":
+                    if atr_climb >= 3.0 and trend_length >= 10: # 변동성 폭발 상단 도달
+                        secret_tajeom = "🔴 [시크릿] 3차 파동 가속 (전량 익절)"
+                    else:
+                        secret_tajeom = "🚀 [시크릿] 상승 가속 (불타기 or 익절 준비)"
+                elif trend_phase == "STEADY":
+                    if atr_climb >= 1.5 and trend_length >= 5: # 변동성 허들 안정적 돌파
+                        secret_tajeom = "🟡 [시크릿] 2차 파동 안정 (본절 스탑 상향)"
+                    else:
+                        secret_tajeom = "🟢 [시크릿] 1차 파동 진행 (추세 홀딩)"
+                elif trend_phase == "DECELERATION":
+                    secret_tajeom = "🟡 [시크릿] 추세 감속 (절반 익절 검토)"
+                else:
+                    secret_tajeom = "🟢 [시크릿] 상승 추세 유지"
+            elif kalman_turned_red:
+                secret_tajeom = "📉 [시크릿] 하락 추세 전환 (전량 매도)"
+            else:
+                secret_tajeom = "📉 [시크릿] 노이즈 및 하락장 (관망)"
+
+            # 하위 호환성용 백업 변수 유지
+            trend_start_price = current_price
+
+        except Exception as e:
+            print(f"❌ STEP 4 Core Filter Error: {e}")
+            atr_14              = current_price * 0.03
+            is_kalman_uptrend   = False
+            kalman_turned_red   = False
+            trend_phase         = "REVERSAL"
+            trend_start_price   = current_price
+            secret_tajeom       = ""
+            slope_pct           = 0.0
+            accel_pct           = 0.0
+            trend_return        = 0.0
+            trend_length        = 0
 
         # --------------------------------------------------
         # STEP 5 & 6 & 7: 윗꼬리, 장도지향 (정적 데이터는 위로 이동됨)
