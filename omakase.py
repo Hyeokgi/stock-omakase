@@ -690,7 +690,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             except: pass
 
         # --------------------------------------------------
-        # 🟢 [개선] STEP 2-0: 정적 데이터(static_info) 및 치명적 하락(is_fatal_drop) 선행 판독
+        # STEP 2-0: 정적 데이터 선행 판독
         # --------------------------------------------------
         static_info = static_db.get(code)
         static_info_to_save = None
@@ -700,7 +700,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             market_cap, is_junk, is_financial_risk, is_chronic_loss = get_market_cap(code), False, False, False
             static_info_to_save = [f"'{code}", name, market_cap, str(is_junk), str(is_financial_risk), str(is_chronic_loss)]
             
-        # 💡 NameError 방지를 위해 STEP 10의 is_jongbe_cand 보다 먼저 정의되도록 상단 배치
         is_fatal_drop = is_junk or is_financial_risk
 
         # --------------------------------------------------
@@ -775,28 +774,56 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             vol_ratio_yest = max(vol_ratio_yest, 500)
 
         # --------------------------------------------------
-        # 👑 [HYEOKS Core Upgrade] STEP 4: Adaptive 칼만 필터 및 가속도 추세 엔진
+        # 🔒 [인사이트 이식] STEP 3-1: 일목 120선 및 엔벨로프 하단선 계산
+        # --------------------------------------------------
+        high_prices_120 = high_prices[-120:] if len(high_prices) >= 120 else high_prices
+        low_prices_120 = [h['low'] for h in history[-120:]] if len(history) >= 120 else [h['low'] for h in history]
+        highest_120d = max(high_prices_120[:-1]) if len(high_prices_120) > 1 else today_high
+        lowest_120d = min(low_prices_120[:-1]) if len(low_prices_120) > 1 else today_low
+        
+        ilmok_120_mid = (highest_120d + lowest_120d) / 2
+        is_ilmok_sangsang = current_price > ilmok_120_mid  # True: 상승구간, False: 하락구간
+        
+        ma20 = int(df_hist['close'].tail(20).mean()) if len(df_hist) >= 20 else current_price
+        envelope_lower_20 = ma20 * 0.80
+        
+        min_nulim_tv = 10_000_000_000 if is_warning_market else 5_000_000_000
+        is_envelope_over_under = (current_price <= envelope_lower_20) and (trading_value >= min_nulim_tv)
+
+        # --------------------------------------------------
+        # 🔒 [수석님 의견 반영] STEP 3-2: 장막판 윗꼬리 감쇠 필터 (타임락 대체 보완)
+        # --------------------------------------------------
+        now_kst_time = datetime.datetime.now(KST)
+        is_afternoon_check = (now_kst_time.hour == 15)
+        
+        is_shadow_disqualified = False
+        if is_afternoon_check:
+            daily_range = today_high - today_low
+            if daily_range > 0 and (upper_shadow / daily_range) > 0.30:
+                is_shadow_disqualified = True
+            if upper_shadow_ratio >= 0.03:
+                is_shadow_disqualified = True
+
+        # --------------------------------------------------
+        # STEP 4: Adaptive 칼만 필터 및 가속도 추세 엔진
         # --------------------------------------------------
         try:
-            # 1. ATR(Average True Range) 계산 및 기초 변동성 비율 산출
-            high_low   = df_hist['high'] - df_hist['low']
+            high_low = df_hist['high'] - df_hist['low']
             high_close = (df_hist['high'] - df_hist['close'].shift()).abs()
-            low_close  = (df_hist['low']  - df_hist['close'].shift()).abs()
-            tr         = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-            atr_14     = tr.rolling(14).mean().iloc[-1]
+            low_close = (df_hist['low'] - df_hist['close'].shift()).abs()
+            tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+            atr_14 = tr.rolling(14).mean().iloc[-1]
             if pd.isna(atr_14) or atr_14 == 0: 
                 atr_14 = current_price * 0.03
 
             volatility_ratio = atr_14 / current_price if current_price > 0 else 0.03
             Q_base = max(1e-5, min(1e-3, volatility_ratio * 0.01))
-            R      = max(5e-3, min(5e-2, volatility_ratio * 0.3))
+            R = max(5e-3, min(5e-2, volatility_ratio * 0.3))
 
             prices = df_hist['close'].values
-
-            # 2. Adaptive 칼만 시그널 프로세싱 (Innovation 실시간 추적형 필터)
-            kalman_ma        = []
-            innovation_hist  = []
-            x_hat, p         = float(prices[0]), 1.0
+            kalman_ma = []
+            innovation_hist = []
+            x_hat, p = float(prices[0]), 1.0
 
             for z in prices:
                 p_hat = p + Q_base
@@ -806,72 +833,65 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
                 if len(innovation_hist) >= 5:
                     recent_innov = sum(innovation_hist[-5:]) / 5
-                    Q_adaptive   = Q_base * (1 + recent_innov / max(x_hat * 0.01, 1e-6))
-                    Q_adaptive   = max(1e-5, min(5e-3, Q_adaptive))
-                    p_hat        = p + Q_adaptive
-                    K            = p_hat / (p_hat + R)
+                    Q_adaptive = Q_base * (1 + recent_innov / max(x_hat * 0.01, 1e-6))
+                    Q_adaptive = max(1e-5, min(5e-3, Q_adaptive))
+                    p_hat = p + Q_adaptive
+                    K = p_hat / (p_hat + R)
                 else:
                     K = K_init
 
                 x_hat = x_hat + K * (float(z) - x_hat)
-                p     = (1 - K) * p_hat
+                p = (1 - K) * p_hat
                 kalman_ma.append(x_hat)
 
-            # 3. 3차원 미분 연산 (기울기 및 가속도 벡터 정규화)
             if len(kalman_ma) >= 11:
-                slope_1  = kalman_ma[-1] - kalman_ma[-2]
-                slope_3  = (kalman_ma[-1] - kalman_ma[-4]) / 3
-                accel    = slope_1 - slope_3
+                slope_1 = kalman_ma[-1] - kalman_ma[-2]
+                slope_3 = (kalman_ma[-1] - kalman_ma[-4]) / 3
+                accel = slope_1 - slope_3
             else:
                 slope_1 = slope_3 = accel = 0.0
 
             slope_pct = slope_1 / current_price * 100 if current_price > 0 else 0
-            accel_pct = accel   / current_price * 100 if current_price > 0 else 0
+            accel_pct = accel / current_price * 100 if current_price > 0 else 0
 
-            # 4. 추세 국면 4단계 분류 Matrix 적용
-            if   slope_pct > 0.3  and accel_pct >  0.05:  trend_phase = "ACCELERATION"   # 상승 급가속 (불타기 영역)
-            elif slope_pct > 0.1  and accel_pct >= -0.05: trend_phase = "STEADY"         # 안정적 우상향 (찐홀딩 구간)
-            elif slope_pct > 0    and accel_pct <  -0.05: trend_phase = "DECELERATION"   # 추세 감속 (익절 대기)
-            else:                                          trend_phase = "REVERSAL"       # 추세 파괴 및 하락 국면
+            if slope_pct > 0.3 and accel_pct > 0.05: trend_phase = "ACCELERATION"
+            elif slope_pct > 0.1 and accel_pct >= -0.05: trend_phase = "STEADY"
+            elif slope_pct > 0 and accel_pct < -0.05: trend_phase = "DECELERATION"
+            else: trend_phase = "REVERSAL"
 
-            is_kalman_uptrend   = slope_pct > 0.05
+            is_kalman_uptrend = slope_pct > 0.05
             is_kalman_downtrend = slope_pct < -0.05
 
-            # 5. 휩쏘 원천 차단형 전환 신호 필터 (2봉 연속 검증 구조)
-            min_slope_th = current_price * 0.0008 # 최소 0.08% 이상의 유의미한 기울기 진동만 허용
+            min_slope_th = current_price * 0.0008
             if len(kalman_ma) >= 4:
-                s_now  = kalman_ma[-1] - kalman_ma[-2]
+                s_now = kalman_ma[-1] - kalman_ma[-2]
                 s_prev = kalman_ma[-2] - kalman_ma[-3]
                 kalman_turned_green = (s_now > min_slope_th and s_prev > 0 and kalman_ma[-2] >= kalman_ma[-3] and kalman_ma[-3] <= kalman_ma[-4])
-                kalman_turned_red   = (s_now < -min_slope_th and s_prev < 0 and kalman_ma[-2] <= kalman_ma[-3] and kalman_ma[-3] >= kalman_ma[-4])
+                kalman_turned_red = (s_now < -min_slope_th and s_prev < 0 and kalman_ma[-2] <= kalman_ma[-3] and kalman_ma[-3] >= kalman_ma[-4])
             else:
                 kalman_turned_green = kalman_turned_red = False
 
-            # 6. 추세 지속 기간 카운팅
-            trend_length       = 0
+            trend_length = 0
             trend_start_kalman = kalman_ma[-1]
             for i in range(len(kalman_ma) - 1, 0, -1):
                 if kalman_ma[i] > kalman_ma[i - 1]:
-                    trend_length      += 1
+                    trend_length += 1
                     trend_start_kalman = kalman_ma[i - 1]
                 else:
                     break
 
-            # 💡 [HYEOKS 맞춤 튜닝] 종목별 고유 변동성(ATR)을 반영한 정규화 파동 도출 연산
-            # 가격 차이가 아니라 "추세 저점 대비 현재 몇 배의 ATR만큼 올라왔는가"를 계산합니다.
             atr_climb = (kalman_ma[-1] - trend_start_kalman) / atr_14 if atr_14 > 0 else 0.0
 
-            # 7. 시크릿 최우선 배지 트리거 분기문
             if kalman_turned_green:
                 secret_tajeom = "🟢 [시크릿] 추세 전환 (1차 매수 타점)"
             elif is_kalman_uptrend:
                 if trend_phase == "ACCELERATION":
-                    if atr_climb >= 3.0 and trend_length >= 10: # 변동성 폭발 상단 도달
+                    if atr_climb >= 3.0 and trend_length >= 10:
                         secret_tajeom = "🔴 [시크릿] 3차 파동 가속 (전량 익절)"
                     else:
                         secret_tajeom = "🚀 [시크릿] 상승 가속 (불타기 or 익절 준비)"
                 elif trend_phase == "STEADY":
-                    if atr_climb >= 1.5 and trend_length >= 5: # 변동성 허들 안정적 돌파
+                    if atr_climb >= 1.5 and trend_length >= 5:
                         secret_tajeom = "🟡 [시크릿] 2차 파동 안정 (본절 스탑 상향)"
                     else:
                         secret_tajeom = "🟢 [시크릿] 1차 파동 진행 (추세 홀딩)"
@@ -884,24 +904,21 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             else:
                 secret_tajeom = "📉 [시크릿] 노이즈 및 하락장 (관망)"
 
-            # 하위 호환성용 백업 변수 유지
             trend_start_price = current_price
-
         except Exception as e:
             print(f"❌ STEP 4 Core Filter Error: {e}")
-            atr_14              = current_price * 0.03
-            is_kalman_uptrend   = False
-            kalman_turned_red   = False
-            trend_phase         = "REVERSAL"
-            trend_start_price   = current_price
-            secret_tajeom       = ""
-            slope_pct           = 0.0
-            accel_pct           = 0.0
-            trend_return        = 0.0
-            trend_length        = 0
+            atr_14 = current_price * 0.03
+            is_kalman_uptrend = False
+            kalman_turned_red = False
+            trend_phase = "REVERSAL"
+            trend_start_price = current_price
+            secret_tajeom = ""
+            slope_pct = 0.0
+            accel_pct = 0.0
+            trend_length = 0
 
         # --------------------------------------------------
-        # STEP 5 & 6 & 7: 윗꼬리, 장도지향 (정적 데이터는 위로 이동됨)
+        # STEP 5 & 6 & 7: 윗꼬리 필터링
         # --------------------------------------------------
         is_volume_dead = (vol_ratio_yest <= 60) and (vol_ratio_10d <= 60)
         is_long_shadow = (upper_shadow_ratio >= 0.035) or (upper_shadow_ratio >= 0.02 and upper_shadow > real_body * 1.2) if is_warning_market else (upper_shadow_ratio >= 0.05) or (upper_shadow_ratio >= 0.025 and upper_shadow > real_body * 1.5)
@@ -920,23 +937,23 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         # STEP 8: 프로그램 및 투자자별 5일 누적 수급 파이프라인
         # --------------------------------------------------
         is_strong_dual_buy = False
-        is_weak_dual_buy   = False
-        supply_text        = ""
-        acc_i_buy_won      = 0
-        acc_f_buy_won      = 0
-        dual_buy_days      = 0
-        i_buy_today        = 0
-        f_buy_today        = 0
-        program_text       = "⚪ [P.관망중] 0억 (0.0%)"
-        pg_amount_eok      = 0.0
+        is_weak_dual_buy = False
+        supply_text = ""
+        acc_i_buy_won = 0
+        acc_f_buy_won = 0
+        dual_buy_days = 0
+        i_buy_today = 0
+        f_buy_today = 0
+        program_text = "⚪ [P.관망중] 0억 (0.0%)"
+        pg_amount_eok = 0.0
         is_today_data_in_frgn = False
         today_str_dot = datetime.datetime.now(KST).strftime('%Y.%m.%d')
 
         try:
-            frgn_url  = f"https://finance.naver.com/item/frgn.naver?code={code}&_={int(time.time() * 1000)}"
-            frgn_res  = local_session.get(frgn_url, headers=desktop_headers, verify=False, timeout=3)
+            frgn_url = f"https://finance.naver.com/item/frgn.naver?code={code}&_={int(time.time() * 1000)}"
+            frgn_res = local_session.get(frgn_url, headers=desktop_headers, verify=False, timeout=3)
             frgn_soup = BeautifulSoup(frgn_res.content, 'html.parser', from_encoding='euc-kr')
-            rows      = frgn_soup.select("table.type2 tr")
+            rows = frgn_soup.select("table.type2 tr")
             valid_days = 0
 
             for r_tag in rows:
@@ -963,12 +980,13 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                             is_today_data_in_frgn = True
                         if f_vol != 0:
                             pg_amount_won = f_vol * current_price
+                            pg_amount_won = f_vol * current_price
                             pg_amount_eok = pg_amount_won / 100_000_000
                             pg_ratio = (abs(pg_amount_won) / trading_value) * 100 if trading_value > 0 else 0.0
-                            if   pg_amount_eok >= 30  and pg_ratio >= 10.0: program_text = f"🔴 [P.대량유입] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-                            elif pg_amount_eok >= 10  and pg_ratio >= 5.0:  program_text = f"🔴 [P.매수우위] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+                            if pg_amount_eok >= 30 and pg_ratio >= 10.0: program_text = f"🔴 [P.대량유입] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+                            elif pg_amount_eok >= 10 and pg_ratio >= 5.0: program_text = f"🔴 [P.매수우위] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
                             elif pg_amount_eok <= -30 and pg_ratio >= 10.0: program_text = f"🔵 [P.대량출회] {int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-                            elif pg_amount_eok <= -10 and pg_ratio >= 5.0:  program_text = f"🔵 [P.매도우위] {int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+                            elif pg_amount_eok <= -10 and pg_ratio >= 5.0: program_text = f"🔵 [P.매도우위] {int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
                             else:
                                 sign = "+" if pg_amount_eok > 0 else ""
                                 program_text = f"⚪ [P.관망중] {sign}{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
@@ -979,296 +997,305 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     acc_f_buy_won += f_buy_won
                     valid_days += 1
                     if valid_days >= 5: break
-        except Exception:
-            program_text = "확인불가"
+            except Exception:
+                program_text = "확인불가"
 
-        acc_i_buy_eok = acc_i_buy_won / 100_000_000
-        acc_f_buy_eok = acc_f_buy_won / 100_000_000
-        f_buy_eok     = f_buy_today / 100_000_000
-        today_dual_buy_ratio = ((i_buy_today + f_buy_today) / trading_value) * 100 if trading_value > 0 else 0.0
+            acc_i_buy_eok = acc_i_buy_won / 100_000_000
+            acc_f_buy_eok = acc_f_buy_won / 100_000_000
+            f_buy_eok = f_buy_today / 100_000_000
+            today_dual_buy_ratio = ((i_buy_today + f_buy_today) / trading_value) * 100 if trading_value > 0 else 0.0
 
-        non_program_buy_eok = 0
-        is_foreigner_active_buy = False
-        if is_today_data_in_frgn:
-            non_program_buy_eok = f_buy_eok - pg_amount_eok
-            is_foreigner_active_buy = (f_buy_eok >= 15) and (pg_amount_eok <= 5) and (non_program_buy_eok >= 10)
+            non_program_buy_eok = 0
+            is_foreigner_active_buy = False
+            if is_today_data_in_frgn:
+                non_program_buy_eok = f_buy_eok - pg_amount_eok
+                is_foreigner_active_buy = (f_buy_eok >= 15) and (pg_amount_eok <= 5) and (non_program_buy_eok >= 10)
 
-        if dual_buy_days >= 3 and today_dual_buy_ratio >= 3.0 and i_buy_today >= 200_000_000 and f_buy_today >= 200_000_000 and acc_i_buy_eok >= 20:
-            is_strong_dual_buy = True
-            supply_text = " (🌟쌍끌이 모아가기)"
-        elif i_buy_today >= 200_000_000 and f_buy_today >= 200_000_000:
-            is_weak_dual_buy = True
-            supply_text = " (🟢약한 양매수)"
-        elif acc_i_buy_eok >= 20:
-            supply_text = " (기관 누적매집)"
+            if dual_buy_days >= 3 and today_dual_buy_ratio >= 3.0 and i_buy_today >= 200_000_000 and f_buy_today >= 200_000_000 and acc_i_buy_eok >= 20:
+                is_strong_dual_buy = True
+                supply_text = " (🌟쌍끌이 모아가기)"
+            elif i_buy_today >= 200_000_000 and f_buy_today >= 200_000_000:
+                is_weak_dual_buy = True
+                supply_text = " (🟢약한 양매수)"
+            elif acc_i_buy_eok >= 20:
+                supply_text = " (기관 누적매집)"
 
-        # --------------------------------------------------
-        # STEP 9: 보조지표 연산
-        # --------------------------------------------------
-        ma5 = int(df_hist['close'].tail(5).mean()) if len(df_hist) >= 5 else current_price
-        ma20 = int(df_hist['close'].tail(20).mean()) if len(df_hist) >= 20 else current_price
-        ma60 = int(df_hist['close'].tail(60).mean()) if len(df_hist) >= 60 else current_price
-        is_high_altitude = surge_rate_20d >= 0.50
+            # --------------------------------------------------
+            # STEP 9: 보조지표 연산
+            # --------------------------------------------------
+            ma5 = int(df_hist['close'].tail(5).mean()) if len(df_hist) >= 5 else current_price
+            ma60 = int(df_hist['close'].tail(60).mean()) if len(df_hist) >= 60 else current_price
+            is_high_altitude = surge_rate_20d >= 0.50
 
-        is_leader_history = any((high_prices[i] - history[i-1]['close']) / history[i-1]['close'] >= 0.22 for i in range(1, len(history)) if history[i-1]['close'] > 0)
-        leader_text = "🔥대장주(O)" if is_leader_history else "평범(X)"
+            is_leader_history = any((high_prices[i] - history[i-1]['close']) / history[i-1]['close'] >= 0.22 for i in range(1, len(history)) if history[i-1]['close'] > 0)
+            leader_text = "🔥대장주(O)" if is_leader_history else "평범(X)"
 
-        std20 = df_hist['close'].tail(20).std(ddof=0) if len(df_hist) >= 20 else 0
-        disp_20 = (current_price / ma20) * 100 if ma20 > 0 else 100
-        disp_text = f"{disp_20:.1f}%"
-        upper_band = ma20 + (std20 * 2)
-        lower_band = ma20 - (std20 * 2)
-        band_width = (upper_band - lower_band) / ma20 if ma20 > 0 else 0
+            std20 = df_hist['close'].tail(20).std(ddof=0) if len(df_hist) >= 20 else 0
+            disp_20 = (current_price / ma20) * 100 if ma20 > 0 else 100
+            disp_text = f"{disp_20:.1f}%"
+            upper_band = ma20 + (std20 * 2)
+            lower_band = ma20 - (std20 * 2)
+            band_width = (upper_band - lower_band) / ma20 if ma20 > 0 else 0
 
-        if vol_ratio_10d <= 40: vol_status_text = "🟢 [V.에너지응축]"
-        elif vol_ratio_10d <= 70: vol_status_text = "🟢 [V.거래감소]"
-        elif vol_ratio_10d >= 200 and vol_ratio_yest >= 150: vol_status_text = "🔴 [V.쌍끌이폭발]"
-        elif vol_ratio_10d >= 200: vol_status_text = "🔴 [V.거래과열]"
-        else: vol_status_text = "🟡 [V.평년수준]"
-        vol_ratio_text = f"전일비 {int(vol_ratio_yest):,}%"
+            if vol_ratio_10d <= 40: vol_status_text = "🟢 [V.에너지응축]"
+            elif vol_ratio_10d <= 70: vol_status_text = "🟢 [V.거래감소]"
+            elif vol_ratio_10d >= 200 and vol_ratio_yest >= 150: vol_status_text = "🔴 [V.쌍끌이폭발]"
+            elif vol_ratio_10d >= 200: vol_status_text = "🔴 [V.거래과열]"
+            else: vol_status_text = "🟡 [V.평년수준]"
+            vol_ratio_text = f"전일비 {int(vol_ratio_yest):,}%"
 
-        box_ratio = 999
-        if len(df_hist) >= 20:
-            max_20d_box, min_20d_box = int(df_hist['high'].tail(20).max()), int(df_hist['low'].tail(20).min())
-            if min_20d_box > 0: box_ratio = (max_20d_box - min_20d_box) / min_20d_box
+            box_ratio = 999
+            if len(df_hist) >= 20:
+                max_20d_box, min_20d_box = int(df_hist['high'].tail(20).max()), int(df_hist['low'].tail(20).min())
+                if min_20d_box > 0: box_ratio = (max_20d_box - min_20d_box) / min_20d_box
 
-        # --------------------------------------------------
-        # STEP 10: 전략 허들 및 마스터 시그널
-        # --------------------------------------------------
-        min_breakout_tv = 50_000_000_000 if is_warning_market else 30_000_000_000
-        min_nulim_tv = 10_000_000_000 if is_warning_market else 5_000_000_000
-        min_danta_rate = 0.10 if is_warning_market else 0.06
+            # --------------------------------------------------
+            # STEP 10: 전략 허들 및 마스터 시그널
+            # --------------------------------------------------
+            min_breakout_tv = 50_000_000_000 if is_warning_market else 30_000_000_000
+            is_platform_breakout = (box_ratio <= 0.15) and (vol_ratio_10d >= 300) and (current_price > ma20) and is_today_yangbong and (trading_value >= min_breakout_tv) and not is_shadow_disqualified
 
-        is_converging = (band_width <= 0.20) or (ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035)
-        is_platform_breakout = (box_ratio <= 0.15) and (vol_ratio_10d >= 300) and (current_price > ma20) and is_today_yangbong and (trading_value >= min_breakout_tv)
+            is_accumulation_cand = False
+            if is_true_history_leader and is_deep_correction and not is_recent_overheated and is_volume_dead and not is_long_shadow and not is_financial_risk:
+                if not is_upper_limit and ((abs(current_price - ma20) / ma20 < 0.03) or (abs(current_price - ma60) / ma60 < 0.03) or is_double_bottom):
+                    is_accumulation_cand = True
 
-        is_accumulation_cand = False
-        if is_true_history_leader and is_deep_correction and not is_recent_overheated and is_volume_dead and not is_long_shadow and not is_financial_risk:
-            if not is_upper_limit and ((abs(current_price - ma20) / ma20 < 0.03) or (abs(current_price - ma60) / ma60 < 0.03) or is_double_bottom):
-                is_accumulation_cand = True
+            # 🎯 종베 타점 고도화 (양봉 무결성 + 일목 120선 위 상승구간 + 장막판 위꼬리 감쇠 동시 결합)
+            is_jongbe_cand = (
+                not is_upper_limit
+                and not is_long_shadow
+                and not is_shadow_disqualified
+                and is_converging
+                and is_today_yangbong       # 1% 디테일: 종가베팅은 무조건 당일 양봉 마감 필수
+                and is_ilmok_sangsang       # 1% 디테일: 주포가 돈을 써서 올린 일목 120선 위 상승구간 필수
+                and vol_ratio_yest <= 80
+                and vol_ratio_10d <= 70
+                and current_price >= ma20
+                and current_price >= (high_60d_calc * 0.90)
+                and not is_fatal_drop
+                and trading_value >= min_nulim_tv
+            )
 
-        # 🎯 [개선] 종베 타점 조건 (거래량 및 윗꼬리 조건 포함)
-        is_jongbe_cand = (
-            not is_upper_limit
-            and not is_long_shadow
-            and is_converging
-            and vol_ratio_yest <= 80
-            and vol_ratio_10d <= 70
-            and current_price >= ma20
-            and current_price >= (high_60d_calc * 0.90)
-            and not is_fatal_drop
-            and trading_value >= min_nulim_tv
-        )
+            if is_junk: signal = "🚨 매매제한 (관리/주의)"
+            elif is_financial_risk: signal = "🚨 매매제한 (재무위험)"
+            elif is_envelope_over_under: signal = "📉 하단매매 (역삼각형 스케일인)" + supply_text
+            elif is_foreigner_active_buy: signal = "💎 외인 집중배팅 (Non-P)" + supply_text
+            elif is_jongbe_cand: signal = "🎯 종가베팅 (M-1눌림)" + supply_text
+            elif is_accumulation_cand: signal = "🌱 바닥 확인 (모아가기)" + supply_text
+            elif is_platform_breakout: signal = "📦 플랫폼 탈출 (스윙)" + supply_text
+            elif is_strong_dual_buy and is_converging: signal = "🌟 모아가기 (쌍끌이)"
+            elif band_width <= 0.20 and current_price >= ma20: signal = ("🚀 N자파동 (밴드돌파)" if current_price >= upper_band * 0.98 else "👀 N자파동 (에너지응축)") + supply_text
+            elif ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035: signal = ("📈 2차랠리 (이평수렴)" if current_price > ma20 else "⏳ 이평선 저항") + supply_text
+            else: signal = ("🟢 낙폭과대 (과매도)" if current_price < lower_band else "⚡ 관망 (이격발생)") + supply_text
 
-        if is_junk: signal = "🚨 매매제한 (관리/주의)"
-        elif is_financial_risk: signal = "🚨 매매제한 (재무위험)"
-        elif is_foreigner_active_buy: signal = "💎 외인 집중배팅 (Non-P)" + supply_text
-        elif is_jongbe_cand: signal = "🎯 종가베팅 (M-1눌림)" + supply_text
-        elif is_accumulation_cand: signal = "🌱 바닥 확인 (모아가기)" + supply_text
-        elif is_platform_breakout: signal = "📦 플랫폼 탈출 (스윙)" + supply_text
-        elif is_strong_dual_buy and is_converging: signal = "🌟 모아가기 (쌍끌이)"
-        elif band_width <= 0.20 and current_price >= ma20: signal = ("🚀 N자파동 (밴드돌파)" if current_price >= upper_band * 0.98 else "👀 N자파동 (에너지응축)") + supply_text
-        elif ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035: signal = ("📈 2차랠리 (이평수렴)" if current_price > ma20 else "⏳ 이평선 저항") + supply_text
-        else: signal = ("🟢 낙폭과대 (과매도)" if current_price < lower_band else "⚡ 관망 (이격발생)") + supply_text
+            is_near_high = current_price >= (high_60d_calc * 0.90) or yest_close >= (high_60d_calc * 0.90)
+            is_near_52w_high = current_price >= (high_250d_calc * 0.90) or yest_close >= (high_250d_calc * 0.90)
 
-        is_near_high = current_price >= (high_60d_calc * 0.90) or yest_close >= (high_60d_calc * 0.90)
-        is_near_52w_high = current_price >= (high_250d_calc * 0.90) or yest_close >= (high_250d_calc * 0.90)
+            if is_near_52w_high: dist_text = "🎯 52주신고가 턱밑"
+            elif is_near_high: dist_text = "🎯 60일전고 턱밑"
+            elif current_price >= high_60d_calc * 0.80: dist_text = "🟢 매물대 소화중"
+            elif is_deep_correction: dist_text = "📉 고점 대비 큰 폭 조정"
+            else: dist_text = "📉 이격 과다"
 
-        if is_near_52w_high: dist_text = "🎯 52주신고가 턱밑"
-        elif is_near_high: dist_text = "🎯 60일전고 턱밑"
-        elif current_price >= high_60d_calc * 0.80: dist_text = "🟢 매물대 소화중"
-        elif is_deep_correction: dist_text = "📉 고점 대비 큰 폭 조정"
-        else: dist_text = "📉 이격 과다"
+            # --------------------------------------------------
+            # STEP 11: 테마 맵핑 및 점수화
+            # --------------------------------------------------
+            is_danta_range = min_danta_rate <= change_rate < 0.295
+            has_today_theme = False
+            has_theme = False
+            is_theme_leader_raw = False
+            my_theme_name = "개별주/기타"
 
-        # --------------------------------------------------
-        # STEP 11: 테마 맵핑 및 점수화
-        # --------------------------------------------------
-        is_danta_range = min_danta_rate <= change_rate < 0.295
-        has_today_theme = False
-        has_theme = False
-        is_theme_leader_raw = False
-        my_theme_name = "개별주/기타"
+            if name in theme_rank_dict:
+                my_theme_name = "🆕[당일] " + theme_rank_dict[name]['theme_name']
+                is_theme_leader_raw = theme_rank_dict[name]['is_leader']
+                has_theme = True
+                has_today_theme = True
+            elif name in all_theme_map:
+                my_theme_name = "🆕[당일] " + all_theme_map[name]['theme_name']
+                is_theme_leader_raw = all_theme_map[name]['is_leader']
+                has_theme = True
+                has_today_theme = True
 
-        if name in theme_rank_dict:
-            my_theme_name = "🆕[당일] " + theme_rank_dict[name]['theme_name']
-            is_theme_leader_raw = theme_rank_dict[name]['is_leader']
-            has_theme = True
-            has_today_theme = True
-        elif name in all_theme_map:
-            my_theme_name = "🆕[당일] " + all_theme_map[name]['theme_name']
-            is_theme_leader_raw = all_theme_map[name]['is_leader']
-            has_theme = True
-            has_today_theme = True
+            if not has_today_theme:
+                if name in past_theme_map:
+                    my_theme_name = "🕰️[과거] " + past_theme_map[name]
+                    is_theme_leader_raw = False
+                    has_theme = False
 
-        if not has_today_theme:
-            if name in past_theme_map:
-                my_theme_name = "🕰️[과거] " + past_theme_map[name]
-                is_theme_leader_raw = False
-                has_theme = False
+            is_true_theme_leader = is_theme_leader_raw and (trading_value >= min_breakout_tv)
+            is_theme_daejang = is_true_theme_leader and is_danta_range and not (is_junk or is_financial_risk)
+            is_real_hubal = has_theme and not is_theme_leader_raw
+            is_theme_hubal = is_real_hubal and is_danta_range and not (is_junk or is_financial_risk)
 
-        is_true_theme_leader = is_theme_leader_raw and (trading_value >= min_breakout_tv)
-        is_theme_daejang = is_true_theme_leader and is_danta_range and not (is_junk or is_financial_risk)
-        is_real_hubal = has_theme and not is_theme_leader_raw
-        is_theme_hubal = is_real_hubal and is_danta_range and not (is_junk or is_financial_risk)
+            # [수석님 의견 100% 수용]: 환율 강제 셧다운 폐기 -> 가변 하락장 필터 연동 (돌파 타점 디인센티브 페널티 마크)
+            track_type = "눌림" if (is_accumulation_cand or is_jongbe_cand or is_envelope_over_under) else ("돌파" if current_price >= ma20 else "눌림")
+            
+            # --------------------------------------------------
+            # STEP 13: 스코어 산출 알고리즘 및 지수헷지 팩터
+            # --------------------------------------------------
+            base_score = 0
+            master_tajeom_suffix = ""
 
-        is_breakout_track = current_price >= ma20
-        track_type = "눌림" if (is_accumulation_cand or is_jongbe_cand) else ("돌파" if is_breakout_track else "눌림")
+            if is_warning_market and track_type == "돌파":
+                base_score -= 25  # 불확실한 폭락 장세 속 가짜 돌파 진입 시 인디케이터 감점 작동
+                master_tajeom_suffix += " ⚠️[하락장 돌파제한]"
 
-        # --------------------------------------------------
-        # STEP 13: 스코어 산출 알고리즘 및 지수헷지 팩터
-        # --------------------------------------------------
-        base_score = 0
-        master_tajeom_suffix = ""
+            is_core_buy_zone = (surge_rate_20d <= 0.25) and (change_rate < 0.07) and (current_price >= ma60 * 0.85)
+            is_long_term_pick = (name in long_term_stocks) and not is_recent_overheated and is_core_buy_zone
+            
+            if is_long_term_pick:
+                base_score += 20  
+                master_tajeom_suffix += " 🎖️(코어 포트폴리오)"
 
-        is_core_buy_zone = (surge_rate_20d <= 0.25) and (change_rate < 0.07) and (current_price >= ma60 * 0.85)
-        is_long_term_pick = (name in long_term_stocks) and not is_recent_overheated and is_core_buy_zone
-        
-        if is_long_term_pick:
-            base_score += 20  
-            master_tajeom_suffix += " 🎖️(코어 포트폴리오)"
+            if is_foreigner_active_buy:
+                base_score += 30  
 
-        if is_foreigner_active_buy:
-            base_score += 30  
+            is_relative_strong = (kospi_rate <= -1.0) and (change_rate >= 0.03)
+            if is_relative_strong:
+                master_tajeom_suffix += " 💪(하락장 역행)"
+                base_score += 10
 
-        is_relative_strong = (kospi_rate <= -1.0) and (change_rate >= 0.03)
-        if is_relative_strong:
-            master_tajeom_suffix += " 💪(하락장 역행)"
-            base_score += 10
+            if is_jongbe_cand:
+                base_score += 35
+                if is_near_52w_high: base_score += 10
+                if "매수" in program_text: base_score += 15
+                if is_strong_dual_buy: base_score += 10
+            elif is_accumulation_cand:
+                base_score += 40
+                if is_double_bottom: base_score += 15
+                if "매수" in program_text or acc_i_buy_eok >= 10: base_score += 10
+            else:
+                if is_near_52w_high: base_score += 20
+                elif current_price >= (high_60d_calc * 0.90): base_score += 15
+                if vol_ratio_yest >= 300 and vol_ratio_10d >= 200: base_score += 15
+                elif vol_ratio_yest >= 150: base_score += 10
+                if "대량유입" in program_text: base_score += 25
+                elif "매수" in program_text: base_score += 15
+                if is_strong_dual_buy: base_score += 15
+                if acc_i_buy_eok >= 50: base_score += 15
 
-        # 🟢 [개선] 종베 타점 점수 산출 로직 완벽 분리 (볼륨 페널티 회피)
-        if is_jongbe_cand:
-            base_score += 35
-            if is_near_52w_high: base_score += 10
-            if "매수" in program_text: base_score += 15
-            if is_strong_dual_buy: base_score += 10
-        elif is_accumulation_cand:
-            base_score += 40
-            if is_double_bottom: base_score += 15
-            if "매수" in program_text or acc_i_buy_eok >= 10: base_score += 10
-        else:
-            if is_near_52w_high: base_score += 20
-            elif current_price >= (high_60d_calc * 0.90): base_score += 15
-            if vol_ratio_yest >= 300 and vol_ratio_10d >= 200: base_score += 15
-            elif vol_ratio_yest >= 150: base_score += 10
-            if "대량유입" in program_text: base_score += 25
-            elif "매수" in program_text: base_score += 15
-            if is_strong_dual_buy: base_score += 15
-            if acc_i_buy_eok >= 50: base_score += 15
+            high_retention = current_price / today_high if today_high > 0 else 0
+            if high_retention >= 0.97 and change_rate >= 0.10 and trading_value >= 100_000_000_000:
+                base_score += 30
+                master_tajeom_suffix += " 👑(진성대장)"
 
-        high_retention = current_price / today_high if today_high > 0 else 0
-        if high_retention >= 0.97 and change_rate >= 0.10 and trading_value >= 100_000_000_000:
-            base_score += 30
-            master_tajeom_suffix += " 👑(진성대장)"
-
-        tajeom_multiplier = 0.0
-        master_tajeom_base = "⏸️ [대기] 분석 중"
-
-        if is_fatal_drop:
-            master_tajeom_base = "🚫 [제외] 상폐/재무위험"
             tajeom_multiplier = 0.0
-        elif is_foreigner_active_buy:
-            master_tajeom_base = "💎 [관심/수급] 외인 집중배팅 (Non-프로그램)"
-            tajeom_multiplier = 1.4
-        elif is_upper_limit:
-            master_tajeom_base = "🚀 [당일/단타] 대장주 불기둥 (상한가 안착/추격금지)"
-            tajeom_multiplier = 1.3
-        elif is_jongbe_cand:
-            master_tajeom_base = "🎯 [종베] M-1 눌림목 (종가베팅 타점)"
-            tajeom_multiplier = 1.3
-        elif is_accumulation_cand:
-            master_tajeom_base = "🌱 [중장기/모아가기] 지지선 방어 및 거래량 바닥"
-            tajeom_multiplier = 1.4
-        elif is_theme_daejang:
-            master_tajeom_base = "🚀 [당일/단타] 대장주 불기둥"
-            tajeom_multiplier = 1.3
-        elif is_theme_hubal:
-            master_tajeom_base = "🚀 [당일/단타] 테마 후발주"
-            tajeom_multiplier = 1.15
-        elif is_platform_breakout:
-            master_tajeom_base = "📦 [스윙/추세] 박스권 탈출"
-            tajeom_multiplier = 1.25
-        elif "1차" in secret_tajeom or "🟢 [시크릿] 추세 전환" in secret_tajeom:
-            master_tajeom_base = "🕵️ [관심/수급] 세력선 포착 (시크릿)"
-            tajeom_multiplier = 1.35
-        elif ("🌟" in signal):
-            master_tajeom_base = "🌟 [관심/수급] 기준봉 포착"
-            tajeom_multiplier = 0.9
-        else:
-            master_tajeom_base = "👀 [관망] 타점 미도달"
-            tajeom_multiplier = 0.6
+            master_tajeom_base = "⏸️ [대기] 분석 중"
 
-        master_tajeom = master_tajeom_base + master_tajeom_suffix
-
-        if not is_fatal_drop:
-            if is_long_shadow or is_huge_gap:
-                master_tajeom += " ⚠️(윗꼬리/이격)"
-                if is_warning_market and is_long_shadow and not (is_foreigner_active_buy or is_long_term_pick):
-                    tajeom_multiplier = 0.0
-                    master_tajeom = "👀 [관망] 하락장 윗꼬리 리스크 과다"
-                else:
-                    tajeom_multiplier -= 0.3
-            if "3차 파동" in secret_tajeom or "하락 추세 전환" in secret_tajeom:
+            if is_fatal_drop:
+                master_tajeom_base = "🚫 [제외] 상폐/재무위험"
                 tajeom_multiplier = 0.0
-                master_tajeom = "👀 [관망] 3차 파동 고점 리스크"
+            elif is_envelope_over_under:
+                master_tajeom_base = "📉 [하단] 역삼각형 스케일인 과이격 타점"
+                tajeom_multiplier = 1.45
+            elif is_foreigner_active_buy:
+                master_tajeom_base = "💎 [관심/수급] 외인 집중배팅 (Non-프로그램)"
+                tajeom_multiplier = 1.4
+            elif is_upper_limit:
+                master_tajeom_base = "🚀 [당일/단타] 대장주 불기둥 (상한가 안착/추격금지)"
+                tajeom_multiplier = 1.3
+            elif is_jongbe_cand:
+                master_tajeom_base = "🎯 [종베] M-1 눌림목 (종가베팅 타점)"
+                tajeom_multiplier = 1.3
+            elif is_accumulation_cand:
+                master_tajeom_base = "🌱 [중장기/모아가기] 지지선 방어 및 거래량 바닥"
+                tajeom_multiplier = 1.4
+            elif is_theme_daejang:
+                master_tajeom_base = "🚀 [당일/단타] 대장주 불기둥"
+                tajeom_multiplier = 1.3
+            elif is_theme_hubal:
+                master_tajeom_base = "🚀 [당일/단타] 테마 후발주"
+                tajeom_multiplier = 1.15
+            elif is_platform_breakout:
+                master_tajeom_base = "📦 [스윙/추세] 박스권 탈출"
+                tajeom_multiplier = 1.25
+            elif "1차" in secret_tajeom or "🟢 [시크릿] 추세 전환" in secret_tajeom:
+                master_tajeom_base = "🕵️ [관심/수급] 세력선 포착 (시크릿)"
+                tajeom_multiplier = 1.35
+            elif ("🌟" in signal):
+                master_tajeom_base = "🌟 [관심/수급] 기준봉 포착"
+                tajeom_multiplier = 0.9
+            else:
+                master_tajeom_base = "👀 [관망] 타점 미도달"
+                tajeom_multiplier = 0.6
 
-        # 🟢 [개선] SEED (중장기) 전용 구조적 방어선 손절가 로직 도입
-        if is_accumulation_cand or is_long_term_pick:
-            stop_loss = int(min(ma60 * 0.95, recent_60d_min * 0.98))
-            target_price = int(display_high_60d) if display_high_60d > current_price else int(current_price * 1.15)
-        elif is_kalman_uptrend:
-            target_price = int(current_price + (atr_14 * 2.0))
-            stop_loss = int(current_price - (atr_14 * 1.0))
-        else:
-            target_price = int(display_high_60d) if display_high_60d > current_price else int(current_price * 1.05)
-            stop_loss = int(min(ma20, current_price * 0.95))
+            master_tajeom = master_tajeom_base + master_tajeom_suffix
 
-        if secret_tajeom and "관망" not in master_tajeom and "매수금지" not in master_tajeom and not is_upper_limit:
-            master_tajeom = f"{master_tajeom} | {secret_tajeom}"
+            if not is_fatal_drop:
+                if is_long_shadow or is_huge_gap or is_shadow_disqualified:
+                    if "⚠️(윗꼬리/이격)" not in master_tajeom:
+                        master_tajeom += " ⚠️(윗꼬리/이격)"
+                    if is_warning_market and (is_long_shadow or is_shadow_disqualified) and not (is_foreigner_active_buy or is_long_term_pick):
+                        tajeom_multiplier = 0.0
+                        master_tajeom = "👀 [관망] 하락장 윗꼬리 리스크 과다"
+                    else:
+                        tajeom_multiplier -= 0.3
+                if "3차 파동" in secret_tajeom or "하락 추세 전환" in secret_tajeom:
+                    tajeom_multiplier = 0.0
+                    master_tajeom = "👀 [관망] 3차 파동 고점 리스크"
 
-        is_super_leader = (change_rate >= 0.15) and (trading_value >= 100_000_000_000) and ("대량유입" in program_text or "매수" in program_text)
-        is_absolute_protected = is_super_leader or is_foreigner_active_buy or is_long_term_pick
+            # [하단 매매 독자 타점 엔진] 엔벨로프 과이격 반등 및 손절 버퍼 분리 설계
+            if is_envelope_over_under:
+                target_price = int(ma20)  # 직전 20일 이평선 청산선 배치
+                stop_loss = int(current_price * 0.93)  # 과매도 구간 분할집행용 버퍼(-7%) 수동 확보
+            elif is_accumulation_cand or is_long_term_pick:
+                stop_loss = int(min(ma60 * 0.95, recent_60d_min * 0.98))
+                target_price = int(display_high_60d) if display_high_60d > current_price else int(current_price * 1.15)
+            elif is_kalman_uptrend:
+                target_price = int(current_price + (atr_14 * 2.0))
+                stop_loss = int(current_price - (atr_14 * 1.0))
+            else:
+                target_price = int(display_high_60d) if display_high_60d > current_price else int(current_price * 1.05)
+                stop_loss = int(min(ma20, current_price * 0.95))
 
-        if is_absolute_protected:
-            # 절대대장은 손절가 재조정 보장
-            stop_loss = int(current_price * 0.96) if not (is_accumulation_cand or is_long_term_pick) else stop_loss
-            target_price = int(current_price * 1.15) if not (is_accumulation_cand or is_long_term_pick) else target_price
-            tajeom_multiplier = max(1.2, tajeom_multiplier)
-            if is_foreigner_active_buy: master_tajeom += " 💎(외인집중/면책)"
-            elif is_long_term_pick: master_tajeom += " 🎖️(코어픽/면책)"
-            else: master_tajeom += " 🔥(절대대장/면책)"
+            if secret_tajeom and "관망" not in master_tajeom and "매수금지" not in master_tajeom and not is_upper_limit:
+                master_tajeom = f"{master_tajeom} | {secret_tajeom}"
 
-        quant_score = int(max(0, (base_score + 10) * tajeom_multiplier))
-        cutoff_score = 40 if is_warning_market else 25
-        
-        if quant_score < cutoff_score and not is_absolute_protected:
-            master_tajeom = f"👀 [관망] 스코어 미달 (기준:{cutoff_score}점)"
+            is_super_leader = (change_rate >= 0.15) and (trading_value >= 100_000_000_000) and ("대량유입" in program_text or "매수" in program_text)
+            is_absolute_protected = is_super_leader or is_foreigner_active_buy or is_long_term_pick
 
-        score_display = f"{quant_score}점 ({track_type})"
-        is_seed_tag = "SEED" if (is_accumulation_cand or is_long_term_pick) else "NORMAL"
+            if is_absolute_protected:
+                stop_loss = int(current_price * 0.96) if not (is_accumulation_cand or is_long_term_pick) else stop_loss
+                target_price = int(current_price * 1.15) if not (is_accumulation_cand or is_long_term_pick) else target_price
+                tajeom_multiplier = max(1.2, tajeom_multiplier)
+                if is_foreigner_active_buy: master_tajeom += " 💎(외인집중/면책)"
+                elif is_long_term_pick: master_tajeom += " 🎖️(코어픽/면책)"
+                else: master_tajeom += " 🔥(절대대장/면책)"
 
-        i_sign = "+" if acc_i_buy_eok > 0 else ""
-        f_sign = "+" if acc_f_buy_eok > 0 else ""
-        supply_status_col = f"🏦기:{i_sign}{acc_i_buy_eok:.1f}억 / 🌎외:{f_sign}{acc_f_buy_eok:.1f}억"
+            quant_score = int(max(0, (base_score + 10) * tajeom_multiplier))
+            cutoff_score = 40 if is_warning_market else 25
+            
+            if quant_score < cutoff_score and not is_absolute_protected:
+                master_tajeom = f"👀 [관망] 스코어 미달 (기준:{cutoff_score}점)"
 
-        krx_str = f"'{'+' if krx_rate > 0 else ''}{krx_rate:.2f}% ({krx_close:,}원)" if krx_close > 0 else ""
-        nxt_str = f"'{'+' if nxt_rate > 0 else ''}{nxt_rate:.2f}% ({nxt_close:,}원)" if nxt_close > 0 else ""
+            score_display = f"{quant_score}점 ({track_type})"
+            is_seed_tag = "SEED" if (is_accumulation_cand or is_long_term_pick) else "NORMAL"
 
-        result_row = [
-            name, f"'{code}", current_price, f"{change_rate * 100:.2f}%",
-            int(ma5), int(ma20), vol_ratio_text, signal,
-            master_tajeom, "AI 브리핑 대기중", today_high, today_low, int(display_high_60d),
-            market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, my_theme_name,
-            program_text, int(display_high_250d), supply_status_col,
-            target_price, stop_loss, is_seed_tag,
-            krx_str, nxt_str, market_type, 
-            quant_score, score_display
-        ]
+            i_sign = "+" if acc_i_buy_eok > 0 else ""
+            f_sign = "+" if acc_f_buy_eok > 0 else ""
+            supply_status_col = f"🏦기:{i_sign}{acc_i_buy_eok:.1f}억 / 🌎외:{f_sign}{acc_f_buy_eok:.1f}억"
 
-        return result_row, static_info_to_save
+            krx_str = f"'{'+' if krx_rate > 0 else ''}{krx_rate:.2f}% ({krx_close:,}원)" if krx_close > 0 else ""
+            nxt_str = f"'{'+' if nxt_rate > 0 else ''}{nxt_rate:.2f}% ({nxt_close:,}원)" if nxt_close > 0 else ""
+
+            result_row = [
+                name, f"'{code}", current_price, f"{change_rate * 100:.2f}%",
+                int(ma5), int(ma20), vol_ratio_text, signal,
+                master_tajeom, "AI 브리핑 대기중", today_high, today_low, int(display_high_60d),
+                market_cap, shadow_text, dist_text, disp_text, leader_text, vol_status_text, my_theme_name,
+                program_text, int(display_high_250d), supply_status_col,
+                target_price, stop_loss, is_seed_tag,
+                krx_str, nxt_str, market_type, 
+                quant_score, score_display
+            ]
+
+            return result_row, static_info_to_save
 
     except Exception as e:
         print(f"❌ 분석 에러 [{name}]: {e}")
         return fail_fallback, None
+
 
 def update_technical_data(df_theme, all_theme_map):
     try:
@@ -1405,8 +1432,8 @@ def update_technical_data(df_theme, all_theme_map):
                         if s_name and t_name and t_name != "개별주/기타" and s_name not in past_theme_map:
                             if s_name not in theme_rank_dict:
                                 past_theme_map[s_name] = t_name
-            except: pass
-        except Exception as e: print(f"⚠️ 과거 테마 맵핑 에러: {e}")
+                except: pass
+            except Exception as e: print(f"⚠️ 과거 테마 맵핑 에러: {e}")
 
         target_names = set()
         try:
@@ -1416,7 +1443,7 @@ def update_technical_data(df_theme, all_theme_map):
                     stock_name = str(row[-4]).strip()
                     if stock_name and stock_name not in ["#REF!", "로딩중...", "데이터대기", "FALSE"]:
                         target_names.add(stock_name)
-        except: pass
+            except: pass
 
         if not df_theme.empty:
             top_10_themes = df_theme[df_theme['순위'] <= 10]['종목명'].tolist()
@@ -1452,7 +1479,7 @@ def update_technical_data(df_theme, all_theme_map):
                 for (dt, th), t_sum in daily_sums.items():
                     if t_sum > theme_historical_max[th]:
                         theme_historical_max[th] = t_sum
-        except Exception as e: pass
+            except Exception as e: pass
 
         target_dict = {}
         for name in list(target_names):
@@ -1492,8 +1519,8 @@ def update_technical_data(df_theme, all_theme_map):
                         "stop": row[15],
                         "raw_row": row
                     }
-        except:
-            pass
+            except:
+                pass
 
         for r in results:
             c_code = str(r[1]).replace("'", "").strip().zfill(6)
@@ -1532,28 +1559,22 @@ def update_technical_data(df_theme, all_theme_map):
         ]
 
         helper_sheet.batch_clear(['A1:AC'])
-        
         helper_sheet_data = [extended_headers] + [r[:29] for r in results]
         helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
         print(f"✅ 총 {len(results)}개 종목 판독 완료 (주가데이터_보조 실시간 갱신 및 동기화 완료)")
 
-        # ============================================================
-        # 하이브리드 독립 풀(Pool) 선별 게이트 (DB_스캐너용 컴팩트 포맷)
-        # ============================================================
-        scanner_keywords = ["[종베]", "[스윙/눌림]", "[스윙/추세]", "[당일/단타]", "[관심/수급]", "[중장기/모아가기]"]
+        scanner_keywords = ["[종베]", "[스윙/눌림]", "[스윙/추세]", "[당일/단타]", "[관심/수급]", "[중장기/모아가기]", "[하단]"]
         all_candidates = []
         processed_codes = set()
 
         for r in results:
             종목명 = r[0]
             종목코드 = str(r[1]).replace("'", "").zfill(6)
-            
             processed_codes.add(종목코드) 
             
             tajeom = r[8]
             if any(kw in tajeom for kw in scanner_keywords):
                 하이퍼링크 = f'=HYPERLINK("https://m.stock.naver.com/domestic/stock/{종목코드}/total", "{종목명}")'
-                
                 시장구분 = r[28] if r[28] else "정규장"
                 현재가 = r[2]
                 등락률 = r[3]
@@ -1564,7 +1585,6 @@ def update_technical_data(df_theme, all_theme_map):
                 프로그램 = r[20]
                 고가_52주 = r[21]
                 기관누적수급 = r[22] 
-
                 ai_briefing = r[9]
                 ai_target = r[23]
                 ai_stop = r[24]
@@ -1606,8 +1626,18 @@ def update_technical_data(df_theme, all_theme_map):
         MAX_SEED_COUNT = 5
         MAX_NORMAL_COUNT = 15
 
+        # 👑 [VIP 종목 소환 및 보존 게이트]: 엘앤에프, 서진시스템 등 AI 브리핑 연동 종목 실종 차단 로직
+        vip_retention_cands = []
+        pure_normal_cands = []
+        
+        for cand in normal_cands:
+            if cand[9] != "AI 브리핑 대기중" and str(cand[9]).strip() != "":
+                vip_retention_cands.append(cand)
+            else:
+                pure_normal_cands.append(cand)
+
         final_seed = seed_cands[:MAX_SEED_COUNT]
-        final_normal = normal_cands[:MAX_NORMAL_COUNT]
+        final_normal = vip_retention_cands + pure_normal_cands[:max(0, MAX_NORMAL_COUNT - len(vip_retention_cands))]
 
         top_20_results = final_seed + final_normal
         top_20_results.sort(key=get_score_num, reverse=True)
@@ -1616,15 +1646,13 @@ def update_technical_data(df_theme, all_theme_map):
         db_scanner_sheet.batch_clear(['A2:AC'])
         if top_20_results:
             db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
-        print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (모든 분석 제안 패치본 반영 완료)")
+        print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (VIP 강제 소환 게이트 적용 완료)")
 
         if is_reset_time:
             try:
                 bt_sheet = doc.worksheet("백테스트_로그")
                 bt_data = bt_sheet.get_all_values()
-                
                 header_row = ["진입일", "종목명", "종목코드", "테마명", "진입가", "타점유형", "퀀트점수", "T+1수익률", "T+3수익률", "T+5수익률", "T+10수익률"]
-                
                 if len(bt_data) == 0:
                     bt_sheet.append_row(header_row)
                     bt_data = bt_sheet.get_all_values()
@@ -1643,13 +1671,12 @@ def update_technical_data(df_theme, all_theme_map):
                     try:
                         entry_date = datetime.datetime.strptime(row[0], '%Y-%m-%d').date()
                         days_elapsed = (today_date_bt - entry_date).days
-                        
                         tajeom_type = str(row[5])
                         is_seed = "SEED" in tajeom_type or "중장기" in tajeom_type or "모아가기" in tajeom_type
                         
-                        needs_t1  = (days_elapsed >= 1 and row[7] == "" and not is_seed)
-                        needs_t3  = (days_elapsed >= 3 and row[8] == "")
-                        needs_t5  = (days_elapsed >= 5 and row[9] == "")
+                        needs_t1 = (days_elapsed >= 1 and row[7] == "" and not is_seed)
+                        needs_t3 = (days_elapsed >= 3 and row[8] == "")
+                        needs_t5 = (days_elapsed >= 5 and row[9] == "")
                         needs_t10 = (days_elapsed >= 10 and row[10] == "" and is_seed)
                         
                         if is_seed and days_elapsed >= 1 and row[7] == "":
@@ -1671,12 +1698,12 @@ def update_technical_data(df_theme, all_theme_map):
                     except: pass
                 if updated:
                     bt_sheet.update(range_name="A1", values=bt_data, value_input_option="USER_ENTERED")
-                    print("✅ 아침 백테스트 로그 수익률 자동 갱신 완료 (단기/중장기 하이브리드 트래킹 적용)!")
+                    print("✅ 아침 백테스트 로그 수익률 자동 갱신 완료!")
             except Exception as e:
                 print(f"⚠️ 백테스트 업데이트 에러: {e}")
 
     except Exception as e:
-        print(f"❌ 전체 업데이트 에러: {e}")
+        print(f"❌ DB_스캐너 및 기술적 지표 일괄 업데이트 에러: {e}")
 
 if __name__ == "__main__":
     global_state.super_leader_count = 0
