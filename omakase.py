@@ -696,6 +696,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         # 2. 엔벨로프 하단선 (-20% 과매도선) 추출
         envelope_lower_20 = ma20 * 0.80
         min_nulim_tv = 10_000_000_000 if is_warning_market else 5_000_000_000
+        min_breakout_tv = 10_000_000_000  # 돌파 최소 거래대금 (기본 100억 허들)
+        min_danta_rate = 0.03            # 단타 최소 등락률 (기본 3% 허들)
         is_envelope_over_under = (current_price <= envelope_lower_20) and (trading_value >= min_nulim_tv)
 
         high_prices_60 = high_prices[-60:] if len(high_prices) >= 60 else high_prices
