@@ -1470,13 +1470,13 @@ def update_technical_data(df_theme, all_theme_map):
         top_20_results = final_seed + final_normal
         top_20_results.sort(key=get_score_num, reverse=True)
 
-        # 👑 [VIP 강제 보존 락 가동] 순위권 밖이나 풀(Pool)에서 탈락한 리포트/브리핑 완료주 강제 생존 로직
+        # 👑 [VIP 강제 보존 락 가동] 순위권 밖이나 풀(Pool)에서 탈락한 리포트 완료주 강제 생존 로직
         if not is_reset_time:
             top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results if len(x) > 2}
             for c_code, data in existing_data.items():
                 if c_code not in top_20_codes:
-                    # 브리핑란에 '리포트 발송 완료' 또는 '간단 브리핑'이 적혀있다면 무조건 구조
-                    if any(key in data["briefing"] for key in ["리포트 발송 완료", "간단 브리핑"]):
+                    # 브리핑란에 '리포트 발송 완료'가 적혀있다면 무조건 구조
+                    if any(key in data["briefing"] for key in ["리포트 발송 완료"]):
                         top_20_results.append(data["raw_row"])
                         top_20_codes.add(c_code)
 
