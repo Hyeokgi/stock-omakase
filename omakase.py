@@ -1124,7 +1124,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             master_tajeom_base = "🚀 [당일/단타] 대장주 불기둥 (상한가 안착/추격금지)"
             tajeom_multiplier = 1.3
         elif is_jongbe_cand:
-            master_tajeom_base = "🎯 [종베] 신접갈거조재 1등 대장주 타점"
+            master_tajeom_base = "🎯 [종베] 주도주 관성 파동"
             tajeom_multiplier = 1.5              # 종베 멀티플라이어 최고 우대 상향
         elif is_accumulation_cand:
             master_tajeom_base = "🌱 [중장기/모아가기] 지지선 방어 및 거래량 바닥"
@@ -1498,7 +1498,7 @@ def update_technical_data(df_theme, all_theme_map):
             top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results if len(x) > 2}
             for c_code, data in existing_data.items():
                 if c_code not in top_20_codes:
-                    if any(key in data["briefing"] for key in ["리포트 발송 완료", "간단 브리핑"]):
+                    if any(key in data["briefing"] for key in ["리포트 발송 완료"]):
                         top_20_results.append(data["raw_row"])
                         top_20_codes.add(c_code)
 
