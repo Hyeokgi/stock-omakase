@@ -846,18 +846,18 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             atr_climb = (kalman_ma[-1] - trend_start_kalman) / atr_14 if atr_14 > 0 else 0.0
 
             if kalman_turned_green:
-                secret_tajeom = "🟢 전환"
+                secret_tajeom = "🟢 [시크릿] 추세 전환 (1차 매수 타점)"
             elif is_kalman_uptrend:
                 if trend_phase == "ACCELERATION":
-                    if atr_climb >= 3.0 and trend_length >= 10: secret_tajeom = "🔴 3파 익절"
-                    else: secret_tajeom = "🚀 가속"
+                    if atr_climb >= 3.0 and trend_length >= 10: secret_tajeom = "🔴 [시크릿] 3차 파동 가속 (전량 익절)"
+                    else: secret_tajeom = "🚀 [시크릿] 상승 가속 (불타기 or 익절 준비)"
                 elif trend_phase == "STEADY":
-                    if atr_climb >= 1.5 and trend_length >= 5: secret_tajeom = "🟡 2파 안정(본절 스탑 상향)"
+                    if atr_climb >= 1.5 and trend_length >= 5: secret_tajeom = "🟡 [시크릿] 2차 파동 안정 (본절 스탑 상향)"
                     else: secret_tajeom = "🟢 [시크릿] 1차 파동 진행 (추세 홀딩)"
-                elif trend_phase == "DECELERATION": secret_tajeom = "🟡 2파 안정(절반 익절 검토)"
+                elif trend_phase == "DECELERATION": secret_tajeom = "🟡 [시크릿] 추세 감속 (절반 익절 검토)"
                 else: secret_tajeom = "🟢 [시크릿] 상승 추세 유지"
-            elif kalman_turned_red: secret_tajeom = "📉 하락 전환"
-            else: secret_tajeom = "📉 노이즈 및 하락장 (관망)"
+            elif kalman_turned_red: secret_tajeom = "📉 [시크릿] 하락 추세 전환 (전량 매도)"
+            else: secret_tajeom = "📉 [시크릿] 노이즈 및 하락장 (관망)"
 
             trend_start_price = current_price
         except Exception as e:
@@ -1165,42 +1165,42 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         master_tajeom_base = "⏸️ [대기] 분석 중"
 
         if is_fatal_drop:
-            master_tajeom_base = "🚫 매매금지 · 위험"
+            master_tajeom_base = "🚫 [제외] 상폐/재무위험"
             tajeom_multiplier = 0.0
         elif is_envelope_over_under:
-            master_tajeom_base = "📉 과매도 · 역배팅"
+            master_tajeom_base = "📉 [하단] 역삼각형 스케일인 과이격 타점"
             tajeom_multiplier = 1.45
             target_price = int(ma20)
             stop_loss = int(current_price * 0.93)
         elif is_foreigner_active_buy:
-            master_tajeom_base = "💎 외인 역발상 매집"
+            master_tajeom_base = "💎 [관심/수급] 외인 집중배팅 (Non-프로그램)"
             tajeom_multiplier = 1.4
         elif is_upper_limit:
-            master_tajeom_base = "🚀 대장 · 당일단타(상한가)"
+            master_tajeom_base = "🚀 [당일/단타] 대장주 불기둥 (상한가 안착/추격금지)"
             tajeom_multiplier = 1.3
         elif is_jongbe_cand:
-            master_tajeom_base = "🎯 종베 · 눌림 타점"
+            master_tajeom_base = "🎯 [종베] 주도주 관성 파동"
             tajeom_multiplier = 1.5              
         elif is_accumulation_cand:
-            master_tajeom_base = "🌱 바닥 · 분할매수"
+            master_tajeom_base = "🌱 [중장기/모아가기] 지지선 방어 및 거래량 바닥"
             tajeom_multiplier = 1.4
         elif is_theme_daejang:
-            master_tajeom_base = "🚀 대장 · 당일단타"
+            master_tajeom_base = "🚀 [당일/단타] 대장주 불기둥"
             tajeom_multiplier = 1.3
         elif is_theme_hubal:
-            master_tajeom_base = "🚀 후발주 · 당일단타"
+            master_tajeom_base = "🚀 [당일/단타] 테마 후발주"
             tajeom_multiplier = 1.15
         elif is_platform_breakout:
-            master_tajeom_base = "📦 박스 돌파 · 스윙"
+            master_tajeom_base = "📦 [스윙/추세] 박스권 탈출"
             tajeom_multiplier = 1.25
         elif "1차" in secret_tajeom or "🟢 [시크릿] 추세 전환" in secret_tajeom:
-            master_tajeom_base = "🔍 칼만 전환 · 관심"
+            master_tajeom_base = "🕵️ [관심/수급] 세력선 포착 (시크릿)"
             tajeom_multiplier = 1.35
         elif ("🌟" in signal):
             master_tajeom_base = "🌟 [관심/수급] 기준봉 포착"
             tajeom_multiplier = 0.9
         else:
-            master_tajeom_base = "⏸ 관망 · 조건미달"
+            master_tajeom_base = "👀 [관망] 타점 미도달"
             tajeom_multiplier = 0.6
 
         master_tajeom = master_tajeom_base + master_tajeom_suffix
