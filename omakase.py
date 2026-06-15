@@ -944,14 +944,11 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 ).json()
                 if kis_res.get("rt_cd") == "0":
                     out = kis_res["output"]
-    
-                    inst_qty = int(str(out.get("inst_ntby_qty", "0")).replace(",","").replace("+","") or "0")
-                    frgn_qty = int(str(out.get("frgn_ntby_qty", "0")).replace(",","").replace("+","") or "0")
-                    pgtr_qty = int(str(out.get("pgtr_ntby_qty", "0")).replace(",","").replace("+","") or "0")
-    
-                    inst_ntby_eok = (inst_qty * current_price) / 100_000_000
-                    frgn_ntby_eok = (frgn_qty * current_price) / 100_000_000  # frgn.naver 보완용
-                    pgtr_ntby_eok = (pgtr_qty * current_price) / 100_000_000  # 진짜 프로그램
+                    pgtr_qty = int(
+                        str(out.get("pgtr_ntby_qty", "0"))
+                        .replace(",", "").replace("+", "") or "0"
+                    )
+                    pgtr_ntby_eok = (pgtr_qty * current_price) / 100_000_000
             except:
                 pass
 
@@ -979,18 +976,22 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
 
         if smi_ratio >= 5.0 and turnover_rate >= 8.0:
-            program_text = f"🔥 [수급강도 폭발] {smi_ratio:.1f}배 / 기관:{inst_sign}{inst_ntby_eok:.1f}억 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
+            program_text = f"🔥 [수급강도 폭발] {smi_ratio:.1f}배 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
         elif smi_ratio >= 2.5 and turnover_rate >= 4.0:
-            program_text = f"🔥 [수급강도 유입] {smi_ratio:.1f}배 / 기관:{inst_sign}{inst_ntby_eok:.1f}억 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
+            program_text = f"🔥 [수급강도 유입] {smi_ratio:.1f}배 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
         elif smi_ratio <= 0.4:
-            program_text = f"💤 [수급강도 절벽] {smi_ratio:.1f}배 / 기관:{inst_sign}{inst_ntby_eok:.1f}억 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
+            program_text = f"💤 [수급강도 절벽] {smi_ratio:.1f}배 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
         else:
-            program_text = f"⚪ [수급강도 평년] {smi_ratio:.1f}배 / 기관:{inst_sign}{inst_ntby_eok:.1f}억 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
+            program_text = f"⚪ [수급강도 평년] {smi_ratio:.1f}배 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
 
         acc_i_buy_eok = acc_i_buy_won / 100_000_000
         acc_f_buy_eok = acc_f_buy_won / 100_000_000
         today_dual_buy_ratio = ((i_buy_today + f_buy_today) / trading_value) * 100 if trading_value > 0 else 0.0
-        is_foreigner_active_buy = (smi_ratio >= 3.0) and (turnover_rate >= 5.0) and (change_rate >= 0.04)
+        is_foreigner_active_buy = (
+            (smi_ratio >= 3.0) and (turnover_rate >= 5.0) and (change_rate >= 0.04)
+        ) or (
+            pgtr_ntby_eok >= 500 and change_rate >= 0.03  # 프로그램 500억 이상 유입
+        )
 
         if dual_buy_days >= 3 and today_dual_buy_ratio >= 3.0 and i_buy_today >= 200_000_000 and f_buy_today >= 200_000_000 and acc_i_buy_eok >= 20:
             is_strong_dual_buy = True
