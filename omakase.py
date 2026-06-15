@@ -979,9 +979,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         pgtr_sign = "+" if pgtr_ntby_eok > 0 else ""
         pgtr_direction = pgtr_ntby_eok >= 0  # True = 매수 방향
 
-        if smi_ratio >= 5.0 and turnover_rate >= 8.0 and pgtr_direction:
+        if smi_ratio >= 5.0 and turnover_rate >= 3.0 and pgtr_direction:
             program_text = f"🔥 [수급강도 폭발] {smi_ratio:.1f}배 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
-        elif smi_ratio >= 2.5 and turnover_rate >= 4.0 and pgtr_direction:
+        elif smi_ratio >= 2.5 and turnover_rate >= 2.0 and pgtr_direction:
             program_text = f"🔥 [수급강도 유입] {smi_ratio:.1f}배 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
         elif smi_ratio >= 2.5 and not pgtr_direction:
             # 거래량은 폭발했지만 프로그램은 매도 → 개인 단타 or 세력 분산 가능성
