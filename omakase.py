@@ -137,7 +137,6 @@ def check_warning_market():
     return warning_count >= 1
 
 def is_index_above_ma5():
-    """📈 코스닥 지수가 5일선 위에 안착해 반등하는지 시황 체커"""
     local_session = requests.Session()
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     try:
@@ -573,8 +572,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
     
     fail_fallback = [
         name, f"'{code}", 0, "0.00%", 0, 0, "전일비 100%", "⚡ 관망 (데이터 수집 오류)",
-        "👀 [관망] 타점 미도달", "AI 브리핑 대기중", 0, 0, 0, 0, "🟡 일반형", "📉 이격 과다",
-        "100.0%", "평범(X)", "🟡 [V.평년수준]", "개별주/기타", "⚪ [M.평년수준] 1.0배 (0.0%)", 0,
+        "⏸ 관망 · 조건미달", "AI 브리핑 대기중", 0, 0, 0, 0, "🟡 일반형", "📉 이격 과다",
+        "100.0%", "평범(X)", "🟡 [V.평년수준]", "개별주/기타", "⚪ [수급강도 평년] 1.0배", 0,
         "🏦기:0.0억 / 🌎외:0.0억", 0, 0, "NORMAL", "", "", "정규장", 0, "0점 (오류)"
     ]
 
@@ -764,9 +763,14 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         vol_ratio_yest = (today_vol / yest_vol) * 100 if yest_vol > 0 else 0
         surge_rate_20d = (current_price - recent_20d_min) / recent_20d_min if recent_20d_min > 0 else 0
 
-        if is_upper_limit and today_vol > 0:
-            vol_ratio_10d = max(vol_ratio_10d, 500)
-            vol_ratio_yest = max(vol_ratio_yest, 500)
+        is_near_high = current_price >= (high_60d_calc * 0.90) or yest_close >= (high_60d_calc * 0.90)
+        is_near_52w_high = current_price >= (high_250d_calc * 0.90) or yest_close >= (high_250d_calc * 0.90)
+
+        if is_near_52w_high: dist_text = "🎯 52주신고가 턱밑"
+        elif is_near_high: dist_text = "🎯 60일전고 턱밑"
+        elif current_price >= high_60d_calc * 0.80: dist_text = "🟢 매물대 소화중"
+        elif is_deep_correction: dist_text = "📉 고점 대비 큰 폭 조정"
+        else: dist_text = "📉 이격 과다"
 
         # --------------------------------------------------
         # STEP 4: Adaptive 칼만 필터 및 가속도 추세 엔진
@@ -846,18 +850,18 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             atr_climb = (kalman_ma[-1] - trend_start_kalman) / atr_14 if atr_14 > 0 else 0.0
 
             if kalman_turned_green:
-                secret_tajeom = "🟢 [시크릿] 추세 전환 (1차 매수 타점)"
+                secret_tajeom = "🟢 전환"
             elif is_kalman_uptrend:
                 if trend_phase == "ACCELERATION":
-                    if atr_climb >= 3.0 and trend_length >= 10: secret_tajeom = "🔴 [시크릿] 3차 파동 가속 (전량 익절)"
-                    else: secret_tajeom = "🚀 [시크릿] 상승 가속 (불타기 or 익절 준비)"
+                    if atr_climb >= 3.0 and trend_length >= 10: secret_tajeom = "🔴 3파 익절"
+                    else: secret_tajeom = "🚀 가속"
                 elif trend_phase == "STEADY":
-                    if atr_climb >= 1.5 and trend_length >= 5: secret_tajeom = "🟡 [시크릿] 2차 파동 안정 (본절 스탑 상향)"
-                    else: secret_tajeom = "🟢 [시크릿] 1차 파동 진행 (추세 홀딩)"
-                elif trend_phase == "DECELERATION": secret_tajeom = "🟡 [시크릿] 추세 감속 (절반 익절 검토)"
-                else: secret_tajeom = "🟢 [시크릿] 상승 추세 유지"
-            elif kalman_turned_red: secret_tajeom = "📉 [시크릿] 하락 추세 전환 (전량 매도)"
-            else: secret_tajeom = "📉 [시크릿] 노이즈 및 하락장 (관망)"
+                    if atr_climb >= 1.5 and trend_length >= 5: secret_tajeom = "🟡 2파 안정"
+                    else: secret_tajeom = "🟢 1파 진행"
+                elif trend_phase == "DECELERATION": secret_tajeom = "🟡 추세 감속"
+                else: secret_tajeom = "🟢 추세 유지"
+            elif kalman_turned_red: secret_tajeom = "📉 하락 전환"
+            else: secret_tajeom = "📉 하락장 (관망)"
 
             trend_start_price = current_price
         except Exception as e:
@@ -871,7 +875,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             trend_length = 0
 
         # --------------------------------------------------
-        # STEP 5 ~ STEP 9: 캔들 및 수급 파싱 (진성 5일 누적분만 보존)
+        # STEP 5 ~ STEP 9: 캔들 및 수급 파싱
         # --------------------------------------------------
         is_volume_dead = (vol_ratio_yest <= 60) and (vol_ratio_10d <= 60)
         is_long_shadow = (upper_shadow_ratio >= 0.035) or (upper_shadow_ratio >= 0.02 and upper_shadow > real_body * 1.2) if is_warning_market else (upper_shadow_ratio >= 0.05) or (upper_shadow_ratio >= 0.025 and upper_shadow > real_body * 1.5)
@@ -929,8 +933,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     if valid_days >= 5: break
         except Exception: pass
         
-        # ── KIS 당일 기관 순매수 보강 (변수 미선언 NameError 완벽 방어) ──────────────────
-        pgtr_ntby_eok = 0.0  # 🎯 수석님 오더 반영: 상단에서 무조건 0.0 영점 초기화 고정
+        pgtr_ntby_eok = 0.0  
         if KIS_TOKEN and KIS_APP_KEY and KIS_APP_SECRET:
             try:
                 kis_h = {
@@ -957,9 +960,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             except:
                 pass
 
-        # ============================================================
-        # 🎯 [프로그램 완전 대체] 100% 무결성 스마트 머니 강도(SMI) 지수 연산 레이어
-        # ============================================================
         if len(df_hist) >= 11:
             avg_tv_10d = df_hist['trading_value'].iloc[-11:-1].mean()
         elif len(df_hist) >= 2:
@@ -971,9 +971,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         market_cap_won = market_cap * 100_000_000
         turnover_rate = (trading_value / market_cap_won) * 100 if market_cap_won > 0 else 0.0
 
-        # ── 기관 순매수 부호 처리 ──
         pgtr_sign = "+" if pgtr_ntby_eok > 0 else ""
-        pgtr_direction = pgtr_ntby_eok >= 0  # True = 매수 방향
+        pgtr_direction = pgtr_ntby_eok >= 0  
 
         vol_status_text = ""
         if smi_ratio >= 5.0 and turnover_rate >= 3.0 and pgtr_direction:
@@ -1029,9 +1028,20 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 is_accumulation_cand = True
 
         # --------------------------------------------------
-        # 테마 매핑 및 대장 레이블 추출
+        # 🎯 [STEP 10]: 무결성 종가베팅(is_jongbe_cand) 조건 검증
         # --------------------------------------------------
-        is_danta_range = min_danta_rate <= change_rate < 0.295
+        is_jongbe_cand = (
+            not is_upper_limit 
+            and not is_long_shadow 
+            and is_converging
+            and vol_ratio_yest <= 80  
+            and vol_ratio_10d <= 70   
+            and current_price >= ma20 
+            and is_near_high         
+            and not is_fatal_drop 
+            and trading_value >= min_nulim_tv
+        )
+
         has_today_theme = False
         has_theme = False
         is_theme_leader_raw = False
@@ -1050,32 +1060,11 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             my_theme_name = "🕰️[과거] " + past_theme_map[name]
             has_theme = False
 
+        is_danta_range = min_danta_rate <= change_rate < 0.295
         is_true_theme_leader = is_theme_leader_raw and (trading_value >= min_breakout_tv)
         is_theme_daejang = is_true_theme_leader and is_danta_range and not (is_junk or is_financial_risk)
         is_real_hubal = has_theme and not is_theme_leader_raw
         is_theme_hubal = is_real_hubal and is_danta_range and not (is_junk or is_financial_risk)
-
-        # --------------------------------------------------
-        # 🎯 STEP 10: [신접갈거조재 필터 구역]
-        # --------------------------------------------------
-        is_neat_tail = True
-        if (today_high - today_low) > 0:
-            is_neat_tail = ((today_high - current_price) / (today_high - today_low)) <= 0.15
-
-        is_tight_gap = (current_price >= high_60d_calc * 0.96) and (current_price <= high_60d_calc * 1.04)
-        is_theme_valid = (my_theme_name != "개별주/기타") or (leader_text == "🔥대장주(O)")
-
-        is_jongbe_cand = (
-            index_above_ma5                      
-            and not is_upper_limit               
-            and is_today_yangbong                
-            and is_neat_tail                     
-            and is_tight_gap                     
-            and is_converging                    
-            and is_theme_valid                   
-            and not is_fatal_drop                
-            and (trading_value >= 30_000_000_000) 
-        )
 
         if is_junk: signal = "🚨 매매제한 (관리/주의)"
         elif is_financial_risk: signal = "🚨 매매제한 (재무위험)"
@@ -1089,17 +1078,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         elif ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035: signal = ("📈 2차랠리 (이평수렴)" if current_price > ma20 else "⏳ 이평선 저항") + supply_text
         else: signal = ("🟢 낙폭과대 (과매도)" if current_price < lower_band else "⚡ 관망 (이격발생)") + supply_text
 
-        is_near_high = current_price >= (high_60d_calc * 0.90) or yest_close >= (high_60d_calc * 0.90)
-        is_near_52w_high = current_price >= (high_250d_calc * 0.90) or yest_close >= (high_250d_calc * 0.90)
-
-        if is_near_52w_high: dist_text = "🎯 52주신고가 턱밑"
-        elif is_near_high: dist_text = "🎯 60일전고 턱밑"
-        elif current_price >= high_60d_calc * 0.80: dist_text = "🟢 매물대 소화중"
-        elif is_deep_correction: dist_text = "📉 고점 대비 큰 폭 조정"
-        else: dist_text = "📉 이격 과다"
-
         # --------------------------------------------------
-        # STEP 13: 가변 장세 스코어링 및 점수 바인딩 정상화
+        # 🎯 [STEP 13]: 가점 체계 및 실전형 배지 매핑 수립
         # --------------------------------------------------
         base_score = 0
         master_tajeom_suffix = ""
@@ -1146,45 +1126,43 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             master_tajeom_suffix += " 👑(진성대장)"
 
         tajeom_multiplier = 0.0
-        master_tajeom_base = "⏸️ [대기] 분석 중"
+        master_tajeom_base = "⏸ 관망 · 조건미달"
 
         if is_fatal_drop:
-            master_tajeom_base = "🚫 [제외] 상폐/재무위험"
+            master_tajeom_base = "🚫 매매금지 · 위험"
             tajeom_multiplier = 0.0
         elif is_envelope_over_under:
-            master_tajeom_base = "📉 [하단] 역삼각형 스케일인 과이격 타점"
+            master_tajeom_base = "📉 과매도 · 역배팅"
             tajeom_multiplier = 1.45
-            target_price = int(ma20)
-            stop_loss = int(current_price * 0.93)
         elif is_foreigner_active_buy:
-            master_tajeom_base = "💎 [관심/수급] 외인 집중배팅 (Non-프로그램)"
+            master_tajeom_base = "💎 외인 역발상 매집"
             tajeom_multiplier = 1.4
         elif is_upper_limit:
-            master_tajeom_base = "🚀 [당일/단타] 대장주 불기둥 (상한가 안착/추격금지)"
+            master_tajeom_base = "🚀 대장 · 당일단타 (상한가 안착/추격금지)"
             tajeom_multiplier = 1.3
         elif is_jongbe_cand:
-            master_tajeom_base = "🎯 [종베] 주도주 관성 파동"
-            tajeom_multiplier = 1.5              
+            master_tajeom_base = "🎯 종베 · 관성파동"
+            tajeom_multiplier = 1.3
         elif is_accumulation_cand:
-            master_tajeom_base = "🌱 [중장기/모아가기] 지지선 방어 및 거래량 바닥"
+            master_tajeom_base = "🌱 바닥 · 분할매수"
             tajeom_multiplier = 1.4
         elif is_theme_daejang:
-            master_tajeom_base = "🚀 [당일/단타] 대장주 불기둥"
+            master_tajeom_base = "🚀 대장 · 당일단타"
             tajeom_multiplier = 1.3
         elif is_theme_hubal:
-            master_tajeom_base = "🚀 [당일/단타] 테마 후발주"
+            master_tajeom_base = "🚀 테마 후발주"
             tajeom_multiplier = 1.15
         elif is_platform_breakout:
-            master_tajeom_base = "📦 [스윙/추세] 박스권 탈출"
+            master_tajeom_base = "📦 박스 돌파 · 스윙"
             tajeom_multiplier = 1.25
-        elif "1차" in secret_tajeom or "🟢 [시크릿] 추세 전환" in secret_tajeom:
-            master_tajeom_base = "🕵️ [관심/수급] 세력선 포착 (시크릿)"
+        elif "1차" in secret_tajeom or "🟢 전환" in secret_tajeom:
+            master_tajeom_base = "🔍 칼만 전환 · 관심"
             tajeom_multiplier = 1.35
         elif ("🌟" in signal):
-            master_tajeom_base = "🌟 [관심/수급] 기준봉 포착"
+            master_tajeom_base = "🌟 기준봉 포착"
             tajeom_multiplier = 0.9
         else:
-            master_tajeom_base = "👀 [관망] 타점 미도달"
+            master_tajeom_base = "⏸ 관망 · 조건미달"
             tajeom_multiplier = 0.6
 
         master_tajeom = master_tajeom_base + master_tajeom_suffix
@@ -1194,15 +1172,30 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 master_tajeom += " ⚠️(윗꼬리/이격)"
                 if is_warning_market and is_long_shadow and not (is_foreigner_active_buy or is_long_term_pick):
                     tajeom_multiplier = 0.0
-                    master_tajeom = "👀 [관망] 하락장 윗꼬리 리스크 과다"
+                    master_tajeom = "⏸ 관망 · 윗꼬리 리스크 과다"
                 else: tajeom_multiplier -= 0.3
-            if "3차 파동" in secret_tajeom or "하락 추세 전환" in secret_tajeom:
+            if "3파 익절" in secret_tajeom or "하락 전환" in secret_tajeom:
                 tajeom_multiplier = 0.0
-                master_tajeom = "👀 [관망] 3차 파동 고점 리스크"
+                master_tajeom = "⏸ 관망 · 3차 파동 고점 리스크"
 
-        if not is_envelope_over_under:
+        # --------------------------------------------------
+        # 🎯 [강창권 마스터]: 20일 기준봉 시가 추적 및 손절가 바인딩
+        # --------------------------------------------------
+        gijunbong_open = 0
+        if len(df_hist) >= 1:
+            recent_20 = df_hist.tail(20)
+            max_tv_idx = recent_20['trading_value'].idxmax()
+            gijunbong_open = int(recent_20.loc[max_tv_idx, 'open'])
+
+        if is_envelope_over_under:
+            target_price = int(ma20)
+            stop_loss = int(current_price * 0.93)
+        else:
             if is_accumulation_cand or is_long_term_pick:
-                stop_loss = int(min(ma60 * 0.95, recent_60d_min * 0.98))
+                if gijunbong_open > 0 and gijunbong_open < current_price:
+                    stop_loss = gijunbong_open
+                else:
+                    stop_loss = int(min(ma60, recent_60d_min * 1.02))
                 target_price = int(display_high_60d) if display_high_60d > current_price else int(current_price * 1.15)
             elif is_kalman_uptrend:
                 target_price = int(current_price + (atr_14 * 2.0))
@@ -1229,7 +1222,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         cutoff_score = 40 if is_warning_market else 25
         
         if quant_score < cutoff_score and not is_absolute_protected and not is_envelope_over_under:
-            master_tajeom = f"👀 [관망] 스코어 미달 (기준:{cutoff_score}점)"
+            master_tajeom = f"⏸ 관망 · 조건미달 (기준:{cutoff_score}점)"
 
         score_display = f"{quant_score}점 ({track_type})"
         is_seed_tag = "SEED" if (is_accumulation_cand or is_long_term_pick or is_envelope_over_under) else "NORMAL"
@@ -1490,7 +1483,8 @@ def update_technical_data(df_theme, all_theme_map):
         helper_sheet_data = [extended_headers] + [r[:29] for r in results]
         helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
 
-        scanner_keywords = ["[종베]", "[스윙/눌림]", "[스윙/추세]", "[당일/단타]", "[관심/수급]", "[중장기/모아가기]", "[하단]"]
+        # 🎯 [필터링 교정]: 4글자 다이어트 배지에 최적화된 마스터 이모지 키워드 필터링 레이어
+        scanner_keywords = ["🎯", "💎", "🌱", "🚀", "📦", "🔍", "📉 과매도"]
         all_candidates = []
         processed_codes = set()
 
@@ -1512,7 +1506,7 @@ def update_technical_data(df_theme, all_theme_map):
         normal_cands = []
         for cand in all_candidates:
             tajeom_str = str(cand[8])
-            if "🌱" in tajeom_str or "[중장기/모아가기]" in tajeom_str or "코어 포트폴리오" in tajeom_str or "[하단]" in tajeom_str:
+            if "🌱" in tajeom_str or "코어 포트폴리오" in tajeom_str or "📉 과매도" in tajeom_str or "[중장기/모아가기]" in tajeom_str or "[하단]" in tajeom_str:
                 seed_cands.append(cand)
             else: normal_cands.append(cand)
 
