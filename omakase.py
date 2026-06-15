@@ -923,10 +923,37 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     valid_days += 1
                     if valid_days >= 5: break
         except Exception: pass
+        # STEP 8 루프 끝난 후, 아래 블록 추가
+        # ── KIS 당일 기관 순매수 보강 ──────────────────
+        inst_ntby_eok = 0.0
+        if KIS_TOKEN and KIS_APP_KEY and KIS_APP_SECRET:
+            try:
+                kis_h = {
+                    "authorization": f"Bearer {KIS_TOKEN}",
+                    "appkey": KIS_APP_KEY,
+                    "appsecret": KIS_APP_SECRET,
+                    "custtype": "P",
+                    "tr_id": "FHKST01010100"
+                }
+                kis_res = local_session.get(
+                    "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price",
+                    headers=kis_h,
+                    params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code},
+                    verify=False,
+                    timeout=3
+                ).json()
+                if kis_res.get("rt_cd") == "0":
+                    inst_qty = int(str(kis_res["output"].get("inst_ntby_qty", "0")).replace(",", "").replace("+", "") or "0")
+                    inst_ntby_eok = (inst_qty * current_price) / 100_000_000
+            except:
+                pass
 
         # ============================================================
         # 🎯 [프로그램 완전 대체] 100% 무결성 스마트 머니 강도(SMI) 지수 연산 레이어
         # ============================================================
+        # 기존 SMI 블록 (smi_ratio 계산 후) 전체를 아래로 교체
+
+        # ── SMI 수급 강도 지수 ──
         if len(df_hist) >= 11:
             avg_tv_10d = df_hist['trading_value'].iloc[-11:-1].mean()
         elif len(df_hist) >= 2:
@@ -937,16 +964,20 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         smi_ratio = trading_value / avg_tv_10d if avg_tv_10d > 0 else 1.0
         market_cap_won = market_cap * 100_000_000
         turnover_rate = (trading_value / market_cap_won) * 100 if market_cap_won > 0 else 0.0
-        pg_amount_eok = trading_value / 100_000_000 # 퀀트 스코어 스케일링 호환성 유지용
+        pg_amount_eok = trading_value / 100_000_000  # 스케일링 호환용
+
+        # ── 기관 순매수 부호 처리 ──
+        inst_sign = "+" if inst_ntby_eok > 0 else ""
+        inst_label = f"기관:{inst_sign}{inst_ntby_eok:.1f}억" if inst_ntby_eok != 0 else "기관:미집계"
 
         if smi_ratio >= 5.0 and turnover_rate >= 8.0:
-            program_text = f"🔥 [M.기관폭발] {smi_ratio:.1f}배 (회전:{turnover_rate:.1f}%)"
+            program_text = f"🔥 [수급강도 폭발] {smi_ratio:.1f}배 / {inst_label}"
         elif smi_ratio >= 2.5 and turnover_rate >= 4.0:
-            program_text = f"🔥 [M.수급유입] {smi_ratio:.1f}배 (회전:{turnover_rate:.1f}%)"
+            program_text = f"🔥 [수급강도 유입] {smi_ratio:.1f}배 / {inst_label}"
         elif smi_ratio <= 0.4:
-            program_text = f"💤 [M.거래절벽] {smi_ratio:.1f}배 (회전:{turnover_rate:.1f}%)"
+            program_text = f"💤 [수급강도 절벽] {smi_ratio:.1f}배 / {inst_label}"
         else:
-            program_text = f"⚪ [M.평년수준] {smi_ratio:.1f}배 (회전:{turnover_rate:.1f}%)"
+            program_text = f"⚪ [수급강도 평년] {smi_ratio:.1f}배 / {inst_label}"
 
         acc_i_buy_eok = acc_i_buy_won / 100_000_000
         acc_f_buy_eok = acc_f_buy_won / 100_000_000
@@ -1198,8 +1229,19 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         i_sign = "+" if acc_i_buy_eok > 0 else ""
         f_sign = "+" if acc_f_buy_eok > 0 else ""
-        supply_status_col = f"🏦기:{i_sign}{acc_i_buy_eok:.1f}억 / 🌎외:{f_sign}{acc_f_buy_eok:.1f}억"
+        frgn_label = ""
+        if acc_f_buy_eok >= 50:
+            frgn_label = " 🌎💎(외인대량)"
+        elif acc_f_buy_eok >= 20:
+            frgn_label = " 🌎(외인집중)"
+        elif acc_f_buy_eok <= -20:
+            frgn_label = " 🌎🔵(외인이탈)"
 
+        supply_status_col = (
+            f"🏦기(5일):{i_sign}{acc_i_buy_eok:.1f}억 / "
+            f"🌎외(5일):{f_sign}{acc_f_buy_eok:.1f}억"
+            f"{frgn_label}"
+        )
         krx_str = f"'{'+' if krx_rate > 0 else ''}{krx_rate:.2f}% ({krx_close:,}원)" if krx_close > 0 else ""
         nxt_str = f"'{'+' if nxt_rate > 0 else ''}{nxt_rate:.2f}% ({nxt_close:,}원)" if nxt_close > 0 else ""
 
