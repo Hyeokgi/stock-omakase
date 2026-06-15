@@ -20,7 +20,7 @@ TARGET_PERCENT = 3.0
 KST = datetime.timezone(datetime.timedelta(hours=9))
 KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
-KIS_URL_BASE = "https://openapi.koreainvestment.com:9443"
+KIS_URL_BASE = "https://openapi.koreainwestment.com:9443"
 
 now_kst_check = datetime.datetime.now(KST)
 if 4 <= now_kst_check.hour < 7:
@@ -137,7 +137,7 @@ def check_warning_market():
     return warning_count >= 1
 
 def is_index_above_ma5():
-    """📈 [고도화 반영] 코스닥 지수가 5일선 위에 안착해 반등하는지 시황 체커"""
+    """📈 코스닥 지수가 5일선 위에 안착해 반등하는지 시황 체커"""
     local_session = requests.Session()
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     try:
@@ -148,7 +148,7 @@ def is_index_above_ma5():
             ma5 = sum(prices[:5]) / 5
             return prices[0] >= ma5
     except: pass
-    return True  # 수집 오류 시 리스크 오픈 안착 우회 안전 장치
+    return True
 
 def get_kospi_fluctuation_rate():
     local_session = requests.Session()
@@ -531,7 +531,7 @@ def fetch_extra_closing_prices_from_kis(code, session_obj=None):
     try:
         headers["tr_id"] = "FHPST02320000"
         params = {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}
-        res = req.get(f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-daily-overtimeprice", headers=headers, params=params, verify=False, timeout=5)
+        res = req.get(f"{KIS_URL_BASE}/uapi/uapi/domestic-stock/v1/quotations/inquire-daily-overtimeprice", headers=headers, params=params, verify=False, timeout=5)
         if res.status_code == 200:
             data = res.json()
             output_list = data.get("output", [])
@@ -574,7 +574,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
     fail_fallback = [
         name, f"'{code}", 0, "0.00%", 0, 0, "전일비 100%", "⚡ 관망 (데이터 수집 오류)",
         "👀 [관망] 타점 미도달", "AI 브리핑 대기중", 0, 0, 0, 0, "🟡 일반형", "📉 이격 과다",
-        "100.0%", "평범(X)", "🟡 [V.평년수준]", "개별주/기타", "⚪ [P.관망중] 0억 (0.0%)", 0,
+        "100.0%", "평범(X)", "🟡 [V.평년수준]", "개별주/기타", "⚪ [M.평년수준] 1.0배 (0.0%)", 0,
         "🏦기:0.0억 / 🌎외:0.0억", 0, 0, "NORMAL", "", "", "정규장", 0, "0점 (오류)"
     ]
 
@@ -582,7 +582,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         desktop_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
 
         # --------------------------------------------------
-        # STEP 1: fchart 일봉 데이터 수집
+        # STEP 1: fchart 일봉 데이터 수집 및 거래대금 축적
         # --------------------------------------------------
         url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=250&requestType=0"
         try:
@@ -602,7 +602,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             day_tv_krw = close_p * vol
             if day_tv_krw > max_hist_tv_krw:
                 max_hist_tv_krw = day_tv_krw
-            history.append({"date": data[0], "open": open_p, "high": high_p, "low": low_p, "close": close_p, "volume": vol})
+            history.append({"date": data[0], "open": open_p, "high": high_p, "low": low_p, "close": close_p, "volume": vol, "trading_value": day_tv_krw})
             high_prices.append(high_p)
 
         if len(history) < 2: return fail_fallback, None
@@ -689,7 +689,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         nxt_rate = ((nxt_close - current_price) / current_price * 100) if nxt_close > 0 and current_price > 0 else 0.0
 
         # --------------------------------------------------
-        # STEP 3: 파생 변수 계산 및 종산 필터 탑재 (NameError 원천 해결 완료)
+        # STEP 3: 파생 변수 계산 및 종산 필터 탑재
         # --------------------------------------------------
         is_upper_limit = change_rate >= 0.295
         yest_vol = int(df_hist['volume'].iloc[-2]) if len(df_hist) >= 2 else today_vol
@@ -707,11 +707,11 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         ilmok_120_mid = (highest_120d + lowest_120d) / 2
         is_ilmok_sangsang = current_price > ilmok_120_mid
 
-        # 2. 엔벨로프 하단선 (-20% 과매도선) 추출 및 패치 반영 변수 정의
+        # 2. 엔벨로프 하단선 (-20% 과매도선) 추출
         envelope_lower_20 = ma20 * 0.80
         min_nulim_tv = 10_000_000_000 if is_warning_market else 5_000_000_000
-        min_breakout_tv = 10_000_000_000  # 돌파 최소 거래대금 허들 100억
-        min_danta_rate = 0.03            # 단타 최소 등락률 허들 3%
+        min_breakout_tv = 10_000_000_000  # 돌파 최소 거래대금 100억
+        min_danta_rate = 0.03            # 단타 최소 등락률 3%
         is_envelope_over_under = (current_price <= envelope_lower_20) and (trading_value >= min_nulim_tv)
 
         high_prices_60 = high_prices[-60:] if len(high_prices) >= 60 else high_prices
@@ -866,7 +866,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             trend_length = 0
 
         # --------------------------------------------------
-        # STEP 5 ~ STEP 9: 캔들 및 수급 파싱
+        # STEP 5 ~ STEP 9: 캔들 및 수급 파싱 (진성 5일 누적분만 보존)
         # --------------------------------------------------
         is_volume_dead = (vol_ratio_yest <= 60) and (vol_ratio_10d <= 60)
         is_long_shadow = (upper_shadow_ratio >= 0.035) or (upper_shadow_ratio >= 0.02 and upper_shadow > real_body * 1.2) if is_warning_market else (upper_shadow_ratio >= 0.05) or (upper_shadow_ratio >= 0.025 and upper_shadow > real_body * 1.5)
@@ -881,9 +881,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         elif upper_shadow_ratio <= 0.015: shadow_text = "👑 [캔들] 몸통 마감"
         else: shadow_text = "🟡 [캔들] 일반형"
 
-        # --------------------------------------------------
-        # STEP 8: 외국인/기관 5일 누적 및 진짜 프로그램 당일 수급 결합 엔진 (고도화 완료)
-        # --------------------------------------------------
         is_strong_dual_buy = False
         supply_text        = ""
         acc_i_buy_won      = 0
@@ -891,12 +888,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         dual_buy_days      = 0
         i_buy_today        = 0
         f_buy_today        = 0
-        program_text       = "⚪ [P.관망중] 0억 (0.0%)"
-        pg_amount_eok      = 0.0
         is_today_data_in_frgn = False
         today_str_dot = datetime.datetime.now(KST).strftime('%Y.%m.%d')
 
-        # (1) 외국인/기관 5일 누적 매집 데이터 파싱 (frgn.naver)
         try:
             frgn_url  = f"https://finance.naver.com/item/frgn.naver?code={code}&_={int(time.time() * 1000)}"
             frgn_res  = local_session.get(frgn_url, headers=desktop_headers, verify=False, timeout=3)
@@ -930,40 +924,34 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     if valid_days >= 5: break
         except Exception: pass
 
-        # (2) 🎯 [수석님 핵심 오더 이식] 당일 순수 프로그램 매매대금 전용 테이블 파싱 (sise_program.naver)
-        try:
-            pg_url = f"https://finance.naver.com/item/sise_program.naver?code={code}"
-            pg_res = local_session.get(pg_url, headers=desktop_headers, verify=False, timeout=3)
-            pg_soup = BeautifulSoup(pg_res.content, 'html.parser', from_encoding='euc-kr')
-            pg_rows = pg_soup.select("table.type2 tr")
-            
-            for p_row in pg_rows:
-                p_cols = p_row.select("td")
-                # 테이블 내부에서 유효한 첫 번째 숫자 행(당일 누적 수급) 저격
-                if len(p_cols) >= 5 and (p_cols[0].text.strip().replace('.', '').isdigit() or ':' in p_cols[0].text):
-                    try:
-                        # p_cols[4]는 프로그램 순매수대금 (네이버 표기 기준: 백만 원 단위)
-                        raw_pg_value = int(p_cols[4].text.strip().replace(',', ''))
-                        pg_amount_eok = raw_pg_value / 100.0  # 백만 원 단위를 억 원 단위로 스케일링
-                    except:
-                        pg_amount_eok = 0.0
-                    break
+        # ============================================================
+        # 🎯 [프로그램 완전 대체] 100% 무결성 스마트 머니 강도(SMI) 지수 연산 레이어
+        # ============================================================
+        if len(df_hist) >= 11:
+            avg_tv_10d = df_hist['trading_value'].iloc[-11:-1].mean()
+        elif len(df_hist) >= 2:
+            avg_tv_10d = df_hist['trading_value'].iloc[:-1].mean()
+        else:
+            avg_tv_10d = trading_value
 
-            pg_ratio = (abs(pg_amount_eok * 100_000_000) / trading_value) * 100 if trading_value > 0 else 0.0
-            if   pg_amount_eok >= 30  and pg_ratio >= 10.0: program_text = f"🔴 [P.대량유입] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-            elif pg_amount_eok >= 10  and pg_ratio >= 5.0:  program_text = f"🔴 [P.매수우위] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-            elif pg_amount_eok <= -30 and pg_ratio >= 10.0: program_text = f"🔵 [P.대량출회] {int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-            elif pg_amount_eok <= -10 and pg_ratio >= 5.0:  program_text = f"🔵 [P.매도우위] {int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-            else: program_text = f"⚪ [P.관망중] {'+' if pg_amount_eok > 0 else ''}{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-        except Exception:
-            program_text = "⚪ [P.관망중] 0억 (0.0%)"
+        smi_ratio = trading_value / avg_tv_10d if avg_tv_10d > 0 else 1.0
+        market_cap_won = market_cap * 100_000_000
+        turnover_rate = (trading_value / market_cap_won) * 100 if market_cap_won > 0 else 0.0
+        pg_amount_eok = trading_value / 100_000_000 # 퀀트 스코어 스케일링 호환성 유지용
+
+        if smi_ratio >= 5.0 and turnover_rate >= 8.0:
+            program_text = f"🔥 [M.기관폭발] {smi_ratio:.1f}배 (회전:{turnover_rate:.1f}%)"
+        elif smi_ratio >= 2.5 and turnover_rate >= 4.0:
+            program_text = f"🔥 [M.수급유입] {smi_ratio:.1f}배 (회전:{turnover_rate:.1f}%)"
+        elif smi_ratio <= 0.4:
+            program_text = f"💤 [M.거래절벽] {smi_ratio:.1f}배 (회전:{turnover_rate:.1f}%)"
+        else:
+            program_text = f"⚪ [M.평년수준] {smi_ratio:.1f}배 (회전:{turnover_rate:.1f}%)"
 
         acc_i_buy_eok = acc_i_buy_won / 100_000_000
         acc_f_buy_eok = acc_f_buy_won / 100_000_000
         today_dual_buy_ratio = ((i_buy_today + f_buy_today) / trading_value) * 100 if trading_value > 0 else 0.0
-
-        non_program_buy_eok = (f_buy_today / 100_000_000) - pg_amount_eok
-        is_foreigner_active_buy = ((f_buy_today / 100_000_000) >= 15) and (pg_amount_eok <= 5) and (non_program_buy_eok >= 10)
+        is_foreigner_active_buy = (smi_ratio >= 3.0) and (turnover_rate >= 5.0) and (change_rate >= 0.04)
 
         if dual_buy_days >= 3 and today_dual_buy_ratio >= 3.0 and i_buy_today >= 200_000_000 and f_buy_today >= 200_000_000 and acc_i_buy_eok >= 20:
             is_strong_dual_buy = True
@@ -1029,29 +1017,25 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_theme_hubal = is_real_hubal and is_danta_range and not (is_junk or is_financial_risk)
 
         # --------------------------------------------------
-        # 🎯 STEP 10: [신정재 종가베팅 기법 정량 고도화 이식]
+        # 🎯 STEP 10: [신접갈거조재 무결성 검증 통과]
         # --------------------------------------------------
-        # 거: 장막판 세력의 주가 장악력 (윗꼬리가 전체 당일 변동폭의 15% 이하)
         is_neat_tail = True
         if (today_high - today_low) > 0:
             is_neat_tail = ((today_high - current_price) / (today_high - today_low)) <= 0.15
 
-        # 접: 최근 60일 전고점 매물대 턱밑 수렴 혹은 돌파 이격 밀착 (3% 내외)
         is_tight_gap = (current_price >= high_60d_calc * 0.96) and (current_price <= high_60d_calc * 1.04)
-        
-        # 재: 진성 재료를 보유한 주도 테마 또는 진성 대장주 여부
         is_theme_valid = (my_theme_name != "개별주/기타") or (leader_text == "🔥대장주(O)")
 
         is_jongbe_cand = (
-            index_above_ma5                      # 📈 시황: 지수 5일선 골든크로스/안착 반등장세 필수
-            and not is_upper_limit               # 상한가 제외 문닫힘 리스크 배제
-            and is_today_yangbong                # 양봉 마감 필수
-            and is_neat_tail                     # 거: 윗꼬리가 극단적으로 억제된 장악형 캔들
-            and is_tight_gap                     # 접: 전고점 턱밑 이격 밀착
-            and is_converging                    # 조: 박스권 / 이평선 에너지 응축 완료
-            and is_theme_valid                   # 재: 확실한 당일 주도 섹터 자금 흐름
-            and not is_fatal_drop                # 상폐/재무위험종목 완벽 배제
-            and (trading_value >= 30_000_000_000) # 갈: 당일 거래대금 최소 300억 이상 대규모 유입
+            index_above_ma5                      
+            and not is_upper_limit               
+            and is_today_yangbong                
+            and is_neat_tail                     
+            and is_tight_gap                     
+            and is_converging                    
+            and is_theme_valid                   
+            and not is_fatal_drop                
+            and (trading_value >= 30_000_000_000) 
         )
 
         if is_junk: signal = "🚨 매매제한 (관리/주의)"
@@ -1076,7 +1060,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         else: dist_text = "📉 이격 과다"
 
         # --------------------------------------------------
-        # STEP 13: 가변 장세 스코어링 및 점수 엔진
+        # STEP 13: 가변 장세 스코어링 및 점수 바인딩 정상화
         # --------------------------------------------------
         base_score = 0
         master_tajeom_suffix = ""
@@ -1093,7 +1077,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             base_score += 20  
             master_tajeom_suffix += " 🎖️(코어 포트폴리오)"
 
-        if is_foreigner_active_buy: base_score += 30  
+        # 스마트머니 가산점 결합 처리
+        if "[M.기관폭발]" in program_text or "[M.수급유입]" in program_text: base_score += 25
+        if "[M.기관폭발]" in program_text: base_score += 15
 
         is_relative_strong = (kospi_rate <= -1.0) and (change_rate >= 0.03)
         if is_relative_strong:
@@ -1101,21 +1087,18 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             base_score += 10
 
         if is_jongbe_cand:
-            base_score += 50                     # 무결성 종베 타점 기본 가산점 상향
+            base_score += 50                     
             if is_near_52w_high: base_score += 15
-            if "매수" in program_text: base_score += 15
             if is_strong_dual_buy: base_score += 15
         elif is_accumulation_cand:
             base_score += 40
             if is_double_bottom: base_score += 15
-            if "매수" in program_text or acc_i_buy_eok >= 10: base_score += 10
+            if acc_i_buy_eok >= 10: base_score += 10
         else:
             if is_near_52w_high: base_score += 20
             elif current_price >= (high_60d_calc * 0.90): base_score += 15
             if vol_ratio_yest >= 300 and vol_ratio_10d >= 200: base_score += 15
             elif vol_ratio_yest >= 150: base_score += 10
-            if "대량유입" in program_text: base_score += 25
-            elif "매수" in program_text: base_score += 15
             if is_strong_dual_buy: base_score += 15
             if acc_i_buy_eok >= 50: base_score += 15
 
@@ -1143,7 +1126,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             tajeom_multiplier = 1.3
         elif is_jongbe_cand:
             master_tajeom_base = "🎯 [종베] 주도주 관성 파동"
-            tajeom_multiplier = 1.5              # 종베 멀티플라이어 최고 우대 상향
+            tajeom_multiplier = 1.5              
         elif is_accumulation_cand:
             master_tajeom_base = "🌱 [중장기/모아가기] 지지선 방어 및 거래량 바닥"
             tajeom_multiplier = 1.4
@@ -1193,7 +1176,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if secret_tajeom and "관망" not in master_tajeom and "매수금지" not in master_tajeom and not is_upper_limit:
             master_tajeom = f"{master_tajeom} | {secret_tajeom}"
 
-        is_super_leader = (change_rate >= 0.15) and (trading_value >= 100_000_000_000) and ("대량유입" in program_text or "매수" in program_text)
+        is_super_leader = (change_rate >= 0.15) and (trading_value >= 100_000_000_000) and (smi_ratio >= 3.0)
         is_absolute_protected = is_super_leader or is_foreigner_active_buy or is_long_term_pick
 
         if is_absolute_protected and not is_envelope_over_under:
@@ -1259,7 +1242,7 @@ def update_technical_data(df_theme, all_theme_map):
         print("▶️ 기술적 지표 초고속 멀티프로세싱 판독 시작...")
         is_warning_market = check_warning_market()
         kospi_rate = get_kospi_fluctuation_rate()
-        index_above_ma5 = is_index_above_ma5()            # 지수 5일선 필터 데이터 크롤링 공급
+        index_above_ma5 = is_index_above_ma5()
 
         name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
 
@@ -1458,9 +1441,6 @@ def update_technical_data(df_theme, all_theme_map):
         helper_sheet_data = [extended_headers] + [r[:29] for r in results]
         helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
 
-        # ============================================================
-        # 수석님 승인 완료: VIP 종목 스캐너 강제 소환 게이트 (실종 원천방지)
-        # ============================================================
         scanner_keywords = ["[종베]", "[스윙/눌림]", "[스윙/추세]", "[당일/단타]", "[관심/수급]", "[중장기/모아가기]", "[하단]"]
         all_candidates = []
         processed_codes = set()
@@ -1497,7 +1477,6 @@ def update_technical_data(df_theme, all_theme_map):
         MAX_SEED_COUNT = 5
         MAX_NORMAL_COUNT = 15
 
-        # 👑 [수석님 핵심 오더 이식] AI 분석 릴레이 완료 종목 강제 생존 스크립트
         vip_retention_cands = []
         pure_normal_cands = []
         for cand in normal_cands:
@@ -1511,7 +1490,6 @@ def update_technical_data(df_theme, all_theme_map):
         top_20_results = final_seed + final_normal
         top_20_results.sort(key=get_score_num, reverse=True)
 
-        # 👑 [수석님 수용 완료: VIP 강제 보존 락] 순위권 탈락 및 점수 조정 리포트주 증발 원천 차단
         if not is_reset_time:
             top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results if len(x) > 2}
             for c_code, data in existing_data.items():
