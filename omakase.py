@@ -943,8 +943,15 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     timeout=3
                 ).json()
                 if kis_res.get("rt_cd") == "0":
-                    inst_qty = int(str(kis_res["output"].get("inst_ntby_qty", "0")).replace(",", "").replace("+", "") or "0")
+                    out = kis_res["output"]
+    
+                    inst_qty = int(str(out.get("inst_ntby_qty", "0")).replace(",","").replace("+","") or "0")
+                    frgn_qty = int(str(out.get("frgn_ntby_qty", "0")).replace(",","").replace("+","") or "0")
+                    pgtr_qty = int(str(out.get("pgtr_ntby_qty", "0")).replace(",","").replace("+","") or "0")
+    
                     inst_ntby_eok = (inst_qty * current_price) / 100_000_000
+                    frgn_ntby_eok = (frgn_qty * current_price) / 100_000_000  # frgn.naver 보완용
+                    pgtr_ntby_eok = (pgtr_qty * current_price) / 100_000_000  # 진짜 프로그램
             except:
                 pass
 
@@ -968,16 +975,17 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         # ── 기관 순매수 부호 처리 ──
         inst_sign = "+" if inst_ntby_eok > 0 else ""
-        inst_label = f"기관:{inst_sign}{inst_ntby_eok:.1f}억" if inst_ntby_eok != 0 else "기관:미집계"
+        pgtr_sign = "+" if pgtr_ntby_eok > 0 else ""
+
 
         if smi_ratio >= 5.0 and turnover_rate >= 8.0:
-            program_text = f"🔥 [수급강도 폭발] {smi_ratio:.1f}배 / {inst_label}"
+            program_text = f"🔥 [수급강도 폭발] {smi_ratio:.1f}배 / 기관:{inst_sign}{inst_ntby_eok:.1f}억 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
         elif smi_ratio >= 2.5 and turnover_rate >= 4.0:
-            program_text = f"🔥 [수급강도 유입] {smi_ratio:.1f}배 / {inst_label}"
+            program_text = f"🔥 [수급강도 유입] {smi_ratio:.1f}배 / 기관:{inst_sign}{inst_ntby_eok:.1f}억 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
         elif smi_ratio <= 0.4:
-            program_text = f"💤 [수급강도 절벽] {smi_ratio:.1f}배 / {inst_label}"
+            program_text = f"💤 [수급강도 절벽] {smi_ratio:.1f}배 / 기관:{inst_sign}{inst_ntby_eok:.1f}억 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
         else:
-            program_text = f"⚪ [수급강도 평년] {smi_ratio:.1f}배 / {inst_label}"
+            program_text = f"⚪ [수급강도 평년] {smi_ratio:.1f}배 / 기관:{inst_sign}{inst_ntby_eok:.1f}억 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
 
         acc_i_buy_eok = acc_i_buy_won / 100_000_000
         acc_f_buy_eok = acc_f_buy_won / 100_000_000
