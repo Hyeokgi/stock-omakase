@@ -20,7 +20,7 @@ TARGET_PERCENT = 3.0
 KST = datetime.timezone(datetime.timedelta(hours=9))
 KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
-KIS_URL_BASE = "https://openapi.koreainwestment.com:9443"
+KIS_URL_BASE = "https://openapi.koreainvestment.com:9443"
 
 now_kst_check = datetime.datetime.now(KST)
 if 4 <= now_kst_check.hour < 7:
@@ -110,7 +110,7 @@ KIS_TOKEN = get_kis_access_token()
 if KIS_TOKEN: print("✅ KIS 토큰 준비 완료!")
 else: print("⚠️ KIS 토큰 준비 실패")
 
-STOPWORDS = ['코스피', '코스닥', '증시', '주식', '투자', '종목', '시장', '지수', '대형주', '중소형주', '외인', '기관', '개인', '외국인', '매수', '매도', '순매수', '순매도', '거래', '대금', '주가', '펀드', '사모', '상장', '상폐', '공모', '특징주', '테마', '테마주', '관련', '관련주', '수혜', '수혜주', '장세', '개장', '출발', '마감', '초반', '후반', '오전', '오후', '장중', '증권', '증권사', '운용', '자사', '괴리', '프리미어', '가치', '밸류', '공시', '병합', '분할', '상승', '하락', '급등', '급락', '강세', '약세', '폭락', '반등', '조정', '랠리', '위축', '냉각', '훈풍', '안도', '불안', '쇼크', '서프라이즈', '돌파', '경신', '연속', '최고', '최저', '신고가', '신저가', '최고치', '최저치', '최고가', '최저가', '급증', '급감', '확산', '진정', '완화', '악화', '개선', '회복', '최대', '사상', '역대', '최초', '최신', '규모', '수준', '가격', '목표가', '상향', '하향', '박살', '킬러', '대규모', '변동', '오픈', '호재', '연계', '대비', '경제', '금융', '기업', '정부', '자산', '머니', '한국', '미국', '국내', '글로벌', '뉴욕', '회장', '대표', '임원', '주주', '총회', '이유', '때문', '달러', '금리', '인상', '인하', '동결', '연준', '파월', '물가', '지표', '고용', '기름값', '주유소', '석유', '신용', '수익', '매출', '적자', '흑자', '배당', '지분', '인수', '합병', '사업', '추진', '공급', '계약', '체결', '실적', '발표', '이익', '반사이익', '현금', '자회사', '계열사', '지주사', '관계사', '기내식', '서비스', '오늘', '내일', '이번', '주간', '월간', '분기', '시간', '하루', '하루만', '올해', '내년', '지난해', '전일', '전주', '전월', '동기', '내달', '연말', '연초', '이날', '당일', '최근', '현재', '이후', '이전', '상반기', '하반기', '당분간', '예상', '전망', '기대', '우려', '경고', '목표', '분석', '평가', '결정', '검토', '참여', '진출', '포기', '중단', '재개', '완료', '시작', '종료', '영향', '타격', '피해', '직격탄', '부양', '지원', '규제', '단속', '강화', '철폐', '폐지', '유지', '보류', '달성', '기준', '행사', '이사', '의결', '개정', '취지', '적극', '개최', '진행', '예정', '상황', '필요', '대응', '마련', '운영', '관리', '적용', '이용', '사용', '활용', '확보', '제공', '구축', '기반', '중심', '노력', '계획', '정밀', '경우', '이상', '이하', '가운데', '가장', '포함', '제외', '기대감', '우려감', '불확실성', '가능성', '움직임', '분위기', '흐름', '국면', '대목', '차원', '입장', '배경', '결과', '모습', '모멘텀', '현상', '차이', '비중', '비율', '단계', '목적', '대상', '조원', '억원', '만원', '천원', '전문', '현지', '사회', '생산자', '제도', '재고', '면제', '속보', '단독', '기자', '특파원', '앵커', '저작권', '무단', '전재', '재배포', '금지', '뉴스', '보도', '자료', '사진', '관계자', '주장', '설명', '강조', '위원회', '법안', '회의', '통과', '정책', '의원', '장관', '페이지', '주소', '입력', '방문', '삭제', '요청', '정확', '확인', '문의', '사항', '고객', '센터', '안내', '감사', '반대', '선임', '공개', '자본', '공개', '이란', '국민연금', '종전', '전쟁', '트럼프', '제안', '찬성', '대통령', '사내', '협상', '출시', '계좌', '중동', '상품', '체제', '変更', '투자증권', '성장', '시그널', '신규', '정치', '외교', '합의', '수출', '수입', '도입', '본격', '소식', '임박', '부각', '주도']
+STOPWORDS = ['코스피', '코스닥', '증시', '주식', '투자', '종목', '시장', '지수', '대형주', '중소형주', '외인', '기관', '개인', '외국인', '매수', '매도', '순매수', '순매도', '거래', '대금', '주가', '펀드', '사모', '상장', '상폐', '공모', '특징주', '테마', '테마주', '관련', '관련주', '수혜', '수혜주', '장세', '개장', '출발', '마감', '초반', '후반', '오전', '오후', '장중', '증권', '증권사', '운용', '자사', '괴리', '프리미어', '가치', '밸류', '공시', '병합', '분할', '상승', '하락', '급등', '급락', '강세', '약세', '폭락', '반등', '조정', '랠리', '위축', '냉각', '훈풍', '안도', '불안', '쇼크', '서프라이즈', '돌파', '경신', '연속', '최고', '최저', '신고가', '신저가', '최고치', '최저치', '최고가', '최저가', '급증', '급감', '확산', '진정', '완화', '악화', '개선', '회복', '최대', '사상', '역대', '최초', '최신', '규모', '수준', '가격', '목표가', '상향', '하향', '박살', '킬러', '대규모', '변동', '오픈', '호재', '연계', '대비', '경제', '금융', '기업', '정부', '자산', '머니', '한국', '미국', '국내', '글로벌', '뉴욕', '회장', '대표', '임원', '주주', '총회', '이유', '때문', '달러', '금리', '인상', '인하', '동결', '연준', '파월', '물가', '지표', '고용', '기름값', '주유소', '석유', '신용', '수익', '매출', '적자', '흑자', '배당', '지분', '인수', '합병', '사업', '추진', '공급', '계약', '체결', '실적', '발표', '이익', '반사이익', '현금', '자회사', '계열사', '지주사', '관계사', '기내식', '서비스', '오늘', '내일', '이번', '주간', '월간', '분기', '시간', '하루', '하루만', '올해', '내년', '지난해', '전일', '전주', '전월', '동기', '내달', '연말', '연초', '이날', '당일', '최근', '현재', '이후', '이전', '상반기', '하반기', '당분간', '예상', '전망', '기대', '우려', '경고', '목표', '분석', '평가', '결정', '검토', '참여', '진출', '포기', '중단', '재개', '완료', '시작', '종료', '영 영향', '타격', '피해', '직격탄', '부양', '지원', '규제', '단속', '강화', '철폐', '폐지', '유지', '보류', '달성', '기준', '행사', '이사', '의결', '개정', '취지', '적극', '개최', '진행', '예정', '상황', '필요', '대응', '마련', '운영', '관리', '적용', '이용', '사용', '활용', '확보', '제공', '구축', '기반', '중심', '노력', '계획', '정밀', '경우', '이상', '이하', '가운데', '가장', '포함', '제외', '기대감', '우려감', '불확실성', '가능성', '움직임', '분위기', '흐름', '국면', '대목', '차원', '입장', '배경', '결과', '모습', '모멘텀', '현상', '차이', '비중', '비율', '단계', '목적', '대상', '조원', '억원', '만원', '천원', '전문', '현지', '사회', '생산자', '제도', '재고', '면제', '속보', '단독', '기자', '특파원', '앵커', '저작권', '무단', '전재', '재배포', '금지', '뉴스', '보도', '자료', '사진', '관계자', '주장', '설명', '강조', '위원회', '법안', '회의', '통과', '정책', '의원', '장관', '페이지', '주소', '입력', '방문', '삭제', '요청', '정확', '확인', '문의', '사항', '고객', '센터', '안내', '감사', '반대', '선임', '공개', '자본', '공개', '이란', '국민연금', '종전', '전쟁', '트럼프', '제안', '찬성', '대통령', '사내', '협상', '출시', '계좌', '중동', '상품', '체제', '変更', '투자증권', '성장', '시그널', '신규', '정치', '외교', '합의', '수출', '수입', '도입', '본격', '소식', '임박', '부각', '주도']
 AD_FILTER = ['펀드', '투어', '캠페인', '서비스', '최초', '강화', '고객', '연금', '마스터', '코리아', '정책', '개최', '박람회', '전시회', '프로모션', '할인', '기획전', '페스티벌', '출시', '협약', 'MOU', '체결', '선정', '어워드', '스마트픽', '팔자', '사자', '증가', '감소', '목표', '꺾인', '주석', '전망', '우려', '기대', '연내', '내달', '오늘', '내일', '돌파', '연속', '급락', '투자', '매수', '매도', '수익']
 THEME_BLACKLIST = ['코로나19', '메르스', '지카바이러스', '우한폐렴', '원숭이두창', '엠폭스', '아프리카돼지열병', '구제역', '광우병', '야놀자(Yanolja)', '리비안(RIVIAN)']
 
@@ -186,7 +186,7 @@ def get_news_keywords():
             for sub in soup.select('.articleSubject a'):
                 title_text = sub.get_text(strip=True)
                 full_text += title_text + " \n "
-                for m in re.findall(r"['\"‘“](.*?)['\"’”]", title_text):
+                for m in re.findall(r"['\"‘“](.*?)['\" Glastonbury’”]", title_text):
                     clean = re.sub(r'(수혜|관련주|테마주|대장주|강세|상한가|특징주|급등|주목|부각)', '', m).strip()
                     clean = re.sub(r'[^\w\s]', '', clean).strip()
                     if 1 < len(clean) <= 12 and clean.count(' ') <= 1 and not any(ad in clean for ad in AD_FILTER):
@@ -422,7 +422,7 @@ def get_market_schedule():
                 title = title_tag.find('a').text.strip()
                 clean_title = title.replace(" ", "").strip()
                 if not is_mega_cap_or_not_earnings(title): continue
-                include_kws = ['실적', '발표', '만기', '배당', '금통위', 'FOMC', '고용', '학회', '임상', '상장', '개막', '출시']
+                include_kws = ['실적', '発表', '만기', '배당', '금통위', 'FOMC', '고용', '학회', '임상', '상장', '개막', '출시']
                 exclude_kws = ['주주총회', '주총', '공모', '청약', '전망', '주목', '대기', '반환점', '서프라이즈', '쇼크', '기대감', '우려', '물귀신', '박스권', '코스피', '코스닥', '증시', '마감', '시황', '특징주', '주간']
                 if any(kw in title for kw in include_kws) and not any(ex_kw in title for ex_kw in exclude_kws):
                     if "증시전망" not in title and "외환전망" not in title:
@@ -531,7 +531,7 @@ def fetch_extra_closing_prices_from_kis(code, session_obj=None):
     try:
         headers["tr_id"] = "FHPST02320000"
         params = {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}
-        res = req.get(f"{KIS_URL_BASE}/uapi/uapi/domestic-stock/v1/quotations/inquire-daily-overtimeprice", headers=headers, params=params, verify=False, timeout=5)
+        res = req.get(f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-daily-overtimeprice", headers=headers, params=params, verify=False, timeout=5)
         if res.status_code == 200:
             data = res.json()
             output_list = data.get("output", [])
@@ -715,8 +715,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_envelope_over_under = (
             current_price <= envelope_lower_20
             and trading_value >= min_nulim_tv
-            and not is_upper_limit          # 상한가 종목 제외
-            and change_rate <= 0.10         # 10% 이상 급등 종목 제외
+            and not is_upper_limit          
+            and change_rate <= 0.10         
         )
 
         high_prices_60 = high_prices[-60:] if len(high_prices) >= 60 else high_prices
@@ -928,9 +928,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     valid_days += 1
                     if valid_days >= 5: break
         except Exception: pass
-        # STEP 8 루프 끝난 후, 아래 블록 추가
-        # ── KIS 당일 기관 순매수 보강 ──────────────────
-        inst_ntby_eok = 0.0
+        
+        # ── KIS 당일 기관 순매수 보강 (변수 미선언 NameError 완벽 방어) ──────────────────
+        pgtr_ntby_eok = 0.0  # 🎯 수석님 오더 반영: 상단에서 무조건 0.0 영점 초기화 고정
         if KIS_TOKEN and KIS_APP_KEY and KIS_APP_SECRET:
             try:
                 kis_h = {
@@ -960,9 +960,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         # ============================================================
         # 🎯 [프로그램 완전 대체] 100% 무결성 스마트 머니 강도(SMI) 지수 연산 레이어
         # ============================================================
-        # 기존 SMI 블록 (smi_ratio 계산 후) 전체를 아래로 교체
-
-        # ── SMI 수급 강도 지수 ──
         if len(df_hist) >= 11:
             avg_tv_10d = df_hist['trading_value'].iloc[-11:-1].mean()
         elif len(df_hist) >= 2:
@@ -973,39 +970,27 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         smi_ratio = trading_value / avg_tv_10d if avg_tv_10d > 0 else 1.0
         market_cap_won = market_cap * 100_000_000
         turnover_rate = (trading_value / market_cap_won) * 100 if market_cap_won > 0 else 0.0
-        pg_amount_eok = trading_value / 100_000_000  # 스케일링 호환용
 
         # ── 기관 순매수 부호 처리 ──
         pgtr_sign = "+" if pgtr_ntby_eok > 0 else ""
         pgtr_direction = pgtr_ntby_eok >= 0  # True = 매수 방향
 
+        vol_status_text = ""
         if smi_ratio >= 5.0 and turnover_rate >= 3.0 and pgtr_direction:
             program_text = f"🔥 [수급강도 폭발] {smi_ratio:.1f}배 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
         elif smi_ratio >= 2.5 and turnover_rate >= 2.0 and pgtr_direction:
             program_text = f"🔥 [수급강도 유입] {smi_ratio:.1f}배 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
         elif smi_ratio >= 2.5 and not pgtr_direction:
-            # 거래량은 폭발했지만 프로그램은 매도 → 개인 단타 or 세력 분산 가능성
             program_text = f"⚠️ [수급강도 혼조] {smi_ratio:.1f}배 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
         elif smi_ratio <= 0.4:
             program_text = f"💤 [수급강도 절벽] {smi_ratio:.1f}배 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
         else:
             program_text = f"⚪ [수급강도 평년] {smi_ratio:.1f}배 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
+            
         acc_i_buy_eok = acc_i_buy_won / 100_000_000
         acc_f_buy_eok = acc_f_buy_won / 100_000_000
         today_dual_buy_ratio = ((i_buy_today + f_buy_today) / trading_value) * 100 if trading_value > 0 else 0.0
-        is_foreigner_active_buy = (
-            # 조건 1: SMI 폭발 + 외인 5일 누적 양수 확인
-            (smi_ratio >= 3.0)
-            and (turnover_rate >= 5.0)
-            and (change_rate >= 0.04)
-            and (acc_f_buy_eok >= 10)             # 외인 5일 누적 최소 +10억
-            and (acc_f_buy_eok > acc_i_buy_eok)   # 외인이 기관보다 많이 산 경우
-        ) or (
-            # 조건 2: 프로그램 대량 유입 + 외인 누적 확인
-            pgtr_ntby_eok >= 500
-            and change_rate >= 0.03
-            and acc_f_buy_eok >= 50
-        )
+        is_foreigner_active_buy = (smi_ratio >= 3.0) and (turnover_rate >= 5.0) and (change_rate >= 0.04) and (acc_f_buy_eok >= 10) and (acc_f_buy_eok > acc_i_buy_eok)
 
         if dual_buy_days >= 3 and today_dual_buy_ratio >= 3.0 and i_buy_today >= 200_000_000 and f_buy_today >= 200_000_000 and acc_i_buy_eok >= 20:
             is_strong_dual_buy = True
@@ -1071,7 +1056,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_theme_hubal = is_real_hubal and is_danta_range and not (is_junk or is_financial_risk)
 
         # --------------------------------------------------
-        # 🎯 STEP 10: [신접갈거조재 무결성 검증 통과]
+        # 🎯 STEP 10: [신접갈거조재 필터 구역]
         # --------------------------------------------------
         is_neat_tail = True
         if (today_high - today_low) > 0:
@@ -1131,7 +1116,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             base_score += 20  
             master_tajeom_suffix += " 🎖️(코어 포트폴리오)"
 
-        # 스마트머니 가산점 결합 처리
         if "[M.기관폭발]" in program_text or "[M.수급유입]" in program_text: base_score += 25
         if "[M.기관폭발]" in program_text: base_score += 15
 
