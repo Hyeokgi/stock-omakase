@@ -712,7 +712,12 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         min_nulim_tv = 10_000_000_000 if is_warning_market else 5_000_000_000
         min_breakout_tv = 10_000_000_000  # 돌파 최소 거래대금 100억
         min_danta_rate = 0.03            # 단타 최소 등락률 3%
-        is_envelope_over_under = (current_price <= envelope_lower_20) and (trading_value >= min_nulim_tv)
+        is_envelope_over_under = (
+            current_price <= envelope_lower_20
+            and trading_value >= min_nulim_tv
+            and not is_upper_limit          # 상한가 종목 제외
+            and change_rate <= 0.10         # 10% 이상 급등 종목 제외
+        )
 
         high_prices_60 = high_prices[-60:] if len(high_prices) >= 60 else high_prices
         high_60d_calc = max(high_prices_60[:-1]) if len(high_prices_60) > 1 else today_high
@@ -971,26 +976,35 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         pg_amount_eok = trading_value / 100_000_000  # 스케일링 호환용
 
         # ── 기관 순매수 부호 처리 ──
-        inst_sign = "+" if inst_ntby_eok > 0 else ""
         pgtr_sign = "+" if pgtr_ntby_eok > 0 else ""
+        pgtr_direction = pgtr_ntby_eok >= 0  # True = 매수 방향
 
-
-        if smi_ratio >= 5.0 and turnover_rate >= 8.0:
+        if smi_ratio >= 5.0 and turnover_rate >= 8.0 and pgtr_direction:
             program_text = f"🔥 [수급강도 폭발] {smi_ratio:.1f}배 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
-        elif smi_ratio >= 2.5 and turnover_rate >= 4.0:
+        elif smi_ratio >= 2.5 and turnover_rate >= 4.0 and pgtr_direction:
             program_text = f"🔥 [수급강도 유입] {smi_ratio:.1f}배 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
+        elif smi_ratio >= 2.5 and not pgtr_direction:
+            # 거래량은 폭발했지만 프로그램은 매도 → 개인 단타 or 세력 분산 가능성
+            program_text = f"⚠️ [수급강도 혼조] {smi_ratio:.1f}배 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
         elif smi_ratio <= 0.4:
             program_text = f"💤 [수급강도 절벽] {smi_ratio:.1f}배 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
         else:
             program_text = f"⚪ [수급강도 평년] {smi_ratio:.1f}배 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
-
         acc_i_buy_eok = acc_i_buy_won / 100_000_000
         acc_f_buy_eok = acc_f_buy_won / 100_000_000
         today_dual_buy_ratio = ((i_buy_today + f_buy_today) / trading_value) * 100 if trading_value > 0 else 0.0
         is_foreigner_active_buy = (
-            (smi_ratio >= 3.0) and (turnover_rate >= 5.0) and (change_rate >= 0.04)
+            # 조건 1: SMI 폭발 + 외인 5일 누적 양수 확인
+            (smi_ratio >= 3.0)
+            and (turnover_rate >= 5.0)
+            and (change_rate >= 0.04)
+            and (acc_f_buy_eok >= 10)             # 외인 5일 누적 최소 +10억
+            and (acc_f_buy_eok > acc_i_buy_eok)   # 외인이 기관보다 많이 산 경우
         ) or (
-            pgtr_ntby_eok >= 500 and change_rate >= 0.03  # 프로그램 500억 이상 유입
+            # 조건 2: 프로그램 대량 유입 + 외인 누적 확인
+            pgtr_ntby_eok >= 500
+            and change_rate >= 0.03
+            and acc_f_buy_eok >= 50
         )
 
         if dual_buy_days >= 3 and today_dual_buy_ratio >= 3.0 and i_buy_today >= 200_000_000 and f_buy_today >= 200_000_000 and acc_i_buy_eok >= 20:
