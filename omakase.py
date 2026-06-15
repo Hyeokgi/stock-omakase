@@ -906,9 +906,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     row_date_str = cols[0].text.strip()
                     try: close_price_day = int(cols[1].text.strip().replace(',', ''))
                     except: close_price_day = current_price
-                    try: i_vol = int(cols[4].text.strip().replace(',', '').replace('+', '').replace(' ', ''))
+                    # 🎯 [영점 복구 완료] 4:거래량(제외) / 5:기관순매매 / 6:외인순매매 매핑 정상화
+                    try: i_vol = int(cols[5].text.strip().replace(',', '').replace('+', '').replace(' ', ''))
                     except: i_vol = 0
-                    try: f_vol = int(cols[5].text.strip().replace(',', '').replace('+', '').replace(' ', ''))
+                    try: f_vol = int(cols[6].text.strip().replace(',', '').replace('+', '').replace(' ', ''))
                     except: f_vol = 0
 
                     i_buy_won = i_vol * close_price_day
