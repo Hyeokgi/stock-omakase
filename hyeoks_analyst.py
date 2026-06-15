@@ -230,7 +230,7 @@ try:
         ■ 종목명: {stock_name}
         ■ 현재가: {curr_p}
         ■ 타점 위치(배지): {tajeom_badge}
-        ■ 당일 수급: {sugeup}
+        ■ 수급강도 및 프로그램: {sugeup}   ← "당일 수급" → "수급강도 및 프로그램"으로 라벨 변경
         ■ 52주 고가: {high_52}
         ■ 테마: {theme}
         ■ 🤖 [시스템 임시 기준가]: 목표가 {target_sys} / 손절가 {stop_sys}
@@ -254,8 +254,8 @@ try:
                 
                 curr_p = row[3] if len(row) > 3 else ''
                 tajeom_badge = row[8] if len(row) > 8 else ''
-                sugeup = row[11] if len(row) > 11 else ''
-                high_52 = row[12] if len(row) > 12 else ''
+                sugeup = row[11] if len(row) > 11 else ''   # 수급강도 (변경 없음, 포맷만 달라짐)
+                high_52 = row[12] if len(row) > 12 else ''  # 52주전고점 (변경 없음)
                 theme = row[5] if len(row) > 5 else ''
                 target_sys = row[14] if len(row) > 14 else ''
                 stop_sys = row[15] if len(row) > 15 else ''
@@ -317,12 +317,14 @@ try:
     for r in tech_data:
         if len(r) < 21: continue
         name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
-        curr_p, chg, score_str, tajeom_raw = str(r[2]).strip(), str(r[3]).strip(), str(r[8]).strip(), str(r[9]).strip()
-        theme_name = str(r[19]).strip()  # 19번 열 테마명 구조 확보
-        prog = str(r[20]).strip()
+        curr_p, chg = str(r[2]).strip(), str(r[3]).strip()
+        tajeom_raw = str(r[8]).strip()     # 마스터타점
+        score_str = str(r[30]).strip() if len(r) > 30 else "0점"  # 퀀트스코어
+        theme_name = str(r[19]).strip()
+        prog = str(r[20]).strip()          # 수급강도 (새 포맷 반영)
         seed_tag = str(r[25]).strip() if len(r) > 25 else "NORMAL"
-        
-        try: num_score = int(re.findall(r'-?\d+', score_str)[0])
+
+        try: num_score = int(re.findall(r'\d+', score_str)[0])
         except: num_score = 0
         
         if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|3년적자|스코어 미달|과거 주도주 이력 미달', tajeom_raw): continue 
@@ -330,7 +332,10 @@ try:
         tajeom_clean = tajeom_raw.split('⚠️')[0].strip()
         tajeom_clean = tajeom_clean.split('🎯')[0].strip()
         
-        info = f"종목:{name}({code}) | 현재가:{curr_p}원({chg}) | 퀀트점수:{num_score}점 | 타점:{tajeom_clean} | 수급:{prog} | 유형:{seed_tag}"
+        info = (
+            f"종목:{name}({code}) | 현재가:{curr_p}원({chg}) | 퀀트점수:{num_score}점 | "
+            f"타점:{tajeom_clean} | 수급강도:{prog} | 유형:{seed_tag} | 테마:{theme_name}"
+        )
         cands_list.append({
             'name': name, 
             'code': code, 
