@@ -881,6 +881,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         elif upper_shadow_ratio <= 0.015: shadow_text = "👑 [캔들] 몸통 마감"
         else: shadow_text = "🟡 [캔들] 일반형"
 
+        # --------------------------------------------------
+        # STEP 8: 외국인/기관 5일 누적 및 진짜 프로그램 당일 수급 결합 엔진 (고도화 완료)
+        # --------------------------------------------------
         is_strong_dual_buy = False
         supply_text        = ""
         acc_i_buy_won      = 0
@@ -893,6 +896,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_today_data_in_frgn = False
         today_str_dot = datetime.datetime.now(KST).strftime('%Y.%m.%d')
 
+        # (1) 외국인/기관 5일 누적 매집 데이터 파싱 (frgn.naver)
         try:
             frgn_url  = f"https://finance.naver.com/item/frgn.naver?code={code}&_={int(time.time() * 1000)}"
             frgn_res  = local_session.get(frgn_url, headers=desktop_headers, verify=False, timeout=3)
@@ -906,7 +910,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     row_date_str = cols[0].text.strip()
                     try: close_price_day = int(cols[1].text.strip().replace(',', ''))
                     except: close_price_day = current_price
-                    # 🎯 [영점 복구 완료] 4:거래량(제외) / 5:기관순매매 / 6:외인순매매 매핑 정상화
                     try: i_vol = int(cols[5].text.strip().replace(',', '').replace('+', '').replace(' ', ''))
                     except: i_vol = 0
                     try: f_vol = int(cols[6].text.strip().replace(',', '').replace('+', '').replace(' ', ''))
@@ -920,33 +923,47 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                         i_buy_today = i_buy_won
                         f_buy_today = f_buy_won
                         if row_date_str == today_str_dot: is_today_data_in_frgn = True
-                        if f_vol != 0:
-                            pg_amount_won = f_vol * current_price
-                            pg_amount_eok = pg_amount_won / 100_000_000
-                            pg_ratio = (abs(pg_amount_won) / trading_value) * 100 if trading_value > 0 else 0.0
-                            if   pg_amount_eok >= 30  and pg_ratio >= 10.0: program_text = f"🔴 [P.대량유입] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-                            elif pg_amount_eok >= 10  and pg_ratio >= 5.0:  program_text = f"🔴 [P.매수우위] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-                            elif pg_amount_eok <= -30 and pg_ratio >= 10.0: program_text = f"🔵 [P.대량출회] {int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-                            elif pg_amount_eok <= -10 and pg_ratio >= 5.0:  program_text = f"🔵 [P.매도우위] {int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-                            else: program_text = f"⚪ [P.관망중] {'+' if pg_amount_eok > 0 else ''}{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
-                        else: program_text = "⚪ [P.관망중] 0억 (0.0%)"
 
                     acc_i_buy_won += i_buy_won
                     acc_f_buy_won += f_buy_won
                     valid_days += 1
                     if valid_days >= 5: break
-        except Exception: program_text = "확인불가"
+        except Exception: pass
+
+        # (2) 🎯 [수석님 핵심 오더 이식] 당일 순수 프로그램 매매대금 전용 테이블 파싱 (sise_program.naver)
+        try:
+            pg_url = f"https://finance.naver.com/item/sise_program.naver?code={code}"
+            pg_res = local_session.get(pg_url, headers=desktop_headers, verify=False, timeout=3)
+            pg_soup = BeautifulSoup(pg_res.content, 'html.parser', from_encoding='euc-kr')
+            pg_rows = pg_soup.select("table.type2 tr")
+            
+            for p_row in pg_rows:
+                p_cols = p_row.select("td")
+                # 테이블 내부에서 유효한 첫 번째 숫자 행(당일 누적 수급) 저격
+                if len(p_cols) >= 5 and (p_cols[0].text.strip().replace('.', '').isdigit() or ':' in p_cols[0].text):
+                    try:
+                        # p_cols[4]는 프로그램 순매수대금 (네이버 표기 기준: 백만 원 단위)
+                        raw_pg_value = int(p_cols[4].text.strip().replace(',', ''))
+                        pg_amount_eok = raw_pg_value / 100.0  # 백만 원 단위를 억 원 단위로 스케일링
+                    except:
+                        pg_amount_eok = 0.0
+                    break
+
+            pg_ratio = (abs(pg_amount_eok * 100_000_000) / trading_value) * 100 if trading_value > 0 else 0.0
+            if   pg_amount_eok >= 30  and pg_ratio >= 10.0: program_text = f"🔴 [P.대량유입] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+            elif pg_amount_eok >= 10  and pg_ratio >= 5.0:  program_text = f"🔴 [P.매수우위] +{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+            elif pg_amount_eok <= -30 and pg_ratio >= 10.0: program_text = f"🔵 [P.대량출회] {int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+            elif pg_amount_eok <= -10 and pg_ratio >= 5.0:  program_text = f"🔵 [P.매도우위] {int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+            else: program_text = f"⚪ [P.관망중] {'+' if pg_amount_eok > 0 else ''}{int(pg_amount_eok):,}억 ({pg_ratio:.1f}%)"
+        except Exception:
+            program_text = "⚪ [P.관망중] 0억 (0.0%)"
 
         acc_i_buy_eok = acc_i_buy_won / 100_000_000
         acc_f_buy_eok = acc_f_buy_won / 100_000_000
-        f_buy_eok     = f_buy_today / 100_000_000
         today_dual_buy_ratio = ((i_buy_today + f_buy_today) / trading_value) * 100 if trading_value > 0 else 0.0
 
-        non_program_buy_eok = 0
-        is_foreigner_active_buy = False
-        if is_today_data_in_frgn:
-            non_program_buy_eok = f_buy_eok - pg_amount_eok
-            is_foreigner_active_buy = (f_buy_eok >= 15) and (pg_amount_eok <= 5) and (non_program_buy_eok >= 10)
+        non_program_buy_eok = (f_buy_today / 100_000_000) - pg_amount_eok
+        is_foreigner_active_buy = ((f_buy_today / 100_000_000) >= 15) and (pg_amount_eok <= 5) and (non_program_buy_eok >= 10)
 
         if dual_buy_days >= 3 and today_dual_buy_ratio >= 3.0 and i_buy_today >= 200_000_000 and f_buy_today >= 200_000_000 and acc_i_buy_eok >= 20:
             is_strong_dual_buy = True
