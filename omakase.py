@@ -22,10 +22,12 @@ KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
 KIS_URL_BASE = "https://openapi.koreainvestment.com:9443"
 
-# [수용] requests.Session 공용화로 연결 비용 절감 및 Keep-Alive 활성화
+# requests.Session 공용화로 연결 비용 절감 및 Keep-Alive 활성화
 GLOBAL_SESSION = requests.Session()
 GLOBAL_SESSION.headers.update({
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
 })
 
 now_kst_check = datetime.datetime.now(KST)
@@ -33,7 +35,7 @@ if 4 <= now_kst_check.hour < 7:
     print(f"🌙 현재 시간({now_kst_check.strftime('%H:%M')}): 시스템을 휴식 모드로 전환합니다. (04시~07시)")
     sys.exit(0)
 
-# [수용] O(1) 초고속 해시 탐색을 위한 불용어/블랙리스트 Set 변환
+# O(1) 초고속 해시 탐색을 위한 불용어/블랙리스트 Set 변환
 STOPWORDS = set(['코스피', '코스닥', '증시', '주식', '투자', '종목', '시장', '지수', '대형주', '중소형주', '외인', '기관', '개인', '외국인', '매수', '매도', '순매수', '순매도', '거래', '대금', '주가', '펀드', '사모', '상장', '상폐', '공모', '특징주', '테마', '테마주', '관련', '관련주', '수혜', '수혜주', '장세', '개장', '출발', '마감', '초반', '후반', '오전', '오후', '장중', '증권', '증권사', '운용', '자사', '괴리', '프리미어', '가치', '밸류', '공시', '병합', '분할', '상승', '하락', '급등', '급락', '강세', '약세', '폭락', '반등', '조정', '랠리', '위축', '냉각', '훈풍', '안도', '불안', '쇼크', '서프라이즈', '돌파', '경신', '연속', '최고', '최저', '신고가', '신저가', '최고치', '최저치', '최고가', '최저가', '급증', '급감', '확산', '진정', '완화', '악화', '개선', '회복', '최대', '사상', '역대', '최초', '최신', '규모', '수준', '가격', '목표가', '상향', '하향', '박살', '킬러', '대규모', '변동', '오픈', '호재', '연계', '대비', '경제', '금융', '기업', '정부', '자산', '머니', '한국', '미국', '국내', '글로벌', '뉴욕', '회장', '대표', '임원', '주주', '총회', '이유', '때문', '달러', '금리', '인상', '인하', '동결', '연준', '파월', '물가', '지표', '고용', '기름값', '주유소', '석유', '신용', '수익', '매출', '적자', '흑자', '배당', '지분', '인수', '합병', '사업', '추진', '공급', '계약', '체결', '실적', '발표', '이익', '반사이익', '현금', '자회사', '계열사', '지주사', '관계사', '기내식', '서비스', '오늘', '내일', '이번', '주간', '월간', '분기', '시간', '하루', '하루만', '올해', '내년', '지난해', '전일', '전주', '전월', '동기', '내달', '연말', '연초', '이날', '당일', '최근', '현재', '이후', '이전', '상반기', '하반기', '당분간', '예상', '전망', '기대', '우려', '경고', '목표', '분석', '평가', '결정', '검토', '참여', '진출', '포기', '중단', '재개', '완료', '시작', '종료', '영 영향', '타격', '피해', '직격탄', '부양', '지원', '규제', '단속', '강화', '철폐', '폐지', '유지', '보류', '달성', '기준', '행사', '이사', '의결', '개정', '취지', '적극', '개최', '진행', '예정', '상황', '필요', '대응', '마련', '운영', '관리', '적용', '이용', '사용', '활용', '확보', '제공', '구축', '기반', '중심', '노력', '계획', '정밀', '경우', '이상', '이하', '가운데', '가장', '포함', '제외', '기대감', '우려감', '불확실성', '가능성', '움직임', '분위기', '흐름', '국면', '대목', '차원', '입장', '배경', '결과', '모습', '모멘텀', '현상', '차이', '비중', '비율', '단계', '목적', '대상', '조원', '억원', '만원', '천원', '전문', '현지', '사회', '생산자', '제도', '재고', '면제', '속보', '단독', '기자', '특파원', '앵커', '저작권', '무단', '전재', '재배포', '금지', '뉴스', '보도', '자료', '사진', '관계자', '주장', '설명', '강조', '위원회', '법안', '회의', '통과', '정책', '의원', '장관', '페이지', '주소', '입력', '방문', '삭제', '요청', '정확', '확인', '문의', '사항', '고객', '센터', '안내', '감사', '반대', '선임', '공개', '자본', '공개', '이란', '국민연금', '종전', '전쟁', '트럼프', '제안', '찬성', '대통령', '사내', '협상', '출시', '계좌', '중동', '상품', '체제', '変更', '투자증권', '성장', '시그널', '신규', '정치', '외교', '합의', '수출', '수입', '도입', '본격', '소식', '임박', '부각', '주도'])
 AD_FILTER = set(['펀드', '투어', '캠페인', '서비스', '최초', '강화', '고객', '연금', '마스터', '코리아', '정책', '개최', '박람회', '전시회', '프로모션', '할인', '기획전', '페스티벌', '출시', '협약', 'MOU', '체결', '선정', '어워드', '스마트픽', '팔자', '사자', '증가', '감소', '목표', '꺾인', '주석', '전망', '우려', '기대', '연내', '내달', '오늘', '내일', '돌파', '연속', '급락', '투자', '매수', '매도', '수익'])
 THEME_BLACKLIST = set(['코로나19', '메르스', '지카바이러스', '우한폐렴', '원숭이두창', '엠폭스', '아프리카돼지열병', '구제역', '광우병', '야놀자(Yanolja)', '리비안(RIVIAN)'])
@@ -63,7 +65,6 @@ def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
     except Exception as e:
         print(f"⚠️ [{sheet_name}] 정렬 실패: {e}")
 
-# [수용] current_year 자동 추출 엔진화로 매년 하드코딩 수정해야 하는 리스크 박멸
 def normalize_date_format(date_str, current_year=None):
     if current_year is None:
         current_year = str(datetime.datetime.now(KST).year)
@@ -107,7 +108,6 @@ def get_kis_access_token():
         print("🆕 KIS 토큰을 새로 발급합니다...")
         headers = {"content-type": "application/json"}
         body = {"grant_type": "client_credentials", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET}
-        # [수용] KIS 토큰 발급 등 금융 보안 통신은 verify=True 복구하여 안정성 및 보안 획득
         res = GLOBAL_SESSION.post(f"{KIS_URL_BASE}/oauth2/tokenP", headers=headers, json=body, timeout=5)
         if res.status_code == 200:
             new_token = res.json().get("access_token")
@@ -172,9 +172,15 @@ def get_kospi_fluctuation_rate():
 def search_code_from_naver(stock_name):
     try:
         url = f"https://m.stock.naver.com/api/search/all?keyword={stock_name}"
-        data = GLOBAL_SESSION.get(url, timeout=3).json()
-        if data.get('result') and data['result'].get('stocks'):
-            return data['result']['stocks'][0]['itemCode']
+        # 💡 [429 방어]: 네이버 과부하 필터 우회용 랜덤 딜레이 및 타임아웃 고도화
+        time.sleep(random.uniform(0.05, 0.2))
+        res = GLOBAL_SESSION.get(url, timeout=4)
+        if res.status_code == 200:
+            data = res.json()
+            if data.get('result') and data['result'].get('stocks'):
+                return data['result']['stocks'][0]['itemCode']
+        else:
+            print(f"⚠️ [search_code_from_naver HTTP Error {res.status_code}] for {stock_name}")
     except Exception as e:
         print(f"⚠️ [search_code_from_naver Error] {e}")
     return None
@@ -192,7 +198,7 @@ def get_news_keywords():
             for sub in soup.select('.articleSubject a'):
                 title_text = sub.get_text(strip=True)
                 full_text += title_text + " \n "
-                for m in re.findall(r"['\"‘“](.*?)['\" Glastonbury Tyrol’”]", title_text):
+                for m in re.findall(r"['\"‘“](.*?)['\" Glastonbury Tyrol Stam’”]", title_text):
                     clean = re.sub(r'(수혜|관련주|테마주|대장주|강세|상한가|특징주|급등|주목|부각)', '', m).strip()
                     clean = re.sub(r'[^\w\s]', '', clean).strip()
                     if 1 < len(clean) <= 12 and clean.count(' ') <= 1 and clean not in AD_FILTER:
@@ -531,7 +537,6 @@ def fetch_extra_closing_prices_from_kis(code, session_obj=None):
     try:
         headers["tr_id"] = "FHPST02320000"
         params = {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}
-        # KIS 기업 금융 연동 주소 verify=True 보안 검증 준수
         res = req.get(f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-daily-overtimeprice", headers=headers, params=params, timeout=5)
         if res.status_code == 200:
             data = res.json()
@@ -572,7 +577,7 @@ def fetch_extra_closing_prices_from_kis(code, session_obj=None):
     return krx_close, nxt_close
 
 # ==================================================
-# 📊 [핵심 연산 레이어]: 데이터 및 수급/추세 스캐닝
+# 📊 [핵심 연산 레이어]: 순서 정상화 완료
 # ==================================================
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db, theme_historical_max, long_term_stocks, index_above_ma5):
     time.sleep(random.uniform(0.1, 0.4))
@@ -721,10 +726,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             and change_rate <= 0.10         
         )
 
-        high_prices_60 = high_prices[-60:] if len(high_prices) >= 60 else high_prices
-        high_60d_calc = max(high_prices_60[:-1]) if len(high_prices_60) > 1 else today_high
+        high_60d_calc = max(high_prices[-60:-1]) if len(high_prices) >= 60 else today_high
         high_250d_calc = max(high_prices[:-1]) if len(high_prices) > 1 else today_high
-        display_high_60d = max(high_prices_60) if high_prices_60 else today_high
+        display_high_60d = max(high_prices[-60:]) if len(high_prices) >= 60 else today_high
         display_high_250d = max(high_prices) if high_prices else today_high
 
         recent_20d_min = int(df_hist['low'].tail(20).min())
@@ -764,6 +768,16 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         vol_ratio_10d = (today_vol / avg_vol_10) * 100 if avg_vol_10 > 0 else 0
         vol_ratio_yest = (today_vol / yest_vol) * 100 if yest_vol > 0 else 0
         surge_rate_20d = (current_price - recent_20d_min) / recent_20d_min if recent_20d_min > 0 else 0
+
+        # 💡 [버그 원인 분쇄]: NameError 대재앙 방지용 변수 선언 레이어 전면 전방 배치
+        is_near_high = current_price >= (high_60d_calc * 0.90) or yest_close >= (high_60d_calc * 0.90)
+        is_near_52w_high = current_price >= (high_250d_calc * 0.90) or yest_close >= (high_250d_calc * 0.90)
+
+        if is_near_52w_high: dist_text = "🎯 52주신고가 턱밑"
+        elif is_near_high: dist_text = "🎯 60일전고 턱밑"
+        elif current_price >= high_60d_calc * 0.80: dist_text = "🟢 매물대 소화중"
+        elif is_deep_correction: dist_text = "📉 고점 대비 큰 폭 조정"
+        else: dist_text = "📉 이격 과다"
 
         # ── [레이어 4] Adaptive 칼만 필터 추세 가속 연산 ──
         try:
@@ -1032,10 +1046,23 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             my_theme_name = "🕰️[과거] " + past_theme_map[name]
             has_theme = False
 
+        is_danta_range = min_danta_rate <= change_rate < 0.295
         is_true_theme_leader = is_theme_leader_raw and (trading_value >= min_breakout_tv)
         is_theme_daejang = is_true_theme_leader and is_danta_range and not (is_junk or is_financial_risk)
         is_real_hubal = has_theme and not is_theme_leader_raw
         is_theme_hubal = is_real_hubal and is_danta_range and not (is_junk or is_financial_risk)
+
+        if is_junk: signal = "🚨 매매제한 (관리/주의)"
+        elif is_financial_risk: signal = "🚨 매매제한 (재무위험)"
+        elif is_envelope_over_under: signal = "📉 하단매매 (역삼각형 스케일인)" + supply_text
+        elif is_foreigner_active_buy: signal = "💎 외인 집중배팅 (Non-P)" + supply_text
+        elif is_jongbe_cand: signal = "🎯 종가베팅 (M-1눌림)" + supply_text
+        elif is_accumulation_cand: signal = "🌱 바닥 확인 (모아가기)" + supply_text
+        elif is_platform_breakout: signal = "📦 플랫폼 탈출 (스윙)" + supply_text
+        elif is_strong_dual_buy and is_converging: signal = "🌟 모아가기 (쌍끌이)"
+        elif band_width <= 0.20 and current_price >= ma20: signal = ("🚀 N자파동 (밴드돌파)" if current_price >= upper_band * 0.98 else "👀 N자파동 (에너지응축)") + supply_text
+        elif ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035: signal = ("📈 2차랠리 (이평수렴)" if current_price > ma20 else "⏳ 이평선 저항") + supply_text
+        else: signal = ("🟢 낙폭과대 (과매도)" if current_price < lower_band else "⚡ 관망 (이격발생)") + supply_text
 
         # ── [레이어 6] 실전형 4글자 배지 네이밍 체계 매핑 ──
         base_score = 0
