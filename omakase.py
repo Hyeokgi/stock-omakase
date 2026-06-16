@@ -513,6 +513,25 @@ def safe_int(v, default=0):
         return int(str(v).replace(",", "").strip())
     except Exception: return default
 
+def parse_score_num(value):
+    try:
+        text = str(value)
+        return int(text.split('점')[0]) if '점' in text else int(float(text))
+    except Exception:
+        return 0
+
+def parse_stock_name(value):
+    text = str(value).strip()
+    if 'HYPERLINK' in text:
+        m = re.search(r',\s*"([^"]+)"\)', text)
+        if m:
+            return m.group(1).strip()
+    return text
+
+def parse_price_num(value):
+    cleaned = re.sub(r'[^0-9]', '', str(value))
+    return int(cleaned) if cleaned else 0
+
 def find_key(data, key):
     if isinstance(data, dict):
         if key in data: return data[key]
@@ -579,6 +598,98 @@ def fetch_extra_closing_prices_from_kis(code, session_obj=None):
             print(f"⚠️ [fetch_extra_closing_prices_from_kis Fallback Error for {code}] {e}")
 
     return krx_close, nxt_close
+
+def get_current_price_for_backtest(code):
+    try:
+        t_code = str(code).replace("'", "").strip().zfill(6)
+        rt_res = GLOBAL_SESSION.get(f"https://m.stock.naver.com/api/stock/{t_code}/basic", verify=False, timeout=3).json()
+        return parse_price_num(rt_res.get('closePrice', '0'))
+    except Exception as e:
+        print(f"⚠️ [Backtest Current Price Error for {code}] {e}")
+        return 0
+
+def update_recommendation_tracking(doc, top_20_results):
+    header_row = ["추천일", "종목명", "종목코드", "테마명", "추천가", "타점유형", "퀀트점수", "수급상태", "장구분", "T+3수익률", "T+5수익률", "T+10수익률"]
+    today_date = datetime.datetime.now(KST).date()
+    today_str = today_date.strftime('%Y-%m-%d')
+
+    try:
+        bt_sheet = doc.worksheet("백테스트_로그")
+    except Exception:
+        bt_sheet = doc.add_worksheet(title="백테스트_로그", rows="2000", cols=str(len(header_row)))
+
+    try:
+        bt_data = bt_sheet.get_all_values()
+        rows = bt_data[1:] if bt_data else []
+        normalized_rows = []
+        existing_keys = set()
+
+        for row in rows:
+            if not row or not str(row[0]).strip():
+                continue
+            row = list(row)
+            if len(row) >= 12:
+                new_row = row[:12]
+            else:
+                while len(row) < 11:
+                    row.append("")
+                new_row = [
+                    row[0], row[1], row[2], row[3], row[4], row[5], row[6],
+                    "", "", row[8], row[9], row[10]
+                ]
+            while len(new_row) < 12:
+                new_row.append("")
+
+            rec_date = str(new_row[0]).strip()
+            rec_code = str(new_row[2]).replace("'", "").strip().zfill(6)
+            if rec_date and rec_code:
+                existing_keys.add((rec_date, rec_code))
+            normalized_rows.append(new_row)
+
+        for row in normalized_rows:
+            try:
+                entry_date = datetime.datetime.strptime(str(row[0]).strip(), '%Y-%m-%d').date()
+                days_elapsed = (today_date - entry_date).days
+                entry_p = parse_price_num(row[4])
+                t_code = str(row[2]).replace("'", "").strip().zfill(6)
+                needs_t3 = days_elapsed >= 3 and row[9] == ""
+                needs_t5 = days_elapsed >= 5 and row[10] == ""
+                needs_t10 = days_elapsed >= 10 and row[11] == ""
+                if entry_p > 0 and (needs_t3 or needs_t5 or needs_t10):
+                    curr_p = get_current_price_for_backtest(t_code)
+                    if curr_p > 0:
+                        rtn = ((curr_p - entry_p) / entry_p) * 100
+                        if needs_t3: row[9] = f"{rtn:.2f}%"
+                        if needs_t5: row[10] = f"{rtn:.2f}%"
+                        if needs_t10: row[11] = f"{rtn:.2f}%"
+            except Exception as e:
+                print(f"⚠️ [Backtest Return Update Loop Exception for {row[:3]}] {e}")
+
+        new_rows = []
+        for cand in top_20_results:
+            if len(cand) < 11:
+                continue
+            rec_name = parse_stock_name(cand[0])
+            rec_code = str(cand[2]).replace("'", "").strip().zfill(6)
+            rec_price = parse_price_num(cand[3])
+            if not rec_name or not rec_code or rec_price <= 0:
+                continue
+            key = (today_str, rec_code)
+            if key in existing_keys:
+                continue
+            new_rows.append([
+                today_str, rec_name, f"'{rec_code}", cand[5], rec_price,
+                cand[8], parse_score_num(cand[10]), cand[13] if len(cand) > 13 else "",
+                cand[1] if len(cand) > 1 else "", "", "", ""
+            ])
+            existing_keys.add(key)
+
+        final_data = [header_row] + normalized_rows + new_rows
+        bt_sheet.update(range_name="A1", values=final_data, value_input_option="USER_ENTERED")
+        bt_sheet.batch_clear([f"A{len(final_data) + 1}:L"])
+        print(f"✅ 백테스트_로그 갱신 완료 (신규 {len(new_rows)}개, 전체 {len(final_data) - 1}개)")
+    except Exception as e:
+        print(f"⚠️ [Recommendation Tracking Main Exception] {e}")
 
 # ==================================================
 # 📊 [핵심 연산 레이어]: 순서 정상화 완료
@@ -1209,7 +1320,60 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             elif is_long_term_pick: master_tajeom += " 🎖️(코어픽/면책)"
             else: master_tajeom += " 🔥(절대대장/면책)"
 
-        quant_score = int(max(0, (base_score + 10) * tajeom_multiplier))
+        supply_quality_score = 0
+        total_supply_eok = acc_i_buy_eok + acc_f_buy_eok
+        is_dual_accumulation = acc_i_buy_eok > 0 and acc_f_buy_eok > 0
+        is_dual_outflow = acc_i_buy_eok < 0 and acc_f_buy_eok < 0
+        is_overheated_chase = (is_upper_limit or change_rate >= 0.20 or surge_rate_20d >= 0.45) and vol_ratio_yest >= 300
+
+        if is_dual_accumulation:
+            if total_supply_eok >= 300:
+                supply_quality_score += 25
+                master_tajeom += " ✅(수급가점+25)"
+            elif total_supply_eok >= 100:
+                supply_quality_score += 18
+                master_tajeom += " ✅(수급가점+18)"
+            elif total_supply_eok >= 30:
+                supply_quality_score += 10
+                master_tajeom += " ✅(수급가점+10)"
+        else:
+            if acc_f_buy_eok >= 100:
+                supply_quality_score += 15
+                master_tajeom += " 🌎(외인가점+15)"
+            elif acc_f_buy_eok >= 50:
+                supply_quality_score += 10
+                master_tajeom += " 🌎(외인가점+10)"
+            if acc_i_buy_eok >= 100:
+                supply_quality_score += 12
+                master_tajeom += " 🏦(기관가점+12)"
+            elif acc_i_buy_eok >= 50:
+                supply_quality_score += 8
+                master_tajeom += " 🏦(기관가점+8)"
+
+        if is_dual_outflow:
+            outflow_size = abs(total_supply_eok)
+            if outflow_size >= 300:
+                supply_quality_score -= 35
+                master_tajeom += " ⚠️(역수급감점-35)"
+            elif outflow_size >= 100:
+                supply_quality_score -= 28
+                master_tajeom += " ⚠️(역수급감점-28)"
+            elif outflow_size >= 30:
+                supply_quality_score -= 20
+                master_tajeom += " ⚠️(역수급감점-20)"
+        elif acc_f_buy_eok <= -100 or acc_i_buy_eok <= -100:
+            supply_quality_score -= 15
+            master_tajeom += " ⚠️(대량매도감점-15)"
+
+        if is_overheated_chase and not is_absolute_protected:
+            supply_quality_score -= 15
+            master_tajeom += " ⚠️(과열주의-15)"
+
+        quant_score = int(max(0, (base_score + 10) * tajeom_multiplier + supply_quality_score))
+        if is_dual_outflow and track_type == "눌림" and not is_absolute_protected:
+            quant_score = min(quant_score, 55)
+        if is_overheated_chase and not (is_dual_accumulation or is_absolute_protected):
+            quant_score = min(quant_score, 65)
         cutoff_score = 40 if is_warning_market else 25
         
         if quant_score < cutoff_score and not is_absolute_protected and not is_envelope_over_under:
