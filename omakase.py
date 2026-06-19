@@ -692,12 +692,11 @@ def update_recommendation_tracking(doc, top_20_results):
         print(f"⚠️ [Recommendation Tracking Main Exception] {e}")
 
 # ==================================================================
-# 📊 [핵심 연산 레이어]: V1 차트 점수 + V2 수급배지 우선순위 하이브리드 엔진
+# 📊 [핵심 연산 레이어]: 캔들 가점 축소 및 수급·하락장 브레이크 완성판
 # ==================================================================
 def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db, theme_historical_max, long_term_stocks, index_above_ma5):
     time.sleep(random.uniform(0.1, 0.4))
     
-    # 💡 [무결성 유지]: 인덱스 밀림을 방지하기 위해 fail_fallback 맨 뒤에 V2용 2개 필드 추가 (총 33개)
     fail_fallback = [
         name, f"'{code}", 0, "0.00%", 0, 0, "전일비 100%", "⚡ 관망 (데이터 수집 오류)",
         "⏸ 관망 · 조건미달", "AI 브리핑 대기중", 0, 0, 0, 0, "🟡 일반형", "📉 이격 과다",
@@ -707,6 +706,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
     ]
 
     try:
+        # 🛡️ [피드백 반영 1]: 포스코인터 등 예외 분기 NameError 방지를 위한 가격 변수 전방 초기화
+        target_price = 0
+        stop_loss = 0
+
         desktop_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
 
         # ── [레이어 1] fchart 일봉 데이터 동기화 ──
@@ -891,7 +894,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         vol_ratio_yest = (today_vol / yest_vol) * 100 if yest_vol > 0 else 0
         surge_rate_20d = (current_price - recent_20d_min) / recent_20d_min if recent_20d_min > 0 else 0
 
-        # ── [버그 원인 분쇄 레이어] ──
         is_near_high = current_price >= (high_60d_calc * 0.90) or yest_close >= (high_60d_calc * 0.90)
         is_near_52w_high = current_price >= (high_250d_calc * 0.90) or yest_close >= (high_250d_calc * 0.90)
 
@@ -1137,7 +1139,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if not is_upper_limit and ((abs(current_price - ma20) / ma20 < 0.03) or (abs(current_price - ma60) / ma60 < 0.03) or is_double_bottom):
                 is_accumulation_cand = True
 
-        # [클로드 엔진 이식] 무결성 종가베팅 수식 수립
         is_jongbe_cand = (
             not is_upper_limit 
             and not is_long_shadow 
@@ -1186,14 +1187,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         elif ma20 > 0 and abs(ma5 - ma20) / ma20 <= 0.035: signal = ("📈 2차랠리 (이평수렴)" if current_price > ma20 else "⏳ 이평선 저항") + supply_text
         else: signal = ("🟢 낙폭과대 (과매도)" if current_price < lower_band else "⚡ 관망 (이격발생)") + supply_text
 
-        # ── [레이어 6] 실전형 4글자 배지 네이밍 체계 매핑 ──
         base_score = 0
         master_tajeom_suffix = ""
 
         track_type = "눌림" if (is_accumulation_cand or is_jongbe_cand or is_envelope_over_under) else ("돌파" if current_price >= ma20 else "눌림")
-        if is_warning_market and track_type == "돌파":
-            base_score -= 25
-            master_tajeom_suffix += " ⚠️[하락장 돌파제한]"
 
         is_core_buy_zone = (surge_rate_20d <= 0.25) and (change_rate < 0.07) and (current_price >= ma60 * 0.85)
         is_long_term_pick = (name in long_term_stocks) and not is_recent_overheated and is_core_buy_zone
@@ -1210,21 +1207,29 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             master_tajeom_suffix += " 💪(하락장 역행)"
             base_score += 10
 
+        # ── 🎯 [피드백 반영 2]: 수급 주도형 점수 역전 체계 전면 개편 ──
+        # 차트 기반 가점 대폭 낮춤
         if is_jongbe_cand:
-            base_score += 50                     
+            base_score += 20                     # 기존 50점 -> 20점 (하향)
             if is_near_52w_high: base_score += 15
             if is_strong_dual_buy: base_score += 15
         elif is_accumulation_cand:
-            base_score += 40
+            base_score += 15                     # 기존 40점 -> 15점 (하향)
             if is_double_bottom: base_score += 15
             if acc_i_buy_eok >= 10: base_score += 10
         else:
-            if is_near_52w_high: base_score += 20
-            elif current_price >= (high_60d_calc * 0.90): base_score += 15
+            if is_near_52w_high: base_score += 15
+            elif current_price >= (high_60d_calc * 0.90): base_score += 10
             if vol_ratio_yest >= 300 and vol_ratio_10d >= 200: base_score += 15
             elif vol_ratio_yest >= 150: base_score += 10
             if is_strong_dual_buy: base_score += 15
             if acc_i_buy_eok >= 50: base_score += 15
+
+        # 메인 돈의 흔적(수급 주체) 가점을 차트보다 우선시하도록 격상
+        if is_foreigner_active_buy:
+            base_score += 40                     # 외인집중배팅 명시 가점 (+40점)
+        if acc_i_buy_eok >= 20:
+            base_score += 30                     # 기관누적매집 명시 가점 (+30점)
 
         high_retention = current_price / today_high if today_high > 0 else 0
         if high_retention >= 0.97 and change_rate >= 0.10 and trading_value >= 100_000_000_000:
@@ -1273,7 +1278,12 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         master_tajeom = master_tajeom_base + master_tajeom_suffix
 
-        if not is_fatal_drop and not is_envelope_over_under:
+        # ── 🚫 [피드백 반영 3]: 하락장 돌파매매 무조건 금지 마스터 조항 (감점 우회 차단) ──
+        if is_warning_market and track_type == "돌파":
+            tajeom_multiplier = 0.0
+            master_tajeom = "⏸ 관망 · 하락장 돌파매매 금지 조항 적용"
+
+        if not is_fatal_drop and not is_envelope_over_under and tajeom_multiplier > 0.0:
             if is_long_shadow or is_huge_gap:
                 master_tajeom += " ⚠️(윗꼬리/이격)"
                 if is_warning_market and is_long_shadow and not (is_foreigner_active_buy or is_long_term_pick):
@@ -1371,7 +1381,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             supply_quality_score -= 15
             master_tajeom += " ⚠️(과열주의-15)"
 
-        # ── 원래의 V1 연산 공식 마무리 ──
+        # ── V1 연산 마무리 ──
         quant_score = int(max(0, (base_score + 10) * tajeom_multiplier + supply_quality_score))
         if is_dual_outflow and track_type == "눌림" and not is_absolute_protected:
             quant_score = min(quant_score, 55)
@@ -1396,47 +1406,34 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         krx_str = f"'{'+' if krx_rate > 0 else ''}{krx_rate:.2f}% ({krx_close:,}원)" if krx_close > 0 else ""
         nxt_str = f"'{'+' if nxt_rate > 0 else ''}{nxt_rate:.2f}% ({nxt_close:,}원)" if nxt_close > 0 else ""
 
-
         # ==========================================================================
-        # 🚀 [HYEOKS 고도화] STEP 14: V2 수급 배지 우선순위 및 동적 허들 엔진
+        # 🚀 STEP 14: V2 수급 배지 우선순위 및 동적 허들 엔진
         # ==========================================================================
-        # 1. 챗GPT 제안 연동 - 실전 수급형 돈의 흔적 등급 분리
         has_s_tier = (is_strong_dual_buy or is_foreigner_active_buy or "기관 누적매집" in supply_text)
         has_a_tier = ("👑(진성대장)" in master_tajeom or is_theme_daejang or is_super_leader)
         has_b_tier = (is_jongbe_cand or is_accumulation_cand or is_platform_breakout)
 
-        # 2. 1차 필수 관문 연산 (가뭄/잡주 차단 및 고점 상투 차단)
         try:
             high_250d_ratio = current_price / high_250d_calc if high_250d_calc > 0 else 0.0
-            
-            is_absolute_liquidity = (trading_value >= 15_000_000_000)  # 쏠림방지 최소 150억 허들
-            is_volume_shuting = (vol_ratio_yest >= 150.0)             # 전일 대비 150% 이상 거래량 리트리거
-            is_proper_position = (0.70 <= high_250d_ratio <= 1.05)    # 52주 고점의 70~100% (낙폭과대 잡주/상투 배제)
+            is_absolute_liquidity = (trading_value >= 15_000_000_000)  # 150억 허들
+            is_volume_shuting = (vol_ratio_yest >= 150.0)             # 전일 대비 150%
+            is_proper_position = (0.70 <= high_250d_ratio <= 1.05)    # 52주 고점 70~105% (상투 배제)
             
             is_v2_gate_passed = is_absolute_liquidity and is_volume_shuting and is_proper_position
         except:
             is_v2_gate_passed = False
 
-        # 3. 등급별 V2 동적 양향성 스코어 배치
         if is_v2_gate_passed:
-            if has_s_tier:
-                v2_quant_score = 90 + (quant_score * 0.09)     # S등급: 무조건 90점대 보장 (V1 가중치 적용)
-            elif has_a_tier:
-                v2_quant_score = 75 + (quant_score * 0.09)     # A등급: 75~84점 주도섹터 대장선점
-            elif has_b_tier:
-                v2_quant_score = 55 + (quant_score * 0.09)     # B등급: 55~64점 차트 이쁜 단기자리
-            else:
-                v2_quant_score = 40 + (quant_score * 0.09)     # 기본 매매 가능 영역
+            if has_s_tier: v2_quant_score = 90 + (quant_score * 0.09)
+            elif has_a_tier: v2_quant_score = 75 + (quant_score * 0.09)
+            elif has_b_tier: v2_quant_score = 55 + (quant_score * 0.09)
+            else: v2_quant_score = 40 + (quant_score * 0.09)
         else:
-            # 필수 관문을 하나라도 탈락하면 (예: 수급이 말랐거나, 150억 미만이거나, 외인 대량매도 중인 삼성전자 등)
-            # V1 점수가 아무리 높아도 35% 수준으로 강력 페널티 삭감 처리
             v2_quant_score = quant_score * 0.35
 
         v2_quant_score = min(100, max(0, int(v2_quant_score)))
         v2_score_display = f"{v2_quant_score}점 ({track_type}_V2)"
 
-
-        # ── [결과 데이터 패킹] 인덱스 하방 유지용 추가 이식 ──
         result_row = [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%",
             int(ma5), int(ma20), vol_ratio_text, signal,
@@ -1446,7 +1443,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             target_price, stop_loss, is_seed_tag,
             krx_str, nxt_str, market_type, 
             quant_score, score_display,       # [인덱스 29, 30]: 기존 V1 데이터
-            v2_quant_score, v2_score_display  # [인덱스 31, 32]: 신규 V2 실전수급 데이터 추가 이식
+            v2_quant_score, v2_score_display  # [인덱스 31, 32]: 신규 V2 실전수급 데이터
         ]
 
         return result_row, static_info_to_save
