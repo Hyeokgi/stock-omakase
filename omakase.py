@@ -1400,9 +1400,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         print(f"❌ 분석 에러 [{name}]: {e}")
         return fail_fallback, None
 
-# ==================================================
-# 📡 [구글 시트 연동 레이어]: 멀티프로세싱 가동
-# ==================================================
+# ==================================================================
+# 📡 [구글 시트 연동 레이어]: 멀티프로세싱 가동 및 V1/V2 투트랙 실증 엔진
+# ==================================================================
 def update_technical_data(df_theme, all_theme_map):
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -1600,10 +1600,8 @@ def update_technical_data(df_theme, all_theme_map):
                 if static_res: new_static_data.append(static_res)
 
         if new_static_data:
-            try:
-                static_sheet.append_rows(new_static_data, value_input_option="USER_ENTERED")
-            except Exception as e:
-                print(f"⚠️ [static_sheet append_rows Error] {e}")
+            try: static_sheet.append_rows(new_static_data, value_input_option="USER_ENTERED")
+            except Exception as e: print(f"⚠️ [static_sheet append_rows Error] {e}")
 
         results.sort(key=lambda x: x[29] if len(x) > 29 else 0, reverse=True)
 
@@ -1623,7 +1621,6 @@ def update_technical_data(df_theme, all_theme_map):
             if is_regular_market:
                 r[26] = r[27] = ""
                 r[28] = "정규장 진행중"
-            
             if c_code in existing_data:
                 if not is_reset_time:
                     r[9] = existing_data[c_code]["briefing"]
@@ -1635,39 +1632,40 @@ def update_technical_data(df_theme, all_theme_map):
                         r[27] = str(existing_data[c_code]["raw_row"][17]).strip() if len(existing_data[c_code]["raw_row"]) > 17 else ""
                         r[28] = str(existing_data[c_code]["raw_row"][18]).strip() if len(existing_data[c_code]["raw_row"]) > 18 else "정규장"
 
+        # 🛡️ [피드백 반영 1]: 주가데이터_보조 탭 컬럼수를 33열로 확장하여 V1, V2 정밀 스코어 전면 노출
         try: helper_sheet = doc.worksheet("주가데이터_보조")
-        except Exception: helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="29")
+        except Exception: helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="33")
 
         extended_headers = [
             "종목명", "종목코드", "현재가", "등락률", "5일평균", "20일평균", "거래량비율", "AI신호",
             "마스터타점", "브리핑상태", "당일고가", "당일저가", "60일고가", "시가총액", "캔들상태",
             "전고거리", "20일이격", "대장구분", "거래과열", "테마명", "프로그램", "52주고가",
-            "기관/외인 누적(5일)", "목표가(AI)", "손절가(AI)", "종목쿼터", "시간외단일가(18시)", "NXT야간종가(20시)", "장구분"
+            "기관/외인 누적(5일)", "목표가(AI)", "손절가(AI)", "종목쿼터", "시간외단일가(18시)", "NXT야간종가(20시)", "장구분",
+            "V1 차트점수", "V1 표시", "V2 수급점수", "V2 표시"
         ]
-        helper_sheet_data = [extended_headers] + [(r[:29] + [""] * max(0, 29 - len(r[:29]))) for r in results]
+        # 🛡️ 슬라이싱 버그를 r[:33]으로 교정하여 유실되던 점수 축을 완벽히 복원
+        helper_sheet_data = [extended_headers] + [(r[:33] + [""] * max(0, 33 - len(r[:33]))) for r in results]
         try:
             helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
-            helper_sheet.batch_clear([f"A{len(helper_sheet_data) + 1}:AC"])
+            helper_sheet.batch_clear([f"A{len(helper_sheet_data) + 1}:AG"])
         except Exception as e:
             print(f"⚠️ [helper_sheet update Error] {e}")
 
-        # 4글자 다이어트 배지에 완벽 동기화된 가변 스캐너 필터 키워드
         scanner_keywords = ["🎯", "💎", "🌱", "🚀", "📦", "🔍", "📉 과매도"]
         all_candidates = []
         processed_codes = set()
 
         for r in results:
-            if len(r) < 29:
-                continue
+            if len(r) < 29: continue
             종목명 = r[0]
             종목코드 = str(r[1]).replace("'", "").zfill(6)
             processed_codes.add(종목코드) 
             tajeom = r[8]
             
             if any(kw in tajeom for kw in scanner_keywords):
-                하이퍼링크 = f'=HYPERLINK("https://m.stock.naver.com/domestic/stock/{종목코드}/total", "{종목명}")'
+                하이브리드_링크 = f'=HYPERLINK("https://m.stock.naver.com/domestic/stock/{종목코드}/total", "{종목명}")'
                 row_data = [
-                    하이퍼링크, r[28] if len(r) > 28 and r[28] else "정규장", f"'{종목코드}", r[2], r[3], r[19], r[7], r[6],
+                    하이브리드_링크, r[28] if len(r) > 28 and r[28] else "정규장", f"'{종목코드}", r[2], r[3], r[19], r[7], r[6],
                     tajeom, r[9], r[30] if len(r) > 30 else "0점", r[20], r[21], r[22], r[23], r[24], r[26], r[27], r[28]
                 ]
                 all_candidates.append(row_data)
@@ -1687,18 +1685,10 @@ def update_technical_data(df_theme, all_theme_map):
         seed_cands.sort(key=get_score_num, reverse=True)
         normal_cands.sort(key=get_score_num, reverse=True)
 
-        MAX_SEED_COUNT = 5
-        MAX_NORMAL_COUNT = 15
-
-        vip_retention_cands = []
-        pure_normal_cands = []
-        for cand in normal_cands:
-            if cand[9] != "AI 브리핑 대기중" and str(cand[9]).strip() != "":
-                vip_retention_cands.append(cand)
-            else: pure_normal_cands.append(cand)
-
-        final_seed = seed_cands[:MAX_SEED_COUNT]
-        final_normal = vip_retention_cands + pure_normal_cands[:max(0, MAX_NORMAL_COUNT - len(vip_retention_cands))]
+        final_seed = seed_cands[:5]
+        vip_retention_cands = [c for cand in normal_cands if cand[9] != "AI 브리핑 대기중" and str(cand[9]).strip() != ""]
+        pure_normal_cands = [c for cand in normal_cands if c not in vip_retention_cands]
+        final_normal = vip_retention_cands + pure_normal_cands[:max(0, 15 - len(vip_retention_cands))]
 
         top_20_results = final_seed + final_normal
         top_20_results.sort(key=get_score_num, reverse=True)
@@ -1711,19 +1701,15 @@ def update_technical_data(df_theme, all_theme_map):
                         top_20_results.append(data["raw_row"])
                         top_20_codes.add(c_code)
 
-        db_scanner_sheet = doc.worksheet("DB_스캐너")
         if top_20_results:
             try:
                 db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
                 db_scanner_sheet.batch_clear([f"A{len(top_20_results) + 2}:AC"])
-                print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (VIP 강제 소환 완료)")
-            except Exception as e:
-                print(f"⚠️ [db_scanner_sheet update Error] {e}")
-        else:
-            print("⚠️ DB_스캐너 후보가 없어 기존 데이터를 유지합니다.")
+                print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료")
+            except Exception as e: print(f"⚠️ [DB_스캐너 update Error] {e}")
 
         # ==========================================================================
-        # 👑 [수석님 제안 반영]: V1 vs V2 멀티포맷 자가치유 복원 및 실증 백테스트 로그 엔진 (V3 에디션)
+        # 👑 [수석님 제안 반영]: V1 vs V2 멀티포맷 자가치유 복원 및 실증 백테스트 로그 엔진
         # ==========================================================================
         try:
             bt_sheet = doc.worksheet("백테스트_로그")
@@ -1732,70 +1718,42 @@ def update_technical_data(df_theme, all_theme_map):
             bt_sheet = doc.add_worksheet(title="백테스트_로그", rows="3000", cols="12")
             bt_data = []
 
-        # 수석님 제안: 한눈에 승률 비교가 가능한 인스티튜셔널 프리미엄 12열 헤더 확정
-        header_row = [
-            "진입일", "종목명", "종목코드", "주도 테마명", "진입가(추천가)", 
-            "마스터 타점유형", "V1 (차트점수)", "V2 (수급점수)", "외인/기관 수급상태", 
-            "T+1 수익률", "T+3 수익률", "T+5 수익률"
-        ]
-        
+        header_row = ["진입일", "종목명", "종목코드", "주도 테마명", "진입가(추천가)", "마스터 타점유형", "V1 (차트점수)", "V2 (수급점수)", "외인/기관 수급상태", "T+1 수익률", "T+3 수익률", "T+5 수익률"]
         normalized_bt_data = [header_row]
         
-        # 🛡️ [스마트 데이터 자가치유 복원 레이어]: 4, 5, 6월의 모든 뒤죽박죽된 구형 행을 완전 자동 추적 및 복원
         if len(bt_data) > 1:
             print("▶ [통합 복원 엔진] 구형 및 깨진 과거 로그 멀티포맷 전수 정밀 매핑 개시...")
             for row in bt_data[1:]:
-                if not row or not str(row[0]).strip() or "진입" in str(row[0]): 
-                    continue
-                
-                # 현재 행의 팩트 요소를 성격별(%, 점, 수급)로 완전히 분리 추출
+                if not row or not str(row[0]).strip() or "진입" in str(row[0]): continue
                 pcts = [str(x).strip() for x in row if "%" in str(x)]
                 scores = [str(x).strip() for x in row if "점" in str(x)]
+                is_corrupted = (len(row) < 12) or any("%" in str(row[idx]) for idx in [6, 7, 8] if idx < len(row))
                 
-                # 인덱스 6, 7번 혹은 전체 슬롯에 % 수익률 기호가 오염되어 침범해 들어온 구형 행 판독
-                is_corrupted_row = (len(row) < 12) or any("%" in str(row[idx]) for idx in [6, 7, 8] if idx < len(row))
-                
-                if is_corrupted_row:
+                if is_corrupted:
                     v1_val = scores[0] if len(scores) >= 1 else "0점"
                     v2_val = scores[1] if len(scores) >= 2 else "-"
-                    
-                    # 수급 강도 및 프로그램 동향 문자열 추출
                     supply_val = "이전기록 수동참조"
                     for x in row:
                         if any(kw in str(x) for kw in ["억", "🏦", "🌎", "프로그램"]):
                             supply_val = str(x).strip()
                             break
-                    
-                    # 가변적인 타점 유형 추출 (이모지 및 특수문자 기반 탐색)
                     tajeom_val = "🕰️ 과거기록"
                     for x in row[5:9]:
-                        if idx < len(row) and any(emoji in str(x) for emoji in ["🚀", "🕵️", "🌱", "📦", "🎯", "🌟", "🌙", "Host", "📉"]):
+                        if any(emoji in str(x) for emoji in ["🚀", "🕵️", "🌱", "📦", "🎯", "🌟", "🌙", "📉"]):
                             tajeom_val = str(x).strip()
                             break
-                    if tajeom_val == "🕰️ 과거기록" and len(row) > 5 and str(row[5]).strip() in ["단기", "중기"]:
-                        tajeom_val = f"🕰️ 과거기록 ({row[5]})"
-                    
-                    # 테마명 복원 ("수동확인요망" 오염 제거 및 정제)
                     raw_theme = str(row[3]).strip() if len(row) > 3 else "개별주/기타"
                     theme_val = "과거 선출 주도주" if raw_theme == "수동확인요망" else raw_theme
                     
-                    # 시차 수익률 분배 (과거 데이터 배열의 순서대로 정위치 이사)
-                    t1_val = pcts[0] if len(pcts) >= 1 else ""
-                    t3_val = pcts[1] if len(pcts) >= 2 else ""
-                    t5_val = pcts[2] if len(pcts) >= 3 else ""
-                    
-                    # 완벽한 12열 레이아웃으로 강제 리빌딩 및 정렬 완료
                     migrated_row = [
                         str(row[0]).strip(), str(row[1]).strip(), str(row[2]).strip(),
                         theme_val, str(row[4]).strip(), tajeom_val,
                         v1_val, v2_val, supply_val,
-                        t1_val, t3_val, t5_val
+                        pcts[0] if len(pcts) >= 1 else "", pcts[1] if len(pcts) >= 2 else "", pcts[2] if len(pcts) >= 3 else ""
                     ]
                     normalized_bt_data.append(migrated_row)
                 else:
-                    # 규격이 정상적인 최신 12열 행은 데이터 유실 없이 그대로 유지
-                    while len(row) < 12: 
-                        row.append("")
+                    while len(row) < 12: row.append("")
                     normalized_bt_data.append(row[:12])
             bt_data = normalized_bt_data
         else:
@@ -1805,7 +1763,6 @@ def update_technical_data(df_theme, all_theme_map):
         today_str = today_date_bt.strftime('%Y-%m-%d')
         updated = False
 
-        # Part 1. 아침 리셋 시점 과거 진입 종목들의 시차별 성과(T+1, T+3, T+5) 자동 추적
         if is_reset_time:
             print("▶ [통합 실증 엔진] 과거 선출 종목들의 시차별 성과 검증 스캔 가동...")
             for i in range(1, len(bt_data)):
@@ -1813,54 +1770,43 @@ def update_technical_data(df_theme, all_theme_map):
                 try:
                     entry_date = datetime.datetime.strptime(str(row[0]).strip(), '%Y-%m-%d').date()
                     days_elapsed = (today_date_bt - entry_date).days
-                    
-                    needs_t1 = (days_elapsed >= 1 and row[9] == "")
-                    needs_t3 = (days_elapsed >= 3 and row[10] == "")
-                    needs_t5 = (days_elapsed >= 5 and row[11] == "")
-                    
-                    if needs_t1 or needs_t3 or needs_t5:
+                    if (days_elapsed >= 1 and row[9] == "") or (days_elapsed >= 3 and row[10] == "") or (days_elapsed >= 5 and row[11] == ""):
                         t_code = str(row[2]).replace("'", "").strip().zfill(6)
                         entry_p = parse_price_num(row[4])
                         curr_p = get_current_price_for_backtest(t_code)
                         if curr_p > 0 and entry_p > 0:
                             rtn = ((curr_p - entry_p) / entry_p) * 100
-                            if needs_t1: row[9] = f"{rtn:.2f}%"
-                            if needs_t3: row[10] = f"{rtn:.2f}%"
-                            if needs_t5: row[11] = f"{rtn:.2f}%"
+                            if days_elapsed >= 1 and row[9] == "": row[9] = f"{rtn:.2f}%"
+                            if days_elapsed >= 3 and row[10] == "": row[10] = f"{rtn:.2f}%"
+                            if days_elapsed >= 5 and row[11] == "": row[11] = f"{rtn:.2f}%"
                             updated = True
-                except Exception:
-                    pass
+                except Exception: pass
 
-        # Part 2. 오늘 선출된 주도주 당일 기록 누적 (동적 중복 방지)
         existing_keys = set()
         for row in bt_data[1:]:
-            if len(row) >= 3:
-                r_date = str(row[0]).strip()
-                r_code = str(row[2]).replace("'", "").strip().zfill(6)
-                existing_keys.add((r_date, r_code))
+            if len(row) >= 3: existing_keys.add((str(row[0]).strip(), str(row[2]).replace("'", "").strip().zfill(6)))
+
+        # 🛡️ [피드백 반영 2]: 오늘 최종 스캐너 대시보드(TOP 20) 및 AI 리포트 대상 코드를 전사 추적
+        top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results if len(x) > 2}
 
         new_logs_count = 0
         for r in results:
             if len(r) < 33: continue
-            tajeom = r[8]
-            if "관망" in tajeom or "조건미달" in tajeom or "🚫" in tajeom: continue
-            
             s_code = str(r[1]).replace("'", "").strip().zfill(6)
+            tajeom = r[8]
+            
+            # 🛡️ [관망 필터 우회 가드]: 수석님이 지적하신 대로 조건미달/관망 마커가 달렸어도, 
+            # 당일 차트/수급 상위(DB_스캐너 진입권) 종목이라면 무조건 백테스트 대상에 포착하여 궤적을 실증 추적합니다.
+            if s_code not in top_20_codes: 
+                continue
+                
             key = (today_str, s_code)
             if key not in existing_keys:
                 v1_s = r[29]
                 v2_s = r[31]
                 new_row = [
-                    today_str,
-                    r[0],              # 종목명
-                    f"'{s_code}",      # 종목코드
-                    r[19],             # 주도 테마명
-                    r[2],              # 진입가
-                    tajeom,            # 마스터 타점유형
-                    f"{v1_s}점",       # V1 (차트점수)
-                    f"{v2_s}점",       # V2 (수급점수)
-                    r[22],             # 외인/기관 수급상태
-                    "", "", ""         # 시차 수익률 추적용 공란
+                    today_str, r[0], f"'{s_code}", r[19], r[2], tajeom,
+                    f"{v1_s}점", f"{v2_s}점", r[22], "", "", ""
                 ]
                 bt_data.append(new_row)
                 existing_keys.add(key)
@@ -1869,11 +1815,9 @@ def update_technical_data(df_theme, all_theme_map):
 
         if updated:
             bt_sheet.update(range_name="A1", values=bt_data, value_input_option="USER_ENTERED")
-            if len(bt_data) > 0:
-                bt_sheet.batch_clear([f"A{len(bt_data) + 1}:L"])
+            if len(bt_data) > 0: bt_sheet.batch_clear([f"A{len(bt_data) + 1}:L"])
             print(f"✅ [통합 백테스트 엔진] 로그 정제 및 전 세션 마이그레이션 완료 (신규 진입: {new_logs_count}개)")
 
-    # 함수 전체를 감싸는 유일한 최외곽 예외처리문 (들여쓰기 4칸 정렬 매칭 완료)
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
 
