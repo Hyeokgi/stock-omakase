@@ -1794,38 +1794,31 @@ def update_technical_data(df_theme, all_theme_map):
         top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results if len(x) > 2}
 
         new_logs_count = 0
+        positive_badges = ["🎯", "💎", "🌟", "👑", "📦", "🔍", "🚀", "🌱"]
+         negative_markers = ["📉", "관망", "조건미달", "🚫", "매매금지"]
         for r in results:
             if len(r) < 33: continue
             s_code = str(r[1]).replace("'", "").strip().zfill(6)
             tajeom = r[8]
             
-            # 🛡️ [클로드 피드백 반영 3]: 양의 시그널 화이트리스트 검사 가드 주입
-            # 차트 점수만 높고 약세 신호(📉)이거나 음의 시그널인 덤핑 픽은 백테스트 노이즈 컷 대상 탈락 처리
-            positive_badges = ["🎯", "💎", "🌟", "👑", "📦", "🔍", "🚀", "🌱"]
-            negative_markers = ["📉", "관망", "조건미달", "🚫", "매매금지"]
-            for r in results:
-                if len(r) < 33: continue
-                s_code = str(r[1]).replace("'", "").strip().zfill(6)
-                tajeom = r[8]
+            # 음의 시그널이 하나라도 있으면 즉시 차단 (먼저 검사)
+            if any(neg in tajeom for neg in negative_markers):
+                continue
+            # 양의 배지가 하나도 없으면 차단
+            if not any(pos in tajeom for pos in positive_badges):
+                continue
+            if s_code not in top_20_codes:
+                continue
 
-                # 음의 시그널이 하나라도 있으면 즉시 차단 (먼저 검사)
-                if any(neg in tajeom for neg in negative_markers):
-                    continue
-                # 양의 배지가 하나도 없으면 차단
-                if not any(pos in tajeom for pos in positive_badges):
-                    continue
-                if s_code not in top_20_codes:
-                    continue
-    
-                key = (today_str, s_code)
-                if key not in existing_keys:
-                    v1_s = r[29]
-                    v2_s = r[31]
-                    new_row = [today_str, r[0], f"'{s_code}", r[19], r[2], tajeom, f"{v1_s}점", f"{v2_s}점", r[22], "", "", ""]
-                    bt_data.append(new_row)
-                    existing_keys.add(key)
-                    updated = True
-                    new_logs_count += 1
+            key = (today_str, s_code)
+            if key not in existing_keys:
+                v1_s = r[29]
+                v2_s = r[31]
+                new_row = [today_str, r[0], f"'{s_code}", r[19], r[2], tajeom, f"{v1_s}점", f"{v2_s}점", r[22], "", "", ""]
+                bt_data.append(new_row)
+                existing_keys.add(key)
+                updated = True
+                new_logs_count += 1
 
         # 🛡️ [헤더 동기화 가드] 시트 데이터를 리셋하고 100% 규격 정렬된 12열 테이블로 전면 갱신
         bt_sheet.batch_clear(['A1:L3000'])
