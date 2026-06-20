@@ -669,97 +669,71 @@ try:
                       files={'document': open(pdf_file, 'rb')}, data={'chat_id': TELEGRAM_CHAT_ID, 'caption': "[HYEOKS] AI 심층 리서치 보고서"})
         print("✅ 텔레그램 발송 완료!")
  
-    # ==========================================
-    # 9. 백테스트 로그 스냅샷 저장 (단기/중기 분리 버전)
-    # ==========================================
+    # ==========================================================================
+    # 👑 [HYEOKS 백테스트 V5] 리포팅2 채널 — 실제 PDF/텔레그램 발송된 단기1+중기1 기록
+    # update_portfolio([pick_short, pick_mid]) 호출 직후에 위치시킬 것
+    # ==========================================================================
     try:
-        print("▶ 백테스트 로그 스냅샷 기록 중...")
+        print("\n▶ [백테스트 V5] 리포팅 채널(Gemini 실제 발송픽) 기록 중...")
         bt_sheet = doc.worksheet("백테스트_로그")
-        today_str = datetime.datetime.now(KST).strftime('%Y-%m-%d')
-        today_date_bt = datetime.datetime.now(KST).date()
-
-        # 헤더 확인 및 세팅
         bt_data = bt_sheet.get_all_values()
-        header_row = ["진입일", "종목명", "종목코드", "테마명", "진입가",
-                      "유형(단기/중기)", "퀀트점수",
-                      "T+1(단기전용)", "T+3", "T+5", "T+10(중기전용)"]
-        if len(bt_data) == 0:
-            bt_sheet.append_row(header_row)
-            bt_data = bt_sheet.get_all_values()
+
+        header_row = [
+            "진입일", "종목명", "종목코드", "주도 테마명", "진입가(추천가)",
+            "마스터 타점유형", "선정카테고리", "V1 (차트점수)", "V2 (수급점수)",
+            "외인/기관 수급상태", "T+1 수익률", "T+3 수익률", "T+5 수익률", "T+10 수익률"
+        ]
+
+        if not bt_data:
+            bt_data = [header_row]
         elif bt_data[0] != header_row:
-            bt_sheet.update(range_name="A1:K1", values=[header_row])
-            bt_data = bt_sheet.get_all_values()
+            bt_data[0] = header_row  # omakase.py가 만든 헤더와 다르면 강제 동기화
 
-        # ── 오늘 픽 신규 기록 ──────────────────────
-        already_logged = any(today_str in str(r[0]) for r in bt_data[1:] if r)
-        if not already_logged:
-            log_rows = []
-            if best_short:
-                log_rows.append([
-                    today_str, best_short['name'], f"'{best_short['code']}",
-                    best_short.get('theme_name', ''),
-                    f"{best_short['curr_p']:,}원",
-                    "단기", f"{best_short['score']}점",
-                    "", "", "", ""
-                ])
-            if best_mid:
-                log_rows.append([
-                    today_str, best_mid['name'], f"'{best_mid['code']}",
-                    best_mid.get('theme_name', ''),
-                    f"{best_mid['curr_p']:,}원",
-                    "중기", f"{best_mid['score']}점",
-                    "", "", "", ""
-                ])
-            if log_rows:
-                bt_sheet.append_rows(log_rows, value_input_option="USER_ENTERED")
-                print(f"✅ 백테스트 로그 기록 완료 (단기:{bool(best_short)} / 중기:{bool(best_mid)})")
+        today_str = datetime.datetime.now(KST).strftime('%Y-%m-%d')
 
-        # ── 기존 로그 수익률 자동 갱신 ─────────────
-        bt_data = bt_sheet.get_all_values()  # 방금 추가한 행 포함해서 다시 읽기
-        updated = False
-        for i in range(1, len(bt_data)):
-            row = bt_data[i]
-            while len(row) < 11: row.append("")
-            try:
-                entry_date = datetime.datetime.strptime(row[0], '%Y-%m-%d').date()
-                days_elapsed = (today_date_bt - entry_date).days
-                trade_type = str(row[5]).strip()
-                is_short = trade_type == "단기"
-                is_mid   = trade_type == "중기"
+        existing_keys = set()
+        for row in bt_data[1:]:
+            if len(row) >= 7:
+                existing_keys.add((str(row[0]).strip(), str(row[2]).replace("'", "").strip().zfill(6), str(row[6]).strip()))
 
-                # 중기 T+1은 노이즈 → "-" 처리
-                if is_mid and days_elapsed >= 1 and row[7] == "":
-                    row[7] = "-"
-                    updated = True
+        # best_short / best_mid 는 이 파일 15시 모드 상단에서 이미 확정된 변수
+        report_picks = []
+        if best_short: report_picks.append(best_short)
+        if best_mid: report_picks.append(best_mid)
 
-                needs_t1  = is_short and days_elapsed >= 1  and row[7]  == ""
-                needs_t3  = days_elapsed >= 3               and row[8]  == ""
-                needs_t5  = days_elapsed >= 5               and row[9]  == ""
-                needs_t10 = is_mid   and days_elapsed >= 10 and row[10] == ""
+        new_logs_count = 0
+        for cand in report_picks:
+            s_code = str(cand['code']).replace("'", "").strip().zfill(6)
+            if s_code == "000000":
+                continue
+            key = (today_str, s_code, "리포팅TOP2")
+            if key not in existing_keys:
+                new_row = [
+                    today_str,
+                    cand['name'],
+                    f"'{s_code}",
+                    cand.get('theme_name', ''),
+                    cand['curr_p'],
+                    cand.get('type', ''),       # NORMAL/SEED 등 마스터타점 대용
+                    "리포팅TOP2",
+                    "",                          # V1점수 — 리포팅 채널은 미해당이라 공란
+                    "",                          # V2점수 — 동일
+                    "",                          # 수급상태 — 필요시 추후 보강
+                    "", "", "", ""               # T+1/T+3/T+5/T+10
+                ]
+                bt_data.append(new_row)
+                existing_keys.add(key)
+                new_logs_count += 1
 
-                if needs_t1 or needs_t3 or needs_t5 or needs_t10:
-                    t_code  = str(row[2]).replace("'", "").zfill(6)
-                    entry_p = int(str(row[4]).replace(',', '').replace('원', ''))
-                    rt_res  = requests.get(
-                        f"https://m.stock.naver.com/api/stock/{t_code}/basic",
-                        verify=False, timeout=3
-                    ).json()
-                    curr_p = int(str(rt_res.get('closePrice', '0')).replace(',', ''))
-                    if curr_p > 0:
-                        rtn = ((curr_p - entry_p) / entry_p) * 100
-                        if needs_t1:  row[7]  = f"{rtn:.2f}%"
-                        if needs_t3:  row[8]  = f"{rtn:.2f}%"
-                        if needs_t5:  row[9]  = f"{rtn:.2f}%"
-                        if needs_t10: row[10] = f"{rtn:.2f}%"
-                        updated = True
-            except: pass
-
-        if updated:
+        if new_logs_count > 0:
+            bt_sheet.batch_clear(['A1:N5000'])
             bt_sheet.update(range_name="A1", values=bt_data, value_input_option="USER_ENTERED")
-            print("✅ 백테스트 수익률 자동 갱신 완료 (단기/중기 분리 트래킹)")
+            print(f"✅ [백테스트 V5] 리포팅 채널 신규 {new_logs_count}건 기록 완료.")
+        else:
+            print("⏭ [백테스트 V5] 리포팅 채널 — 신규 기록 없음 (이미 기록됐거나 픽 없음).")
 
     except Exception as e:
-        print(f"⚠️ 백테스트 로그 기록 에러: {e}")
+        print(f"⚠️ [백테스트 V5] 리포팅 채널 기록 실패: {e}")
         
     print(f"🎉 모든 작업이 성공적으로 완료되었습니다: {pdf_file}")
  
