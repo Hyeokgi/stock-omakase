@@ -1709,7 +1709,7 @@ def update_technical_data(df_theme, all_theme_map):
             except Exception as e: print(f"⚠️ [DB_스캐너 update Error] {e}")
 
         # ==========================================================================
-        # 👑 [HYEOKS 고도화]: V1 상위2 / V2 상위2 / 리포트 상위2 삼분할 T+10 실증 추적 엔진 (V4)
+        # 👑 [HYEOKS 마스터 완성판]: 채널 분류 마커 기반 철저 격리 및 실증 백테스트 로그 엔진 (V4)
         # ==========================================================================
         try:
             bt_sheet = doc.worksheet("백테스트_로그")
@@ -1718,53 +1718,66 @@ def update_technical_data(df_theme, all_theme_map):
             bt_sheet = doc.add_worksheet(title="백테스트_로그", rows="3000", cols="14")
             bt_data = []
 
-        # T+10 컬럼 및 선정 채널 컬럼을 추가한 최종 프리미엄 14열 헤더 명시
+        # 수석님 오더: 한눈에 전략 카테고리별 승률을 파악하는 정형 14열 인스티튜셔널 헤더 확정
         header_row = [
             "진입일", "종목명", "종목코드", "주도 테마명", "진입가(추천가)", 
             "마스터 타점유형", "선정 카테고리", "V1 (차트점수)", "V2 (수급점수)", 
-            "외인/기관 수급상태", "T+1 수익률", "T+3 수익률", "T+5 수익률", "T+10 수익률"
+            "외인/기관 수급상태", "T+1 수익률", "T+3 수익률", "T+5 수익률", "T+14 수익률"
         ]
 
         legacy_rows = []
         clean_v2_rows = []
 
+        # 🛡️ [마스터 자가 치유 복원 조항]: '선정 카테고리' 축에 프리미엄 마커가 찍힌 신형 데이터만 철저히 분류
         if len(bt_data) > 1:
+            print("▶ [통합 격리 엔진] 구형 오염 데이터 및 포맷 비매칭 행 필터링 스캔 개시...")
             for row in bt_data[1:]:
                 if not row or not str(row[0]).strip() or "진입" in str(row[0]): 
                     continue
-                try:
-                    row_date = datetime.datetime.strptime(str(row[0]).strip(), '%Y-%m-%d').date()
-                    # 6월 10일 이전 기록이거나, 컬럼수가 신형 규격(14열)에 미달하여 꼬인 행은 구형 아카이브로 이사
-                    is_legacy = (row_date < datetime.date(2026, 6, 10)) or (len(row) < 14) or ("수동확인" in str(row[3]))
-                except Exception:
-                    is_legacy = True
                 
-                if is_legacy:
-                    while len(row) < 14: row.append("")
-                    legacy_rows.append(row[:14])
-                else:
+                # 가변적인 시트 패딩 버그를 깨부수기 위해, 6번 인덱스(선정 카테고리)의 고유값 전수 추적
+                category_marker = str(row[6]).strip() if len(row) > 6 else ""
+                
+                # 신형 14열 삼분할 엔진이 정형화하여 꽂아준 정예 마커가 아니라면 무조건 과거 구형 행으로 판정
+                is_valid_v4 = any(marker in category_marker for marker in ["차트 상위", "수급 상위", "리포트 발송"])
+                
+                if is_valid_v4:
+                    # 완벽한 14열 레이아웃으로 칸 규격 평탄화 패딩 조정
                     while len(row) < 14: row.append("")
                     clean_v2_rows.append(row[:14])
+                else:
+                    # 4월, 5월 및 6월 중순의 모든 꼬인 레거시 행은 무조건 아카이브 대상 포착
+                    while len(row) < 14: row.append("")
+                    
+                    # 수동확인요망 테마명 및 꼬인 점수 레이아웃 보정 가공 후 아카이브 편입
+                    if len(row) > 3 and "수동확인" in str(row[3]):
+                        row[3] = "과거 선출 주도주"
+                    if len(row) > 5 and str(row[5]).strip() in ["단기", "중기"]:
+                        row[5] = f"과거기록 ({row[5]})"
+                    legacy_rows.append(row[:14])
 
-        # 구형 레저시 로그 데이터군 아카이브 시트로 강제 분리 격리
+        # 🛡️ 구형 레거시 데이터셋을 단 한 자의 유실도 없이 아카이브 시트로 전량 안전 격리 이사
         if legacy_rows:
             try:
                 archive_sheet = doc.worksheet("백테스트_로그_아카이브")
             except Exception:
                 archive_sheet = doc.add_worksheet(title="백테스트_로그_아카이브", rows="3000", cols="14")
                 archive_sheet.append_row(header_row)
+            
+            # 아카이브 시트의 맨 아래에 차곡차곡 누적 추가
             archive_sheet.append_rows(legacy_rows, value_input_option="USER_ENTERED")
-            print(f"📦 [자동 아카이브] 노이즈 찌꺼기 로그 {len(legacy_rows)}건을 아카이브로 격리 보관 처리 완료.")
+            print(f"📦 [자동 아카이브] 혼돈의 과거 데이터 {len(legacy_rows)}건을 '백테스트_로그_아카이브'로 완벽 분리!")
 
+        # 🛡️ 현재 메인 백테스트_로그는 불순물이 0%인 순수 14열 화이트리스트 정예 데이터셋으로 리세팅
         bt_data = [header_row] + clean_v2_rows
 
         today_date_bt = datetime.datetime.now(KST).date()
         today_str = today_date_bt.strftime('%Y-%m-%d')
         updated = False
 
-        # Part 1. 아침 리셋 시점 과거 진입 종목들의 시차별 성과 (T+1, T+3, T+5, T+10) 정밀 추적 자동화
+        # Part 1. 아침 리셋 시점 과거 진입 종목들의 시차별 성과 (T+1, T+3, T+5, T+14) 정밀 추적 자동화
         if is_reset_time and len(bt_data) > 1:
-            print("▶ [통합 실증 엔진] 삼분할 정예 주도주들의 T+10 시차별 성과 스캔 가동...")
+            print("▶ [통합 실증 엔진] 삼분할 정예 주도주들의 T+14 시차별 성과 스캔 가동...")
             for i in range(1, len(bt_data)):
                 row = bt_data[i]
                 try:
@@ -1774,9 +1787,9 @@ def update_technical_data(df_theme, all_theme_map):
                     needs_t1 = (days_elapsed >= 1 and row[10] == "")
                     needs_t3 = (days_elapsed >= 3 and row[11] == "")
                     needs_t5 = (days_elapsed >= 5 and row[12] == "")
-                    needs_t10 = (days_elapsed >= 10 and row[13] == "")
+                    needs_t14 = (days_elapsed >= 14 and row[13] == "")
                     
-                    if needs_t1 or needs_t3 or needs_t5 or needs_t10:
+                    if needs_t1 or needs_t3 or needs_t5 or needs_t14:
                         t_code = str(row[2]).replace("'", "").strip().zfill(6)
                         entry_p = parse_price_num(row[4])
                         curr_p = get_current_price_for_backtest(t_code)
@@ -1785,7 +1798,7 @@ def update_technical_data(df_theme, all_theme_map):
                             if needs_t1: row[10] = f"{rtn:.2f}%"
                             if needs_t3: row[11] = f"{rtn:.2f}%"
                             if needs_t5: row[12] = f"{rtn:.2f}%"
-                            if needs_t10: row[13] = f"{rtn:.2f}%"
+                            if needs_t14: row[13] = f"{rtn:.2f}%"
                             updated = True
                 except Exception:
                     pass
@@ -1841,21 +1854,21 @@ def update_technical_data(df_theme, all_theme_map):
                     r[19],             # 주도 테마명
                     r[2],              # 진입가
                     r[8],              # 마스터 타점유형
-                    channel_tag,       # ✨ 선정 카테고리 (삼분할 고유 마커)
+                    channel_tag,       # 선정 카테고리 (삼분할 고유 마커)
                     f"{v1_s}점",       # V1 차트스코어
                     f"{v2_s}점",       # V2 실전수급스코어
                     r[22],             # 5일 누적 수급강도 동향
-                    "", "", "", ""     # T+1, T+3, T+5, T+10 수익률 영역
+                    "", "", "", ""     # T+1, T+3, T+5, T+14 수익률 영역
                 ]
                 bt_data.append(new_row)
                 existing_keys.add(key)
                 updated = True
                 new_logs_count += 1
 
-        # 🛡️ 전사 동기화 리셋 빌드
+        # 🛡️ [메인 로그 전면 청소 및 동기화 리셋] 
         bt_sheet.batch_clear(['A1:N3000'])
         bt_sheet.update(range_name="A1", values=bt_data, value_input_option="USER_ENTERED")
-        print(f"✅ [삼분할 14열 엔진] 패치 성공! (금일 신규 진입 채널 로그: {new_logs_count}개 적재 완료)")
+        print(f"✅ [통합 백테스트 V4.0 완성판] 아카이브 분리 및 3채널 삼분할 적재 완료 (금일 선출: {new_logs_count}개)")
 
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
