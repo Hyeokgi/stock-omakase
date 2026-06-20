@@ -1797,11 +1797,10 @@ def update_technical_data(df_theme, all_theme_map):
                 db_scanner_sheet.batch_clear([f"A{len(top_20_results) + 2}:AC"])
                 print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (VIP 강제 소환 완료)")
             except Exception as e:
-                print(f"⚠️ [DB_스캐너 update Error] {e}")
+                print(f"⚠️ [db_scanner_sheet update Error] {e}")
         else:
             print("⚠️ DB_스캐너 후보가 없어 기존 데이터를 유지합니다.")
 
-        if is_reset_time:
         # ==========================================================================
         # 👑 [수석님 제안 반영]: 가상계좌 시뮬레이션 및 V1 vs V2 투트랙 통합 실증 백테스트 로그 엔진
         # ==========================================================================
@@ -1891,7 +1890,7 @@ def update_technical_data(df_theme, all_theme_map):
                 bt_sheet.batch_clear([f"A{len(bt_data) + 1}:L"])
             print(f"✅ [통합 백테스트 엔진] 로그 갱신 완료 (신규 진입: {new_logs_count}개, 총 누적: {len(bt_data)-1}개)")
 
-    # 함수 전체를 감싸는 유일한 최외곽 예외처리문 (중복 도려내고 단 하나만 유지)
+    # 함수 전체를 감싸는 유일한 최외곽 예외처리문 (들여쓰기 4칸 정렬 매칭 완료)
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
 
