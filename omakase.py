@@ -1795,7 +1795,7 @@ def update_technical_data(df_theme, all_theme_map):
 
         new_logs_count = 0
         positive_badges = ["🎯", "💎", "🌟", "👑", "📦", "🔍", "🚀", "🌱"]
-         negative_markers = ["📉", "관망", "조건미달", "🚫", "매매금지"]
+        negative_markers = ["📉", "관망", "조건미달", "🚫", "매매금지"]
         for r in results:
             if len(r) < 33: continue
             s_code = str(r[1]).replace("'", "").strip().zfill(6)
