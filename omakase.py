@@ -613,83 +613,143 @@ def update_recommendation_tracking(doc, top_20_results):
     today_date = datetime.datetime.now(KST).date()
     today_str = today_date.strftime('%Y-%m-%d')
 
-    try:
-        bt_sheet = doc.worksheet("백테스트_로그")
-    except Exception:
-        bt_sheet = doc.add_worksheet(title="백테스트_로그", rows="2000", cols=str(len(header_row)))
+        # ==========================================================================
+        # 👑 [수석님 제안 반영]: V1 vs V2 투트랙 통합 실증 및 구형 로그 자가치유(Self-Healing) 엔진
+        # ==========================================================================
+        try:
+            bt_sheet = doc.worksheet("백테스트_로그")
+            bt_data = bt_sheet.get_all_values()
+        except Exception:
+            bt_sheet = doc.add_worksheet(title="백테스트_로그", rows="3000", cols="12")
+            bt_data = []
 
-    try:
-        bt_data = bt_sheet.get_all_values()
-        rows = bt_data[1:] if bt_data else []
-        normalized_rows = []
+        # 수석님 의견 적극 반영: 직관적이고 시인성 높은 프리미엄 12열 헤더 세팅
+        header_row = ["진입일", "종목명", "종목코드", "주도 테마명", "진입가(추천가)", "마스터 타점유형", "V1 (차트점수)", "V2 (수급점수)", "외인/기관 수급상태", "T+1 수익률", "T+3 수익률", "T+5 수익률"]
+        normalized_bt_data = [header_row]
+        
+        # 🛡️ [과거 자산 구출 레이어]: 4, 5, 6월 데이터 중 꼬이고 밀린 과거 구형 행(9열)을 판독해 12열 정위치로 강제 이사
+        if len(bt_data) > 1:
+            for row in bt_data[1:]:
+                if not row or not str(row[0]).strip() or "진입" in str(row[0]): 
+                    continue
+                
+                # '유형(단기/중기)' 텍스트가 5번 인덱스에 끼어있던 구형 포맷 발견 시
+                if len(row) < 12 and len(row) > 5 and (row[5] in ["단기", "중기"]):
+                    date_val = row[0]
+                    name_val = row[1]
+                    code_val = row[2]
+                    theme_val = row[3]
+                    price_val = row[4]
+                    type_val = row[5]   # '단기' 또는 '중기' 구분
+                    v1_val = row[6]     # 과거에 저장된 차트 점수
+                    
+                    # 꼬여서 다른 열에 박혀있던 % 수익률 데이터만 쏙쏙 골라내기
+                    pct_elements = [str(x) for x in row[7:] if "%" in str(x)]
+                    t1_out = pct_elements[0] if (len(pct_elements) >= 1 and type_val == "단기") else ""
+                    t3_out = pct_elements[0] if (len(pct_elements) >= 1 and type_val == "중기") else ""
+                    
+                    if len(pct_elements) >= 2:
+                        if type_val == "단기":
+                            t1_out = pct_elements[0]
+                            t3_out = pct_elements[1]
+                            t5_out = ""
+                        else:
+                            t1_out = ""
+                            t3_out = pct_elements[0]
+                            t5_out = pct_elements[1]
+                    else:
+                        t5_out = ""
+                        
+                    if len(pct_elements) >= 3:
+                        t5_out = pct_elements[2]
+
+                    # 신형 프리미엄 12열 헤더 규격에 맞게 완벽히 복원 재조립
+                    migrated_row = [
+                        date_val, name_val, code_val, theme_val, price_val,
+                        f"🕰️ 과거기록 ({type_val})", v1_val, "-", "이전 수집 데이터",
+                        t1_out, t3_out, t5_out
+                    ]
+                    normalized_bt_data.append(migrated_row)
+                else:
+                    # 규격이 정상적인 최신 12열 행은 데이터 유실 없이 그대로 보존
+                    while len(row) < 12: 
+                        row.append("")
+                    normalized_bt_data.append(row[:12])
+            bt_data = normalized_bt_data
+        else:
+            bt_data = [header_row]
+
+        today_date_bt = datetime.datetime.now(KST).date()
+        today_str = today_date_bt.strftime('%Y-%m-%d')
+        updated = False
+
+        # Part 1. 아침 리셋 시점 과거 진입 종목들의 시차별 성과(T+1, T+3, T+5) 추적 자동화
+        if is_reset_time:
+            print("▶ [통합 실증 엔진] 과거 선출 종목들의 시차별 성과 검증 스캔 가동...")
+            for i in range(1, len(bt_data)):
+                row = bt_data[i]
+                try:
+                    entry_date = datetime.datetime.strptime(str(row[0]).strip(), '%Y-%m-%d').date()
+                    days_elapsed = (today_date_bt - entry_date).days
+                    
+                    needs_t1 = (days_elapsed >= 1 and row[9] == "")
+                    needs_t3 = (days_elapsed >= 3 and row[10] == "")
+                    needs_t5 = (days_elapsed >= 5 and row[11] == "")
+                    
+                    if needs_t1 or needs_t3 or needs_t5:
+                        t_code = str(row[2]).replace("'", "").strip().zfill(6)
+                        entry_p = parse_price_num(row[4])
+                        curr_p = get_current_price_for_backtest(t_code)
+                        if curr_p > 0 and entry_p > 0:
+                            rtn = ((curr_p - entry_p) / entry_p) * 100
+                            if needs_t1: row[9] = f"{rtn:.2f}%"
+                            if needs_t3: row[10] = f"{rtn:.2f}%"
+                            if needs_t5: row[11] = f"{rtn:.2f}%"
+                            updated = True
+                except Exception:
+                    pass
+
+        # Part 2. 오늘 선출된 주도주 당일 기록 누적 (동적 중복 가드 적용)
         existing_keys = set()
+        for row in bt_data[1:]:
+            if len(row) >= 3:
+                r_date = str(row[0]).strip()
+                r_code = str(row[2]).replace("'", "").strip().zfill(6)
+                existing_keys.add((r_date, r_code))
 
-        for row in rows:
-            if not row or not str(row[0]).strip():
-                continue
-            row = list(row)
-            if len(row) >= 12:
-                new_row = row[:12]
-            else:
-                while len(row) < 11:
-                    row.append("")
+        new_logs_count = 0
+        for r in results:
+            if len(r) < 33: continue
+            tajeom = r[8]
+            if "관망" in tajeom or "조건미달" in tajeom or "🚫" in tajeom: continue
+            
+            s_code = str(r[1]).replace("'", "").strip().zfill(6)
+            key = (today_str, s_code)
+            if key not in existing_keys:
+                v1_s = r[29]
+                v2_s = r[31]
                 new_row = [
-                    row[0], row[1], row[2], row[3], row[4], row[5], row[6],
-                    "", "", row[8], row[9], row[10]
+                    today_str,
+                    r[0],              # 종목명
+                    f"'{s_code}",      # 종목코드
+                    r[19],             # 주도 테마명
+                    r[2],              # 진입가
+                    tajeom,            # 마스터 타점유형
+                    f"{v1_s}점",       # V1 (차트점수)
+                    f"{v2_s}점",       # V2 (수급점수)
+                    r[22],             # 외인/기관 수급상태
+                    "", "", ""         # 시차 수익률 추적 공란
                 ]
-            while len(new_row) < 12:
-                new_row.append("")
+                bt_data.append(new_row)
+                existing_keys.add(key)
+                updated = True
+                new_logs_count += 1
 
-            rec_date = str(new_row[0]).strip()
-            rec_code = str(new_row[2]).replace("'", "").strip().zfill(6)
-            if rec_date and rec_code:
-                existing_keys.add((rec_date, rec_code))
-            normalized_rows.append(new_row)
-
-        for row in normalized_rows:
-            try:
-                entry_date = datetime.datetime.strptime(str(row[0]).strip(), '%Y-%m-%d').date()
-                days_elapsed = (today_date - entry_date).days
-                entry_p = parse_price_num(row[4])
-                t_code = str(row[2]).replace("'", "").strip().zfill(6)
-                needs_t3 = days_elapsed >= 3 and row[9] == ""
-                needs_t5 = days_elapsed >= 5 and row[10] == ""
-                needs_t10 = days_elapsed >= 10 and row[11] == ""
-                if entry_p > 0 and (needs_t3 or needs_t5 or needs_t10):
-                    curr_p = get_current_price_for_backtest(t_code)
-                    if curr_p > 0:
-                        rtn = ((curr_p - entry_p) / entry_p) * 100
-                        if needs_t3: row[9] = f"{rtn:.2f}%"
-                        if needs_t5: row[10] = f"{rtn:.2f}%"
-                        if needs_t10: row[11] = f"{rtn:.2f}%"
-            except Exception as e:
-                print(f"⚠️ [Backtest Return Update Loop Exception for {row[:3]}] {e}")
-
-        new_rows = []
-        for cand in top_20_results:
-            if len(cand) < 11:
-                continue
-            rec_name = parse_stock_name(cand[0])
-            rec_code = str(cand[2]).replace("'", "").strip().zfill(6)
-            rec_price = parse_price_num(cand[3])
-            if not rec_name or not rec_code or rec_price <= 0:
-                continue
-            key = (today_str, rec_code)
-            if key in existing_keys:
-                continue
-            new_rows.append([
-                today_str, rec_name, f"'{rec_code}", cand[5], rec_price,
-                cand[8], parse_score_num(cand[10]), cand[13] if len(cand) > 13 else "",
-                cand[1] if len(cand) > 1 else "", "", "", ""
-            ])
-            existing_keys.add(key)
-
-        final_data = [header_row] + normalized_rows + new_rows
-        bt_sheet.update(range_name="A1", values=final_data, value_input_option="USER_ENTERED")
-        bt_sheet.batch_clear([f"A{len(final_data) + 1}:L"])
-        print(f"✅ 백테스트_로그 갱신 완료 (신규 {len(new_rows)}개, 전체 {len(final_data) - 1}개)")
-    except Exception as e:
-        print(f"⚠️ [Recommendation Tracking Main Exception] {e}")
+        if updated:
+            bt_sheet.update(range_name="A1", values=bt_data, value_input_option="USER_ENTERED")
+            if len(bt_data) > 0:
+                bt_sheet.batch_clear([f"A{len(bt_data) + 1}:L"])
+            print(f"✅ [통합 백테스트 엔진] 로그 정제 및 과거 데이터 구출 완료 (신규 진입: {new_logs_count}개)")
 
 # ==================================================================
 # 📊 [핵심 연산 레이어]: 캔들 가점 축소 및 수급·하락장 브레이크 완성판
