@@ -1383,7 +1383,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         # ==========================================================================
         # ── 무결성 보정 연산 및 V1 / V2 하이브리드 엔진 패킹 구역 ──
         # ==========================================================================
-        q# ── V1 연산 마무리 ──
+        # ── V1 연산 마무리 ──
         quant_score = int(max(0, (base_score + 10) * tajeom_multiplier + supply_quality_score))
         if is_dual_outflow and track_type == "눌림" and not is_absolute_protected:
             quant_score = min(quant_score, 55)
@@ -1396,7 +1396,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         score_display = f"{quant_score}점 ({track_type})"
         
-        # 🛡️ [줄바꿈 오류 차단]: SEED 태그 판독 inline if 구조 전면 해체
         if is_accumulation_cand or is_long_term_pick or is_envelope_over_under:
             is_seed_tag = "SEED"
         else:
@@ -1415,7 +1414,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         supply_status_col = f"🏦기(5일):{i_sign}{acc_i_buy_eok:.1f}억 / 🌎외(5일):{f_sign}{acc_f_buy_eok:.1f}억{frgn_label}"
         
-        # 🛡️ [줄바꿈 오류 차단]: KRX 시간외 문자열 조립 inline if 전면 해체 및 구조화
         if krx_close > 0:
             if krx_rate > 0:
                 krx_str = f"'+{krx_rate:.2f}% ({krx_close:,}원)"
@@ -1424,7 +1422,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         else:
             krx_str = ""
 
-        # 🛡️ [줄바꿈 오류 차단]: NXT 시간외 문자열 조립 inline if 전면 해체 및 구조화
         if nxt_close > 0:
             if nxt_rate > 0:
                 nxt_str = f"'+{nxt_rate:.2f}% ({nxt_close:,}원)"
@@ -1473,8 +1470,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             program_text, int(display_high_250d), supply_status_col,
             target_price, stop_loss, is_seed_tag,
             krx_str, nxt_str, market_type, 
-            quant_score, score_display,       # [인덱스 29, 30]: 기존 V1 데이터
-            v2_quant_score, v2_score_display  # [인덱스 31, 32]: 신규 V2 실전수급 데이터
+            quant_score, score_display,       
+            v2_quant_score, v2_score_display  
         ]
 
         return result_row, static_info_to_save
@@ -1805,7 +1802,7 @@ def update_technical_data(df_theme, all_theme_map):
             print("⚠️ DB_스캐너 후보가 없어 기존 데이터를 유지합니다.")
 
         if is_reset_time:
-# ==========================================================================
+        # ==========================================================================
         # 👑 [수석님 제안 반영]: 가상계좌 시뮬레이션 및 V1 vs V2 투트랙 통합 실증 백테스트 로그 엔진
         # ==========================================================================
         try:
@@ -1815,7 +1812,6 @@ def update_technical_data(df_theme, all_theme_map):
             bt_sheet = doc.add_worksheet(title="백테스트_로그", rows="3000", cols="12")
             bt_data = []
 
-        # 포드코, 클로드 피드백을 수용한 무결성 주도주 검증 헤더셋 구성
         header_row = ["진입일", "종목명", "종목코드", "테마명", "진입가", "타점유형", "V1점수", "V2점수", "수급상태", "T+1수익률", "T+3수익률", "T+5수익률"]
         if len(bt_data) == 0:
             bt_data = [header_row]
@@ -1826,7 +1822,7 @@ def update_technical_data(df_theme, all_theme_map):
         today_str = today_date_bt.strftime('%Y-%m-%d')
         updated = False
 
-        # Part 1. 아침 리셋 시점 과거 진입 종목들의 시차별 성과(T+1, T+3, T+5) 추적 자동화
+        # 과거 선출 종목들의 시차별 성과는 아침 리셋 시점에만 정밀 파싱 추적
         if is_reset_time:
             print("▶ [통합 실증 엔진] 과거 선출 종목들의 시차별 성과 검증 스캔 가동...")
             for i in range(1, len(bt_data)):
@@ -1853,7 +1849,7 @@ def update_technical_data(df_theme, all_theme_map):
                 except Exception as e:
                     print(f"⚠️ [시차 수익률 업데이트 루프 에러] {e}")
 
-        # Part 2. 오늘 선출된 실전 리포팅 후보 종목군 중 유효 타점주 신규 로그 자동 누적
+        # 신규 진입 주도주 당일 기록 누적은 매 세션 가동 시마다 무조건 실행
         existing_keys = set()
         for row in bt_data[1:]:
             if len(row) >= 3:
@@ -1865,7 +1861,6 @@ def update_technical_data(df_theme, all_theme_map):
         for r in results:
             if len(r) < 32: continue
             tajeom = r[8]
-            # 단순 관망이나 데이터 수집 오류, 위험 제외 종목은 수집 차단
             if "관망" in tajeom or "조건미달" in tajeom or "🚫" in tajeom: continue
             
             s_code = str(r[1]).replace("'", "").strip().zfill(6)
@@ -1875,15 +1870,15 @@ def update_technical_data(df_theme, all_theme_map):
                 v2_s = r[31]
                 new_row = [
                     today_str,
-                    r[0],              # 종목명
-                    f"'{s_code}",      # 종목코드
-                    r[19],             # 테마명
-                    r[2],              # 현재가 (진입가)
-                    tajeom,            # 타점유형 (마스터타점)
-                    f"{v1_s}점",       # V1점수
-                    f"{v2_s}점",       # V2점수
-                    r[22],             # 기관/외인 수급상태
-                    "", "", ""         # T+1, T+3, T+5 수익률 추적용 공란
+                    r[0],              
+                    f"'{s_code}",      
+                    r[19],             
+                    r[2],              
+                    tajeom,            
+                    f"{v1_s}점",       
+                    f"{v2_s}점",       
+                    r[22],             
+                    "", "", ""         
                 ]
                 bt_data.append(new_row)
                 existing_keys.add(key)
@@ -1896,9 +1891,7 @@ def update_technical_data(df_theme, all_theme_map):
                 bt_sheet.batch_clear([f"A{len(bt_data) + 1}:L"])
             print(f"✅ [통합 백테스트 엔진] 로그 갱신 완료 (신규 진입: {new_logs_count}개, 총 누적: {len(bt_data)-1}개)")
 
-    except Exception as e:
-        print(f"❌ 전체 업데이트 에러: {e}")
-
+    # 함수 전체를 감싸는 유일한 최외곽 예외처리문 (중복 도려내고 단 하나만 유지)
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
 
