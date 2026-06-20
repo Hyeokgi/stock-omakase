@@ -1380,6 +1380,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             supply_quality_score -= 15
             master_tajeom += " ⚠️(과열주의-15)"
 
+        # ==========================================================================
+        # ── 무결성 보정 연산 및 V1 / V2 하이브리드 엔진 패킹 구역 ──
+        # ==========================================================================
         quant_score = int(max(0, (base_score + 10) * tajeom_multiplier + supply_quality_score))
         if is_dual_outflow and track_type == "눌림" and not is_absolute_protected:
             quant_score = min(quant_score, 55)
@@ -1395,10 +1398,15 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         i_sign = "+" if acc_i_buy_eok > 0 else ""
         f_sign = "+" if acc_f_buy_eok > 0 else ""
+        
+        # 🛡️ [라인 깨짐 방지]: 줄바꿈 오류를 원천 차단하기 위해 명시적 멀티라인 블록화 완료
         frgn_label = ""
-        if acc_f_buy_eok >= 50: frgn_label = " 🌎💎(외인대량)"
-        elif acc_f_buy_eok >= 20: frgn_label = " 🌎(외인집중)"
-        elif acc_f_buy_eok <= -20: frgn_label = " 🌎🔵(외인이탈)"
+        if acc_f_buy_eok >= 50: 
+            frgn_label = " 🌎💎(외인대량)"
+        elif acc_f_buy_eok >= 20: 
+            frgn_label = " 🌎(외인집중)"
+        elif acc_f_buy_eok <= -20: 
+            frgn_label = " 🌎🔵(외인이탈)"
 
         supply_status_col = f"🏦기(5일):{i_sign}{acc_i_buy_eok:.1f}억 / 🌎외(5일):{f_sign}{acc_f_buy_eok:.1f}억{frgn_label}"
         krx_str = f"'{'+' if krx_rate > 0 else ''}{krx_rate:.2f}% ({krx_close:,}원)" if krx_close > 0 else ""
@@ -1415,26 +1423,29 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             high_250d_ratio = current_price / high_250d_calc if high_250d_calc > 0 else 0.0
             is_absolute_liquidity = (trading_value >= 15_000_000_000)  
             is_volume_shuting = (vol_ratio_yest >= 150.0)             
-            
-            # 🛡️ [클로드 피드백 반영 1]: 고점 상한값을 1.05에서 1.00으로 낮추어 신고가 펌핑 상투 원천 배제
             is_proper_position = (0.70 <= high_250d_ratio <= 1.00)    
             
             is_v2_gate_passed = is_absolute_liquidity and is_volume_shuting and is_proper_position
         except:
             is_v2_gate_passed = False
 
+        # 🛡️ [클로드 피드백 반영 및 인덴트 가드]: 내포된 가점 조건도 멀티라인으로 분리하여 가독성/안정성 극대화
         if is_v2_gate_passed:
-            if has_s_tier: v2_quant_score = 90 + (quant_score * 0.09)
-            elif has_a_tier: v2_quant_score = 75 + (quant_score * 0.09)
-            elif has_b_tier: v2_quant_score = 55 + (quant_score * 0.09)
-            else: v2_quant_score = 40 + (quant_score * 0.09)
+            if has_s_tier: 
+                v2_quant_score = 90 + (quant_score * 0.09)
+            elif has_a_tier: 
+                v2_quant_score = 75 + (quant_score * 0.09)
+            elif has_b_tier: 
+                v2_quant_score = 55 + (quant_score * 0.09)
+            else: 
+                v2_quant_score = 40 + (quant_score * 0.09)
         else:
-            # 🛡️ [클로드 피드백 반영 2]: 문턱값 부근 종목의 몰살을 방지하기 위해 관문 페널티 완화 (0.35 -> 0.55)
             v2_quant_score = quant_score * 0.55
 
         v2_quant_score = min(100, max(0, int(v2_quant_score)))
         v2_score_display = f"{v2_quant_score}점 ({track_type}_V2)"
 
+        # 최종 구글 시트 업로드용 데이터 리스트 패킹
         result_row = [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%",
             int(ma5), int(ma20), vol_ratio_text, signal,
@@ -1443,8 +1454,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             program_text, int(display_high_250d), supply_status_col,
             target_price, stop_loss, is_seed_tag,
             krx_str, nxt_str, market_type, 
-            quant_score, score_display,       # [인덱스 29, 30]: 기존 V1 데이터
-            v2_quant_score, v2_score_display  # [인덱스 31, 32]: 신규 V2 실전수급 데이터
+            quant_score, score_display,       # [인덱스 29, 30]: V1 오리지널 차트 스코어
+            v2_quant_score, v2_score_display  # [인덱스 31, 32]: V2 주도주 실전수급 스코어
         ]
 
         return result_row, static_info_to_save
