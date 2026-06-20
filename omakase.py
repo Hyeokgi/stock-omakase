@@ -173,20 +173,29 @@ def get_kospi_fluctuation_rate():
         print(f"⚠️ [get_kospi_fluctuation_rate Error] {e}")
         return 0.0
 
+# [핵심 수정 1]: 별칭 매핑 딕셔너리 추가 (search_code_from_naver 함수 상단에 배치)
+stock_alias_map = {
+    "삼성화재": "삼성화재해상보험",
+    "IPARK현대산업개발": "HDC현대산업개발",
+    "NC": "엔씨소프트",
+    "한국전력": "한국전력공사",
+    "KCC": "KCC",  # 혹은 명칭이 다를 경우 확인 필요
+    "LS ELECTRIC": "LS ELECTRIC"
+}
+
 def search_code_from_naver(stock_name):
+# 별칭 매핑 적용
+    lookup_name = stock_alias_map.get(stock_name, stock_name)
+    local_session = requests.Session()
+    headers = {'User-Agent': 'Mozilla/5.0'}
     try:
         url = f"https://m.stock.naver.com/api/search/all?keyword={stock_name}"
         # 💡 [429 방어]: 네이버 과부하 필터 우회용 랜덤 딜레이 및 타임아웃 고도화
-        time.sleep(random.uniform(0.05, 0.2))
-        res = GLOBAL_SESSION.get(url, timeout=4)
-        if res.status_code == 200:
-            data = res.json()
-            if data.get('result') and data['result'].get('stocks'):
-                return data['result']['stocks'][0]['itemCode']
-        else:
-            print(f"⚠️ [search_code_from_naver HTTP Error {res.status_code}] for {stock_name}")
+        data = local_session.get(url, headers=headers, timeout=3).json()
+        if data.get('result') and data['result'].get('stocks'):
+            return data['result']['stocks'][0]['itemCode']
     except Exception as e:
-        print(f"⚠️ [search_code_from_naver Error] {e}")
+        print(f"⚠️ [search_code_from_naver Error] {lookup_name}: {e}")
     return None
 
 def get_news_keywords():
