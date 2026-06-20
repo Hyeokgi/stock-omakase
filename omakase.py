@@ -1709,7 +1709,7 @@ def update_technical_data(df_theme, all_theme_map):
             except Exception as e: print(f"⚠️ [DB_스캐너 update Error] {e}")
 
         # ==========================================================================
-        # 👑 [수석님 제안 반영]: V1 vs V2 멀티포맷 자가치유 복원 및 실증 백테스트 로그 엔진
+        # 👑 [HYEOKS 고도화]: V1 vs V2 투트랙 통합 실증 및 구형 로그 자동 아카이브 분리 엔진
         # ==========================================================================
         try:
             bt_sheet = doc.worksheet("백테스트_로그")
@@ -1718,75 +1718,78 @@ def update_technical_data(df_theme, all_theme_map):
             bt_sheet = doc.add_worksheet(title="백테스트_로그", rows="3000", cols="12")
             bt_data = []
 
-        header_row = ["진입일", "종목명", "종목코드", "주도 테마명", "진입가(추천가)", "마스터 타점유형", "V1 (차트점수)", "V2 (수급점수)", "외인/기관 수급상태", "T+1 수익률", "T+3 수익률", "T+5 수익률"]
-        normalized_bt_data = [header_row]
-        
+        # 12열 인스티튜셔널 프리미엄 화이트리스트 전용 헤더 선언
+        header_row = [
+            "진입일", "종목명", "종목코드", "주도 테마명", "진입가(추천가)", 
+            "마스터 타점유형", "V1 (차트점수)", "V2 (수급점수)", "외인/기관 수급상태", 
+            "T+1 수익률", "T+3 수익률", "T+5 수익률"
+        ]
+
+        # 🛡️ [클로드 피드백 반영 1]: 구형 4~5월 데이터 파편화 자동 감지 및 아카이브 분리 보관 로직
+        legacy_rows = []
+        clean_v2_rows = []
+
         if len(bt_data) > 1:
-            print("▶ [통합 복원 엔진] 구형 및 깨진 과거 로그 멀티포맷 전수 정밀 매핑 개시...")
             for row in bt_data[1:]:
-                if not row or not str(row[0]).strip() or "진입" in str(row[0]): continue
-                pcts = [str(x).strip() for x in row if "%" in str(x)]
-                scores = [str(x).strip() for x in row if "점" in str(x)]
-                is_corrupted = (len(row) < 12) or any("%" in str(row[idx]) for idx in [6, 7, 8] if idx < len(row))
-                
-                if is_corrupted:
-                    v1_val = scores[0] if len(scores) >= 1 else "0점"
-                    v2_val = scores[1] if len(scores) >= 2 else "-"
-                    supply_val = "이전기록 수동참조"
-                    for x in row:
-                        if any(kw in str(x) for kw in ["억", "🏦", "🌎", "프로그램"]):
-                            supply_val = str(x).strip()
-                            break
-                    tajeom_val = "🕰️ 과거기록"
-                    for x in row[5:9]:
-                        if any(emoji in str(x) for emoji in ["🚀", "🕵️", "🌱", "📦", "🎯", "🌟", "🌙", "📉"]):
-                            tajeom_val = str(x).strip()
-                            break
-                    raw_theme = str(row[3]).strip() if len(row) > 3 else "개별주/기타"
-                    theme_val = "과거 선출 주도주" if raw_theme == "수동확인요망" else raw_theme
-                    
-                    migrated_row = [
-                        str(row[0]).strip(), str(row[1]).strip(), str(row[2]).strip(),
-                        theme_val, str(row[4]).strip(), tajeom_val,
-                        v1_val, v2_val, supply_val,
-                        pcts[0] if len(pcts) >= 1 else "", pcts[1] if len(pcts) >= 2 else "", pcts[2] if len(pcts) >= 3 else ""
-                    ]
-                    normalized_bt_data.append(migrated_row)
+                if not row or not str(row[0]).strip(): 
+                    continue
+                # 테마명 컬럼에 '수동확인요망'이 있거나, 6/5 이전 구형 컬럼 구조(12열 미만)인 행 분류
+                is_legacy = (len(row) < 12) or (len(row) > 3 and "수동확인" in str(row[3]))
+                if is_legacy:
+                    legacy_rows.append(row)
                 else:
                     while len(row) < 12: row.append("")
-                    normalized_bt_data.append(row[:12])
-            bt_data = normalized_bt_data
-        else:
-            bt_data = [header_row]
+                    clean_v2_rows.append(row[:12])
+
+        # 🛡️ 구형 데이터가 발견되면 영구 삭제하지 않고 별도 시트(백테스트_로그_아카이브)로 안전 격리 이사
+        if legacy_rows:
+            try:
+                archive_sheet = doc.worksheet("백테스트_로그_아카이브")
+            except Exception:
+                archive_sheet = doc.add_worksheet(title="백테스트_로그_아카이브", rows="3000", cols="12")
+                archive_sheet.append_row(["구형 진입기록 (4~6월 레저시 데이터군)"])
+            archive_sheet.append_rows(legacy_rows, value_input_option="USER_ENTERED")
+            print(f"📦 [자동 아카이브] 테마 깨짐 및 구형 로그 {len(legacy_rows)}건을 '백테스트_로그_아카이브' 탭으로 분리 보관 완료.")
+
+        # 🛡️ [클로드 피드백 반영 2]: 현재 백테스트_로그 탭은 엄격하게 12열 화이트리스트 구조로만 재조립
+        bt_data = [header_row] + clean_v2_rows
 
         today_date_bt = datetime.datetime.now(KST).date()
         today_str = today_date_bt.strftime('%Y-%m-%d')
         updated = False
 
-        if is_reset_time:
-            print("▶ [통합 실증 엔진] 과거 선출 종목들의 시차별 성과 검증 스캔 가동...")
+        # Part 1. 아침 리셋 시점 과거 진입 종목들의 시차별 성과 추적 (V2 클린 데이터 대상)
+        if is_reset_time and len(bt_data) > 1:
+            print("▶ [통합 실증 엔진] V2 정예 진입 주도주들의 시차별 성과 검증 스캔 가동...")
             for i in range(1, len(bt_data)):
                 row = bt_data[i]
                 try:
                     entry_date = datetime.datetime.strptime(str(row[0]).strip(), '%Y-%m-%d').date()
                     days_elapsed = (today_date_bt - entry_date).days
-                    if (days_elapsed >= 1 and row[9] == "") or (days_elapsed >= 3 and row[10] == "") or (days_elapsed >= 5 and row[11] == ""):
+                    
+                    needs_t1 = (days_elapsed >= 1 and row[9] == "")
+                    needs_t3 = (days_elapsed >= 3 and row[10] == "")
+                    needs_t5 = (days_elapsed >= 5 and row[11] == "")
+                    
+                    if needs_t1 or needs_t3 or needs_t5:
                         t_code = str(row[2]).replace("'", "").strip().zfill(6)
                         entry_p = parse_price_num(row[4])
                         curr_p = get_current_price_for_backtest(t_code)
                         if curr_p > 0 and entry_p > 0:
                             rtn = ((curr_p - entry_p) / entry_p) * 100
-                            if days_elapsed >= 1 and row[9] == "": row[9] = f"{rtn:.2f}%"
-                            if days_elapsed >= 3 and row[10] == "": row[10] = f"{rtn:.2f}%"
-                            if days_elapsed >= 5 and row[11] == "": row[11] = f"{rtn:.2f}%"
+                            if needs_t1: row[9] = f"{rtn:.2f}%"
+                            if needs_t3: row[10] = f"{rtn:.2f}%"
+                            if needs_t5: row[11] = f"{rtn:.2f}%"
                             updated = True
-                except Exception: pass
+                except Exception:
+                    pass
 
+        # Part 2. 오늘 최종 선출 대시보드(TOP 20) 진입 대기 데이터 매핑 (중복 가드)
         existing_keys = set()
         for row in bt_data[1:]:
-            if len(row) >= 3: existing_keys.add((str(row[0]).strip(), str(row[2]).replace("'", "").strip().zfill(6)))
+            if len(row) >= 3:
+                existing_keys.add((str(row[0]).strip(), str(row[2]).replace("'", "").strip().zfill(6)))
 
-        # 🛡️ [피드백 반영 2]: 오늘 최종 스캐너 대시보드(TOP 20) 및 AI 리포트 대상 코드를 전사 추적
         top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results if len(x) > 2}
 
         new_logs_count = 0
@@ -1795,8 +1798,16 @@ def update_technical_data(df_theme, all_theme_map):
             s_code = str(r[1]).replace("'", "").strip().zfill(6)
             tajeom = r[8]
             
-            # 🛡️ [관망 필터 우회 가드]: 수석님이 지적하신 대로 조건미달/관망 마커가 달렸어도, 
-            # 당일 차트/수급 상위(DB_스캐너 진입권) 종목이라면 무조건 백테스트 대상에 포착하여 궤적을 실증 추적합니다.
+            # 🛡️ [클로드 피드백 반영 3]: 양의 시그널 화이트리스트 검사 가드 주입
+            # 차트 점수만 높고 약세 신호(📉)이거나 음의 시그널인 덤핑 픽은 백테스트 노이즈 컷 대상 탈락 처리
+            positive_badges = ["🎯", "💎", "🌟", "👑", "📦", "🔍", "🚀", "🌱"]
+            if not any(b in tajeom for b in positive_badges):
+                continue
+                
+            if "관망" in tajeom or "조건미달" in tajeom or "🚫" in tajeom: 
+                continue
+                
+            # 최종 대시보드 검증 픽 필터링
             if s_code not in top_20_codes: 
                 continue
                 
@@ -1813,10 +1824,10 @@ def update_technical_data(df_theme, all_theme_map):
                 updated = True
                 new_logs_count += 1
 
-        if updated:
-            bt_sheet.update(range_name="A1", values=bt_data, value_input_option="USER_ENTERED")
-            if len(bt_data) > 0: bt_sheet.batch_clear([f"A{len(bt_data) + 1}:L"])
-            print(f"✅ [통합 백테스트 엔진] 로그 정제 및 전 세션 마이그레이션 완료 (신규 진입: {new_logs_count}개)")
+        # 🛡️ [헤더 동기화 가드] 시트 데이터를 리셋하고 100% 규격 정렬된 12열 테이블로 전면 갱신
+        bt_sheet.batch_clear(['A1:L3000'])
+        bt_sheet.update(range_name="A1", values=bt_data, value_input_option="USER_ENTERED")
+        print(f"✅ [통합 백테스트 V3] 아카이브 분격 격리 및 화이트리스트 로그 적재 완료 (신규: {new_logs_count}개)")
 
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
