@@ -706,7 +706,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
     ]
 
     try:
-        # 🛡️ [피드백 반영 1]: 포스코인터 등 예외 분기 NameError 방지를 위한 가격 변수 전방 초기화
+        # 🛡️ 포스코인터 등 예외 분기 NameError 방지를 위한 가격 변수 전방 초기화
         target_price = 0
         stop_loss = 0
 
@@ -751,7 +751,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         current_price = last_day['close']
         today_vol = last_day['volume']
 
-        today_str_ymd = datetime.datetime.now(KST).strftime('%Y%m%d')
+        today_str_ymd = datetime.datetime.now(KST).strftime('%Y-%m-%d')
         if last_day['date'] == today_str_ymd:
             yest_close = int(df_hist['close'].iloc[-2]) if len(df_hist) >= 2 else current_price
         else:
@@ -1207,14 +1207,13 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             master_tajeom_suffix += " 💪(하락장 역행)"
             base_score += 10
 
-        # ── 🎯 [피드백 반영 2]: 수급 주도형 점수 역전 체계 전면 개편 ──
-        # 차트 기반 가점 대폭 낮춤
+        # ── 🎯 [피드백 반영]: 차트 기반 가점 축소 및 수급 위주 채점 ──
         if is_jongbe_cand:
-            base_score += 20                     # 기존 50점 -> 20점 (하향)
+            base_score += 20                     
             if is_near_52w_high: base_score += 15
             if is_strong_dual_buy: base_score += 15
         elif is_accumulation_cand:
-            base_score += 15                     # 기존 40점 -> 15점 (하향)
+            base_score += 15                     
             if is_double_bottom: base_score += 15
             if acc_i_buy_eok >= 10: base_score += 10
         else:
@@ -1225,11 +1224,11 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if is_strong_dual_buy: base_score += 15
             if acc_i_buy_eok >= 50: base_score += 15
 
-        # 메인 돈의 흔적(수급 주체) 가점을 차트보다 우선시하도록 격상
+        # 돈의 흐름 가점 격상
         if is_foreigner_active_buy:
-            base_score += 40                     # 외인집중배팅 명시 가점 (+40점)
+            base_score += 40                     
         if acc_i_buy_eok >= 20:
-            base_score += 30                     # 기관누적매집 명시 가점 (+30점)
+            base_score += 30                     
 
         high_retention = current_price / today_high if today_high > 0 else 0
         if high_retention >= 0.97 and change_rate >= 0.10 and trading_value >= 100_000_000_000:
@@ -1278,7 +1277,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         master_tajeom = master_tajeom_base + master_tajeom_suffix
 
-        # ── 🚫 [피드백 반영 3]: 하락장 돌파매매 무조건 금지 마스터 조항 (감점 우회 차단) ──
+        # 하락장 돌파매매 무조건 셧다운 브레이크
         if is_warning_market and track_type == "돌파":
             tajeom_multiplier = 0.0
             master_tajeom = "⏸ 관망 · 하락장 돌파매매 금지 조항 적용"
@@ -1381,7 +1380,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             supply_quality_score -= 15
             master_tajeom += " ⚠️(과열주의-15)"
 
-        # ── V1 연산 마무리 ──
         quant_score = int(max(0, (base_score + 10) * tajeom_multiplier + supply_quality_score))
         if is_dual_outflow and track_type == "눌림" and not is_absolute_protected:
             quant_score = min(quant_score, 55)
@@ -1415,9 +1413,11 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         try:
             high_250d_ratio = current_price / high_250d_calc if high_250d_calc > 0 else 0.0
-            is_absolute_liquidity = (trading_value >= 15_000_000_000)  # 150억 허들
-            is_volume_shuting = (vol_ratio_yest >= 150.0)             # 전일 대비 150%
-            is_proper_position = (0.70 <= high_250d_ratio <= 1.05)    # 52주 고점 70~105% (상투 배제)
+            is_absolute_liquidity = (trading_value >= 15_000_000_000)  
+            is_volume_shuting = (vol_ratio_yest >= 150.0)             
+            
+            # 🛡️ [클로드 피드백 반영 1]: 고점 상한값을 1.05에서 1.00으로 낮추어 신고가 펌핑 상투 원천 배제
+            is_proper_position = (0.70 <= high_250d_ratio <= 1.00)    
             
             is_v2_gate_passed = is_absolute_liquidity and is_volume_shuting and is_proper_position
         except:
@@ -1429,7 +1429,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             elif has_b_tier: v2_quant_score = 55 + (quant_score * 0.09)
             else: v2_quant_score = 40 + (quant_score * 0.09)
         else:
-            v2_quant_score = quant_score * 0.35
+            # 🛡️ [클로드 피드백 반영 2]: 문턱값 부근 종목의 몰살을 방지하기 위해 관문 페널티 완화 (0.35 -> 0.55)
+            v2_quant_score = quant_score * 0.55
 
         v2_quant_score = min(100, max(0, int(v2_quant_score)))
         v2_score_display = f"{v2_quant_score}점 ({track_type}_V2)"
@@ -1774,57 +1775,99 @@ def update_technical_data(df_theme, all_theme_map):
             print("⚠️ DB_스캐너 후보가 없어 기존 데이터를 유지합니다.")
 
         if is_reset_time:
-            try:
-                bt_sheet = doc.worksheet("백테스트_로그")
-                bt_data = bt_sheet.get_all_values()
-                header_row = ["진입일", "종목명", "종목코드", "테마명", "진입가", "타점유형", "퀀트점수", "T+1수익률", "T+3수익률", "T+5수익률", "T+10수익률"]
-                if len(bt_data) == 0:
-                    bt_sheet.append_row(header_row)
-                    bt_data = bt_sheet.get_all_values()
-                elif "진입" not in str(bt_data[0][0]).replace(" ", ""):
-                    bt_sheet.insert_row(header_row, index=1)
-                    bt_data = bt_sheet.get_all_values()
+# ==========================================================================
+        # 👑 [수석님 제안 반영]: 가상계좌 시뮬레이션 및 V1 vs V2 투트랙 통합 실증 백테스트 로그 엔진
+        # ==========================================================================
+        try:
+            bt_sheet = doc.worksheet("백테스트_로그")
+            bt_data = bt_sheet.get_all_values()
+        except Exception:
+            bt_sheet = doc.add_worksheet(title="백테스트_로그", rows="3000", cols="12")
+            bt_data = []
 
-                today_date_bt = datetime.datetime.now(KST).date()
-                updated = False
-                for i in range(1, len(bt_data)):
-                    row = bt_data[i]
-                    while len(row) < 11: row.append("")
-                    try:
-                        entry_date = datetime.datetime.strptime(row[0], '%Y-%m-%d').date()
-                        days_elapsed = (today_date_bt - entry_date).days
-                        tajeom_type = str(row[5])
-                        is_seed = "SEED" in tajeom_type or "중장기" in tajeom_type or "모아가기" in tajeom_type
-                        
-                        needs_t1  = (days_elapsed >= 1 and row[7] == "" and not is_seed)
-                        needs_t3  = (days_elapsed >= 3 and row[8] == "")
-                        needs_t5  = (days_elapsed >= 5 and row[9] == "")
-                        needs_t10 = (days_elapsed >= 10 and row[10] == "" and is_seed)
-                        
-                        if is_seed and days_elapsed >= 1 and row[7] == "":
-                            row[7] = "-"
+        # 포드코, 클로드 피드백을 수용한 무결성 주도주 검증 헤더셋 구성
+        header_row = ["진입일", "종목명", "종목코드", "테마명", "진입가", "타점유형", "V1점수", "V2점수", "수급상태", "T+1수익률", "T+3수익률", "T+5수익률"]
+        if len(bt_data) == 0:
+            bt_data = [header_row]
+        elif "진입" not in str(bt_data[0][0]):
+            bt_data.insert(0, header_row)
+
+        today_date_bt = datetime.datetime.now(KST).date()
+        today_str = today_date_bt.strftime('%Y-%m-%d')
+        updated = False
+
+        # Part 1. 아침 리셋 시점 과거 진입 종목들의 시차별 성과(T+1, T+3, T+5) 추적 자동화
+        if is_reset_time:
+            print("▶ [통합 실증 엔진] 과거 선출 종목들의 시차별 성과 검증 스캔 가동...")
+            for i in range(1, len(bt_data)):
+                row = bt_data[i]
+                while len(row) < 12: row.append("")
+                try:
+                    entry_date = datetime.datetime.strptime(str(row[0]).strip(), '%Y-%m-%d').date()
+                    days_elapsed = (today_date_bt - entry_date).days
+                    
+                    needs_t1 = (days_elapsed >= 1 and row[9] == "")
+                    needs_t3 = (days_elapsed >= 3 and row[10] == "")
+                    needs_t5 = (days_elapsed >= 5 and row[11] == "")
+                    
+                    if needs_t1 or needs_t3 or needs_t5:
+                        t_code = str(row[2]).replace("'", "").strip().zfill(6)
+                        entry_p = parse_price_num(row[4])
+                        curr_p = get_current_price_for_backtest(t_code)
+                        if curr_p > 0 and entry_p > 0:
+                            rtn = ((curr_p - entry_p) / entry_p) * 100
+                            if needs_t1: row[9] = f"{rtn:.2f}%"
+                            if needs_t3: row[10] = f"{rtn:.2f}%"
+                            if needs_t5: row[11] = f"{rtn:.2f}%"
                             updated = True
+                except Exception as e:
+                    print(f"⚠️ [시차 수익률 업데이트 루프 에러] {e}")
 
-                        if needs_t1 or needs_t3 or needs_t5 or needs_t10:
-                            t_code = str(row[2]).replace("'", "").zfill(6)
-                            entry_p = int(str(row[4]).replace(',', '').replace('원', ''))
-                            rt_res = GLOBAL_SESSION.get(f"https://m.stock.naver.com/api/stock/{t_code}/basic", verify=False, timeout=3).json()
-                            curr_p = int(str(rt_res.get('closePrice', '0')).replace(',', ''))
-                            if curr_p > 0:
-                                rtn = ((curr_p - entry_p) / entry_p) * 100
-                                if needs_t1: row[7] = f"{rtn:.2f}%"
-                                if needs_t3: row[8] = f"{rtn:.2f}%"
-                                if needs_t5: row[9] = f"{rtn:.2f}%"
-                                if needs_t10: row[10] = f"{rtn:.2f}%"
-                                updated = True
-                    except Exception as e:
-                        print(f"⚠️ [Backtest Return Update Loop Exception for row {i}] {e}")
-                        pass
-                if updated:
-                    bt_sheet.update(range_name="A1", values=bt_data, value_input_option="USER_ENTERED")
-                    print("✅ 백테스트 수익률 자동 갱신 완료")
-            except Exception as e:
-                print(f"⚠️ [Backtest Logging Main Exception] {e}")
+        # Part 2. 오늘 선출된 실전 리포팅 후보 종목군 중 유효 타점주 신규 로그 자동 누적
+        existing_keys = set()
+        for row in bt_data[1:]:
+            if len(row) >= 3:
+                r_date = str(row[0]).strip()
+                r_code = str(row[2]).replace("'", "").strip().zfill(6)
+                existing_keys.add((r_date, r_code))
+
+        new_logs_count = 0
+        for r in results:
+            if len(r) < 32: continue
+            tajeom = r[8]
+            # 단순 관망이나 데이터 수집 오류, 위험 제외 종목은 수집 차단
+            if "관망" in tajeom or "조건미달" in tajeom or "🚫" in tajeom: continue
+            
+            s_code = str(r[1]).replace("'", "").strip().zfill(6)
+            key = (today_str, s_code)
+            if key not in existing_keys:
+                v1_s = r[29]
+                v2_s = r[31]
+                new_row = [
+                    today_str,
+                    r[0],              # 종목명
+                    f"'{s_code}",      # 종목코드
+                    r[19],             # 테마명
+                    r[2],              # 현재가 (진입가)
+                    tajeom,            # 타점유형 (마스터타점)
+                    f"{v1_s}점",       # V1점수
+                    f"{v2_s}점",       # V2점수
+                    r[22],             # 기관/외인 수급상태
+                    "", "", ""         # T+1, T+3, T+5 수익률 추적용 공란
+                ]
+                bt_data.append(new_row)
+                existing_keys.add(key)
+                updated = True
+                new_logs_count += 1
+
+        if updated:
+            bt_sheet.update(range_name="A1", values=bt_data, value_input_option="USER_ENTERED")
+            if len(bt_data) > 0:
+                bt_sheet.batch_clear([f"A{len(bt_data) + 1}:L"])
+            print(f"✅ [통합 백테스트 엔진] 로그 갱신 완료 (신규 진입: {new_logs_count}개, 총 누적: {len(bt_data)-1}개)")
+
+    except Exception as e:
+        print(f"❌ 전체 업데이트 에러: {e}")
 
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
