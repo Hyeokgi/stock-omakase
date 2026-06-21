@@ -1726,7 +1726,7 @@ def update_technical_data(df_theme, all_theme_map):
             except Exception as e: print(f"⚠️ [DB_스캐너 update Error] {e}")
 
         # ==========================================================================
-        # 👑 [수석님 핵심 오더]: 14열 삼분할(차트2 / 수급2 / 리포트2) 정밀 검증 백테스트 시스템
+        # 👑 [HYEOKS 마스터 최적화]: 시간 가드 무관 즉시 정화 기능을 탑재한 14열 삼분할 엔진
         # ==========================================================================
         try:
             bt_sheet = doc.worksheet("백테스트_로그")
@@ -1735,122 +1735,139 @@ def update_technical_data(df_theme, all_theme_map):
             bt_sheet = doc.add_worksheet(title="백테스트_로그", rows="3000", cols="14")
             bt_data = []
 
+        # T+10까지 확장 및 선정 카테고리 축을 반영한 최상위 프리미엄 14열 헤더
         header_row = [
-            "진입일", "종목명", "종목코드", "주도 테마명", "진입가(추천가)", 
-            "마스터 타점유형", "선정 카테고리", "V1 (차트점수)", "V2 (수급점수)", 
+            "진입일", "종목명", "종목코드", "주도 테마명", "진입가(추천가)",
+            "마스터 타점유형", "선정카테고리", "V1 (차트점수)", "V2 (수급점수)",
             "외인/기관 수급상태", "T+1 수익률", "T+3 수익률", "T+5 수익률", "T+10 수익률"
         ]
 
+        MIGRATION_CUTOFF = datetime.date(2026, 6, 19)
         legacy_rows = []
-        clean_v2_rows = []
+        clean_rows = []
 
         if len(bt_data) > 1:
-            print("▶ [통합 격리 엔진] 카테고리 마커 유무 기반 무결성 아카이브 분리 스캔...")
             for row in bt_data[1:]:
-                if not row or not str(row[0]).strip() or "진입" in str(row[0]): 
+                if not row or not str(row[0]).strip() or "진입" in str(row[0]):
                     continue
-                category_marker = str(row[6]).strip() if len(row) > 6 else ""
-                is_valid_v4 = any(marker in category_marker for marker in ["차트 상위", "수급 상위", "리포트 발송"])
-                
-                if is_valid_v4:
+                row_date_str = str(row[0]).strip()
+                try:
+                    row_date = datetime.datetime.strptime(row_date_str, '%Y-%m-%d').date()
+                except Exception:
+                    row_date = None
+
+                is_legacy = (
+                    row_date is None
+                    or row_date < MIGRATION_CUTOFF
+                    or len(row) < 14
+                    or (len(row) > 3 and "수동확인" in str(row[3]))
+                )
+                if is_legacy:
                     while len(row) < 14: row.append("")
-                    clean_v2_rows.append(row[:14])
+                    if "수동확인" in str(row[3]): row[3] = "과거 선출 주도주"
+                    legacy_rows.append(row[:14])
                 else:
                     while len(row) < 14: row.append("")
-                    if len(row) > 3 and "수동확인" in str(row[3]):
-                        row[3] = "과거 선출 주도주"
-                    legacy_rows.append(row[:14])
+                    clean_rows.append(row[:14])
 
-        # ==========================================================================
-        # 👑 [HYEOKS 마스터 수정판]: 휴일 저장 무시 버그가 완벽히 치유된 14열 백테스트 엔진
-        # ==========================================================================
         if legacy_rows:
-            try: 
+            try:
                 archive_sheet = doc.worksheet("백테스트_로그_아카이브")
+                archive_existing = archive_sheet.get_all_values()
+                if not archive_existing:
+                    archive_sheet.append_row(header_row)
             except Exception:
-                archive_sheet = doc.add_worksheet(title="백테스트_로그_아카이브", rows="3000", cols="14")
+                archive_sheet = doc.add_worksheet(title="백테스트_로그_아카이브", rows="5000", cols="14")
                 archive_sheet.append_row(header_row)
-            
             archive_sheet.append_rows(legacy_rows, value_input_option="USER_ENTERED")
-            print(f"📦 [자동 이사 완료] 깨진 구형 4~5월 행 {len(legacy_rows)}건을 아카이브 탭으로 전량 안전 대피.")
-            
-            # ✨ [치유 완료 조항]: 이사가 발생했다면 휴일이라도 메인 시트를 즉시 정화하도록 트리거 강제 가동!
-            updated = True
-        bt_data = [header_row] + clean_v2_rows
+            print(f"📦 [자동 아카이브] 구형 레저시 데이터군 {len(legacy_rows)}건을 아카이브 탭으로 이관 완료.")
+
+        bt_data = [header_row] + clean_rows
         today_date_bt = datetime.datetime.now(KST).date()
         today_str = today_date_bt.strftime('%Y-%m-%d')
+        now_time_bt = datetime.datetime.now(KST)
+        
+        # 🛡️ 휴일 락 방어 가드: 이사가 발생했거나 정리가 필요한 경우 무조건 구글 시트 갱신 강제 활성화
+        force_sync_sheet = True
         updated = False
 
+        # ── Part 1. 아침 리셋 세션 시 장기 추적 (T+10 컬럼 연동) ──
         if is_reset_time and len(bt_data) > 1:
-            print("▶ [통합 실증 엔진] 삼분할 정예 타겟 종목들의 시차별 성과(T+10) 스캔 개시...")
+            print("▶ [실증 엔진] V2 정예 진입 종목 성과 추적(T+1/T+3/T+5/T+10) 가동...")
             for i in range(1, len(bt_data)):
                 row = bt_data[i]
                 try:
                     entry_date = datetime.datetime.strptime(str(row[0]).strip(), '%Y-%m-%d').date()
                     days_elapsed = (today_date_bt - entry_date).days
-                    
-                    needs_t1 = (days_elapsed >= 1 and row[10] == "")
-                    needs_t3 = (days_elapsed >= 3 and row[11] == "")
-                    needs_t5 = (days_elapsed >= 5 and row[12] == "")
+
+                    needs_t1  = (days_elapsed >= 1  and row[10] == "")
+                    needs_t3  = (days_elapsed >= 3  and row[11] == "")
+                    needs_t5  = (days_elapsed >= 5  and row[12] == "")
                     needs_t10 = (days_elapsed >= 10 and row[13] == "")
-                    
+
                     if needs_t1 or needs_t3 or needs_t5 or needs_t10:
                         t_code = str(row[2]).replace("'", "").strip().zfill(6)
                         entry_p = parse_price_num(row[4])
                         curr_p = get_current_price_for_backtest(t_code)
                         if curr_p > 0 and entry_p > 0:
                             rtn = ((curr_p - entry_p) / entry_p) * 100
-                            if needs_t1: row[10] = f"{rtn:.2f}%"
-                            if needs_t3: row[11] = f"{rtn:.2f}%"
-                            if needs_t5: row[12] = f"{rtn:.2f}%"
+                            if needs_t1:  row[10] = f"{rtn:.2f}%"
+                            if needs_t3:  row[11] = f"{rtn:.2f}%"
+                            if needs_t5:  row[12] = f"{rtn:.2f}%"
                             if needs_t10: row[13] = f"{rtn:.2f}%"
                             updated = True
                 except Exception: pass
 
+        # ── Part 2. 평일 15:00~15:30 윈도우 장마감 로깅 (차트2 / 수급2 / 리포트2) 삼분할 분리 적재 ──
+        is_eod_log_window = (now_time_bt.hour == 15 and 0 <= now_time_bt.minute < 30)
+
         existing_keys = set()
         for row in bt_data[1:]:
-            if len(row) >= 7: existing_keys.add((str(row[0]).strip(), str(row[2]).replace("'", "").strip().zfill(6), str(row[6]).strip()))
-
-        # 화이트리스트 양의 마스터 시그널 룰셋 적용
-        valid_pool = []
-        positive_badges = ["🎯", "💎", "🌟", "👑", "📦", "🔍", "🚀", "🌱"]
-        for r in results:
-            if len(r) < 33: continue
-            tajeom = r[8]
-            if not any(b in tajeom for b in positive_badges): continue
-            if "관망" in tajeom or "조건미달" in tajeom or "🚫" in tajeom: continue
-            valid_pool.append(r)
-
-        today_entries = []
-        if valid_pool:
-            # 채널 ①: V1 차트점수 최상위 정예 2종목
-            for r in sorted(valid_pool, key=lambda x: x[29], reverse=True)[:2]:
-                today_entries.append((r, "차트 상위 TOP2"))
-            # 채널 ②: V2 실전수급점수 최상위 정예 2종목
-            for r in sorted(valid_pool, key=lambda x: x[31], reverse=True)[:2]:
-                today_entries.append((r, "수급 상위 TOP2"))
-            # 채널 ③: 당일 최종 대시보드 리포팅 2종목
-            report_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results if len(x) > 2}
-            pool_report = sorted([r for r in valid_pool if str(r[1]).replace("'", "").strip().zfill(6) in report_codes], key=lambda x: x[31], reverse=True)[:2]
-            for r in pool_report:
-                today_entries.append((r, "리포트 발송 TOP2"))
+            if len(row) >= 7:
+                existing_keys.add((str(row[0]).strip(), str(row[2]).replace("'", "").strip().zfill(6), str(row[6]).strip()))
 
         new_logs_count = 0
-        for r, channel_tag in today_entries:
-            s_code = str(r[1]).replace("'", "").strip().zfill(6)
-            if (today_str, s_code, channel_tag) not in existing_keys:
-                bt_data.append([
-                    today_str, r[0], f"'{s_code}", r[19], r[2], r[8], channel_tag,
-                    f"{r[29]}점", f"{r[31]}점", r[22], "", "", "", ""
-                ])
-                existing_keys.add((today_str, s_code, channel_tag))
-                updated = True
-                new_logs_count += 1
+        if is_eod_log_window:
+            positive_badges = ["🎯", "💎", "🌟", "👑", "📦", "🔍", "🚀", "🌱"]
+            negative_markers = ["📉", "관망", "조건미달", "🚫", "매매금지"]
 
-        if updated:
-            bt_sheet.batch_clear(['A1:N3000'])
+            candidate_pool = []
+            for r in results:
+                if len(r) < 33: continue
+                tajeom = r[8]
+                if any(neg in tajeom for neg in negative_markers): continue
+                if not any(pos in tajeom for pos in positive_badges): continue
+                candidate_pool.append(r)
+
+            chart_top2  = sorted(candidate_pool, key=lambda x: x[29], reverse=True)[:2]   # V1 차트스코어 기준
+            supply_top2 = sorted(candidate_pool, key=lambda x: x[31], reverse=True)[:2]   # V2 실전수급스코어 기준
+            
+            report_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results if len(x) > 2}
+            pool_report = sorted([r for r in candidate_pool if str(r[1]).replace("'", "").strip().zfill(6) in report_codes], key=lambda x: x[31], reverse=True)[:2] # 리포트 선출작 중 최상위 수급 2선정
+
+            channels = [("차트상위TOP2", chart_top2), ("수급상위TOP2", supply_top2), ("리포트발송TOP2", pool_report)]
+
+            for category, picks in channels:
+                for r in picks:
+                    s_code = str(r[1]).replace("'", "").strip().zfill(6)
+                    key = (today_str, s_code, category)
+                    if key not in existing_keys:
+                        v1_s, v2_s = r[29], r[31]
+                        new_row = [
+                            today_str, r[0], f"'{s_code}", r[19], r[2], r[8], category,
+                            f"{v1_s}점", f"{v2_s}점", r[22], "", "", "", ""
+                        ]
+                        bt_data.append(new_row)
+                        existing_keys.add(key)
+                        updated = True
+                        new_logs_count += 1
+            print(f"📊 [3채널 분 분할 적재] 당일 핵심 주도주 {new_logs_count}건 타겟 완료.")
+
+        # ── 🛡️ [무결성 덮어쓰기 브레이크]: 이사가 발생했거나 업데이트가 있다면 강제 밀어넣기 정화 ──
+        if updated or len(legacy_rows) > 0 or force_sync_sheet:
+            bt_sheet.batch_clear(['A1:N5000'])
             bt_sheet.update(range_name="A1", values=bt_data, value_input_option="USER_ENTERED")
-            print(f"✅ [통합 백테스트 V4.2] 3채널 전용 로그 분할 및 T+10 추적 빌드 성공! (선출: {new_logs_count}개)")
+            print(f"✅ [백테스트 V5] 메인 테이블 14열 규격 포맷팅 및 동기화 완료.")
 
     except Exception as e:
         print(f"❌ 전체 업데이트 에러: {e}")
