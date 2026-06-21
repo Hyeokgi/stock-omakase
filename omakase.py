@@ -1761,14 +1761,21 @@ def update_technical_data(df_theme, all_theme_map):
                         row[3] = "과거 선출 주도주"
                     legacy_rows.append(row[:14])
 
+        # ==========================================================================
+        # 👑 [HYEOKS 마스터 수정판]: 휴일 저장 무시 버그가 완벽히 치유된 14열 백테스트 엔진
+        # ==========================================================================
         if legacy_rows:
-            try: archive_sheet = doc.worksheet("백테스트_로그_아카이브")
+            try: 
+                archive_sheet = doc.worksheet("백테스트_로그_아카이브")
             except Exception:
                 archive_sheet = doc.add_worksheet(title="백테스트_로그_아카이브", rows="3000", cols="14")
                 archive_sheet.append_row(header_row)
+            
             archive_sheet.append_rows(legacy_rows, value_input_option="USER_ENTERED")
             print(f"📦 [자동 이사 완료] 깨진 구형 4~5월 행 {len(legacy_rows)}건을 아카이브 탭으로 전량 안전 대피.")
-
+            
+            # ✨ [치유 완료 조항]: 이사가 발생했다면 휴일이라도 메인 시트를 즉시 정화하도록 트리거 강제 가동!
+            updated = True
         bt_data = [header_row] + clean_v2_rows
         today_date_bt = datetime.datetime.now(KST).date()
         today_str = today_date_bt.strftime('%Y-%m-%d')
