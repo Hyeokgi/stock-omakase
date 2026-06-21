@@ -6,8 +6,9 @@ on:
     types: [trigger-nightly-batch]
   workflow_dispatch:
 
+# .github/workflows/nightly_batch.yml 파일을 열고 아래 구문을 수정하세요
 concurrency:
-  group: hyeoks-google-sheet
+  group: hyeoks-sheet-lock  # 👑기존 hyeoks-google-sheet에서 메인 스캐너 락 이름과 동일하게 일치시켜 충돌 차단
   cancel-in-progress: false
 
 jobs:
