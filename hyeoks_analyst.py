@@ -245,17 +245,22 @@ try:
         }}
         """
  
+    # ==========================================================================
+    # 👑 [수석님 오더]: 18시 덮어쓰기 오염 및 VIP 증발 원천 차단 보정 엔진
+    # ==========================================================================
     if current_hour != 15:
-        print(f"▶ [{current_hour}시 모드] 메인 리포트 시간이 아니므로, 대기 중인 종목의 브리핑 및 가격 산출을 진행합니다.")
+        print(f"▶ [{current_hour}시 모드] 메인 리포트 시간이 아니므로, 실시간 대기 종목의 정밀 요격 브리핑을 개시합니다.")
+        
+        # 루프 내부에서 순위 변동을 방어하기 위해 종목 코드별로 정밀 추적 진입
         for i, row in enumerate(db_rows[1:], start=2):
             if len(row) > 9 and "리포트 발송 완료" not in str(row[9]):  
                 stock_name = row[0] if len(row) > 0 else "알수없음"
-                print(f" - [{stock_name}] AI 전략 및 가격 산출 중...")
+                code = str(row[2]).replace("'", "").strip().zfill(6)
                 
                 curr_p = row[3] if len(row) > 3 else ''
                 tajeom_badge = row[8] if len(row) > 8 else ''
-                sugeup = row[11] if len(row) > 11 else ''   # 수급강도 (변경 없음, 포맷만 달라짐)
-                high_52 = row[12] if len(row) > 12 else ''  # 52주전고점 (변경 없음)
+                sugeup = row[11] if len(row) > 11 else ''  
+                high_52 = row[12] if len(row) > 12 else ''  
                 theme = row[5] if len(row) > 5 else ''
                 target_sys = row[14] if len(row) > 14 else ''
                 stop_sys = row[15] if len(row) > 15 else ''
@@ -270,16 +275,36 @@ try:
                     if not briefing_text.startswith("✅") and not briefing_text.startswith("⚠️"): 
                         briefing_text = f"✅ [간단 브리핑] {briefing_text}"
                     
-                    target_val = f"{int(parsed_data.get('target_price', 0)):,}원" if parsed_data.get('target_price') else "관망"
-                    stop_val = f"{int(parsed_data.get('stop_loss', 0)):,}원" if parsed_data.get('stop_loss') else "관망"
+                    raw_target = str(parsed_data.get('target_price', '0')).replace(',', '').replace('원', '')
+                    raw_stop = str(parsed_data.get('stop_loss', '0')).replace(',', '').replace('원', '')
                     
-                    db_sheet.update_cell(i, 10, briefing_text)
-                    db_sheet.update_cell(i, 15, target_val)
-                    db_sheet.update_cell(i, 16, stop_val)
+                    target_val = f"{int(raw_target):,}원" if raw_target.isdigit() and int(raw_target) > 0 else "관망"
+                    stop_val = f"{int(raw_stop):,}원" if raw_stop.isdigit() and int(raw_stop) > 0 else "관망"
+                    
+                    # 🛡️ [핵심 가드]: omakase.py가 장중에 순위를 뒤흔든 경우를 대비해 실시간 행 위치 역추적 재재스캔
+                    current_db_snapshot = db_sheet.get_all_values()
+                    real_row_idx = -1
+                    for idx, r_row in enumerate(current_db_snapshot, start=1):
+                        if len(r_row) > 2 and str(r_row[2]).replace("'", "").strip().zfill(6) == code:
+                            real_row_idx = idx
+                            break
+                    
+                    # 정위치를 찾았을 때만 업데이트 집행
+                    if real_row_idx != -1:
+                        # 🚨 [VIP 절대 보존]: 만약 그 사이에 리포트 종목이 이 행으로 이사 왔다면 절대 수정하지 않고 보존!
+                        if "리포트 발송 완료" in str(current_db_snapshot[real_row_idx-1][9]):
+                            print(f"   ↳ 🛡️ [{stock_name}] 6시 오염 방어벽 가동: 리포트 주도주이므로 브리핑 보호 조치 (패스).")
+                            continue
+                            
+                        db_sheet.update_cell(real_row_idx, 10, briefing_text)
+                        db_sheet.update_cell(real_row_idx, 15, target_val)
+                        db_sheet.update_cell(real_row_idx, 16, stop_val)
+                        
                     time.sleep(3.5)
                 except Exception as e:
                     print(f"[{stock_name}] 브리핑/가격 산출 에러 발생 (건너뜀): {e}")
-        print(f"🌅 {current_hour}시 전략 브리핑 완료! 프로그램 종료.")
+                    
+        print(f"🌅 {current_hour}시 시간외 마감 정제 브리핑 완료! 프로그램 종료.")
         exit(0)
  
     # 🔴 [모드 3] 15시 모드 (메인 리포트 생성 및 풀 코스)
