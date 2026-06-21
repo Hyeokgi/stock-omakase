@@ -344,13 +344,15 @@ try:
         name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
         curr_p, chg = str(r[2]).strip(), str(r[3]).strip()
         tajeom_raw = str(r[8]).strip()     # 마스터타점
-        score_str = str(r[30]).strip() if len(r) > 30 else "0점"  # 퀀트스코어
         theme_name = str(r[19]).strip()
         prog = str(r[20]).strip()          # 수급강도 (새 포맷 반영)
         seed_tag = str(r[25]).strip() if len(r) > 25 else "NORMAL"
 
-        try: num_score = int(re.findall(r'\d+', score_str)[0])
-        except: num_score = 0
+        try: v1_score = int(r[29]) if len(r) > 29 else 0
+        except: v1_score = 0
+        try: v2_score = int(r[31]) if len(r) > 31 else 0
+        except: v2_score = 0
+        combo_score = max(v1_score, v2_score)
         
         if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|3년적자|스코어 미달|과거 주도주 이력 미달', tajeom_raw): continue 
         
@@ -358,13 +360,15 @@ try:
         tajeom_clean = tajeom_clean.split('🎯')[0].strip()
         
         info = (
-            f"종목:{name}({code}) | 현재가:{curr_p}원({chg}) | 퀀트점수:{num_score}점 | "
+            f"종목:{name}({code}) | 현재가:{curr_p}원({chg}) | 차트점수(V1):{v1_score}점 | 수급점수(V2):{v2_score}점 | "
             f"타점:{tajeom_clean} | 수급강도:{prog} | 유형:{seed_tag} | 테마:{theme_name}"
         )
         cands_list.append({
             'name': name, 
             'code': code, 
-            'score': num_score, 
+            'score': combo_score, 
+            'v1_score': v1_score,
+            'v2_score': v2_score,
             'info': info, 
             'curr_p': int(curr_p.replace(',','').replace('원','')), 
             'type': seed_tag,
