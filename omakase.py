@@ -1679,10 +1679,14 @@ def update_technical_data(df_theme, all_theme_map):
             tajeom = r[8]
             
             if any(kw in tajeom for kw in scanner_keywords):
+                v1_num = r[29] if len(r) > 29 else 0
+                v2_num = r[31] if len(r) > 31 else 0
+                combined_score_display = f"V1:{v1_num}점 / V2:{v2_num}점"
                 하이브리드_링크 = f'=HYPERLINK("https://m.stock.naver.com/domestic/stock/{종목코드}/total", "{종목명}")'
                 row_data = [
                     하이브리드_링크, r[28] if len(r) > 28 and r[28] else "정규장", f"'{종목코드}", r[2], r[3], r[19], r[7], r[6],
-                    tajeom, r[9], r[30] if len(r) > 30 else "0점", r[20], r[21], r[22], r[23], r[24], r[26], r[27], r[28]
+                    tajeom, r[9], combined_score_display, r[20], r[21], r[22], r[23], r[24], r[26], r[27], r[28],
+                    v1_num, v2_num
                 ]
                 all_candidates.append(row_data)
 
@@ -1694,21 +1698,35 @@ def update_technical_data(df_theme, all_theme_map):
                 seed_cands.append(cand)
             else: normal_cands.append(cand)
 
-        def get_score_num(x):
-            try: return int(str(x[10]).split('점')[0]) if '점' in str(x[10]) else 0
+        def get_v1_score(x):
+            try: return int(x[19])
             except Exception: return 0
 
-        seed_cands.sort(key=get_score_num, reverse=True)
-        normal_cands.sort(key=get_score_num, reverse=True)
+        def get_v2_score(x):
+            try: return int(x[20])
+            except Exception: return 0
 
-        final_seed = seed_cands[:5]
-        # 👑 [완벽한 수리]: 문법 에러의 온상이었던 유령변수 'c' 제거 완료!
-        vip_retention_cands = [cand for cand in normal_cands if cand[9] != "AI 브리핑 대기중" and str(cand[9]).strip() != ""]
-        pure_normal_cands = [cand for cand in normal_cands if cand not in vip_retention_cands]
+        def union_top_n(cand_list, n_each):
+            by_v1 = sorted(cand_list, key=get_v1_score, reverse=True)[:n_each]
+            by_v2 = sorted(cand_list, key=get_v2_score, reverse=True)[:n_each]
+            seen, picked = set(), []
+            for c in by_v1 + by_v2:
+                if c[2] not in seen:           # 종목코드 기준 중복 제거
+                    seen.add(c[2])
+                    picked.append(c)
+            picked.sort(key=lambda x: max(get_v1_score(x), get_v2_score(x)), reverse=True)
+            return picked
+
+        seed_pool = union_top_n(seed_cands, 5)
+        normal_pool = union_top_n(normal_cands, 15)
+
+        final_seed = seed_pool[:5]
+        vip_retention_cands = [cand for cand in normal_pool if cand[9] != "AI 브리핑 대기중" and str(cand[9]).strip() != ""]
+        pure_normal_cands = [cand for cand in normal_pool if cand not in vip_retention_cands]
         final_normal = vip_retention_cands + pure_normal_cands[:max(0, 15 - len(vip_retention_cands))]
 
         top_20_results = final_seed + final_normal
-        top_20_results.sort(key=get_score_num, reverse=True)
+        top_20_results.sort(key=lambda x: max(get_v1_score(x), get_v2_score(x)), reverse=True)
 
         if not is_reset_time:
             top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results if len(x) > 2}
