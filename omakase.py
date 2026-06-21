@@ -20,7 +20,7 @@ TARGET_PERCENT = 3.0
 KST = datetime.timezone(datetime.timedelta(hours=9))
 KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
-KIS_URL_BASE = "https://openapi.koreainvestment.com:9443"
+KIS_URL_BASE = "https://openapi.koreainwestment.com:9443"
 MAX_WORKERS = int(os.environ.get("OMAKASE_MAX_WORKERS", "12"))
 
 # requests.Session 공용화로 연결 비용 절감 및 Keep-Alive 활성화
@@ -134,7 +134,7 @@ def get_kis_access_token():
     return None
 
 print("🔑 한국투자증권 API 접근 토큰을 준비합니다...")
-KIS_TOKEN = get_access_token = get_kis_access_token()
+KIS_TOKEN = get_kis_access_token()
 if KIS_TOKEN: print("✅ KIS 토큰 준비 완료!")
 else: print("⚠️ KIS 토큰 준비 실패")
 
@@ -627,9 +627,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
     fail_fallback = [
         name, f"'{code}", 0, "0.00%", 0, 0, "전일비 100%", "⚡ 관망 (데이터 수집 오류)",
         "⏸ 관망 · 조건미달", "AI 브리핑 대기중", 0, 0, 0, 0, "🟡 일반형", "📉 이격 과다",
-        "100.0%", "평범(X)\", \"🟡 [V.평년수준]\", \"개별주/기타\", \"⚪ [수급강도 평년] 1.0배\", 0,
-        \"🏦기:0.0억 / 🌎외:0.0억\", 0, 0, \"NORMAL\", \"\", \"\", \"정규장\", 0, \"0점 (오류)\",
-        0, \"0점 (V2오류)\"
+        "100.0%", "평범(X)", "🟡 [V.평년수준]", "개별주/기타", "⚪ [수급강도 평년] 1.0배", 0,
+        "🏦기:0.0억 / 🌎외:0.0억", 0, 0, "NORMAL", "", "", "정규장", 0, "0점 (오류)",
+        0, "0점 (V2오류)"
     ]
 
     try:
@@ -661,6 +661,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         f_buy_today = 0
         acc_i_buy_eok = 0.0
         acc_f_buy_eok = 0.0
+        program_qty_eok = 0.0
         pgtr_ntby_eok = 0.0
         smi_ratio = 1.0
         turnover_rate = 0.0
@@ -1091,7 +1092,14 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_core_buy_zone = (surge_rate_20d <= 0.25) and (change_rate < 0.07) and (current_price >= ma60 * 0.85)
         is_long_term_pick = (name in long_term_stocks) and not is_recent_overheated and is_core_buy_zone
         
+        # 👑 [안전 고도화]: NameError 파쇄용 데이터 연산 및 Suffix 동적 초기화 구문 안착
+        high_retention = current_price / today_high if today_high > 0 else 0
+        is_relative_strong = (kospi_rate <= -1.0) and (change_rate >= 0.03)
+        master_tajeom_suffix = ""
+        
         if is_relative_strong: master_tajeom_suffix += " 💪(하락장 역행)"
+        if high_retention >= 0.97 and change_rate >= 0.10 and trading_value >= 100_000_000_000:
+            master_tajeom_suffix += " 👑(진성대장)"
 
         tajeom_multiplier = 0.0
         master_tajeom_base = "⏸ 관망 · 조건미달"
@@ -1299,7 +1307,6 @@ def update_technical_data(df_theme, all_theme_map):
         gc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope))
         doc = gc.open_by_url(SHEET_URL)
 
-        # 👑 [핵심 보정]: 함수 시작 지점에 오늘 날짜 강제 초기화하여 분기 에러 원천 봉쇄
         today_date = datetime.datetime.now(KST).date()
 
         cleanup_and_reorder(doc, "접속로그", 1)
@@ -1362,7 +1369,6 @@ def update_technical_data(df_theme, all_theme_map):
                 theme_idx = header.index('테마명') if '테마명' in header else 3
                 name_idx = header.index('종목명') if '종목명' in header else 4
                 latest_date_str = str(realtime_data[1][date_idx]).strip()
-                today_date = datetime.datetime.strptime(latest_date_str, '%Y-%m-%d').date()
                 theme_rank_tracker = {}
                 for row in realtime_data[1:]:
                     if len(row) > max(date_idx, rank_idx, theme_idx, name_idx):
