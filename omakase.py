@@ -24,12 +24,28 @@ KIS_URL_BASE = "https://openapi.koreainvestment.com:9443"  # 👑 [교정 완료
 MAX_WORKERS = int(os.environ.get("OMAKASE_MAX_WORKERS", "12"))
 
 # requests.Session 공용화로 연결 비용 절감 및 Keep-Alive 활성화
+# requests.Session 공용화로 연결 비용 절감 및 Keep-Alive 활성화
 GLOBAL_SESSION = requests.Session()
 GLOBAL_SESSION.headers.update({
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept': 'application/json, text/plain, */*',
     'Referer': 'https://finance.naver.com/'
 })
+
+# 👑 [보호 레이어 주입]: 멀티스레드 동시 요청 시 커넥션 풀 고갈 및 한투 서버 강제 차단(RemoteDisconnected) 차단
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
+
+retry_strategy = Retry(
+    total=3,                # 한투 서버가 연결을 끊으면 최대 3회 자동 재시도
+    backoff_factor=0.3,     # 재시도 간의 미세한 시간 차 조정 (서버 부하 분산)
+    status_forcelist=[429, 500, 502, 503, 504],
+    raise_on_status=False
+)
+# 스레드 개수(12개)보다 훨씬 넉넉하게 커넥션 풀 용량을 50으로 확장
+adapter = HTTPAdapter(pool_connections=50, pool_maxsize=50, max_retries=retry_strategy)
+GLOBAL_SESSION.mount("https://", adapter)
+GLOBAL_SESSION.mount("http://", adapter)
 
 stock_alias_map = {
     "삼성화재": "삼성화재해상보험",
