@@ -148,9 +148,10 @@ def validate_stock_historical_dna(cand, raw_theme_daily_map):
                     break
                     
         return cand, has_qualified_day
+# hyeoks_analyst.py의 validate_stock_historical_dna 함수 내부의 except 구문을 수정하십시오.
     except Exception as e:
-        print(f"⚠️ [{name}] 역사적 DNA 검증 스킵 (통과): {e}")
-        return cand, True
+        print(f"⚠️ [{name}] 역사적 DNA 검증 인프라 오류 (안전을 위해 풀에서 배제): {e}")
+        return cand, False # 👑 True에서 False로 변경하여 급락장 서버 마비 시 의심 종목 필터링
  
 # ==========================================
 # 2. 구글 시트 연결 및 모드별 작동
