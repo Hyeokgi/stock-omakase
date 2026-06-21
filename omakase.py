@@ -167,12 +167,14 @@ def check_warning_market():
             if ma5 < ma20:       warning_count += 1
     except Exception as e:
         print(f"⚠️ [check_warning_market Naver Index Error] {e}")
+        warning_count += 1 # 👑 Fail-Closed: 네트워크 터지면 리스크 관리를 위해 위험 장세로 간주
 
     try:
         kospi_rate = get_kospi_fluctuation_rate()
         if kospi_rate <= -1.0: warning_count += 1
     except Exception as e:
         print(f"⚠️ [check_warning_market Kospi Fluctuation Error] {e}")
+        warning_count += 1 # 👑 Fail-Closed: 에러 시 안전하게 위험 카운트 수치 유도
 
     return warning_count >= 1
 
@@ -1666,6 +1668,7 @@ def update_technical_data(df_theme, all_theme_map):
             if len(row) >= 7: existing_keys.add((str(row[0]).strip(), str(row[2]).replace("'", "").strip().zfill(6), str(row[6]).strip()))
 
         new_logs_count = 0
+# omakase.py의 15시 메인 백테스트 로깅 블록을 아래 코드로 대체하십시오.
         if is_eod_log_window:
             positive_badges = ["🎯", "💎", "🌟", "👑", "📦", "🔍", "🚀", "🌱"]
             negative_markers = ["📉", "관망", "조건미달", "🚫", "매매금지"]
@@ -1681,12 +1684,15 @@ def update_technical_data(df_theme, all_theme_map):
             chart_top2  = sorted(candidate_pool, key=lambda x: x[29], reverse=True)[:2]   
             supply_top2 = sorted(candidate_pool, key=lambda x: x[31], reverse=True)[:2]   
             
-            report_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results if len(x) > 2}
-            pool_report = sorted([r for r in candidate_pool if str(r[1]).replace("'", "").strip().zfill(6) in report_codes], key=lambda x: x[31], reverse=True)[:2]
-
-            channels = [("차트상위TOP2", chart_top2), ("수급상위TOP2", supply_top2), ("리포트발송TOP2", pool_report)]
+            # 👑 [클로드 지적 즉시 반영]: 예측용 더미 채널을 삭제하여 통계 왜곡 원천 차단
+            channels = [("차트상위TOP2", chart_top2), ("수급상위TOP2", supply_top2)]
 
             for category, picks in channels:
+                # 👑 [장중 중복 실행 방어]: 오늘 이미 해당 카테고리로 2개 이상 기록됐다면 추가 기록을 차단하여 샘플 수 완전 고정!
+                today_logged_count = sum(1 for row in bt_data[1:] if len(row) >= 7 and str(row[0]).strip() == today_str and str(row[6]).strip() == category)
+                if today_logged_count >= 2: 
+                    continue
+
                 for r in picks:
                     s_code = str(r[1]).replace("'", "").strip().zfill(6)
                     key = (today_str, s_code, category)
@@ -1700,7 +1706,7 @@ def update_technical_data(df_theme, all_theme_map):
                         existing_keys.add(key)
                         updated = True
                         new_logs_count += 1
-            print(f"📊 [3채널 분할 적재] 당일 핵심 주도주 {new_logs_count}건 타겟 완료.")
+            print(f"📊 [정밀 적재] 당일 핵심 주도주 중복 없이 정확히 하루 2개 표본 고정 잠금 완료.")
 
         if updated or len(legacy_rows) > 0 or force_sync_sheet:
             bt_sheet.batch_clear(['A1:N5000'])
