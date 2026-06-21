@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-import os, re, time, base64, warnings, datetime, requests, markdown, pdfkit, gspread, PIL.Image 
+import os, re, time, base64, warnings, datetime, requests, markdown, pdfkit, gspread, json
+from PIL import Image 
 from bs4 import BeautifulSoup  
 from oauth2client.service_account import ServiceAccountCredentials
 from google import genai
@@ -745,10 +746,10 @@ try:
                     cand['curr_p'],
                     cand.get('type', ''),       # NORMAL/SEED 등 마스터타점 대용
                     "리포팅TOP2",
-                    "",                          # V1점수 — 리포팅 채널은 미해당이라 공란
-                    "",                          # V2점수 — 동일
-                    "",                          # 수급상태 — 필요시 추후 보강
-                    "", "", "", ""               # T+1/T+3/T+5/T+10
+                    f"{cand['v1_score']}점",                    # 🎯 V1 차트기술점수 실축 연동 기록
+                    f"{cand['v2_score']}점",                    # 🎯 V2 수급거래점수 실축 연동 기록
+                    "",                                          # 수급상태 — 필요시 추후 보강
+                    "", "", "", ""                               # T+1/T+3/T+5/T+10
                 ]
                 bt_data.append(new_row)
                 existing_keys.add(key)
