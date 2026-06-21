@@ -20,7 +20,7 @@ TARGET_PERCENT = 3.0
 KST = datetime.timezone(datetime.timedelta(hours=9))
 KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
-KIS_URL_BASE = "https://openapi.koreainwestment.com:9443"
+KIS_URL_BASE = "https://openapi.koreainvestment.com:9443"  # 👑 [교정 완료]: inwestment -> investment 오타 수정
 MAX_WORKERS = int(os.environ.get("OMAKASE_MAX_WORKERS", "12"))
 
 # requests.Session 공용화로 연결 비용 절감 및 Keep-Alive 활성화
@@ -661,7 +661,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         f_buy_today = 0
         acc_i_buy_eok = 0.0
         acc_f_buy_eok = 0.0
-        program_qty_eok = 0.0
         pgtr_ntby_eok = 0.0
         smi_ratio = 1.0
         turnover_rate = 0.0
