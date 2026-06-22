@@ -1514,11 +1514,14 @@ def update_technical_data(df_theme, all_theme_map):
         except Exception as e: print(f"⚠️ [helper_sheet update Error] {e}")
 
         # ==========================================================================
-        # 👑 [수석 트레이더 오더 반영]: 2중 철벽 브리핑 복원 및 VIP 종목 강제 생존 엔진
+        # 👑 [수석 트레이더 핵심 오더]: 24시간 AI 브리핑 절대 보존 및 자동 구출 엔진 (최종 완결본)
         # ==========================================================================
         scanner_keywords = ["🎯", "💎", "🌱", "🚀", "📦", "🔍", "📉 과매도"]
         all_candidates = []
         processed_codes = set()
+
+        # ✨ [가드레일 1]: 타리프/네트워크 오류에 영향받지 않는 순수 시간 기반 아침 초기화 락 매핑
+        is_official_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50)
 
         for r in results:
             if len(r) < 29: continue
@@ -1571,41 +1574,42 @@ def update_technical_data(df_theme, all_theme_map):
         final_seed = seed_pool[:5]
         final_normal = normal_pool[:15]
 
-        # 1차 당일 탑랭커 리스트 생성
+        # 1차 후보군 종목 풀 조립
         top_20_results = final_seed + final_normal
 
-        # 🎯 [2순위 요구사항 반영]: 리포트/간단 브리핑이 있는 종목은 순위권 탈락 여부와 상관없이 무조건 시트 하단 강제 생존
-        if not is_reset_time:
+        # 🎯 [가드레일 2]: 기존 시트에 브리핑이 채워진 종목이 순위권에서 탈락했더라도 하단에 100% 강제 생존(Rescue)
+        if not is_official_reset_time:
             top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results if len(x) > 2}
             for c_code, data in existing_data.items():
                 if c_code not in top_20_codes:
                     briefing_text = str(data["briefing"]).strip()
-                    if any(key in briefing_text for key in ["리포트 발송 완료", "간단 브리핑"]):
+                    # 대기중 상태가 아닌 찐 애널리스트 분석글이 존재한다면 강제 구출하여 하단 유지
+                    if briefing_text != "AI 브리핑 대기중" and briefing_text != "":
                         top_20_results.append(data["raw_row"])
                         top_20_codes.add(c_code)
 
-        # 생존 종목 포함 전체 재정렬
+        # 생존/구출 종목을 포함하여 대시보드 화면 최종 정렬
         top_20_results.sort(key=lambda x: max(get_v1_score(x), get_v2_score(x)), reverse=True)
 
-        # 🎯 [1순위 요구사항 반영]: 구글 시트 반영(update) 직전, 기존 백업(existing_data)에서 텍스트와 실시간 가격 데이터 복원 덮어쓰기
-        if not is_reset_time:
+        # 🎯 [가드레일 3]: 시트 반영(update) 직전 최종 단계에서 백업본(existing_data) 데이터를 최우선으로 강제 덮어쓰기 복원
+        if not is_official_reset_time:
             for row in top_20_results:
                 if len(row) > 15:
                     code = str(row[2]).replace("'", "").strip().zfill(6)
                     if code in existing_data:
                         existing_briefing = str(existing_data[code]["briefing"]).strip()
-                        # '대기중'이 아닌 사람이 쓴 진짜 데이터가 매칭된다면 오버라이트 차단 및 복원
-                        if any(key in existing_briefing for key in ["간단 브리핑", "리포트 발송 완료"]):
-                            row[9] = existing_briefing                              # J열 (브리핑상태) 복원
+                        # 기존 시트에 데이터가 존재할 경우 연산 원본값에 상관없이 덮어쓰기 방어막 집행
+                        if existing_briefing != "AI 브리핑 대기중" and existing_briefing != "":
+                            row[9] = existing_briefing                              # J열 (🤖 AI 종합 브리핑) 복원
                             row[14] = existing_data[code]["target"]                 # O열 (목표가) 복원
                             row[15] = existing_data[code]["stop"]                   # P열 (손절가) 복원
 
-        # 최종 가드 검증 후 구글 시트 밀어넣기
+        # 최종 무결성 검증 완료 후 스프레드시트 갱신
         if top_20_results:
             try:
                 db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
                 db_scanner_sheet.batch_clear([f"A{len(top_20_results) + 2}:AC"])
-                print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (장중 실시간 브리핑 보존 완벽 검증)")
+                print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (AI 브리핑 대기중 덮어쓰기 현상 완벽 차단 및 사수 완료)")
             except Exception as e: print(f"⚠️ [DB_스캐너 update Error] {e}")
 
         try:
