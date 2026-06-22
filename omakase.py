@@ -1562,10 +1562,18 @@ def update_technical_data(df_theme, all_theme_map):
             picked.sort(key=lambda x: max(get_v1_score(x), get_v2_score(x)), reverse=True)
             return picked
 
+# ==========================================================================
+# 👑 [VIP 강제 보존 락인 게이트 고도화]: 종목 쿼터 및 간단 브리핑 증발 원천 차단
+# ==========================================================================
         seed_pool = union_top_n(seed_cands, 5)
         normal_pool = union_top_n(normal_cands, 15)
 
-        final_seed = seed_pool[:5]
+        # ✨ [가드레일 1]: SEED 풀 내에서도 이미 AI 브리핑이 주입된 종목은 최우선적으로 쿼터 확보 및 보존
+        vip_seed_cands = [cand for cand in seed_pool if cand[9] != "AI 브리핑 대기중" and str(cand[9]).strip() != ""]
+        pure_seed_cands = [cand for cand in seed_pool if cand not in vip_seed_cands]
+        final_seed = vip_seed_cands + pure_seed_cands[:max(0, 5 - len(vip_seed_cands))]
+
+        # ✨ [가드레일 2]: NORMAL 풀 내 브리핑 데이터 보존 (유지 및 강화)
         vip_retention_cands = [cand for cand in normal_pool if cand[9] != "AI 브리핑 대기중" and str(cand[9]).strip() != ""]
         pure_normal_cands = [cand for cand in normal_pool if cand not in vip_retention_cands]
         final_normal = vip_retention_cands + pure_normal_cands[:max(0, 15 - len(vip_retention_cands))]
@@ -1573,11 +1581,15 @@ def update_technical_data(df_theme, all_theme_map):
         top_20_results = final_seed + final_normal
         top_20_results.sort(key=lambda x: max(get_v1_score(x), get_v2_score(x)), reverse=True)
 
+        # ✨ [가드레일 3]: 최후방 탈락 종목 복원 필터에 '간단 브리핑' 및 실질 데이터 검증 로직 확장 주입
         if not is_reset_time:
             top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results if len(x) > 2}
             for c_code, data in existing_data.items():
                 if c_code not in top_20_codes:
-                    if any(key in data["briefing"] for key in ["리포트 발송 완료"]):
+                    briefing_content = str(data["briefing"]).strip()
+                    
+                    # '리포트 발송 완료' 또는 '간단 브리핑'이 적혀있거나, 대기중 상태가 아닌 찐 분석글이 존재한다면 강제 락인(Lock-in)
+                    if any(key in briefing_content for key in ["리포트 발송 완료", "간단 브리핑"]) or (briefing_content != "AI 브리핑 대기중" and briefing_content != ""):
                         top_20_results.append(data["raw_row"])
                         top_20_codes.add(c_code)
 
@@ -1585,7 +1597,7 @@ def update_technical_data(df_theme, all_theme_map):
             try:
                 db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
                 db_scanner_sheet.batch_clear([f"A{len(top_20_results) + 2}:AC"])
-                print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료")
+                print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (AI 브리핑 완벽 보호막 작동)")
             except Exception as e: print(f"⚠️ [DB_스캐너 update Error] {e}")
 
         try:
