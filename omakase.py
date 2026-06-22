@@ -1513,6 +1513,9 @@ def update_technical_data(df_theme, all_theme_map):
             helper_sheet.batch_clear([f"A{len(helper_sheet_data) + 1}:AG"])
         except Exception as e: print(f"⚠️ [helper_sheet update Error] {e}")
 
+        # ==========================================================================
+        # 👑 [수석 트레이더 오더 반영]: 2중 철벽 브리핑 복원 및 VIP 종목 강제 생존 엔진
+        # ==========================================================================
         scanner_keywords = ["🎯", "💎", "🌱", "🚀", "📦", "🔍", "📉 과매도"]
         all_candidates = []
         processed_codes = set()
@@ -1562,41 +1565,47 @@ def update_technical_data(df_theme, all_theme_map):
             picked.sort(key=lambda x: max(get_v1_score(x), get_v2_score(x)), reverse=True)
             return picked
 
-# ==========================================================================
-# 👑 [VIP 강제 보존 락인 게이트 고도화]: 종목 쿼터 및 간단 브리핑 증발 원천 차단
-# ==========================================================================
         seed_pool = union_top_n(seed_cands, 5)
         normal_pool = union_top_n(normal_cands, 15)
 
-        # 👑 [수정 1] seed_pool(기아, SK텔레콤 등)에도 원본의 보존 로직을 동일하게 적용
-        # (기존에는 final_seed = seed_pool[:5] 로 무조건 잘려나가서 브리핑이 증발함)
-        vip_seed_cands = [cand for cand in seed_pool if cand[9] != "AI 브리핑 대기중" and str(cand[9]).strip() != ""]
-        pure_seed_cands = [cand for cand in seed_pool if cand not in vip_seed_cands]
-        final_seed = vip_seed_cands + pure_seed_cands[:max(0, 5 - len(vip_seed_cands))]
+        final_seed = seed_pool[:5]
+        final_normal = normal_pool[:15]
 
-        # 기존 normal_pool 보존 로직 유지 (수정 없음)
-        vip_retention_cands = [cand for cand in normal_pool if cand[9] != "AI 브리핑 대기중" and str(cand[9]).strip() != ""]
-        pure_normal_cands = [cand for cand in normal_pool if cand not in vip_retention_cands]
-        final_normal = vip_retention_cands + pure_normal_cands[:max(0, 15 - len(vip_retention_cands))]
-
+        # 1차 당일 탑랭커 리스트 생성
         top_20_results = final_seed + final_normal
-        top_20_results.sort(key=lambda x: max(get_v1_score(x), get_v2_score(x)), reverse=True)
 
+        # 🎯 [2순위 요구사항 반영]: 리포트/간단 브리핑이 있는 종목은 순위권 탈락 여부와 상관없이 무조건 시트 하단 강제 생존
         if not is_reset_time:
             top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results if len(x) > 2}
             for c_code, data in existing_data.items():
                 if c_code not in top_20_codes:
-                    # 👑 [수정 2] 최후 방어선 키워드에 "간단 브리핑" 추가
-                    # (기존에는 "리포트 발송 완료"만 검사했음)
-                    if any(key in data["briefing"] for key in ["리포트 발송 완료", "간단 브리핑"]):
+                    briefing_text = str(data["briefing"]).strip()
+                    if any(key in briefing_text for key in ["리포트 발송 완료", "간단 브리핑"]):
                         top_20_results.append(data["raw_row"])
                         top_20_codes.add(c_code)
 
+        # 생존 종목 포함 전체 재정렬
+        top_20_results.sort(key=lambda x: max(get_v1_score(x), get_v2_score(x)), reverse=True)
+
+        # 🎯 [1순위 요구사항 반영]: 구글 시트 반영(update) 직전, 기존 백업(existing_data)에서 텍스트와 실시간 가격 데이터 복원 덮어쓰기
+        if not is_reset_time:
+            for row in top_20_results:
+                if len(row) > 15:
+                    code = str(row[2]).replace("'", "").strip().zfill(6)
+                    if code in existing_data:
+                        existing_briefing = str(existing_data[code]["briefing"]).strip()
+                        # '대기중'이 아닌 사람이 쓴 진짜 데이터가 매칭된다면 오버라이트 차단 및 복원
+                        if any(key in existing_briefing for key in ["간단 브리핑", "리포트 발송 완료"]):
+                            row[9] = existing_briefing                              # J열 (브리핑상태) 복원
+                            row[14] = existing_data[code]["target"]                 # O열 (목표가) 복원
+                            row[15] = existing_data[code]["stop"]                   # P열 (손절가) 복원
+
+        # 최종 가드 검증 후 구글 시트 밀어넣기
         if top_20_results:
             try:
                 db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
                 db_scanner_sheet.batch_clear([f"A{len(top_20_results) + 2}:AC"])
-                print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (AI 브리핑 완벽 보호막 작동)")
+                print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (장중 실시간 브리핑 보존 완벽 검증)")
             except Exception as e: print(f"⚠️ [DB_스캐너 update Error] {e}")
 
         try:
