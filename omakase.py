@@ -1568,12 +1568,13 @@ def update_technical_data(df_theme, all_theme_map):
         seed_pool = union_top_n(seed_cands, 5)
         normal_pool = union_top_n(normal_cands, 15)
 
-        # ✨ [가드레일 1]: SEED 풀 내에서도 이미 AI 브리핑이 주입된 종목은 최우선적으로 쿼터 확보 및 보존
+        # 👑 [수정 1] seed_pool(기아, SK텔레콤 등)에도 원본의 보존 로직을 동일하게 적용
+        # (기존에는 final_seed = seed_pool[:5] 로 무조건 잘려나가서 브리핑이 증발함)
         vip_seed_cands = [cand for cand in seed_pool if cand[9] != "AI 브리핑 대기중" and str(cand[9]).strip() != ""]
         pure_seed_cands = [cand for cand in seed_pool if cand not in vip_seed_cands]
         final_seed = vip_seed_cands + pure_seed_cands[:max(0, 5 - len(vip_seed_cands))]
 
-        # ✨ [가드레일 2]: NORMAL 풀 내 브리핑 데이터 보존 (유지 및 강화)
+        # 기존 normal_pool 보존 로직 유지 (수정 없음)
         vip_retention_cands = [cand for cand in normal_pool if cand[9] != "AI 브리핑 대기중" and str(cand[9]).strip() != ""]
         pure_normal_cands = [cand for cand in normal_pool if cand not in vip_retention_cands]
         final_normal = vip_retention_cands + pure_normal_cands[:max(0, 15 - len(vip_retention_cands))]
@@ -1581,15 +1582,13 @@ def update_technical_data(df_theme, all_theme_map):
         top_20_results = final_seed + final_normal
         top_20_results.sort(key=lambda x: max(get_v1_score(x), get_v2_score(x)), reverse=True)
 
-        # ✨ [가드레일 3]: 최후방 탈락 종목 복원 필터에 '간단 브리핑' 및 실질 데이터 검증 로직 확장 주입
         if not is_reset_time:
             top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results if len(x) > 2}
             for c_code, data in existing_data.items():
                 if c_code not in top_20_codes:
-                    briefing_content = str(data["briefing"]).strip()
-                    
-                    # '리포트 발송 완료' 또는 '간단 브리핑'이 적혀있거나, 대기중 상태가 아닌 찐 분석글이 존재한다면 강제 락인(Lock-in)
-                    if any(key in briefing_content for key in ["리포트 발송 완료", "간단 브리핑"]) or (briefing_content != "AI 브리핑 대기중" and briefing_content != ""):
+                    # 👑 [수정 2] 최후 방어선 키워드에 "간단 브리핑" 추가
+                    # (기존에는 "리포트 발송 완료"만 검사했음)
+                    if any(key in data["briefing"] for key in ["리포트 발송 완료", "간단 브리핑"]):
                         top_20_results.append(data["raw_row"])
                         top_20_codes.add(c_code)
 
