@@ -555,10 +555,78 @@ try:
     short_summary = extract_summary(report_short) if best_short else ""
     mid_summary = extract_summary(report_mid) if best_mid else ""
  
-    for i, r in enumerate(latest_db_data[1:], start=2):
-        if len(r) > 9:
-            code = str(r[2]).replace("'", "").strip().zfill(6)
-            stock_name = r[0] if len(r) > 0 else "알수없음"
+    # 👑 [무결성 보정]: omakase.py의 장중 기습 정렬로부터 AI 브리핑 타점을 철통 방어하는 3채널 실시간 역추적 엔진
+    for i, r_legacy in enumerate(latest_db_data[1:], start=2):
+        if len(r_legacy) > 9:
+            code = str(r_legacy[2]).replace("'", "").strip().zfill(6)
+            stock_name = r_legacy[0] if len(r_legacy) > 0 else "알수없음"
+            
+            # 🛡️ [실시간 쉴드 주입]: 매 루프마다 현재 시트 스냅샷을 재스캔하여 실시간 변동된 정확한 행(Row) 인덱스를 추출
+            current_db_snapshot = db_sheet.get_all_values()
+            real_row_idx = -1
+            for idx, r_row in enumerate(current_db_snapshot, start=1):
+                if len(r_row) > 2 and str(r_row[2]).replace("'", "").strip().zfill(6) == code:
+                    real_row_idx = idx
+                    break
+            
+            # 만약 스캐너에 의해 해당 종목이 밀려나 사라졌다면 안전하게 스킵하여 에러 방지
+            if real_row_idx == -1:
+                print(f" ↳ ⚠️ [{stock_name}] 장중 순위 이탈 감지되어 실시간 마킹 패스.")
+                continue
+
+            # 👑 모든 update_cell의 대상을 고정 인덱스 'i'에서 'real_row_idx'로 정밀 요격 전환
+            if best_short and code == best_short['code']:
+                print(f" - [{stock_name}] 리포트 정보 및 가격 시트에 업데이트 중...")
+                db_sheet.update_cell(real_row_idx, 10, short_summary)
+                if pick_short:
+                    db_sheet.update_cell(real_row_idx, 15, f"{pick_short['target']:,}원")
+                    db_sheet.update_cell(real_row_idx, 16, f"{pick_short['stop']:,}원")
+                time.sleep(3.5)
+                continue
+            
+            if best_mid and code == best_mid['code']:
+                print(f" - [{stock_name}] 리포트 정보 및 가격 시트에 업데이트 중...")
+                db_sheet.update_cell(real_row_idx, 10, mid_summary)
+                if pick_mid:
+                    db_sheet.update_cell(real_row_idx, 15, f"{pick_mid['target']:,}원")
+                    db_sheet.update_cell(real_row_idx, 16, f"{pick_mid['stop']:,}원")
+                time.sleep(3.5)
+                continue
+            
+            # 실시간 시황 스냅샷 검사 후 중복 주입 차단
+            if "리포트 발송 완료" not in str(current_db_snapshot[real_row_idx-1][9]):
+                print(f" - [{stock_name}] AI 전략 및 가격 산출 중...")
+                
+                curr_p = r_legacy[3] if len(r_legacy) > 3 else ''
+                tajeom_badge = r_legacy[8] if len(r_legacy) > 8 else ''
+                sugeup = r_legacy[11] if len(r_legacy) > 11 else ''
+                high_52 = r_legacy[12] if len(r_legacy) > 12 else ''
+                theme = r_legacy[5] if len(r_legacy) > 5 else ''
+                target_sys = r_legacy[14] if len(r_legacy) > 14 else ''
+                stop_sys = r_legacy[15] if len(r_legacy) > 15 else ''
+                
+                prompt = get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys, is_warning_market)
+                
+                try:
+                    res_text = safe_generate_content(prompt, is_fast=True).text
+                    parsed_data = parse_ai_json(res_text)
+                    
+                    briefing_text = parsed_data.get("briefing", "브리핑 생성 에러")
+                    if not briefing_text.startswith("✅") and not briefing_text.startswith("⚠️"): 
+                        briefing_text = f"✅ [간단 브리핑] {briefing_text}"
+                    
+                    raw_target = str(parsed_data.get('target_price', '0')).replace(',', '').replace('원', '')
+                    raw_stop = str(parsed_data.get('stop_loss', '0')).replace(',', '').replace('원', '')
+                    
+                    target_val = f"{int(raw_target):,}원" if raw_target.isdigit() and int(raw_target) > 0 else "관망"
+                    stop_val = f"{int(raw_stop):,}원" if raw_stop.isdigit() and int(raw_stop) > 0 else "관망"
+                    
+                    db_sheet.update_cell(real_row_idx, 10, briefing_text)
+                    db_sheet.update_cell(real_row_idx, 15, target_val)
+                    db_sheet.update_cell(real_row_idx, 16, stop_val)
+                    time.sleep(3.5)
+                except Exception as e:
+                    print(f"[{stock_name}] 브리핑/가격 산출 에러 발생 (건너뜀): {e}")
  
             if best_short and code == best_short['code']:
                 print(f" - [{stock_name}] 리포트 정보 및 가격 시트에 업데이트 중...")
