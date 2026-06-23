@@ -1574,42 +1574,45 @@ def update_technical_data(df_theme, all_theme_map):
         final_seed = seed_pool[:5]
         final_normal = normal_pool[:15]
 
-        # 1차 후보군 종목 풀 조립
+        # 1차 후보군 종목 풀 조립 (정량 퀀트 스코어 상위 정예만 선별)
         top_20_results = final_seed + final_normal
 
-        # 🎯 [가드레일 2]: 기존 시트에 브리핑이 채워진 종목이 순위권에서 탈락했더라도 하단에 100% 강제 생존(Rescue)
+        # 🎯 [수석 트레이더 오더 반영 - 가드레일 2]: 핵심 리포트주 외 좀비 종목 원천 청소
+        # '리포트 발송 완료' 꼬리표가 붙은 진짜 핵심주만 순위 이탈 시 하단에 강제 생존(Rescue)시킵니다.
+        # 장중 '간단 브리핑'이나 '매수 보류' 상태였던 종목은 순위 밀리면 유실(지워짐)을 허용하여 시트 폭증을 박멸합니다.
         if not is_official_reset_time:
             top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results if len(x) > 2}
             for c_code, data in existing_data.items():
                 if c_code not in top_20_codes:
                     briefing_text = str(data["briefing"]).strip()
-                    # 대기중 상태가 아닌 찐 애널리스트 분석글이 존재한다면 강제 구출하여 하단 유지
-                    if briefing_text != "AI 브리핑 대기중" and briefing_text != "":
+                    
+                    # 📌 핀셋 가드레일: 오직 발행 완료된 찐 리포트 종목만 탈락 여부 상관없이 익일 07시까지 강제 복원
+                    if any(key in briefing_text for key in ["리포트 발송 완료", "리포트 작성 완료"]):
                         top_20_results.append(data["raw_row"])
                         top_20_codes.add(c_code)
 
         # 생존/구출 종목을 포함하여 대시보드 화면 최종 정렬
         top_20_results.sort(key=lambda x: max(get_v1_score(x), get_v2_score(x)), reverse=True)
 
-        # 🎯 [가드레일 3]: 시트 반영(update) 직전 최종 단계에서 백업본(existing_data) 데이터를 최우선으로 강제 덮어쓰기 복원
+        # 🎯 [가드레일 3]: 순위권(Top 20) 내에 당당히 살아남은 종목들의 장중 리서치 데이터는 오버라이트 차단
+        # (순위권에 안착해 있는 동안에는 '간단 브리핑'이나 '목표가'가 새로고침으로 인해 대기중으로 덮어써지는 것을 완벽 방어)
         if not is_official_reset_time:
             for row in top_20_results:
                 if len(row) > 15:
                     code = str(row[2]).replace("'", "").strip().zfill(6)
                     if code in existing_data:
                         existing_briefing = str(existing_data[code]["briefing"]).strip()
-                        # 기존 시트에 데이터가 존재할 경우 연산 원본값에 상관없이 덮어쓰기 방어막 집행
                         if existing_briefing != "AI 브리핑 대기중" and existing_briefing != "":
                             row[9] = existing_briefing                              # J열 (🤖 AI 종합 브리핑) 복원
                             row[14] = existing_data[code]["target"]                 # O열 (목표가) 복원
                             row[15] = existing_data[code]["stop"]                   # P열 (손절가) 복원
 
-        # 최종 무결성 검증 완료 후 스프레드시트 갱신
+        # 최종 업데이트 집행
         if top_20_results:
             try:
                 db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
                 db_scanner_sheet.batch_clear([f"A{len(top_20_results) + 2}:AC"])
-                print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (AI 브리핑 대기중 덮어쓰기 현상 완벽 차단 및 사수 완료)")
+                print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (불필요 찌꺼기 종목 완전 청소 완료)")
             except Exception as e: print(f"⚠️ [DB_스캐너 update Error] {e}")
 
         try:
