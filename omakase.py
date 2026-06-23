@@ -1624,22 +1624,35 @@ def update_technical_data(df_theme, all_theme_map):
         except Exception as e:
             print(f"⚠️ [DB_중장기 시트 연동 실패] {e}")
 
-        scanner_keywords = ["🎯", "💎", "🌱", "🚀", "📦", "🔍", "📉 과매도"]
+        # ==========================================================================
+        # 👑 [수석 트레이더 최종 승인 본]: 좀비 종목 무조건 박멸 및 면책 특권 강제 박탈 엔진
+        # ==========================================================================
+        scanner_keywords = ["🎯", "💎", "🌱", "🚀", "📦", "🔍"]
         all_candidates = []
         processed_codes = set()
         is_official_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50)
+
+        # 시장 허들 레이팅 설정 (하락장/위험장세에는 40점 미만 정량 스커트 아웃)
+        cutoff_score = 40 if is_warning_market else 25
 
         for r in results:
             if len(r) < 29: continue
             종목명 = str(r[0]).strip()
             종목코드 = str(r[1]).replace("'", "").zfill(6)
             processed_codes.add(종목코드) 
-            tajeom = r[8]
             
-            # ✨ [개선]: 스캐너 키워드에 걸리거나, 혹은 'DB_중장기'에 등록된 포트폴리오 핵심 종목은 무조건 후보군 진입 보장
+            # ✨ [가드레일 1]: 상위 엔진에서 오염되어 내려온 면책/코어픽 배지 및 특권을 문자열 레벨에서 원천 삭제 및 청소
+            tajeom = str(r[8]).replace("🎖️(코어픽/면책)", "").replace("(코어픽/면책)", "").replace("🎖️", "").strip()
+            
+            v1_num = int(r[29]) if len(r) > 29 and str(r[29]).isdigit() else 0
+            v2_num = int(r[31]) if len(r) > 31 and str(r[31]).isdigit() else 0
+            max_current_score = max(v1_num, v2_num)
+
+            # ✨ [가드레일 2]: 타점에 관망/조건미달이 적혀있거나, 퀀트 점수가 허들(하락장 40점) 미달인 유령주는 후보군 진입 자체를 원천 봉쇄
+            if "관망" in tajeom or "조건미달" in tajeom or max_current_score < cutoff_score:
+                continue
+
             if any(kw in tajeom for kw in scanner_keywords) or (종목명 in portfolio_protected_names):
-                v1_num = r[29] if len(r) > 29 else 0
-                v2_num = r[31] if len(r) > 31 else 0
                 combined_score_display = f"V1:{v1_num}점 / V2:{v2_num}점"
                 하이브리드_링크 = f'=HYPERLINK("https://m.stock.naver.com/domestic/stock/{종목코드}/total", "{종목명}")'
                 row_data = [
@@ -1678,36 +1691,34 @@ def update_technical_data(df_theme, all_theme_map):
         seed_pool = union_top_n(seed_cands, 5)
         normal_pool = union_top_n(normal_cands, 15)
 
-        # 1차 후보군 종목 풀 조립 (정량 퀀트 스코어 기반)
+        # 👑 정량 쿼터 선별 (SEED 최대 5개 + NORMAL 최대 15개)
         top_20_results = seed_pool[:5] + normal_pool[:15]
         top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results if len(x) > 2}
 
-        # 🎯 [가드레일 2 - 구출 게이트]: 기존 대시보드 및 중장기 시트 연동 복원 필터
+        # 🎯 [가드레일 3 - 구출 필터 엄격화]: 매수보류/경고 찌꺼기 복원 원천 금지
+        # 오직 애널리스트가 수동 발행한 "리포트 발송 완료" 또는 "리포트 작성 완료" 핵심주만 구출 명단을 허용합니다.
         if not is_official_reset_time:
-            # 기존 시트의 좀비 종목 구출 루프
             for c_code, data in existing_data.items():
                 if c_code not in top_20_codes:
                     briefing_text = str(data["briefing"]).strip()
-                    item_name = str(data["raw_row"][0]).strip()
                     
-                    # 하이퍼링크 분리 가공하여 순수 종목명 획득
-                    clean_item_name = item_name
-                    if 'HYPERLINK' in item_name:
-                        try: clean_item_name = item_name.split('"')[3]
-                        except: pass
-                    
-                    # 구출 절대 법칙: 1) 발행된 찐 리포트주이거나, 2) 현재 'DB_중장기' 시트에 상주하는 전략 포트 종목인 경우
-                    is_report_complete = any(key in briefing_text for key in ["리포트 발송 완료", "리포트 작성 완료"])
-                    is_active_portfolio = clean_item_name in portfolio_protected_names
-                    
-                    if is_report_complete or is_active_portfolio:
-                        top_20_results.append(data["raw_row"])
+                    # 📌 핀셋 소환 법칙: 경고나 보류 문구가 아닌, 실질적인 리포트 출하 완료 종목만 구출
+                    if any(key in briefing_text for key in ["리포트 발송 완료", "리포트 작성 완료"]):
+                        # 구출할 때도 타점 칸의 면책 문구를 강제로 청소해서 결합
+                        clean_row = list(data["raw_row"])
+                        if len(clean_row) > 8:
+                            clean_row[8] = str(clean_row[8]).replace("🎖️(코어픽/면책)", "").replace("(코어픽/면책)", "").replace("🎖️", "").strip()
+                        top_20_results.append(clean_row)
                         top_20_codes.add(c_code)
 
-        # 생존 및 중기 포트 종목을 포함하여 전체 화면 재정렬
+        #종합 정렬
         top_20_results.sort(key=lambda x: max(get_v1_score(x), get_v2_score(x)), reverse=True)
 
-        # 🎯 [가드레일 3]: 순위 유지 중인 종목들의 장중 실시간 데이터 오버라이트 차단성 복원
+        # 🎯 [가드레일 4 - 물리적 상한선 탑재]: 어떤 예외 상황에서도 대시보드가 20종목을 초과해 비대해지는 것을 물리적으로 락(Lock)
+        if len(top_20_results) > 20:
+            top_20_results = top_20_results[:20]
+
+        # 🎯 [가드레일 5]: 순위권 생존 종목의 장중 실시간 데이터 교차 복원 덮어쓰기
         if not is_official_reset_time:
             for row in top_20_results:
                 if len(row) > 15:
@@ -1715,16 +1726,16 @@ def update_technical_data(df_theme, all_theme_map):
                     if code in existing_data:
                         existing_briefing = str(existing_data[code]["briefing"]).strip()
                         if existing_briefing != "AI 브리핑 대기중" and existing_briefing != "":
-                            row[9] = existing_briefing                              # J열 (🤖 AI 종합 브리핑) 복원
-                            row[14] = existing_data[code]["target"]                 # O열 (목표가) 복원
-                            row[15] = existing_data[code]["stop"]                   # P열 (손절가) 복원
+                            row[9] = existing_briefing
+                            row[14] = existing_data[code]["target"]
+                            row[15] = existing_data[code]["stop"]
 
-        # 최종 가드 검증 후 구글 시트 업데이트
+        # 최종 대시보드 송출
         if top_20_results:
             try:
                 db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
                 db_scanner_sheet.batch_clear([f"A{len(top_20_results) + 2}:AC"])
-                print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (중기 포트폴리오 연동형 영구 생존 필터 작동)")
+                print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (면책 삭제 및 유령 종목 완전 차단 완료)")
             except Exception as e: print(f"⚠️ [DB_스캐너 update Error] {e}")
 
         try:
