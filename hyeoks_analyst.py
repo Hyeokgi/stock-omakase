@@ -199,15 +199,27 @@ try:
     def get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys, market_stage, stage_text):
         is_seed = "🌱" in tajeom_badge or "모아가기" in tajeom_badge or "DB_중장기" in tajeom_badge
         is_active_buy = "외인집중" in tajeom_badge
-        market_context = f"🚨 현재 시장은 극단적 자산 훼손 리스크 구간입니다 ({stage_text})." if market_stage == 3 else ("🚨 현재 시장은 변동성이 큰 하락/횡보장입니다." if market_stage == 2 else "현재 시장은 정상적인 장세입니다.")
+        market_context = f"🚨 def get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys, market_stage, stage_text):
+        is_seed = "🌱" in tajeom_badge or "모아가기" in tajeom_badge or "DB_중장기" in tajeom_badge
+        is_active_buy = "외인집중" in tajeom_badge
         
+        # 🎯 [수석 트레이더 오더 반영]: 시장 국면별 보류(Veto) 문구 논리적 분리 및 차단 가이드
         if market_stage == 3:
-            # 🚨 STAGE 3 발동 시 AI에게 강력한 사격 중지 메시지를 강제 하드코딩 유도하는 가이드라인 주입
+            market_context = "🚨 [비상 국면] 국내 증시는 현재 무차별 패닉 투매가 발생하는 극단적 고위험 상태입니다."
+            veto_template = "⚠️ [매수 보류] 시장 패닉셀 국면 진입으로 인해 전 종목 매수 보류 및 현금 100% 관망을 강력 권고합니다."
+        elif market_stage == 2:
+            market_context = "⚠️ [주의 국면] 국내 증시는 현재 변동성이 큰 하락/횡보 장세입니다."
+            veto_template = "⚠️ [매수 보류] 하락 장세로 인한 시장 리스크 과다 및 단기 상승 동력 부족으로 관망 권장"
+        else:
+            market_context = "🟢 [정상 국면] 국내 증시는 현재 정상적인 추세 매매 및 돌파 랠리가 가능한 양호한 장세입니다."
+            veto_template = "⚠️ [매수 보류] 시장은 정상적이나, 해당 종목의 단기 기술적 과열(이격 과다) 또는 매물 저항으로 인해 관망 권장"
+
+        if market_stage == 3:
             guide_text = f"""
             🚨🚨 [EMERGENCY: 시스템 전원 사격 중지 명령] 🚨🚨
             현재 시장은 {stage_text} 상태입니다. 기술적 지표나 개별 종목의 모멘텀 유무와 상관없이 무차별 연쇄 패닉 투매가 발생하는 고위험 국면입니다.
             1. 어떠한 낙관론이나 억지 매수 타점 시나리오도 전개하지 마십시오. 무조건 강력한 '매수 보류(Veto)' 조치를 집행해야 합니다.
-            2. briefing 본문은 반드시 토씨 하나 틀리지 않고 정확하게 다음 문장으로 시작하십시오: "⚠️ [매수 보류] 시장 패닉셀 국면 진입으로 인해 전 종목 매수 보류 및 현금 100% 관망을 강력 권고합니다."
+            2. briefing 본문은 반드시 토씨 하나 틀리지 않고 정확하게 다음 문장으로만 출력하십시오: "{veto_template}"
             3. target_price와 stop_loss는 어떠한 계산값도 출력하지 말고 반드시 0으로 처리하십시오.
             """
         elif is_active_buy:
@@ -230,12 +242,15 @@ try:
             """
         else:
             guide_text = f"""
-            💡 [AI 매매 보류(Veto) 및 가격 결정 가이드: 단기/스윙 히트앤런 전략]
+            💡 [AI 매매 보류(Veto) 및 가격 결정 가이드: 단기/스윙 주도주 전략]
             {market_context}
             🚨 귀하는 세계 최고의 월스트리트 퀀트 애널리스트 집단입니다. 
-            1. 제공된 데이터를 분석했을 때, 하락장에서 단기 모멘텀이 빠르게 소멸할 위험이 있거나, 윗꼬리가 너무 길면 관망(Veto)을 지시하십시오.
-               - 이 경우 briefing에 "⚠️ [매수 보류] {market_context} 단기 상승 동력 부족 및 리스크 과다로 관망 권장"이라고 적고, target_price와 stop_loss는 0으로 처리하십시오.
-            2. 가격 튜닝: 시스템 기준가를 참고하되, 하락장일 경우 손절을 매우 타이트하게 잡고, 익절(목표가) 역시 짧게 끊어치는 보수적인 타점을 제시하십시오.
+            1. 제공된 데이터를 분석했을 때, 단기 모멘텀이 빠르게 소멸할 위험이 있거나, 윗꼬리가 너무 길어 리스크가 크다고 판단되면 과감히 관망(Veto)을 지시하십시오.
+               - 🚨 [중요]: 만약 매수 보류(Veto)를 선언할 경우, briefing 문구는 반드시 다음 규칙을 준수하여 시장 상황과 모순되지 않게 작성하십시오:
+                 - 장세가 정상(STAGE 1)일 때 보류하는 경우: "{veto_template}"
+                 - 장세가 하락/주의(STAGE 2)일 때 보류하는 경우: "⚠️ [매수 보류] 하락 장세로 인한 시장 리스크 과다 및 단기 상승 동력 부족으로 관망 권장"
+               - 이 경우 target_price와 stop_loss는 반드시 0으로 처리하십시오.
+            2. 가격 튜닝: 진입이 가능하다고 판단될 경우 손절을 매우 타이트하게 잡고, 익절(목표가) 역시 짧게 끊어치는 보수적인 타점을 제시하십시오.
             """
  
         return f"""
