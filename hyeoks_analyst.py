@@ -199,11 +199,8 @@ try:
     def get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys, market_stage, stage_text):
         is_seed = "🌱" in tajeom_badge or "모아가기" in tajeom_badge or "DB_중장기" in tajeom_badge
         is_active_buy = "외인집중" in tajeom_badge
-        market_context = f"🚨 def get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys, market_stage, stage_text):
-        is_seed = "🌱" in tajeom_badge or "모아가기" in tajeom_badge or "DB_중장기" in tajeom_badge
-        is_active_buy = "외인집중" in tajeom_badge
         
-        # 🎯 [수석 트레이더 오더 반영]: 시장 국면별 보류(Veto) 문구 논리적 분리 및 차단 가이드
+        # 🎯 [시장 국면별 보류 문구 논리적 분리 및 차단 가이드]
         if market_stage == 3:
             market_context = "🚨 [비상 국면] 국내 증시는 현재 무차별 패닉 투매가 발생하는 극단적 고위험 상태입니다."
             veto_template = "⚠️ [매수 보류] 시장 패닉셀 국면 진입으로 인해 전 종목 매수 보류 및 현금 100% 관망을 강력 권고합니다."
