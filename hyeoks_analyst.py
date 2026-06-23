@@ -197,19 +197,16 @@ try:
         exit(0)
  
     def get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys, market_stage, stage_text):
-        is_seed = "🌱" in tajeom_badge or "모아가기" in tajeom_badge or "DB_중장기" in tajeom_badge
-        is_active_buy = "외인집중" in tajeom_badge
-        
-        # 🎯 [시장 국면별 보류 문구 논리적 분리 및 차단 가이드]
-        if market_stage == 3:
-            market_context = "🚨 [비상 국면] 국내 증시는 현재 무차별 패닉 투매가 발생하는 극단적 고위험 상태입니다."
-            veto_template = "⚠️ [매수 보류] 시장 패닉셀 국면 진입으로 인해 전 종목 매수 보류 및 현금 100% 관망을 강력 권고합니다."
+    # 모순 없는 직관적 국면 컴포넌트 분리
+        if market_stage == 1:
+            market_status = "🟢 장세 판독: [정상 장세] 매크로 지수 및 거래대금 안정권"
+            veto_template = "⚠️ [매수 보류] 시장 장세는 정상이나, 개별 종목의 단기 매물대 저항 및 수급 혼조로 인해 관망을 권장합니다."
         elif market_stage == 2:
-            market_context = "⚠️ [주의 국면] 국내 증시는 현재 변동성이 큰 하락/횡보 장세입니다."
-            veto_template = "⚠️ [매수 보류] 하락 장세로 인한 시장 리스크 과다 및 단기 상승 동력 부족으로 관망 권장"
+            market_status = "⚠️ 장세 판독: [주의 장세] 시장 변동성 확대 및 추세 횡보 구간"
+            veto_template = "⚠️ [매수 보류] 하락/주의 장세 영향으로 시장 리스크 과다 및 단기 모멘텀 공백으로 관망 권장"
         else:
-            market_context = "🟢 [정상 국면] 국내 증시는 현재 정상적인 추세 매매 및 돌파 랠리가 가능한 양호한 장세입니다."
-            veto_template = "⚠️ [매수 보류] 시장은 정상적이나, 해당 종목의 단기 기술적 과열(이격 과다) 또는 매물 저항으로 인해 관망 권장"
+            market_status = "🚨 장세 판독: [비상 장세] 무차별 패닉 투매 상태"
+            veto_template = "⚠️ [매수 보류] 🚨현금 100% 확보 명령. 시장 투매 국면으로 전 종목 진입 절대 금지"
 
         if market_stage == 3:
             guide_text = f"""
