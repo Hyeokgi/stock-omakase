@@ -5,7 +5,6 @@ from bs4 import BeautifulSoup
 from oauth2client.service_account import ServiceAccountCredentials
 from google import genai
 import urllib3
-import json
 import xml.etree.ElementTree as ET
 import concurrent.futures
  
@@ -28,7 +27,7 @@ KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
 now_kst = datetime.datetime.now(KST)
 current_hour = now_kst.hour
  
-print(f"🤖 [HYEOKS 리서치 센터] 봇 가동 (현재 KST {now_kst.strftime('%H:%M:%S')})")
+print(f"🤖 [HYEOKS 리서치 센터] 3단계 세이프티 가드 엔진 가동 (현재 KST {now_kst.strftime('%H:%M:%S')})")
  
 try:
     client = genai.Client(api_key=GEMINI_API_KEY)
@@ -84,7 +83,7 @@ def get_vip_deep_dive_data(code, kis_token):
     if not (kis_token and KIS_APP_KEY and KIS_APP_SECRET): return "PER: N/A / PBR: N/A"
     try:
         headers = {"authorization": f"Bearer {kis_token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "custtype": "P", "tr_id": "FHKST01010100"}
-        res = requests.get("https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price", 
+        res = requests.get("https://openapi.koreainwestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price", 
                           headers=headers, params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}, verify=False, timeout=3).json()
         out = res.get("output", {})
         return f"PER: {out.get('per', 'N/A')} / PBR: {out.get('pbr', 'N/A')}"
@@ -114,9 +113,6 @@ def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
     except Exception as e:
         print(f"⚠️ [{sheet_name}] 정렬 실패: {e}")
  
-# ==========================================
-# 💡 역사적 수급 DNA 검증 함수 (개별 최고 700억 / 당시 테마 2000억)
-# ==========================================
 def validate_stock_historical_dna(cand, raw_theme_daily_map):
     code = cand['code']
     name = cand['name']
@@ -133,28 +129,25 @@ def validate_stock_historical_dna(cand, raw_theme_daily_map):
         has_qualified_day = False
         for item in items:
             data = item.get("data").split("|")
-            f_date_raw = data[0]  # YYYYMMDD
+            f_date_raw = data[0]
             f_date = f"{f_date_raw[:4]}-{f_date_raw[4:6]}-{f_date_raw[6:8]}"
             close_p = int(data[4])
             vol = int(data[5])
             
             day_tv_krw = close_p * vol
-            if day_tv_krw >= 70_000_000_000:  # 1. 역사적 일일 최고 거래대금 700억 이상 조건 충증
-                # 2. 당일 소속 테마 전체 거래대금 누적 합산 2000억 이상 검증
+            if day_tv_krw >= 70_000_000_000:
                 theme_val_eok = raw_theme_daily_map.get((f_date, clean_theme), 0)
                 if theme_val_eok >= 2000 or theme_val_eok == 0:
-                    # 누적 데이터가 미처 없는 날이거나 조건 충족 시 패스 허용
                     has_qualified_day = True
                     break
                     
         return cand, has_qualified_day
-# hyeoks_analyst.py의 validate_stock_historical_dna 함수 내부의 except 구문을 수정하십시오.
     except Exception as e:
         print(f"⚠️ [{name}] 역사적 DNA 검증 인프라 오류 (안전을 위해 풀에서 배제): {e}")
-        return cand, False # 👑 True에서 False로 변경하여 급락장 서버 마비 시 의심 종목 필터링
+        return cand, False
  
 # ==========================================
-# 2. 구글 시트 연결 및 모드별 작동
+# 2. 구글 시트 연결 및 마켓 리스크 단계 판독
 # ==========================================
 try:
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -177,7 +170,18 @@ try:
     korean_market_status = clean_emojis(market_summary_data[1][8]) if len(market_summary_data) > 1 and len(market_summary_data[1]) > 8 else "확인불가"
     is_warning_market = "하락" in korean_market_status or "이탈" in korean_market_status
  
-    sys_instruction = "기업의 일반적인 소개(무엇을 하는 회사인지 등)는 일절 금지. 차트 지표, 타점, 수급 데이터를 바탕으로 '현재 기술적 위치'와 '앞으로의 대응 전략'만을 60~70자 내외로 매우 짧고 날카롭게 작성할 것."
+    # 👑 [3단계 시장 리스크 매트릭스 엔진 고도화]
+    market_stage = 1
+    stage_text = "STAGE 1 (정상 장세 - 공격형 전략 가동)"
+    if is_warning_market:
+        market_stage = 2
+        stage_text = "STAGE 2 (주의 장세 - 방어형/바닥주 SEED 포지션 제한)"
+    if any(kw in korean_market_status for kw in ["폭락", "패닉", "붕괴", "투매", "쇼크", "하락장 위험", "검은"]):
+        market_stage = 3
+        stage_text = "STAGE 3 (패닉 장세 - 위험 천장 돌파, 시스템 전원 사격 중지)"
+    print(f"📡 [실시간 시장 위험도 연산 판독 완료]: {stage_text} (상태: {korean_market_status})")
+
+    sys_instruction = "기업의 일반적인 소개는 일절 금지. 차트 지표, 타점, 수급 데이터를 바탕으로 '현재 기술적 위치'와 '앞으로의 대응 전략'만을 60~70자 내외로 매우 짧고 날카롭게 작성할 것."
  
     if current_hour == 7:
         print("▶ [오전 7시 모드] DB_스캐너 데이터를 'AI 브리핑 대기중' 및 '계산 대기'로 초기화합니다.")
@@ -192,12 +196,21 @@ try:
         print(f"✅ {len(updates) // 3}개 종목 초기화 완료 (batch_update 1회). 프로그램 종료.")
         exit(0)
  
-    def get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys, is_warning_market):
+    def get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys, market_stage, stage_text):
         is_seed = "🌱" in tajeom_badge or "모아가기" in tajeom_badge or "DB_중장기" in tajeom_badge
         is_active_buy = "외인집중" in tajeom_badge
-        market_context = "🚨 현재 시장은 변동성이 큰 하락/횡보장입니다. 안정성을 최우선으로 고려하십시오." if is_warning_market else "현재 시장은 정상적인 스윙/돌파가 불가능한 장세입니다."
+        market_context = f"🚨 현재 시장은 극단적 자산 훼손 리스크 구간입니다 ({stage_text})." if market_stage == 3 else ("🚨 현재 시장은 변동성이 큰 하락/횡보장입니다." if market_stage == 2 else "현재 시장은 정상적인 장세입니다.")
         
-        if is_active_buy:
+        if market_stage == 3:
+            # 🚨 STAGE 3 발동 시 AI에게 강력한 사격 중지 메시지를 강제 하드코딩 유도하는 가이드라인 주입
+            guide_text = f"""
+            🚨🚨 [EMERGENCY: 시스템 전원 사격 중지 명령] 🚨🚨
+            현재 시장은 {stage_text} 상태입니다. 기술적 지표나 개별 종목의 모멘텀 유무와 상관없이 무차별 연쇄 패닉 투매가 발생하는 고위험 국면입니다.
+            1. 어떠한 낙관론이나 억지 매수 타점 시나리오도 전개하지 마십시오. 무조건 강력한 '매수 보류(Veto)' 조치를 집행해야 합니다.
+            2. briefing 본문은 반드시 토씨 하나 틀리지 않고 정확하게 다음 문장으로 시작하십시오: "⚠️ [매수 보류] 시장 패닉셀 국면 진입으로 인해 전 종목 매수 보류 및 현금 100% 관망을 강력 권고합니다."
+            3. target_price와 stop_loss는 어떠한 계산값도 출력하지 말고 반드시 0으로 처리하십시오.
+            """
+        elif is_active_buy:
             guide_text = f"""
             💡 [AI 매매 보류(Veto) 및 가격 결정 가이드: 외인 집중배팅(Non-Program) 역발상 전략]
             {market_context}
@@ -232,7 +245,7 @@ try:
         ■ 종목명: {stock_name}
         ■ 현재가: {curr_p}
         ■ 타점 위치(배지): {tajeom_badge}
-        ■ 수급강도 및 프로그램: {sugeup}   ← "당일 수급" → "수급강도 및 프로그램"으로 라벨 변경
+        ■ 수급강도 및 프로그램: {sugeup}
         ■ 52주 고가: {high_52}
         ■ 테마: {theme}
         ■ 🤖 [시스템 임시 기준가]: 목표가 {target_sys} / 손절가 {stop_sys}
@@ -247,13 +260,11 @@ try:
         }}
         """
  
-    # ==========================================================================
-    # 👑 [수석님 오더]: 18시 덮어쓰기 오염 및 VIP 증발 원천 차단 보정 엔진
-    # ==========================================================================
+    # ==========================================
+    # 💡 [장중 스냅샷 모드 - 15시 외 작동 구역]
+    # ==========================================
     if current_hour != 15:
         print(f"▶ [{current_hour}시 모드] 메인 리포트 시간이 아니므로, 실시간 대기 종목의 정밀 요격 브리핑을 개시합니다.")
-        
-        # 루프 내부에서 순위 변동을 방어하기 위해 종목 코드별로 정밀 추적 진입
         for i, row in enumerate(db_rows[1:], start=2):
             if len(row) > 9 and "리포트 발송 완료" not in str(row[9]):  
                 stock_name = row[0] if len(row) > 0 else "알수없음"
@@ -267,7 +278,7 @@ try:
                 target_sys = row[14] if len(row) > 14 else ''
                 stop_sys = row[15] if len(row) > 15 else ''
                 
-                prompt = get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys, is_warning_market)
+                prompt = get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys, market_stage, stage_text)
                 
                 try:
                     res_text = safe_generate_content(prompt, is_fast=True).text
@@ -283,7 +294,6 @@ try:
                     target_val = f"{int(raw_target):,}원" if raw_target.isdigit() and int(raw_target) > 0 else "관망"
                     stop_val = f"{int(raw_stop):,}원" if raw_stop.isdigit() and int(raw_stop) > 0 else "관망"
                     
-                    # 🛡️ [핵심 가드]: omakase.py가 장중에 순위를 뒤흔든 경우를 대비해 실시간 행 위치 역추적 재재스캔
                     current_db_snapshot = db_sheet.get_all_values()
                     real_row_idx = -1
                     for idx, r_row in enumerate(current_db_snapshot, start=1):
@@ -291,9 +301,7 @@ try:
                             real_row_idx = idx
                             break
                     
-                    # 정위치를 찾았을 때만 업데이트 집행
                     if real_row_idx != -1:
-                        # 🚨 [VIP 절대 보존]: 만약 그 사이에 리포트 종목이 이 행으로 이사 왔다면 절대 수정하지 않고 보존!
                         if "리포트 발송 완료" in str(current_db_snapshot[real_row_idx-1][9]):
                             print(f"   ↳ 🛡️ [{stock_name}] 6시 오염 방어벽 가동: 리포트 주도주이므로 브리핑 보호 조치 (패스).")
                             continue
@@ -309,14 +317,15 @@ try:
         print(f"🌅 {current_hour}시 시간외 마감 정제 브리핑 완료! 프로그램 종료.")
         exit(0)
  
-    # 🔴 [모드 3] 15시 모드 (메인 리포트 생성 및 풀 코스)
+    # ==========================================
+    # 🔴 [메인 15시 모드 진입]
+    # ==========================================
     print("\n▶ [15시 메인 리포트 모드] 주가데이터_보조 상위 150개 풀에서 HYEOKS 알파 종목 발굴 시작...")
     
     macro_data = doc.worksheet("시장요약").get_all_values()
     nasdaq, exchange, oil = clean_emojis(macro_data[1][4]), clean_emojis(macro_data[1][6]), clean_emojis(macro_data[1][7])
     news_keywords = clean_emojis("\n".join([f"{r[2]}({r[3]}회)" for r in doc.worksheet("뉴스_키워드").get_all_values()[1:6]]))
     
-    # 💡 [역사적 수급 DNA 필터용] 수급_Raw 일자별/테마별 거래대금 통계 마스터 맵 빌드
     raw_theme_daily_map = {}
     try:
         raw_sheet = doc.worksheet("수급_Raw")
@@ -345,11 +354,11 @@ try:
         if len(r) < 21: continue
         name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
         curr_p, chg = str(r[2]).strip(), str(r[3]).strip()
-        tajeom_raw = str(r[8]).strip()     # 마스터타점
+        tajeom_raw = str(r[8]).strip()
         theme_name = str(r[19]).strip()
-        prog = str(r[20]).strip()          # 수급강도 (새 포맷 반영)
+        prog = str(r[20]).strip()
         seed_tag = str(r[25]).strip() if len(r) > 25 else "NORMAL"
-
+ 
         try: v1_score = int(r[29]) if len(r) > 29 else 0
         except: v1_score = 0
         try: v2_score = int(r[31]) if len(r) > 31 else 0
@@ -366,15 +375,8 @@ try:
             f"타점:{tajeom_clean} | 수급강도:{prog} | 유형:{seed_tag} | 테마:{theme_name}"
         )
         cands_list.append({
-            'name': name, 
-            'code': code, 
-            'score': combo_score, 
-            'v1_score': v1_score,
-            'v2_score': v2_score,
-            'info': info, 
-            'curr_p': int(curr_p.replace(',','').replace('원','')), 
-            'type': seed_tag,
-            'theme_name': theme_name
+            'name': name, 'code': code, 'score': combo_score, 'v1_score': v1_score, 'v2_score': v2_score,
+            'info': info, 'curr_p': int(curr_p.replace(',','').replace('원','')), 'type': seed_tag, 'theme_name': theme_name
         })
  
     high_score_cands = [c for c in cands_list if c['score'] >= 30]
@@ -385,17 +387,14 @@ try:
         high_score_cands.sort(key=lambda x: x['score'], reverse=True)
         pre_pool = high_score_cands[:100]
  
-    # 💡 [역사적 DNA 동시 검증 실행]
-    print(f"🧬 후보군 {len(pre_pool)}개 종목의 역사적 수급 DNA(개별 700억 / 테마 2000억) 검증 돌입...")
+    print(f"🧬 후보군 {len(pre_pool)}개 종목의 역사적 수급 DNA 검증 돌입...")
     validated_pool = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
         future_to_dna = {executor.submit(validate_stock_historical_dna, c, raw_theme_daily_map): c for c in pre_pool}
         for future in concurrent.futures.as_completed(future_to_dna):
             cand, is_qualified = future.result()
-            if is_qualified:
-                validated_pool.append(cand)
-            else:
-                print(f"❌ [{cand['name']}] 역대 최고거래대금 기준 미달로 최종 리포트 및 스캐너 풀에서 완전 배제")
+            if is_qualified: validated_pool.append(cand)
+            else: print(f"❌ [{cand['name']}] 역대 최고거래대금 기준 미달로 최종 리포트 및 스캐너 풀에서 완전 배제")
  
     validated_pool.sort(key=lambda x: x['score'], reverse=True)
     pool_150 = validated_pool[:150]
@@ -404,121 +403,83 @@ try:
     pick_prompt = f"""
     당신은 세계 최고의 애널리스트 집단이 검증하는 HYEOKS 퀀트 분석가입니다.
     아래는 HYEOKS 퀀트 점수와 역사적 주도주 DNA 검증이 끝난 최상위 150개 종목 리스트입니다.
-    현재 시장 국면은 {'하락장' if is_warning_market else '상승/보합장'}입니다.
+    현재 시장 리스크 매트릭스는 [{stage_text}] 단계입니다.
     
-    이 중에서 제미나이 2.5 모델의 직관과 종합적인 판단을 활용해 
-    최고의 단기 1종목, 중장기 스윙 1종목을 2중 검토(Chain of Thought)를 거쳐 엄선하십시오. 
-    🚨 하락장이라면 안정성이 100% 보장되지 않는 단기 종목은 억지로 뽑지 마십시오("000000" 반환).
+    [🚨 국면별 종목 선정 제약 지침]
+    - 만약 현재 시장이 STAGE 2(주의 장세)라면 단기 슈팅 종목을 극도로 보수적으로 판단하고, 애매하면 단기 픽 자리에 "000000"을 출력하십시오.
+    - 만약 현재 시장이 STAGE 3(패닉 장세)라면, 자산 보호를 위해 단기(short_term_code) 및 중기(swing_code)를 불문하고 억지로 추천을 내지 말고 둘 다 무조건 "000000"을 반환해야 합니다.
  
-    [종목 선정 절대 기준]
-    1. 단기 슈팅 공략주 (short_term_code): 당일 수급이 몰리며 '유형:NORMAL' 인 종목 중 전고점 돌파를 목전에 둔 파괴력 있는 종목 1개. (적절한 종목이 없으면 "000000" 반환)
-    
-    2. 중장기 모아가기주 (swing_code): 
-       - 🚨 '🔴 3차 파동 (전량 익절)' 등 과열 배지가 붙은 종목은 절대 배제하십시오.
-       - '유형:SEED' 인 종목 중 차트상 확실한 바닥 지지가 예상되고 거래량이 마른 최적의 1개를 선별하십시오. (적절한 종목이 없으면 NORMAL 종목 중 스윙 타점 종목으로 대체 가능)
+    [종목 선정 기준]
+    1. 단기 슈팅 공략주 (short_term_code): 유형:NORMAL 종목 중 파괴력 있는 종목 1개 선별. (없으면 "000000")
+    2. 중장기 모아가기주 (swing_code): 유형:SEED 종목 중 과열 배지가 없는 바닥 확인형 1개 선별. (없으면 "000000")
  
     [상위 150개 종목 리스트]
     {pool_str}
     
-    [출력 형식]
-    반드시 아래 JSON 형식으로만 응답하세요. 다른 설명은 절대 추가하지 마세요.
+    반드시 아래 JSON 형식으로만 응답하세요. 다른 설명은 일절 배제하십시오.
     {{
         "short_term_code": "종목코드6자리",
         "swing_code": "종목코드6자리"
     }}
     """
     
-    result_text = safe_generate_content(pick_prompt).text
-    cleaned_text = result_text.replace('```json', '').replace('```', '').strip()
-    picks_json = json.loads(cleaned_text)
+    # 👑 [가드레일 - 사격 중지 우회 필터]: STAGE 3 패닉셀 국면일 경우 AI 연산을 전면 스킵하고 영점 픽 고정
+    if market_stage == 3:
+        print("🚨 [CRITICAL ALERT] STAGE 3 대피 패닉 장세가 발동되었습니다. 억지 종목 매수를 차단하기 위해 AI 픽을 전면 전면 취소(Zero Pick)합니다.")
+        picks_json = {"short_term_code": "000000", "swing_code": "000000"}
+    else:
+        result_text = safe_generate_content(pick_prompt).text
+        cleaned_text = result_text.replace('```json', '').replace('```', '').strip()
+        picks_json = json.loads(cleaned_text)
     
     code_short = picks_json.get('short_term_code', '')
     code_mid = picks_json.get('swing_code', '')
     
-    best_short = next((c for c in pool_150 if c['code'] == code_short), None)
-    best_mid = next((c for c in pool_150 if c['code'] == code_mid), None)
+    best_short = next((c for c in pool_150 if c['code'] == code_short), None) if code_short != "000000" else None
+    best_mid = next((c for c in pool_150 if c['code'] == code_mid), None) if code_mid != "000000" else None
  
-    print(f"🔥 최종 발굴 완료 -> 단기: {best_short['name'] if best_short else '없음'} / 스윙: {best_mid['name'] if best_mid else '없음'}\n")
+    print(f"🔥 최종 발굴 결과 -> 단기 리포트 대상: {best_short['name'] if best_short else '없음(000000)'} / 중기 스윙 대상: {best_mid['name'] if best_mid else '없음(000000)'}\n")
  
     # ==========================================
     # 5. 시황 및 딥리딩 PDF 리포트 본문 생성
     # ==========================================
-    print("▶ [2단계] 딥리딩 분석 및 PDF 리포트 본문 생성 (약 3~5분 소요)...")
+    print("▶ [2단계] 딥리딩 분석 및 PDF 리포트 본문 생성...")
     today_korean = datetime.datetime.now(KST).strftime('%Y년 %m월 %d일')
-    status_txt = "코스닥 20일선 이탈 (보수적 운영 및 방어적 매매 요망)" if is_warning_market else "코스피/코스닥 지지 (공격적 운영 가능)" 
- 
-    macro_prompt = f"""귀하는 HYEOKS 리서치 센터의 수석 퀀트 애널리스트입니다.
-아래 데이터를 바탕으로 '오늘의 시황 및 매크로 브리핑'을 1페이지 분량으로 세계 최고 수준의 통찰력을 담아 상세히 작성하십시오. 정중한 존댓말(하십시오체)을 사용하십시오.
-작성일: {today_korean}
-매크로: 나스닥 {nasdaq}, 환율 {exchange}, 국내증시 {status_txt}
-뉴스 키워드: {news_keywords}
-(종목 추천 없이 시황과 트레이더의 스탠스만 서술하십시오.)"""
+    status_txt = "코스닥 20일선 이탈 (보수적 운영 요망)" if is_warning_market else "코스피/코스닥 지지 (공격적 운영 가능)" 
+    if market_stage == 3: status_txt = "🚨 역대급 패닉셀 투매 장세 돌입 (전원 사격 중지 및 현금 100% 관망 요망)"
+
+    # STAGE 3일 경우 비상 시황 경고 리포트로 톤앤매너 전면 전환
+    if market_stage == 3:
+        macro_prompt = f"""귀하는 HYEOKS 리서치 센터의 최고 심의위원이자 수석 애널리스트입니다.
+        현재 국내 증시는 역대급 패닉 폭락 장세인 [{korean_market_status}] 상태입니다.
+        자산을 사수하기 위한 강력한 경고 메시지와 전원 사격 중지(현금 100% 관망)의 당위성을 거시 매크로 분석과 함께 1페이지 분량으로 묵직하게 작성하십시오. 정중한 하십시오체를 사용하십시오. 작성일: {today_korean}"""
+    else:
+        macro_prompt = f"""귀하는 HYEOKS 리서치 센터의 수석 퀀트 애널리스트입니다. Below 데이터를 바탕으로 '오늘의 시황 및 매크로 브리핑'을 1페이지 분량으로 상세히 작성하십시오. 작성일: {today_korean} 매크로: 나스닥 {nasdaq}, 환율 {exchange}, 국내증시 {status_txt} 뉴스 키워드: {news_keywords}"""
     
     market_summary = safe_generate_content(macro_prompt).text
  
     def generate_deep_report(st_type, best_cand, is_warning_market):
         if not best_cand: return "", None
-        
         vip = get_vip_deep_dive_data(best_cand['code'], KIS_TOKEN)
         news = get_target_stock_news(best_cand['code'])
         market_context = "하락장" if is_warning_market else "상승장"
         
         if st_type == "short":
             sub_title_prefix = "단기 슈팅 및 전고점 돌파 공략"
-            strategy_instruction = f"""
-            [단기 슈팅 주도주 분석 지침]
-            1. 당일 쏠린 메이저 수급과 모멘텀을 바탕으로 전고점 돌파 여부 및 단기 저항선 돌파 시나리오를 논리적으로 작성하십시오.
-            2. 손절가 설정: 현재 시장은 {market_context}입니다. 1.5배 이상의 손익비를 가지도록 의미있는 짧은 지지선(손절가)을 매우 타이트하게 숫자로 명시하십시오. 하락장이라면 변동성에 대비한 리스크 관리를 철저히 강조하십시오.
-            """
+            strategy_instruction = f" 현재 시장은 {market_context}입니다. 손익비 1.5배 이상의 의미있는 짧은 지지선(손절가)을 매우 타이트하게 숫자로 명시하십시오."
         else:
-            is_seed_type = "SEED" in best_cand['info']
-            sub_title_prefix = "중장기 바닥 모아가기 전략" if is_seed_type else "퀀트-시크릿 하이브리드 스윙 전략"
-            strategy_instruction = f"""
-            [{sub_title_prefix} 분석 지침]
-            🚨 핵심 지시: 귀하는 소액(400만 원)을 빠르고 안전하게 불려야 하는 '엄격한 퀀트 게이트키퍼'입니다.
-            1. 퀀트 점수가 왜 높은지(펀더멘털, 수급 등) 설명하고, 이 종목의 현재 파동 위치가 왜 안전한 타점인지 2번 교차 검증(Chain of Thought)하여 명확히 서술하십시오.
-            2. 손절가 설정: 현재 시장은 {market_context}입니다. 기계적 비율(%)이 아닌, 차트 상의 가장 거대한 기준봉의 시가나 쌍바닥 최저점 등 시장 하락 시에도 버틸 수 있는 아주 넉넉하고 단단한 가격(원)을 제시하십시오.
-            3. 매수 전략: 한 번에 몰빵하지 않도록, 현재가 부근 1차 진입 후 하락 시 추가 매수하는 분할 매수 밴드(Band)를 조언에 포함하십시오.
-            """
+            sub_title_prefix = "중장기 바닥 모아가기 전략"
+            strategy_instruction = f" 현재 시장은 {market_context}입니다. 차트 상의 가장 거대한 기준봉의 시가나 쌍바닥 최저점 등 아주 단단한 손절 가격(원)과 분할 매수 밴드(Band)를 조언에 포함하십시오."
  
-        detail_prompt = f"""귀하는 세계 최고의 헤지펀드를 이끄는 수석 퀀트 애널리스트입니다.
-제공된 일봉 차트(Vision)와 데이터를 바탕으로 심층 리포트를 작성하십시오. 한 리포트 내에서 말투가 바뀌지 않도록 정중한 존댓말(하십시오체)로 통일하십시오.
- 
-[입력 데이터]
-종목 및 스캐너 판독: {best_cand['info']}
-★확정 현재가: {best_cand['curr_p']}원
-펀더멘털: {vip}
-최신 뉴스: {news}
- 
-{strategy_instruction}
- 
-[HYEOKS 딥리딩 절대 지침 - 명심하십시오]
-1. 분량 및 깊이: 귀하의 세계 최고 수준의 통찰력을 발휘하여 충분히 길고 논리적으로 1.5~2페이지 분량이 나오도록 상세히 서술하십시오. 
-2. 🚨 [할루시네이션(거짓 정보) 엄격 금지]: 차트를 판독하여 지지/저항선을 제시할 때, 반드시 위 [입력 데이터]에 제공된 ★확정 현재가({best_cand['curr_p']}원)를 기준으로 상/하단 가격을 논리적으로 계산하십시오.
-3. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'O' if st_type=='mid' else 'X'} 형식으로 숫자로만 출력하십시오.
- 
-[출력 양식 (마크다운 유지)]
-<div class="broker-name">HYEOKS SECURITIES | {'SHORT-TERM' if st_type=='short' else 'MID-TERM'} STRATEGY</div>
-<div class="header">
-<p class="stock-title">{best_cand['name']} ({best_cand['code']})</p>
-<p class="subtitle">{sub_title_prefix}: (소제목 작성)</p>
-</div>
- 
-<div class="summary-box">
-<strong>[HYEOKS 핵심 모멘텀 요약]</strong><br><br>
-(오직 차트 타점, 수급, 지지/저항 라인에 근거한 상승 모멘텀만 60~70자 내외의 1문장으로 요약하십시오.)
-</div>
- 
-## 1. 매크로 환경 및 내러티브 고찰
-## 2. 시각적 차트 판독 및 스마트머니 딥리딩
-## 3. 실전 타점 시나리오 및 방어적 리스크 관리 전략
-[DATA] 목표가:00000, 손절가:00000, 분할매수:{'O' if st_type=='mid' else 'X'}
-"""
+        detail_prompt = f"""귀하는 수석 퀀트 애널리스트입니다. 하십시오체로 리포트를 작성하십시오.
+        종목: {best_cand['info']} ★확정 현재가: {best_cand['curr_p']}원 펀더멘털: {vip} 뉴스: {news} {strategy_instruction}
+        리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'O' if st_type=='mid' else 'X'} 형식으로 출력하십시오.
+        """
         img_path = f"temp_{best_cand['code']}.png"
         try:
             res = requests.get(f"https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{best_cand['code']}.png", headers={'User-Agent': 'Mozilla/5.0'}, verify=False)
             with open(img_path, 'wb') as f: f.write(res.content)
-            report_txt = safe_generate_content([detail_prompt, PIL.Image.open(img_path)]).text
+            report_txt = safe_generate_content([detail_prompt, Image.open(img_path)]).text
             os.remove(img_path)
         except:
             report_txt = safe_generate_content(detail_prompt).text
@@ -536,7 +497,7 @@ try:
     report_mid, pick_mid = generate_deep_report("mid", best_mid, is_warning_market)
  
     # ==========================================
-    # 6. 3시 마감 최신 DB_스캐너 동기화 및 브리핑 일괄 덮어쓰기
+    # 6. 3시 마감 최신 DB_스캐너 동기화 및 브리핑 덮어쓰기
     # ==========================================
     print("\n▶ [3단계] 최신 DB_스캐너 동기화 및 리포트 종목/나머지 종목 갱신...")
     latest_db_data = db_sheet.get_all_values()
@@ -548,20 +509,17 @@ try:
         if summary_match:
             clean_text = re.sub(r'<[^>]+>', '', summary_match.group(1)).replace("[HYEOKS 핵심 모멘텀 요약]", "").strip()
             briefing_summary += clean_text[:80] + "..." if len(clean_text) > 80 else clean_text
-        else:
-            briefing_summary += "텔레그램에서 상세 분석 리포트를 확인하십시오."
+        else: briefing_summary += "텔레그램에서 상세 분석 리포트를 확인하십시오."
         return briefing_summary
  
     short_summary = extract_summary(report_short) if best_short else ""
     mid_summary = extract_summary(report_mid) if best_mid else ""
  
-    # 👑 [무결성 보정]: omakase.py의 장중 기습 정렬로부터 AI 브리핑 타점을 철통 방어하는 3채널 실시간 역추적 엔진
     for i, r_legacy in enumerate(latest_db_data[1:], start=2):
         if len(r_legacy) > 9:
             code = str(r_legacy[2]).replace("'", "").strip().zfill(6)
             stock_name = r_legacy[0] if len(r_legacy) > 0 else "알수없음"
             
-            # 🛡️ [실시간 쉴드 주입]: 매 루프마다 현재 시트 스냅샷을 재스캔하여 실시간 변동된 정확한 행(Row) 인덱스를 추출
             current_db_snapshot = db_sheet.get_all_values()
             real_row_idx = -1
             for idx, r_row in enumerate(current_db_snapshot, start=1):
@@ -569,34 +527,23 @@ try:
                     real_row_idx = idx
                     break
             
-            # 만약 스캐너에 의해 해당 종목이 밀려나 사라졌다면 안전하게 스킵하여 에러 방지
-            if real_row_idx == -1:
-                print(f" ↳ ⚠️ [{stock_name}] 장중 순위 이탈 감지되어 실시간 마킹 패스.")
-                continue
-
-            # 👑 모든 update_cell의 대상을 고정 인덱스 'i'에서 'real_row_idx'로 정밀 요격 전환
+            if real_row_idx == -1: continue
+ 
             if best_short and code == best_short['code']:
-                print(f" - [{stock_name}] 리포트 정보 및 가격 시트에 업데이트 중...")
                 db_sheet.update_cell(real_row_idx, 10, short_summary)
                 if pick_short:
                     db_sheet.update_cell(real_row_idx, 15, f"{pick_short['target']:,}원")
                     db_sheet.update_cell(real_row_idx, 16, f"{pick_short['stop']:,}원")
-                time.sleep(3.5)
-                continue
+                time.sleep(3.5); continue
             
             if best_mid and code == best_mid['code']:
-                print(f" - [{stock_name}] 리포트 정보 및 가격 시트에 업데이트 중...")
                 db_sheet.update_cell(real_row_idx, 10, mid_summary)
                 if pick_mid:
                     db_sheet.update_cell(real_row_idx, 15, f"{pick_mid['target']:,}원")
                     db_sheet.update_cell(real_row_idx, 16, f"{pick_mid['stop']:,}원")
-                time.sleep(3.5)
-                continue
+                time.sleep(3.5); continue
             
-            # 실시간 시황 스냅샷 검사 후 중복 주입 차단
             if "리포트 발송 완료" not in str(current_db_snapshot[real_row_idx-1][9]):
-                print(f" - [{stock_name}] AI 전략 및 가격 산출 중...")
-                
                 curr_p = r_legacy[3] if len(r_legacy) > 3 else ''
                 tajeom_badge = r_legacy[8] if len(r_legacy) > 8 else ''
                 sugeup = r_legacy[11] if len(r_legacy) > 11 else ''
@@ -605,19 +552,17 @@ try:
                 target_sys = r_legacy[14] if len(r_legacy) > 14 else ''
                 stop_sys = r_legacy[15] if len(r_legacy) > 15 else ''
                 
-                prompt = get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys, is_warning_market)
+                prompt = get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys, market_stage, stage_text)
                 
                 try:
                     res_text = safe_generate_content(prompt, is_fast=True).text
                     parsed_data = parse_ai_json(res_text)
-                    
                     briefing_text = parsed_data.get("briefing", "브리핑 생성 에러")
                     if not briefing_text.startswith("✅") and not briefing_text.startswith("⚠️"): 
                         briefing_text = f"✅ [간단 브리핑] {briefing_text}"
                     
                     raw_target = str(parsed_data.get('target_price', '0')).replace(',', '').replace('원', '')
                     raw_stop = str(parsed_data.get('stop_loss', '0')).replace(',', '').replace('원', '')
-                    
                     target_val = f"{int(raw_target):,}원" if raw_target.isdigit() and int(raw_target) > 0 else "관망"
                     stop_val = f"{int(raw_stop):,}원" if raw_stop.isdigit() and int(raw_stop) > 0 else "관망"
                     
@@ -626,59 +571,7 @@ try:
                     db_sheet.update_cell(real_row_idx, 16, stop_val)
                     time.sleep(3.5)
                 except Exception as e:
-                    print(f"[{stock_name}] 브리핑/가격 산출 에러 발생 (건너뜀): {e}")
- 
-            if best_short and code == best_short['code']:
-                print(f" - [{stock_name}] 리포트 정보 및 가격 시트에 업데이트 중...")
-                db_sheet.update_cell(i, 10, short_summary)
-                if pick_short:
-                    db_sheet.update_cell(i, 15, f"{pick_short['target']:,}원")
-                    db_sheet.update_cell(i, 16, f"{pick_short['stop']:,}원")
-                time.sleep(3.5)
-                continue
-            
-            if best_mid and code == best_mid['code']:
-                print(f" - [{stock_name}] 리포트 정보 및 가격 시트에 업데이트 중...")
-                db_sheet.update_cell(i, 10, mid_summary)
-                if pick_mid:
-                    db_sheet.update_cell(i, 15, f"{pick_mid['target']:,}원")
-                    db_sheet.update_cell(i, 16, f"{pick_mid['stop']:,}원")
-                time.sleep(3.5)
-                continue
-            
-            if "리포트 발송 완료" not in str(r[9]):
-                print(f" - [{stock_name}] AI 전략 및 가격 산출 중...")
-                
-                curr_p = r[3] if len(r) > 3 else ''
-                tajeom_badge = r[8] if len(r) > 8 else ''
-                sugeup = r[11] if len(r) > 11 else ''
-                high_52 = r[12] if len(r) > 12 else ''
-                theme = r[5] if len(r) > 5 else ''
-                target_sys = r[14] if len(r) > 14 else ''
-                stop_sys = r[15] if len(r) > 15 else ''
-                
-                prompt = get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys, is_warning_market)
-                
-                try:
-                    res_text = safe_generate_content(prompt, is_fast=True).text
-                    parsed_data = parse_ai_json(res_text)
-                    
-                    briefing_text = parsed_data.get("briefing", "브리핑 생성 에러")
-                    if not briefing_text.startswith("✅") and not briefing_text.startswith("⚠️"): 
-                        briefing_text = f"✅ [간단 브리핑] {briefing_text}"
-                    
-                    raw_target = str(parsed_data.get('target_price', '0')).replace(',', '').replace('원', '')
-                    raw_stop = str(parsed_data.get('stop_loss', '0')).replace(',', '').replace('원', '')
-                    
-                    target_val = f"{int(raw_target):,}원" if raw_target.isdigit() and int(raw_target) > 0 else "관망"
-                    stop_val = f"{int(raw_stop):,}원" if raw_stop.isdigit() and int(raw_stop) > 0 else "관망"
-                    
-                    db_sheet.update_cell(i, 10, briefing_text)
-                    db_sheet.update_cell(i, 15, target_val)
-                    db_sheet.update_cell(i, 16, stop_val)
-                    time.sleep(3.5)
-                except Exception as e:
-                    print(f"[{stock_name}] 브리핑/가격 산출 에러 발생 (건너뜀): {e}")
+                    print(f"[{stock_name}] 브리핑/가격 에러 (건너뜀): {e}")
  
     # ==========================================
     # 7. 가상계좌 업데이트
@@ -688,7 +581,6 @@ try:
         hold_sheet = doc.worksheet("가상계좌_보유")
         closed_sheet = doc.worksheet("가상계좌_종료")
         today = datetime.datetime.now(KST).strftime('%Y-%m-%d')
-        
         rows = hold_sheet.get_all_values()
         headers = ["종목명", "종목코드", "매입단가", "투자금액", "현재가", "수익률(%)", "편입일", "목표가", "손절가", "수동매도"]
         if len(rows) <= 1 or rows[0][0] != "종목명":
@@ -736,6 +628,11 @@ try:
     
     html = f"<!DOCTYPE html><html><head><meta charset='utf-8'>{css}</head><body>"
     html += "<div class='broker-name'>HYEOKS SECURITIES | DAILY MARKET REPORT</div>"
+    
+    # 만약 STAGE 3 비상 상황이라면 PDF 최상단에 강렬한 비상 경고창 주입
+    if market_stage == 3:
+        html += "<div class='alert-box'>🚨 [HYEOKS EMERGENCY SYSTEM ALERT] 시장 극단적 패닉 국면 판독으로 인해 전체 투자 알고리즘의 '전원 사격 중지(Ceasefire)' 프로토콜이 발동되었습니다. 현 포지션의 무리한 물타기 및 신규 진입을 전면 금지하며 100% 현금 보존 관망 스탠스를 엄격히 권고합니다.</div>"
+        
     html += f"<h2>글로벌 매크로 및 시황 요약</h2>{markdown.markdown(market_summary)}"
  
     if best_short:
@@ -765,78 +662,42 @@ try:
     if TELEGRAM_BOT_TOKEN:
         print("▶ 텔레그램 발송 진행 중...")
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument", 
-                      files={'document': open(pdf_file, 'rb')}, data={'chat_id': TELEGRAM_CHAT_ID, 'caption': "[HYEOKS] AI 심층 리서치 보고서"})
+                      files={'document': open(pdf_file, 'rb')}, data={'chat_id': TELEGRAM_CHAT_ID, 'caption': "[HYEOKS] AI 심층 리서치 비상 보고서" if market_stage==3 else "[HYEOKS] AI 심층 리서치 보고서"})
         print("✅ 텔레그램 발송 완료!")
  
-    # ==========================================================================
-    # 👑 [HYEOKS 백테스트 V5] 리포팅2 채널 — 실제 PDF/텔레그램 발송된 단기1+중기1 기록
-    # update_portfolio([pick_short, pick_mid]) 호출 직후에 위치시킬 것
-    # ==========================================================================
+    # ==========================================
+    # 👑 [HYEOKS 백테스트 V5] 리포팅 채널 연동
+    # ==========================================
     try:
-        print("\n▶ [백테스트 V5] 리포팅 채널(Gemini 실제 발송픽) 기록 중...")
+        print("\n▶ [백테스트 V5] 리포팅 채널 기록 중...")
         bt_sheet = doc.worksheet("백테스트_로그")
         bt_data = bt_sheet.get_all_values()
-
-        header_row = [
-            "진입일", "종목명", "종목코드", "주도 테마명", "진입가(추천가)",
-            "마스터 타점유형", "선정카테고리", "V1 (차트점수)", "V2 (수급점수)",
-            "외인/기관 수급상태", "T+1 수익률", "T+3 수익률", "T+5 수익률", "T+10 수익률"
-        ]
-
-        if not bt_data:
-            bt_data = [header_row]
-        elif bt_data[0] != header_row:
-            bt_data[0] = header_row  # omakase.py가 만든 헤더와 다르면 강제 동기화
-
+        header_row = ["진입일", "종목명", "종목코드", "주도 테마명", "진입가(추천가)", "마스터 타점유형", "선정카테고리", "V1 (차트점수)", "V2 (추천점수)", "외인/기관 수급상태", "T+1 수익률", "T+3 수익률", "T+5 수익률", "T+10 수익률"]
+        if not bt_data: bt_data = [header_row]
+        elif bt_data[0] != header_row: bt_data[0] = header_row
         today_str = datetime.datetime.now(KST).strftime('%Y-%m-%d')
-
         existing_keys = set()
         for row in bt_data[1:]:
-            if len(row) >= 7:
-                existing_keys.add((str(row[0]).strip(), str(row[2]).replace("'", "").strip().zfill(6), str(row[6]).strip()))
-
-        # best_short / best_mid 는 이 파일 15시 모드 상단에서 이미 확정된 변수
+            if len(row) >= 7: existing_keys.add((str(row[0]).strip(), str(row[2]).replace("'", "").strip().zfill(6), str(row[6]).strip()))
+        
         report_picks = []
         if best_short: report_picks.append(best_short)
         if best_mid: report_picks.append(best_mid)
-
         new_logs_count = 0
         for cand in report_picks:
             s_code = str(cand['code']).replace("'", "").strip().zfill(6)
-            if s_code == "000000":
-                continue
+            if s_code == "000000": continue
             key = (today_str, s_code, "리포팅TOP2")
             if key not in existing_keys:
-                new_row = [
-                    today_str,
-                    cand['name'],
-                    f"'{s_code}",
-                    cand.get('theme_name', ''),
-                    cand['curr_p'],
-                    cand.get('type', ''),       # NORMAL/SEED 등 마스터타점 대용
-                    "리포팅TOP2",
-                    f"{cand['v1_score']}점",                    # 🎯 V1 차트기술점수 실축 연동 기록
-                    f"{cand['v2_score']}점",                    # 🎯 V2 수급거래점수 실축 연동 기록
-                    "",                                          # 수급상태 — 필요시 추후 보강
-                    "", "", "", ""                               # T+1/T+3/T+5/T+10
-                ]
-                bt_data.append(new_row)
-                existing_keys.add(key)
-                new_logs_count += 1
-
+                new_row = [today_str, cand['name'], f"'{s_code}", cand.get('theme_name', ''), cand['curr_p'], cand.get('type', ''), "리포팅TOP2", f"{cand['v1_score']}점", f"{cand['v2_score']}점", "", "", "", "", ""]
+                bt_data.append(new_row); existing_keys.add(key); new_logs_count += 1
         if new_logs_count > 0:
             bt_sheet.batch_clear(['A1:N5000'])
             bt_sheet.update(range_name="A1", values=bt_data, value_input_option="USER_ENTERED")
-            print(f"✅ [백테스트 V5] 리포팅 채널 신규 {new_logs_count}건 기록 완료.")
-        else:
-            print("⏭ [백테스트 V5] 리포팅 채널 — 신규 기록 없음 (이미 기록됐거나 픽 없음).")
-
-    except Exception as e:
-        print(f"⚠️ [백테스트 V5] 리포팅 채널 기록 실패: {e}")
+            print(f"✅ [백테스트 V5] 리포팅 채널 {new_logs_count}건 기록 완료.")
+        else: print("⏭ [백테스트 V5] 리포팅 채널 — 변동 기록 없음.")
+    except Exception as e: print(f"⚠️ [백테스트 V5] 리포팅 채널 기록 에러: {e}")
         
     print(f"🎉 모든 작업이 성공적으로 완료되었습니다: {pdf_file}")
- 
 except Exception as e:
-    print(f"\n❌ 시스템 에러: {e}")
-    exit(1)
- 
+    print(f"\n❌ 시스템 에러: {e}"); exit(1)
