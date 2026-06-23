@@ -1199,16 +1199,102 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if secret_tajeom and "관망" not in master_tajeom and "매수금지" not in master_tajeom and not is_upper_limit:
             master_tajeom = f"{master_tajeom} | {secret_tajeom}"
 
+        # ==========================================================================
+        # 👑 [수석 트레이더 오더 반영]: '면책 특권' 완전 삭제 및 순수 정량 가점 모델 전환
+        # ==========================================================================
         is_super_leader = (change_rate >= 0.15) and (trading_value >= 100_000_000_000) and (smi_ratio >= 3.0)
-        is_absolute_protected = is_super_leader or is_foreigner_active_buy or is_long_term_pick
 
-        if is_absolute_protected and not is_envelope_over_under:
+        # [교정]: 기존의 무조건적 생존 꼬리표(/면책)를 완전 박멸하고, 간결한 타점 명칭만 유지합니다.
+        if is_foreigner_active_buy: master_tajeom += " 💎(외인집중)"
+        elif is_long_term_pick: master_tajeom += " 🎖️(코어픽)"
+        elif is_super_leader: master_tajeom += " 🔥(절대대장)"
+
+        tajeom_multiplier = 0.0
+        master_tajeom_base = "⏸ 관망 · 조건미달"
+
+        if is_fatal_drop:
+            master_tajeom_base = "🚫 매매금지 · 위험"
+            tajeom_multiplier = 0.0
+        elif is_envelope_over_under:
+            master_tajeom_base = "📉 과매도 · 역배팅"
+            tajeom_multiplier = 1.45
+        elif is_foreigner_active_buy:
+            master_tajeom_base = "💎 외인 역발상 매집"
+            tajeom_multiplier = 1.4
+        elif is_upper_limit:
+            master_tajeom_base = "🚀 대장 · 당일단타 (상한가 안착/추격금지)"
+            tajeom_multiplier = 1.3
+        elif is_jongbe_cand:
+            master_tajeom_base = "🎯 종베 · 관성파동"
+            tajeom_multiplier = 1.3
+        elif is_accumulation_cand:
+            master_tajeom_base = "🌱 바닥 · 분할매수"
+            tajeom_multiplier = 1.4
+        elif is_theme_daejang:
+            master_tajeom_base = "🚀 대장 · 당일단타"
+            tajeom_multiplier = 1.3
+        elif is_theme_hubal:
+            master_tajeom_base = "🚀 테마 후발주"
+            tajeom_multiplier = 1.15
+        elif is_platform_breakout:
+            master_tajeom_base = "📦 박스 돌파 · 스윙"
+            tajeom_multiplier = 1.25
+        elif "1차" in secret_tajeom or "🟢 전환" in secret_tajeom:
+            master_tajeom_base = "🔍 칼만 전환 · 관심"
+            tajeom_multiplier = 1.35
+        elif ("🌟" in signal):
+            master_tajeom_base = "🌟 기준봉 포착"
+            tajeom_multiplier = 0.9
+        else:
+            master_tajeom_base = "⏸ 관망 · 조건미달"
+            tajeom_multiplier = 0.6
+
+        master_tajeom = master_tajeom_base + master_tajeom_suffix
+
+        if is_warning_market and track_type == "돌파":
+            tajeom_multiplier = 0.0
+            master_tajeom = "⏸ 관망 · 하락장 돌파매매 금지 조항 적용"
+
+        if not is_fatal_drop and not is_envelope_over_under and tajeom_multiplier > 0.0:
+            if is_long_shadow or is_huge_gap:
+                master_tajeom += " ⚠️(윗꼬리/이격)"
+                if is_warning_market and is_long_shadow and not (is_foreigner_active_buy or is_long_term_pick):
+                    tajeom_multiplier = 0.0
+                    master_tajeom = "⏸ 관망 · 윗꼬리 리스크 과다"
+                else: tajeom_multiplier -= 0.3
+            if "3파 익절" in secret_tajeom or "하락 전환" in secret_tajeom:
+                tajeom_multiplier = 0.0
+                master_tajeom = "⏸ 관망 · 3차 파동 고점 리스크"
+
+        gijunbong_open = 0
+        if len(df_hist) >= 1:
+            recent_20 = df_hist.tail(20)
+            max_tv_idx = recent_20['trading_value'].idxmax()
+            gijunbong_open = int(recent_20.loc[max_tv_idx, 'open'])
+
+        if is_envelope_over_under:
+            target_price = int(ma20)
+            stop_loss = int(current_price * 0.93)
+        else:
+            if is_accumulation_cand or is_long_term_pick:
+                if gijunbong_open > 0 and gijunbong_open < current_price: stop_loss = gijunbong_open
+                else: stop_loss = int(min(ma60, recent_60d_min * 1.02))
+                target_price = int(display_high_60d) if display_high_60d > current_price else int(current_price * 1.15)
+            elif is_kalman_uptrend:
+                target_price = int(current_price + (atr_14 * 2.0))
+                stop_loss = int(current_price - (atr_14 * 1.0))
+            else:
+                target_price = int(display_high_60d) if display_high_60d > current_price else int(current_price * 1.05)
+                stop_loss = int(min(ma20, current_price * 0.95))
+
+        if secret_tajeom and "관망" not in master_tajeom and "매수금지" not in master_tajeom and not is_upper_limit:
+            master_tajeom = f"{master_tajeom} | {secret_tajeom}"
+
+        # 🎯 [가점제 전환]: 멀티플라이어를 무작정 max(1.2)로 뻥튀기하던 강제 보정 로직을 폐지합니다.
+        # 대신 기본 가격 방어선 밴드만 정상 설정하고, 핵심 등급에 맞게 계량 가산점 버프를 부여합니다.
+        if is_foreigner_active_buy and not is_envelope_over_under:
             stop_loss = int(current_price * 0.96) if not (is_accumulation_cand or is_long_term_pick) else stop_loss
             target_price = int(current_price * 1.15) if not (is_accumulation_cand or is_long_term_pick) else target_price
-            tajeom_multiplier = max(1.2, tajeom_multiplier)
-            if is_foreigner_active_buy: master_tajeom += " 💎(외인집중/면책)"
-            elif is_long_term_pick: master_tajeom += " 🎖️(코어픽/면책)"
-            else: master_tajeom += " 🔥(절대대장/면책)"
 
         # ==========================================================================
         # 📊 [트랙 1] V1 차트 기술점수 산출 엔진
@@ -1233,6 +1319,10 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if trend_phase == "ACCELERATION" or secret_tajeom == "🟢 전환": v1_base += 15
         elif trend_phase == "STEADY": v1_base += 10
         if is_long_term_pick: v1_base += 15
+        
+        # ✨ [V1 핵심 가산점 매핑]: 면책 대신 정량 점수 버프로 전환
+        if is_foreigner_active_buy: v1_base += 15
+        if is_super_leader: v1_base += 20
 
         quant_score = int(v1_base * tajeom_multiplier)
         quant_score = min(100, max(0, quant_score))
@@ -1259,10 +1349,16 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         if is_theme_daejang or is_true_theme_leader: v2_base += 25
         elif is_theme_hubal or has_today_theme: v2_base += 10
         if acc_i_buy_eok <= -100 or acc_f_buy_eok <= -100: v2_base -= 15
+        
+        # ✨ [V2 핵심 가산점 매핑]: 면책 대신 정량 점수 버프로 전환
+        if is_long_term_pick: v2_base += 15
+        if is_super_leader: v2_base += 20
 
         cutoff_score = 40 if is_warning_market else 25
         if "⏸ 관망" not in master_tajeom and "🚫" not in master_tajeom:
-            if quant_score < cutoff_score and v2_base < cutoff_score and not is_absolute_protected and not is_envelope_over_under:
+            # 👑 [필터 게이트 봉쇄]: 'not is_absolute_protected' 예외조항을 완벽히 도려냈습니다.
+            # 가산점을 받았음에도 퀀트/수급 스코어가 커트라인(하락장 40점)에 미달하면 국물도 없이 즉시 조건미달 탈락 처리합니다.
+            if quant_score < cutoff_score and v2_base < cutoff_score and not is_envelope_over_under:
                 master_tajeom = f"⏸ 관망 · 조건미달 (V1:{quant_score}점 / V2:{v2_base}점)"
 
         score_display = f"{quant_score}점 ({track_type})"
