@@ -197,19 +197,21 @@ print(f"✅ {len(updates) // 3}개 종목 초기화 완료 (batch_update 1회). 
 exit(0)
 
 def get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52, theme, target_sys, stop_sys, market_stage, stage_text):
-        is_seed = "🌱" in tajeom_badge or "모아가기" in tajeom_badge or "DB_중장기" in tajeom_badge
-        is_active_buy = "외인집중" in tajeom_badge
+        is_seed = any(kw in tajeom_badge for kw in ["🌱", "모아가기", "DB_중장기"])
         
-        # 🎯 [시장 국면별 보류 문구 논리적 분리 및 차단 가이드]
+        # 🎨 [가드레일 1]: 시인성 개편 아이콘(🔴, 👑, 💎)이 수급이나 타점에 어떻게 들어오든 외인 집중배팅을 100% 교차 판독
+        is_active_buy = any(kw in tajeom_badge or kw in sugeup for kw in ["외인집중", "외인대량", "🔥", "👑", "💎"])
+        
+        # 🎯 [가드레일 2]: "시장 정상이나 매수 보류" 같은 LLM 특유의 어조 모순 완전 박멸 및 단락 분리
         if market_stage == 3:
-            market_context = "🚨 [비상 국면] 국내 증시는 현재 무차별 패닉 투매가 발생하는 극단적 고위험 상태입니다."
+            market_context = "🚨 [장세 판독]: STAGE 3 비상 국면 (국내 증시 무차별 패닉 투매 및 자산 훼손 위험 지대)"
             veto_template = "⚠️ [매수 보류] 시장 패닉셀 국면 진입으로 인해 전 종목 매수 보류 및 현금 100% 관망을 강력 권고합니다."
         elif market_stage == 2:
-            market_context = "⚠️ [주의 국면] 국내 증시는 현재 변동성이 큰 하락/횡보 장세입니다."
-            veto_template = "⚠️ [매수 보류] 하락 장세로 인한 시장 리스크 과다 및 단기 상승 동력 부족으로 관망 권장"
+            market_context = "⚠️ [장세 판독]: STAGE 2 주의 국면 (시장 추세 하락 및 거래대금 침체 구간)"
+            veto_template = "⚠️ [매수 보류] 하락/주의 장세 영향으로 시장 리스크가 과다하며, 단기 매수 에너지가 공백 상태이므로 관망을 권장합니다."
         else:
-            market_context = "🟢 [정상 국면] 국내 증시는 현재 정상적인 추세 매매 및 돌파 랠리가 가능한 양호한 장세입니다."
-            veto_template = "⚠️ [매수 보류] 시장은 정상적이나, 해당 종목의 단기 기술적 과열(이격 과다) 또는 매물 저항으로 인해 관망 권장"
+            market_context = "🟢 [장세 판독]: STAGE 1 정상 국면 (매크로 지수 지지력 확보 및 추세 매매 가능 장세)"
+            veto_template = "⚠️ [매수 보류] 지수 장세는 양호하나, 본 종목의 독자적인 단기 기술적 과열(이격 과다) 또는 상단 매물 저항으로 인해 관망을 권장합니다."
 
         if market_stage == 3:
             guide_text = f"""
@@ -224,7 +226,7 @@ def get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52
             💡 [AI 매매 보류(Veto) 및 가격 결정 가이드: 외인 집중배팅(Non-Program) 역발상 전략]
             {market_context}
             🚨 귀하는 세계 최고의 월스트리트 퀀트 애널리스트 집단입니다. 
-            1. 이 종목은 기계적인 프로그램 매도 폭탄 속에서도 외국인 액티브 자금이 강력하게 '개별 종목으로 집중 매집'하고 있는 보석 같은 종목입니다. (💎 외인집중 배지)
+            1. 이 종목은 기계적인 프로그램 매도 폭탄 속에서도 외국인 액티브 자금이 강력하게 '개별 종목으로 집중 매집'하고 있는 보석 같은 종목입니다.
             2. 지수 하락에 흔들리지 말고, 세력의 매집 단가를 유추하여 손절가를 넉넉하게 잡고, 1차/2차 분할 매수 타점을 제시하십시오.
             3. "프로그램 매도에도 불구하고 찐외인 수급이 유입 중"이라는 역발상 논리를 브리핑에 반드시 포함하십시오.
             """
@@ -258,6 +260,7 @@ def get_ai_prompt_for_briefing(stock_name, curr_p, tajeom_badge, sugeup, high_52
         ■ 현재가: {curr_p}
         ■ 타점 위치(배지): {tajeom_badge}
         ■ 수급강도 및 프로그램: {sugeup}
+        | 시장 상황 컨텍스트: {market_context}
         ■ 52주 고가: {high_52}
         ■ 테마: {theme}
         ■ 🤖 [시스템 임시 기준가]: 목표가 {target_sys} / 손절가 {stop_sys}
