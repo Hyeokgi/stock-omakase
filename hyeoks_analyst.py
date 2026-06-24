@@ -485,7 +485,8 @@ try:
         else:
             strategy_instruction = "✨ 현재 국내 증시는 공격적 운영이 가능한 지지 장세입니다. 주도주 돌파 및 적극적인 수익 극대화 관점으로 서술하십시오."
 
-        # 👑 [HYEOKS 시그니처 대분류 및 sub_title_prefix 완벽 복원]
+        # 👑 [디자인 영점 조절] 수석님이 정립하신 고유 영문 전략 서사 및 서브타이틀 동적 바인딩
+        eng_strategy = "AGGRESSIVE TREND MOMENTUM STRATEGY" if st_type == "short" else "DEFENSIVE PLATFORM ACCUMULATION SWING"
         sub_title_prefix = "매물대 진공 구간 돌파 및 단기 슈팅 공략" if st_type == "short" else "에너지 응축 후 플랫폼 탈출 스윙 전략"
 
         detail_prompt = f"""당신은 대한민국 최상위 1% 실전 트레이더들을 위한 HYEOKS 리서치 센터의 수석 퀀트 애널리스트입니다.
@@ -499,27 +500,30 @@ try:
 {strategy_instruction}
 
 [HYEOKS 딥리딩 절대 지침 - 명심하십시오]
-1. 분량 및 깊이: 귀하의 전문적인 통찰력을 발휘하여 충분히 길고 논리적으로 1.5~2페이지 분량이 나오도록 상세히 서술하십시오.
+1. 분량 및 깊이: 귀하의 최고 수준의 통찰력을 발휘하여 충분히 길고 논리적으로 1.5~2페이지 분량이 나오도록 상세히 서술하십시오.
 2. 🚨 [할루시네이션(거짓 정보) 엄격 금지]: 차트를 판독하여 지지/저항선을 제시할 때, 반드시 위 [입력 데이터]에 제공된 ★확정 현재가({best_cand['curr_p']}원)를 기준으로 상/하단 가격을 논리적으로 계산하십시오.
 3. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'O' if st_type=='mid' else 'X'} 형식으로 숫자로만 출력하십시오.
 
-[출력 양식 (마크다운 유지)]
+[출력 양식 (마크다운 및 HTML 복합 레이아웃 절대 고수)]
+
+<div class="strategy-eng">{eng_strategy}</div>
+<hr>
+<h1 class="stock-title">{best_cand['name']} ({best_cand['code']})</h1>
+<div class="subtitle">{sub_title_prefix}</div>
 
 <div class="summary-box">
 [HYEOKS 핵심 모멘텀 요약]
-(여기에 해당 종목의 핵심 모멘텀과 투자 이유를 2-3줄로 요약하십시오.)
+(여기에 해당 종목의 핵심 모멘텀과 투자 이유를 2-3줄로 정갈하게 요약하십시오.)
 </div>
-
-# {best_cand['name']} ({best_cand['code']}) - {sub_title_prefix}
 
 ## 1. 펀더멘털 및 매크로 유동성 심층 고찰
 (FRED 지표 흐름 해석 및 당일 뉴스를 바탕으로 숨겨진 진짜 모멘텀을 심층 분석)
 
 ## 2. 시각적 차트 판독 및 거래량 딥리딩
-(주요 매물대, 이평선 이격도, 최근 거래량 증감 해부)
+(주요 매물대, 이평선 이격도, 최근 스마트머니의 거래량 증감 해부)
 
 ## 3. 실전 타점 시나리오 및 리스크 관리 전략
-(시간외 데이터를 반영한 익일 시가 갭 대응 시나리오, 1차/2차 진입 가격, 목표가/손절가를 매우 상세하게 작성할 것)
+(시간외 데이터를 반영한 익일 시가 갭 대응 시나리오, 1차/2차 진입 가격대, 목표가/손절가를 매우 상세하게 작성할 것)
 
 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'O' if st_type=='mid' else 'X'} """
 
@@ -541,7 +545,7 @@ try:
                     'code': best_cand['code'],
                     'name': best_cand['name'],
                     'curr_p': best_cand['curr_p'],
-                    'curr': best_cand['curr_p'],  # 4단계 포트폴리오 스크립트 'curr' 키 에러 방어
+                    'curr': best_cand['curr_p'],  # 4단계 포트폴리오 정산 가상계좌 연동 무결성 필드
                     'target': int(match.group(1)),
                     'stop': int(match.group(2)),
                     'split': match.group(3)
