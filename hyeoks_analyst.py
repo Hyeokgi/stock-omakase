@@ -472,39 +472,73 @@ try:
     
     market_summary = safe_generate_content(macro_prompt).text
  
-    def generate_deep_report(st_type, best_cand, is_warning_market):
-        if not best_cand: return "", None
-        vip = get_vip_deep_dive_data(best_cand['code'], KIS_TOKEN)
-        news = get_target_stock_news(best_cand['code'])
-        market_context = "하락장" if is_warning_market else "상승장"
+    def generate_deep_report(st_type, best_cand, is_warning_market=False):
+    if not best_cand: 
+        return "", None
         
-        if st_type == "short":
-            sub_title_prefix = "단기 슈팅 및 전고점 돌파 공략"
-            strategy_instruction = f" 현재 시장은 {market_context}입니다. 손익비 1.5배 이상의 의미있는 짧은 지지선(손절가)을 매우 타이트하게 숫자로 명시하십시오."
-        else:
-            sub_title_prefix = "중장기 바닥 모아가기 전략"
-            strategy_instruction = f" 현재 시장은 {market_context}입니다. 차트 상의 가장 거대한 기준봉의 시가나 쌍바닥 최저점 등 아주 단단한 손절 가격(원)과 분할 매수 밴드(Band)를 조언에 포함하십시오."
- 
-        detail_prompt = f"""귀하는 수석 퀀트 애널리스트입니다. 하십시오체로 리포트를 작성하십시오.
-        종목: {best_cand['info']} ★확정 현재가: {best_cand['curr_p']}원 펀더멘털: {vip} 뉴스: {news} {strategy_instruction}
-        리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'O' if st_type=='mid' else 'X'} 형식으로 출력하십시오.
-        """
-        img_path = f"temp_{best_cand['code']}.png"
-        try:
-            res = requests.get(f"https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{best_cand['code']}.png", headers={'User-Agent': 'Mozilla/5.0'}, verify=False)
-            with open(img_path, 'wb') as f: f.write(res.content)
-            report_txt = safe_generate_content([detail_prompt, Image.open(img_path)]).text
-            os.remove(img_path)
-        except:
-            report_txt = safe_generate_content(detail_prompt).text
- 
-        pick_data = None
-        match = re.search(r'\[DATA\]\s*목표가\s*:\s*([0-9,]+).*?손절가\s*:\s*([0-9,]+).*?분할매수\s*:\s*([OX])', report_txt)
+    # 펀더멘털 및 최신 뉴스 데이터 수집
+    vip = get_vip_deep_dive_data(best_cand['code'], KIS_TOKEN)
+    news = get_target_stock_news(best_cand['code'])
+    
+    # 시장 상황에 따른 전략 지침 동적 설정
+    strategy_instruction = ""
+    if is_warning_market:
+        strategy_instruction = "🚨 현재 국내 증시는 보수적 운영 및 방어적 매매가 요망되는 하락/조정 장세입니다. 리스크 관리를 극대화하는 관점으로 서술하십시오."
+    else:
+        strategy_instruction = "✨ 현재 국내 증시는 공격적 운영이 가능한 지지 장세입니다. 주도주 돌파 및 적극적인 수익 극대화 관점으로 서술하십시오."
+
+    # [💡 핵심 보존 구역] 트레이더님이 고생해서 맞춰놓으신 프리미엄 리포트 프롬프트 폼
+    detail_prompt = f"""귀하는 세계 최고의 헤지펀드를 이끄는 수석 퀀트 애널리스트입니다. 
+제공된 일봉 차트(Vision)와 데이터를 바탕으로 심층 리포트를 작성하십시오. 한 리포트 내에서 말투가 바뀌지 않도록 정중한 존댓말(하십시오체)로 통일하십시오. 
+
+[입력 데이터] 
+종목 및 스캐너 판독: {best_cand['info']} 
+★확정 현재가: {best_cand['curr_p']}원 
+펀더멘털: {vip} 
+최신 뉴스: {news} 
+{strategy_instruction} 
+
+[HYEOKS 딥리딩 절대 지침 - 명심하십시오]
+1. 분량 및 깊이: 귀하의 세계 최고 수준의 통찰력을 발휘하여 충분히 길고 논리적으로 1.5~2페이지 분량이 나오도록 상세히 서술하십시오.
+2. 🚨 [할루시네이션(거짓 정보) 엄격 금지]: 차트를 판독하여 지지/저항선을 제시할 때, 반드시 위 [입력 데이터]에 제공된 ★확정 현재가({best_cand['curr_p']}원)를 기준으로 상/하단 가격을 논리적으로 계산하십시오.
+3. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'O' if st_type=='mid' else 'X'} 형식으로 숫자로만 출력하십시오.
+
+[출력 양식 (마크다운 유지)]
+
+1. 매크로 환경 및 내러티브 고찰
+
+2. 시각적 차트 판독 및 스마트머니 딥리딩
+
+3. 실전 타점 시나리오 및 방어적 리스크 관리 전략
+
+[DATA] 목표가:00000, 손절가:00000, 분할매수:{'O' if st_type=='mid' else 'X'} """
+
+    # 네이버 금융 차트 이미지 결합 분석 프로세스
+    img_path = f"temp_{best_cand['code']}.png"
+    try:
+        res = requests.get(f"https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{best_cand['code']}.png", headers={'User-Agent': 'Mozilla/5.0'}, verify=False)
+        with open(img_path, 'wb') as f: 
+            f.write(res.content)
+        report_txt = safe_generate_content([detail_prompt, PIL.Image.open(img_path)]).text
+        os.remove(img_path)
+    except:
+        report_txt = safe_generate_content(detail_prompt).text
+
+    # 가상계좌 및 구글 시트 백테스트 업데이트용 가격 데이터 추출 (Regex)
+    pick_data = None
+    if report_txt:
+        match = re.search(r'\[DATA\]\s*목표가:(\d+),\s*손절가:(\d+),\s*분할매수:([OX])', report_txt)
         if match:
-            pick_data = {'name': best_cand['name'], 'code': best_cand['code'], 'target': int(match.group(1).replace(',', '')), 'stop': int(match.group(2).replace(',', '')), 'split': match.group(3) == 'O', 'curr': best_cand['curr_p']}
-            report_txt = re.sub(r'\[DATA\].*', '', report_txt, flags=re.DOTALL).strip()
+            pick_data = {
+                'code': best_cand['code'],
+                'name': best_cand['name'],
+                'curr_p': best_cand['curr_p'],
+                'target': int(match.group(1)),
+                'stop': int(match.group(2)),
+                'split': match.group(3)
+            }
             
-        return report_txt, pick_data
+    return report_txt, pick_data
  
     report_short, pick_short = generate_deep_report("short", best_short, is_warning_market)
     if best_short: time.sleep(15)
