@@ -524,12 +524,11 @@ def generate_deep_report(st_type, best_cand, is_warning_market=False):
     if report_txt:
         match = re.search(r'\[DATA\]\s*목표가:(\d+),\s*손절가:(\d+),\s*분할매수:([OX])', report_txt)
         if match:
-            # 🚨 [하위 호환성 버그 패치]: 4단계 가상계좌 엔진의 'curr' 키 에러 차단
             pick_data = {
                 'code': best_cand['code'],
                 'name': best_cand['name'],
                 'curr_p': best_cand['curr_p'],
-                'curr': best_cand['curr_p'],  # 👈 이 필드를 추가하여 'curr' KeyError를 원천 봉쇄합니다.
+                'curr': best_cand['curr_p'],
                 'target': int(match.group(1)),
                 'stop': int(match.group(2)),
                 'split': match.group(3)
