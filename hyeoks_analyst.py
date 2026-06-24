@@ -476,18 +476,15 @@ try:
     if not best_cand: 
         return "", None
         
-    # 펀더멘털 및 최신 뉴스 데이터 수집
     vip = get_vip_deep_dive_data(best_cand['code'], KIS_TOKEN)
     news = get_target_stock_news(best_cand['code'])
     
-    # 시장 상황에 따른 전략 지침 동적 설정
     strategy_instruction = ""
     if is_warning_market:
         strategy_instruction = "🚨 현재 국내 증시는 보수적 운영 및 방어적 매매가 요망되는 하락/조정 장세입니다. 리스크 관리를 극대화하는 관점으로 서술하십시오."
     else:
         strategy_instruction = "✨ 현재 국내 증시는 공격적 운영이 가능한 지지 장세입니다. 주도주 돌파 및 적극적인 수익 극대화 관점으로 서술하십시오."
 
-    # [💡 핵심 보존 구역] 트레이더님이 고생해서 맞춰놓으신 프리미엄 리포트 프롬프트 폼
     detail_prompt = f"""귀하는 세계 최고의 헤지펀드를 이끄는 수석 퀀트 애널리스트입니다. 
 제공된 일봉 차트(Vision)와 데이터를 바탕으로 심층 리포트를 작성하십시오. 한 리포트 내에서 말투가 바뀌지 않도록 정중한 존댓말(하십시오체)로 통일하십시오. 
 
@@ -513,7 +510,6 @@ try:
 
 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'O' if st_type=='mid' else 'X'} """
 
-    # 네이버 금융 차트 이미지 결합 분석 프로세스
     img_path = f"temp_{best_cand['code']}.png"
     try:
         res = requests.get(f"https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{best_cand['code']}.png", headers={'User-Agent': 'Mozilla/5.0'}, verify=False)
@@ -524,7 +520,6 @@ try:
     except:
         report_txt = safe_generate_content(detail_prompt).text
 
-    # 가상계좌 및 구글 시트 백테스트 업데이트용 가격 데이터 추출 (Regex)
     pick_data = None
     if report_txt:
         match = re.search(r'\[DATA\]\s*목표가:(\d+),\s*손절가:(\d+),\s*분할매수:([OX])', report_txt)
