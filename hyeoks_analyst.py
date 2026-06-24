@@ -472,7 +472,7 @@ try:
     
     market_summary = safe_generate_content(macro_prompt).text
  
-    def generate_deep_report(st_type, best_cand, is_warning_market=False):
+def generate_deep_report(st_type, best_cand, is_warning_market=False):
     if not best_cand: 
         return "", None
         
