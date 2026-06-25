@@ -186,7 +186,7 @@ def generate_deep_report(st_type, best_cand, is_warning_market=False, KIS_TOKEN=
 
 <div class="summary-box">
 [HYEOKS 핵심 모멘텀 요약]
-(여기에 해당 종목의 핵심 모멘텀과 투자 이유를 2-3줄로 정갈하게 요약하십시오.)
+🚨 [가독성 극대화 지침]: 여기에는 부차적인 수급 설명이나 주절주절 긴 문장을 절대 작성하지 마십시오. 수석 트레이더가 한눈에 직관적으로 파악할 수 있도록 핵심 호재와 차트 위치만 압축하여 "역대급 거래대금 동반 장기 박스권 상단 돌파로 단기 슈팅 초입 국면 판독." 과 같이 구두점 포함 반드시 '50자 이내의 완결된 딱 한 문장'으로만 끝내십시오. 문장 뒤에 다른 사족을 붙여 길어지게 만들면 시스템 탈락 처리됩니다.
 </div>
 
 ## 1. 펀더멘털 및 매크로 유동성 심층 고찰
@@ -206,9 +206,8 @@ def generate_deep_report(st_type, best_cand, is_warning_market=False, KIS_TOKEN=
         with open(img_path, 'wb') as f: 
             f.write(res.content)
         
-        # global로 선언된 client 모델 호출 인자 맵 수정보정
         model_name = 'gemini-2.5-pro'
-        report_txt = client.models.generate_content(model=model_name, contents=[detail_prompt, PIL.Image.open(img_path)]).text
+        report_txt = client.models.generate_content(model=model_name, contents=[detail_prompt, Image.open(img_path)]).text
         os.remove(img_path)
     except Exception as e:
         print(f"⚠️ 비전 파싱 실패 Fallback 구동: {e}")
@@ -266,7 +265,7 @@ try:
         stage_text = "STAGE 3 (패닉 장세 - 서킷 위험 임계점 돌파,전원 사격 중지)"
     print(f"📡 [실시간 시장 위험도 연산 판독 완료]: {stage_text} (상태: {korean_market_status})")
  
-    sys_instruction = "기업의 일반적인 소개는 일절 금지. 차트 지표, 타점, 수급 데이터를 바탕으로 '현재 기술적 위치'와 '앞으로의 대응 전략'만을 80~90자 내외로 매우 짧고 날카롭게 작성할 것."
+    sys_instruction = "기업의 일반적인 소개는 일절 금지. 차트 지표, 타점, 수급 데이터를 바탕으로 '현재 기술적 위치'와 '앞으로의 대응 전략'만을 60~70자 내외로 매우 짧고 날카롭게 작성할 것."
  
     if current_hour == 7:
         print("▶ [오전 7시 모드] DB_스캐너 데이터를 'AI 브리핑 대기중' 및 '계산 대기'로 초기화합니다.")
@@ -362,7 +361,7 @@ try:
     if current_hour != 15:
         print(f"▶ [{current_hour}시 모드] 메인 리포트 시간이 아니므로, 실시간 대기 종목의 정밀 요격 브리핑을 개시합니다.")
         for i, row in enumerate(db_rows[1:], start=2):
-            if len(row) > 9 and "리포트 발송 완료" not in str(row[9]):  
+            if len(row) > 9 and not any(key in str(row[9]) for key in ["리포트 발송 완료", "리포트 작성 완료"]):  
                 stock_name = row[0] if len(row) > 0 else "알수없음"
                 code = str(row[2]).replace("'", "").strip().zfill(6)
                 
@@ -397,21 +396,20 @@ try:
                             real_row_idx = idx; break
                     
                     if real_row_idx != -1:
-                        if "리포트 발송 완료" in str(current_db_snapshot[real_row_idx-1][9]): continue
+                        if any(key in str(current_db_snapshot[real_row_idx-1][9]) for key in ["리포트 발송 완료", "리포트 작성 완료"]): continue
                             
                         db_sheet.update_cell(real_row_idx, 10, briefing_text)
                         db_sheet.update_cell(real_row_idx, 15, target_val)
                         db_sheet.update_cell(real_row_idx, 16, stop_val)
                         
-                        # 📡 [주의/정밀 연동]: 주가데이터_보조 탭 J, X, Y열 역동기화 타격 채널 주입
                         try:
                             helper_sheet = doc.worksheet("주가데이터_보조")
                             helper_snapshot = helper_sheet.get_all_values()
                             for h_idx, h_row in enumerate(helper_snapshot, start=1):
                                 if len(h_row) > 1 and str(h_row[1]).replace("'", "").strip().zfill(6) == code:
-                                    helper_sheet.update_cell(h_idx, 10, briefing_text)    # J열 (브리핑상태)
-                                    helper_sheet.update_cell(h_idx, 24, target_val)      # X열 (목표가 AI)
-                                    helper_sheet.update_cell(h_idx, 25, stop_val)        # Y열 (손절가 AI)
+                                    helper_sheet.update_cell(h_idx, 10, briefing_text)    
+                                    helper_sheet.update_cell(h_idx, 24, target_val)      
+                                    helper_sheet.update_cell(h_idx, 25, stop_val)        
                                     break
                         except Exception as ex:
                             print(f"⚠️ 시간외 주가데이터_보조 보조 타격 실패: {ex}")
@@ -578,7 +576,15 @@ try:
         summary_match = re.search(r'<div class="summary-box">(.*?)</div>', report_text, re.DOTALL)
         if summary_match:
             clean_text = re.sub(r'<[^>]+>', '', summary_match.group(1)).replace("[HYEOKS 핵심 모멘텀 요약]", "").strip()
-            # 👑 [가독성 슬라이싱 고도화]: 80자 이내의 완결형 문장 그대로 표기되도록 안정적 상한선 확보
+            
+            # 👑 [가독성 슬라이싱 혁신]: 주절주절 길어지는 것을 방지하기 위해 마침표(.) 기준 첫 문장만 정밀 분리
+            sentences = [s.strip() for s in re.split(r'(?<=[.])', clean_text) if s.strip()]
+            if sentences:
+                clean_text = sentences[0]
+            
+            # 👑 [안전 하드 가드레일]: 만약 첫 문장 자체가 65자를 초과할 경우 지저분한 절단을 방지하고 강제 클리핑
+            if len(clean_text) > 65:
+                clean_text = clean_text[:62] + "..."
             briefing_summary += clean_text
         else: briefing_summary += "텔레그램에서 상세 분석 리포트를 확인하십시오."
         return briefing_summary
@@ -599,14 +605,12 @@ try:
             
             if real_row_idx == -1: continue
  
-            # 🎯 단기 리포팅 픽 동시 타격 채널 (DB_스캐너 & 주가데이터_보조 J열 동시 각인)
             if best_short and code == best_short['code']:
                 db_sheet.update_cell(real_row_idx, 10, short_summary)
                 if pick_short:
                     db_sheet.update_cell(real_row_idx, 15, f"{pick_short['target']:,}원")
                     db_sheet.update_cell(real_row_idx, 16, f"{pick_short['stop']:,}원")
                 
-                # 🛡️ [수석님 지시 해결]: 주가데이터_보조 탭 탐색 후 '대기중' 텍스트를 강제 삭제 및 진성 동기화
                 helper_snapshot = helper_sheet.get_all_values()
                 for h_idx, h_row in enumerate(helper_snapshot, start=1):
                     if len(h_row) > 1 and str(h_row[1]).replace("'", "").strip().zfill(6) == code:
@@ -617,14 +621,12 @@ try:
                         break
                 time.sleep(3.5); continue
             
-            # 🎯 중기 리포팅 픽 동시 타격 채널 (DB_스캐너 & 주가데이터_보조 J열 동시 각인)
             if best_mid and code == best_mid['code']:
                 db_sheet.update_cell(real_row_idx, 10, mid_summary)
                 if pick_mid:
                     db_sheet.update_cell(real_row_idx, 15, f"{pick_mid['target']:,}원")
                     db_sheet.update_cell(real_row_idx, 16, f"{pick_mid['stop']:,}원")
                 
-                # 🛡️ [수석님 지시 해결]: 주가데이터_보조 탭 탐색 후 '대기중' 텍스트를 강제 삭제 및 진성 동기화
                 helper_snapshot = helper_sheet.get_all_values()
                 for h_idx, h_row in enumerate(helper_snapshot, start=1):
                     if len(h_row) > 1 and str(h_row[1]).replace("'", "").strip().zfill(6) == code:
@@ -635,8 +637,7 @@ try:
                         break
                 time.sleep(3.5); continue
             
-            # 🎯 나머지 장중 일반 종목들의 실시간 스냅 브리핑 처리 채널
-            if "리포트 발송 완료" not in str(current_db_snapshot[real_row_idx-1][9]):
+            if not any(key in str(current_db_snapshot[real_row_idx-1][9]) for key in ["리포트 발송 완료", "리포트 작성 완료"]):
                 curr_p = r_legacy[3] if len(r_legacy) > 3 else ''
                 tajeom_badge = r_legacy[8] if len(r_legacy) > 8 else ''
                 sugeup = r_legacy[11] if len(r_legacy) > 11 else ''
@@ -663,7 +664,6 @@ try:
                     db_sheet.update_cell(real_row_idx, 15, target_val)
                     db_sheet.update_cell(real_row_idx, 16, stop_val)
                     
-                    # 💡 [핵심 가드레일]: omakase.py가 돌 때 백지화 후 복원하도록 주가데이터_보조 탭 J, X, Y열 백업 동시 갱신
                     helper_snapshot = helper_sheet.get_all_values()
                     for h_idx, h_row in enumerate(helper_snapshot, start=1):
                         if len(h_row) > 1 and str(h_row[1]).replace("'", "").strip().zfill(6) == code:
@@ -747,7 +747,7 @@ try:
     html += "</body></html>"
  
     pdf_file = f"HYEOKS_Daily_{datetime.datetime.now(KST).strftime('%Y%m%d')}.pdf"
-    pdfkit.from_string(html, pdf_file, options={'encoding': "UTF-8", 'enable-local-file-access': None})
+    pdfkit.from_string(html, pdf_file, options={'options': "UTF-8", 'enable-local-file-access': None})
  
     if GAS_WEB_APP_URL:
         print("▶ 구글 드라이브 업로드 진행 중...")
