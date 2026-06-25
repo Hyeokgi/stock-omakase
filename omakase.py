@@ -1452,12 +1452,14 @@ def update_technical_data(df_theme, all_theme_map):
             static_sheet.append_row(["종목코드", "종목명", "시가총액", "관리종목", "재무위험", "만성적자"])
 
         now_time = datetime.datetime.now(KST)
-        is_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50) or len(static_sheet.get_all_values()) <= 5
+        # 👑 [긴급 보정 1]: 정적데이터 시트 로딩 검증과 리셋 타임을 수학적으로 완전 격리분리
+        is_official_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50)
+        is_reset_time = is_official_reset_time or len(static_sheet.get_all_values()) <= 5
         is_preserve_time = now_time.hour < 8 or (now_time.hour == 8 and now_time.minute < 50)
         is_regular_market = (9 <= now_time.hour < 15) or (now_time.hour == 15 and now_time.minute <= 40)
         
         static_db = {}
-        if is_reset_time: static_sheet.batch_clear(['A2:F'])
+        if is_official_reset_time: static_sheet.batch_clear(['A2:F'])
         else:
             try:
                 for row in static_sheet.get_all_values()[1:]:
@@ -1583,7 +1585,8 @@ def update_technical_data(df_theme, all_theme_map):
                 r[26] = r[27] = ""
                 r[28] = "정규장 진행중"
             if c_code in existing_data:
-                if not is_reset_time:
+                # 👑 [긴급 보정 2]: 빈 정적시트 강제 트랩을 피하기 위해 시간 검증 전용 플래그(is_official_reset_time)로 가드 교체
+                if not is_official_reset_time:
                     r[9] = existing_data[c_code]["briefing"]
                     r[23] = existing_data[c_code]["target"]
                     r[24] = existing_data[c_code]["stop"]
@@ -1609,30 +1612,21 @@ def update_technical_data(df_theme, all_theme_map):
             helper_sheet.batch_clear([f"A{len(helper_sheet_data) + 1}:AG"])
         except Exception as e: print(f"⚠️ [helper_sheet update Error] {e}")
 
-        # ==========================================================================
-        # 👑 [수석 트레이더 포트폴리오 연동]: 중장기 전략주 무조건 대시보드 상주 가드
-        # ==========================================================================
-        # 1. DB_중장기 시트를 실시간으로 역추적하여 현재 타격 중인 핵심 포트 종목명을 추출합니다.
         portfolio_protected_names = set()
         try:
             portfolio_rows = doc.worksheet("DB_중장기").get_all_values()
-            for row in portfolio_rows[1:]: # 헤더 제외
+            for row in portfolio_rows[1:]: 
                 if len(row) > 4:
-                    if row[3] and str(row[3]).strip(): portfolio_protected_names.add(str(row[3]).strip()) # Top Pick 1
-                    if row[4] and str(row[4]).strip(): portfolio_protected_names.add(str(row[4]).strip()) # Top Pick 2
+                    if row[3] and str(row[3]).strip(): portfolio_protected_names.add(str(row[3]).strip()) 
+                    if row[4] and str(row[4]).strip(): portfolio_protected_names.add(str(row[4]).strip()) 
             print(f"📦 [포트폴리오 동기화 완료] 중기 전략 핵심주 보호막 가동: {list(portfolio_protected_names)}")
         except Exception as e:
             print(f"⚠️ [DB_중장기 시트 연동 실패] {e}")
 
-        # ==========================================================================
-        # 👑 [수석 트레이더 최종 승인 본]: 좀비 종목 무조건 박멸 및 면책 특권 강제 박탈 엔진
-        # ==========================================================================
         scanner_keywords = ["🎯", "💎", "🌱", "🚀", "📦", "🔍"]
         all_candidates = []
         processed_codes = set()
-        is_official_reset_time = (now_time.hour == 7) or (now_time.hour == 8 and now_time.minute < 50)
 
-        # 시장 허들 레이팅 설정 (하락장/위험장세에는 40점 미만 정량 스커트 아웃)
         cutoff_score = 40 if is_warning_market else 25
 
         for r in results:
@@ -1641,14 +1635,12 @@ def update_technical_data(df_theme, all_theme_map):
             종목코드 = str(r[1]).replace("'", "").zfill(6)
             processed_codes.add(종목코드) 
             
-            # ✨ [가드레일 1]: 상위 엔진에서 오염되어 내려온 면책/코어픽 배지 및 특권을 문자열 레벨에서 원천 삭제 및 청소
             tajeom = str(r[8]).replace("🎖️(코어픽/면책)", "").replace("(코어픽/면책)", "").replace("🎖️", "").strip()
             
             v1_num = int(r[29]) if len(r) > 29 and str(r[29]).isdigit() else 0
             v2_num = int(r[31]) if len(r) > 31 and str(r[31]).isdigit() else 0
             max_current_score = max(v1_num, v2_num)
 
-            # ✨ [가드레일 2]: 타점에 관망/조건미달이 적혀있거나, 퀀트 점수가 허들(하락장 40점) 미달인 유령주는 후보군 진입 자체를 원천 봉쇄
             if "관망" in tajeom or "조건미달" in tajeom or max_current_score < cutoff_score:
                 continue
 
@@ -1691,34 +1683,27 @@ def update_technical_data(df_theme, all_theme_map):
         seed_pool = union_top_n(seed_cands, 5)
         normal_pool = union_top_n(normal_cands, 15)
 
-        # 👑 정량 쿼터 선별 (SEED 최대 5개 + NORMAL 최대 15개)
         top_20_results = seed_pool[:5] + normal_pool[:15]
         top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results if len(x) > 2}
 
-        # 🎯 [가드레일 3 - 구출 필터 엄격화]: 매수보류/경고 찌꺼기 복원 원천 금지
-        # 오직 애널리스트가 수동 발행한 "리포트 발송 완료" 또는 "리포트 작성 완료" 핵심주만 구출 명단을 허용합니다.
         if not is_official_reset_time:
             for c_code, data in existing_data.items():
                 if c_code not in top_20_codes:
                     briefing_text = str(data["briefing"]).strip()
                     
-                    # 📌 핀셋 소환 법칙: 경고나 보류 문구가 아닌, 실질적인 리포트 출하 완료 종목만 구출
-                    if any(key in briefing_text for key in ["리포트 발송 완료", "리포트 작성 완료"]):
-                        # 구출할 때도 타점 칸의 면책 문구를 강제로 청소해서 결합
+                    # 👑 [긴급 보정 3]: 리포트 2개 종목뿐만 아니라 일반 간단 브리핑이 주입된 주도주까지 전면 파괴 방어 구출 단락 확장
+                    if any(key in briefing_text for key in ["리포트 발송 완료", "리포트 작성 완료", "간단 브리핑"]):
                         clean_row = list(data["raw_row"])
                         if len(clean_row) > 8:
                             clean_row[8] = str(clean_row[8]).replace("🎖️(코어픽/면책)", "").replace("(코어픽/면책)", "").replace("🎖️", "").strip()
                         top_20_results.append(clean_row)
                         top_20_codes.add(c_code)
 
-        #종합 정렬
         top_20_results.sort(key=lambda x: max(get_v1_score(x), get_v2_score(x)), reverse=True)
 
-        # 🎯 [가드레일 4 - 물리적 상한선 탑재]: 어떤 예외 상황에서도 대시보드가 20종목을 초과해 비대해지는 것을 물리적으로 락(Lock)
         if len(top_20_results) > 20:
             top_20_results = top_20_results[:20]
 
-        # 🎯 [가드레일 5]: 순위권 생존 종목의 장중 실시간 데이터 교차 복원 덮어쓰기
         if not is_official_reset_time:
             for row in top_20_results:
                 if len(row) > 15:
@@ -1730,12 +1715,11 @@ def update_technical_data(df_theme, all_theme_map):
                             row[14] = existing_data[code]["target"]
                             row[15] = existing_data[code]["stop"]
 
-        # 최종 대시보드 송출
         if top_20_results:
             try:
                 db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
                 db_scanner_sheet.batch_clear([f"A{len(top_20_results) + 2}:AC"])
-                print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (면책 삭제 및 유령 종목 완전 차단 완료)")
+                print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (하이재킹 버그 수정 및 데이터 영구 락 보존 완료)")
             except Exception as e: print(f"⚠️ [DB_스캐너 update Error] {e}")
 
         try:
@@ -1786,7 +1770,7 @@ def update_technical_data(df_theme, all_theme_map):
         force_sync_sheet = True
         updated = False
 
-        if is_reset_time and len(bt_data) > 1:
+        if is_official_reset_time and len(bt_data) > 1:
             print("▶ [실증 엔진] V2 정예 진입 종목 성과 추적 가동...")
             for i in range(1, len(bt_data)):
                 row = bt_data[i]
@@ -1818,7 +1802,6 @@ def update_technical_data(df_theme, all_theme_map):
             if len(row) >= 7: existing_keys.add((str(row[0]).strip(), str(row[2]).replace("'", "").strip().zfill(6), str(row[6]).strip()))
 
         new_logs_count = 0
-# omakase.py의 15시 메인 백테스트 로깅 블록을 아래 코드로 대체하십시오.
         if is_eod_log_window:
             positive_badges = ["🎯", "💎", "🌟", "👑", "📦", "🔍", "🚀", "🌱"]
             negative_markers = ["📉", "관망", "조건미달", "🚫", "매매금지"]
@@ -1834,11 +1817,9 @@ def update_technical_data(df_theme, all_theme_map):
             chart_top2  = sorted(candidate_pool, key=lambda x: x[29], reverse=True)[:2]   
             supply_top2 = sorted(candidate_pool, key=lambda x: x[31], reverse=True)[:2]   
             
-            # 👑 [클로드 지적 즉시 반영]: 예측용 더미 채널을 삭제하여 통계 왜곡 원천 차단
             channels = [("차트상위TOP2", chart_top2), ("수급상위TOP2", supply_top2)]
 
             for category, picks in channels:
-                # 👑 [장중 중복 실행 방어]: 오늘 이미 해당 카테고리로 2개 이상 기록됐다면 추가 기록을 차단하여 샘플 수 완전 고정!
                 today_logged_count = sum(1 for row in bt_data[1:] if len(row) >= 7 and str(row[0]).strip() == today_str and str(row[6]).strip() == category)
                 if today_logged_count >= 2: 
                     continue
