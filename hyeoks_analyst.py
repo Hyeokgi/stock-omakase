@@ -266,7 +266,7 @@ try:
         stage_text = "STAGE 3 (패닉 장세 - 서킷 위험 임계점 돌파,전원 사격 중지)"
     print(f"📡 [실시간 시장 위험도 연산 판독 완료]: {stage_text} (상태: {korean_market_status})")
  
-    sys_instruction = "기업의 일반적인 소개는 일절 금지. 차트 지표, 타점, 수급 데이터를 바탕으로 '현재 기술적 위치'와 '앞으로의 대응 전략'만을 60~70자 내외로 매우 짧고 날카롭게 작성할 것."
+    sys_instruction = "기업의 일반적인 소개는 일절 금지. 차트 지표, 타점, 수급 데이터를 바탕으로 '현재 기술적 위치'와 '앞으로의 대응 전략'만을 80~90자 내외로 매우 짧고 날카롭게 작성할 것."
  
     if current_hour == 7:
         print("▶ [오전 7시 모드] DB_스캐너 데이터를 'AI 브리핑 대기중' 및 '계산 대기'로 초기화합니다.")
@@ -574,11 +574,12 @@ try:
  
     def extract_summary(report_text):
         if not report_text: return ""
-        briefing_summary = "✅ [리포트 발송 완료] "
+        briefing_summary = "✅ [리포트 작성 완료] "
         summary_match = re.search(r'<div class="summary-box">(.*?)</div>', report_text, re.DOTALL)
         if summary_match:
             clean_text = re.sub(r'<[^>]+>', '', summary_match.group(1)).replace("[HYEOKS 핵심 모멘텀 요약]", "").strip()
-            briefing_summary += clean_text[:80] + "..." if len(clean_text) > 80 else clean_text
+            # 👑 [가독성 슬라이싱 고도화]: 80자 이내의 완결형 문장 그대로 표기되도록 안정적 상한선 확보
+            briefing_summary += clean_text
         else: briefing_summary += "텔레그램에서 상세 분석 리포트를 확인하십시오."
         return briefing_summary
  
