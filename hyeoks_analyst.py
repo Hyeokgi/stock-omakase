@@ -358,7 +358,7 @@ try:
     # ==========================================
     # 📡 [장중 스냅샷 실시간 업데이트 루프 - 15시 외 가동]
     # ==========================================
-    if False:
+    if current_hour != 15:
         print(f"▶ [{current_hour}시 모드] 메인 리포트 시간이 아니므로, 실시간 대기 종목의 정밀 요격 브리핑을 개시합니다.")
         for i, row in enumerate(db_rows[1:], start=2):
             if len(row) > 9 and not any(key in str(row[9]) for key in ["리포트 발송 완료", "리포트 작성 완료"]):  
