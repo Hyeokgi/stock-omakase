@@ -747,7 +747,7 @@ try:
     html += "</body></html>"
  
     pdf_file = f"HYEOKS_Daily_{datetime.datetime.now(KST).strftime('%Y%m%d')}.pdf"
-    pdfkit.from_string(html, pdf_file, options={'options': "UTF-8", 'enable-local-file-access': None})
+    pdfkit.from_string(html, pdf_file, options={'encoding': "UTF-8", 'enable-local-file-access': None})
  
     if GAS_WEB_APP_URL:
         print("▶ 구글 드라이브 업로드 진행 중...")
