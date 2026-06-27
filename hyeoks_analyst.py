@@ -806,36 +806,55 @@ try:
     # 👑 [HYEOKS 백테스트 V5] 리포팅 채널 연동
     # ==========================================
     try:
-        print("\n▶ [백테스트 V5] 리포팅 채널 기록 중...")
+        print("\n▶ [백테스트 V6 Step1] 리포트 채널 진입 append (신 26열 스키마)...")
         bt_sheet = doc.worksheet("백테스트_로그")
         bt_data = bt_sheet.get_all_values()
-        # 5번: 헤더 라벨을 omakase와 통일 ("V2 (수급점수)")
-        header_row = ["진입일", "종목명", "종목코드", "주도 테마명", "진입가(추천가)", "마스터 타점유형", "선정카테고리", "V1 (차트점수)", "V2 (수급점수)", "외인/기관 수급상태", "T+1 수익률", "T+3 수익률", "T+5 수익률", "T+10 수익률"]
-        # 6번 [레이스 방지]: 전체 batch_clear+rewrite 대신 신규 행만 append → omakase와 동시 실행 시 데이터 소실 차단
-        if not bt_data:
-            bt_sheet.append_row(header_row)
-            bt_data = [header_row]
         today_str = datetime.datetime.now(KST).strftime('%Y-%m-%d')
-        existing_keys = set()
-        for row in bt_data[1:]:
-            if len(row) >= 7: existing_keys.add((str(row[0]).strip(), str(row[2]).replace("'", "").strip().zfill(6), str(row[6]).strip()))
 
-        report_picks = []
-        if best_short: report_picks.append(best_short)
-        if best_mid: report_picks.append(best_mid)
-        new_rows = []
-        for cand in report_picks:
-            s_code = str(cand['code']).replace("'", "").strip().zfill(6)
-            if s_code == "000000": continue
-            key = (today_str, s_code, "리포팅TOP2")
-            if key not in existing_keys:
-                new_rows.append([today_str, cand['name'], f"'{s_code}", cand.get('theme_name', ''), cand['curr_p'], cand.get('type', ''), "리포팅TOP2", f"{cand['v1_score']}점", f"{cand['v2_score']}점", "", "", "", "", ""])
-                existing_keys.add(key)
-        if new_rows:
-            bt_sheet.append_rows(new_rows, value_input_option="USER_ENTERED")
-            print(f"✅ [백테스트 V5] 리포팅 채널 {len(new_rows)}건 append 완료 (전체 rewrite 제거).")
-        else: print("⏭ [백테스트 V5] 리포팅 채널 — 변동 기록 없음.")
-    except Exception as e: print(f"⚠️ [백테스트 V5] 리포팅 채널 기록 에러: {e}")
+        # 신 스키마(26열, trade_id 헤더)일 때만 append. 시트 생성·마이그레이션은 omakase가 단독 소유.
+        is_new_schema = bool(bt_data) and len(bt_data[0]) >= 26 and str(bt_data[0][0]).strip() == "trade_id"
+        if not is_new_schema:
+            print("ℹ️ 백테스트_로그가 아직 신 스키마 아님(omakase 마이그레이션 대기) → 리포트 채널 보류.")
+        else:
+            existing_ids = set(str(row[0]).strip() for row in bt_data[1:] if row and str(row[0]).strip())
+
+            def _idx_close(name):
+                try:
+                    sym = "KOSDAQ" if str(name).upper() == "KOSDAQ" else "KOSPI"
+                    root = ET.fromstring(requests.get(f"https://fchart.stock.naver.com/sise.nhn?symbol={sym}&timeframe=day&count=3&requestType=0", verify=False, timeout=4).text)
+                    its = root.findall(".//item")
+                    if its: return float(its[-1].get("data").split("|")[4])
+                except Exception: pass
+                return 0.0
+
+            def _market(code):
+                try:
+                    j = requests.get(f"https://m.stock.naver.com/api/stock/{code}/basic", headers={'User-Agent': 'Mozilla/5.0'}, verify=False, timeout=3).json()
+                    nm = str(j.get("stockExchangeName", "")).upper()
+                    return nm if nm in ("KOSPI", "KOSDAQ") else "KOSPI"
+                except Exception:
+                    return "KOSPI"
+
+            idx_cache = {"KOSPI": _idx_close("KOSPI"), "KOSDAQ": _idx_close("KOSDAQ")}
+            report_picks = [p for p in (best_short, best_mid) if p]
+            new_rows = []
+            for cand in report_picks:
+                s_code = str(cand['code']).replace("'", "").strip().zfill(6)
+                if s_code == "000000": continue
+                tid = f"{today_str}_리포트TOP2_{s_code}"
+                if tid in existing_ids: continue
+                bench = _market(s_code)
+                new_rows.append([
+                    tid, today_str, "리포트TOP2", cand['name'], f"'{s_code}", cand.get('theme_name', ''), "", market_stage, "",
+                    cand.get('v1_score', ''), cand.get('v2_score', ''), "", "", bench, cand.get('curr_p', ''), idx_cache.get(bench, 0.0)
+                ] + [""] * 10)
+                existing_ids.add(tid)
+            if new_rows:
+                bt_sheet.append_rows(new_rows, value_input_option="USER_ENTERED")
+                print(f"✅ [백테스트 V6 Step1] 리포트 채널 {len(new_rows)}건 append 완료.")
+            else:
+                print("⏭ [백테스트 V6 Step1] 리포트 채널 — 추가 없음.")
+    except Exception as e: print(f"⚠️ [백테스트 V6 Step1] 리포트 채널 기록 에러: {e}")
         
     print(f"🎉 모든 작업이 성공적으로 완료되었습니다: {pdf_file}")
 except Exception as e:
