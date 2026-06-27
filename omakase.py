@@ -647,7 +647,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         "⏸ 관망 · 조건미달", "AI 브리핑 대기중", 0, 0, 0, 0, "🟡 일반형", "📉 이격 과다",
         "100.0%", "평범(X)", "🟡 [V.평년수준]", "개별주/기타", "⚪ [수급강도 평년] 1.0배", 0,
         "🏦기:0.0억 / 🌎외:0.0억", 0, 0, "NORMAL", "", "", "정규장", 0, "0점 (오류)",
-        0, "0점 (V2오류)"
+        0, "0점 (V2오류)", "GATE_FAIL"
     ]
 
     try:
@@ -942,6 +942,8 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             print(f"⚠️ [analyze_single_stock Kalman Engine Exception for {name}] {e}")
             atr_14 = current_price * 0.03
             is_kalman_uptrend = False
+            kalman_turned_green = False
+            kalman_turned_red = False
             trend_phase = "REVERSAL"
             secret_tajeom = ""
             slope_pct = accel_pct = 0.0
@@ -1122,6 +1124,15 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         # (배지 부착은 master_tajeom이 최종 확정된 이후로 이동 — 덮어쓰기로 인한 배지 소실 방지)
         is_super_leader = (change_rate >= 0.15) and (trading_value >= 100_000_000_000) and (smi_ratio >= 3.0)
 
+        # ② [반등 확인 게이트] 과매도/바닥권이 '떨어지는 칼'인지, 첫 반등이 나왔는지 판별
+        # 칼만 상승전환 / 칼만 상승추세 / slope 양전 / ma5 회복 / 저점 절상 양봉 중 하나라도 충족해야 '반등 확인'
+        prev_low_val = int(df_hist['low'].iloc[-2]) if len(df_hist) >= 2 else today_low
+        is_rebound_confirmed = (
+            kalman_turned_green or is_kalman_uptrend or (slope_pct > 0) or
+            (current_price >= ma5) or
+            (today_low > prev_low_val and is_today_yangbong)
+        )
+
         tajeom_multiplier = 0.0
         master_tajeom_base = "⏸ 관망 · 조건미달"
 
@@ -1129,8 +1140,12 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             master_tajeom_base = "🚫 매매금지 · 위험"
             tajeom_multiplier = 0.0
         elif is_envelope_over_under:
-            master_tajeom_base = "📉 과매도 · 역배팅"
-            tajeom_multiplier = 1.45
+            if is_rebound_confirmed:
+                master_tajeom_base = "📉 과매도 · 역배팅"
+                tajeom_multiplier = 1.45
+            else:
+                master_tajeom_base = "⏸ 관망 · 과매도 반등 미확인 (칼날 회피)"
+                tajeom_multiplier = 0.0
         elif is_foreigner_active_buy:
             master_tajeom_base = "💎 외인 역발상 매집"
             tajeom_multiplier = 1.4
@@ -1141,8 +1156,12 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             master_tajeom_base = "🎯 종베 · 관성파동"
             tajeom_multiplier = 1.3
         elif is_accumulation_cand:
-            master_tajeom_base = "🌱 바닥 · 분할매수"
-            tajeom_multiplier = 1.4
+            if is_rebound_confirmed:
+                master_tajeom_base = "🌱 바닥 · 분할매수"
+                tajeom_multiplier = 1.4
+            else:
+                master_tajeom_base = "⏸ 관망 · 바닥권 반등 미확인 (칼날 회피)"
+                tajeom_multiplier = 0.0
         elif is_theme_daejang:
             master_tajeom_base = "🚀 대장 · 당일단타"
             tajeom_multiplier = 1.3
@@ -1168,16 +1187,17 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             tajeom_multiplier = 0.0
             master_tajeom = "⏸ 관망 · 하락장 돌파매매 금지 조항 적용"
 
-        if not is_fatal_drop and not is_envelope_over_under and tajeom_multiplier > 0.0:
-            if is_long_shadow or is_huge_gap:
+        if not is_fatal_drop and tajeom_multiplier > 0.0:
+            if not is_envelope_over_under and (is_long_shadow or is_huge_gap):
                 master_tajeom += " ⚠️(윗꼬리/이격)"
                 if is_warning_market and is_long_shadow and not (is_foreigner_active_buy or is_long_term_pick):
                     tajeom_multiplier = 0.0
                     master_tajeom = "⏸ 관망 · 윗꼬리 리스크 과다"
                 else: tajeom_multiplier -= 0.3
+            # ③ 과매도(역배팅)도 하락 추세 전환/3파 익절 veto 적용 — 떨어지는 칼 회피 (면제 조항 제거)
             if "3파 익절" in secret_tajeom or "하락 전환" in secret_tajeom:
                 tajeom_multiplier = 0.0
-                master_tajeom = "⏸ 관망 · 3차 파동 고점 리스크"
+                master_tajeom = "⏸ 관망 · 3차 파동/하락전환 고점 리스크"
 
         gijunbong_open = 0
         if len(df_hist) >= 1:
@@ -1304,6 +1324,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         v2_quant_score = min(100, max(0, int(v2_quant_score)))
         v2_score_display = f"{v2_quant_score}점 ({track_type}_V2)"
+        v2_gate_flag = "GATE_PASS" if is_v2_gate_passed else "GATE_FAIL"  # 4번: 수급채널 오염 차단용 플래그
 
         i_sign = "+" if acc_i_buy_eok > 0 else ""
         f_sign = "+" if acc_f_buy_eok > 0 else ""
@@ -1321,8 +1342,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             program_text, int(display_high_250d), supply_status_col,
             target_price, stop_loss, is_seed_tag,
             krx_str, nxt_str, market_type, 
-            quant_score, score_display,       
-            v2_quant_score, v2_score_display  
+            quant_score, score_display,
+            v2_quant_score, v2_score_display,
+            v2_gate_flag
         ]
         return result_row, None
     except Exception as e:
@@ -1597,10 +1619,23 @@ def update_technical_data(df_theme, all_theme_map):
             picked.sort(key=lambda x: max(get_v1_score(x), get_v2_score(x)), reverse=True)
             return picked
 
+        # ④ [국면 정합성]: 뉴스 키워드 1위 테마가 2위를 압도하는 '압축 장세'면 SEED(바닥) 쿼터 5→2 축소
+        seed_quota = 5
+        try:
+            kw_rows = doc.worksheet("뉴스_키워드").get_all_values()[1:6]
+            kw_counts = [int(re.sub(r'[^0-9]', '', str(kr[3]))) for kr in kw_rows if len(kr) >= 4 and re.sub(r'[^0-9]', '', str(kr[3]))]
+            if len(kw_counts) >= 2 and kw_counts[0] >= 10 and kw_counts[0] >= kw_counts[1] * 1.5:
+                seed_quota = 2
+                print(f"🧲 압축 장세 감지 (1위 {kw_counts[0]} vs 2위 {kw_counts[1]}) → SEED 쿼터 5→2 축소")
+        except Exception as e:
+            print(f"⚠️ 뉴스 키워드 집중도 판정 스킵: {e}")
+
         seed_pool = union_top_n(seed_cands, 5)
         normal_pool = union_top_n(normal_cands, 15)
 
-        top_20_results = seed_pool[:5] + normal_pool[:15]
+        seed_final = seed_pool[:seed_quota]
+        normal_final = normal_pool[:(20 - len(seed_final))]
+        top_20_results = seed_final + normal_final
         top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results if len(x) > 2}
 
         if not is_official_reset_time:
@@ -1731,8 +1766,10 @@ def update_technical_data(df_theme, all_theme_map):
                 if not any(pos in tajeom for pos in positive_badges): continue
                 candidate_pool.append(r)
 
-            chart_top2  = sorted(candidate_pool, key=lambda x: x[29], reverse=True)[:2]   
-            supply_top2 = sorted(candidate_pool, key=lambda x: x[31], reverse=True)[:2]   
+            chart_top2  = sorted(candidate_pool, key=lambda x: x[29], reverse=True)[:2]
+            # 4번 [채널 독립성]: V2 게이트 미통과(GATE_FAIL)는 V1의 함수로 오염되므로 수급채널에서 배제
+            gate_passed_pool = [r for r in candidate_pool if len(r) > 33 and r[33] == "GATE_PASS"]
+            supply_top2 = sorted(gate_passed_pool, key=lambda x: x[31], reverse=True)[:2]
             
             channels = [("차트상위TOP2", chart_top2), ("수급상위TOP2", supply_top2)]
 
