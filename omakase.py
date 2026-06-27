@@ -1398,20 +1398,20 @@ def update_technical_data(df_theme, all_theme_map):
         is_regular_market = (9 <= now_time.hour < 15) or (now_time.hour == 15 and now_time.minute <= 40)
         
         static_db = {}
-        if is_official_reset_time: static_sheet.batch_clear(['A2:F'])
-        else:
-            try:
-                for row in static_sheet.get_all_values()[1:]:
-                    if len(row) >= 6:
-                        code_key = str(row[0]).replace("'", "").strip().zfill(6)
-                        cap_clean = re.sub(r'[^0-9]', '', str(row[2]))
-                        static_db[code_key] = {
-                            'market_cap': int(cap_clean) if cap_clean else 0,
-                            'is_junk': row[3] == 'True',
-                            'is_fin_risk': row[4] == 'True',
-                            'is_chronic_loss': row[5] == 'True'
-                        }
-            except Exception as e: print(f"⚠️ [Static Sheet Read Error] {e}")
+        # 🛡️ [생명주기 이전] 7시 batch_clear 폐지 — DB_정적데이터는 hyeoks_static_collector.py가 단독 소유(clear→write).
+        # omakase는 순수 reader로서 '항상 읽기만' 한다. (수집기 실패 시 전일 스냅샷이 보존되어 위험게이트가 꺼지지 않음)
+        try:
+            for row in static_sheet.get_all_values()[1:]:
+                if len(row) >= 6:
+                    code_key = str(row[0]).replace("'", "").strip().zfill(6)
+                    cap_clean = re.sub(r'[^0-9]', '', str(row[2]))
+                    static_db[code_key] = {
+                        'market_cap': int(cap_clean) if cap_clean else 0,
+                        'is_junk': row[3] == 'True',
+                        'is_fin_risk': row[4] == 'True',
+                        'is_chronic_loss': row[5] == 'True'
+                    }
+        except Exception as e: print(f"⚠️ [Static Sheet Read Error] {e}")
 
         theme_rank_dict = {}
         try:
