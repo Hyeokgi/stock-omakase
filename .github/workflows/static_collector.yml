@@ -1,0 +1,38 @@
+name: 🛡️ HYEOKS 정적데이터 수집기 (관리/거래정지/투자경고)
+
+on:
+  schedule:
+    - cron: '30 22 * * 0-4'   # KST 매일 07:30 (월~금 아침). UTC 전날 22:30(일~목)
+  workflow_dispatch:
+
+concurrency:
+  group: hyeoks-sheet-lock     # 💡 omakase·analyst와 동일 그룹 = 시트 동시쓰기 레이스 차단
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 코드 가져오기
+        uses: actions/checkout@v4
+
+      - name: 파이썬 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: 라이브러리 설치
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 gspread oauth2client
+
+      - name: 비밀번호 파일(secret.json) 생성
+        env:
+          GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+        run: echo "$GCP_CREDENTIALS" > secret.json
+
+      - name: 정적데이터 수집 실행
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python hyeoks_static_collector.py
