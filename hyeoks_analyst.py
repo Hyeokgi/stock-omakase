@@ -439,7 +439,10 @@ try:
     
     macro_data = doc.worksheet("시장요약").get_all_values()
     nasdaq, exchange, oil = clean_emojis(macro_data[1][4]), clean_emojis(macro_data[1][6]), clean_emojis(macro_data[1][7])
-    news_keywords = clean_emojis("\n".join([f"{r[2]}({r[3]}회)" for r in doc.worksheet("뉴스_키워드").get_all_values()[1:6]]))
+    # [환각 차단]: '검은(금요일/월요일)' 등 폭락·색깔·모호 단어가 키워드에 섞이면 AI가 가짜 테마('검은 반도체')로 창작함 → 매크로 입력 전 제거
+    HALLUC_KW = {"검은", "블랙", "패닉", "폭락", "쇼크", "투매", "붕괴", "공포", "급락", "빨간", "파란"}
+    _kw_rows = doc.worksheet("뉴스_키워드").get_all_values()[1:6]
+    news_keywords = clean_emojis("\n".join([f"{r[2]}({r[3]}회)" for r in _kw_rows if str(r[2]).strip() not in HALLUC_KW]))
     
     raw_theme_daily_map = {}
     try:
@@ -523,6 +526,13 @@ try:
             if is_qualified: validated_pool.append(cand)
             else: print(f"❌ [{cand['name']}] 역대 최고거래대금 기준 미달로 최종 리포트 및 스캐너 풀에서 완전 배제")
  
+    # ⑦ [대량 실패 가드]: 검증 인프라(네이버 등)가 전면 다운되면 전 종목이 동시 탈락 → 빈 풀이 조용히 넘어가는 것을 차단.
+    # 탈락률 80% 이상이면 개별 부적격이 아니라 인프라 장애로 간주하고 점수순 폴백(우회)한다.
+    fail_rate = 1 - (len(validated_pool) / max(1, len(pre_pool)))
+    if len(pre_pool) >= 10 and fail_rate >= 0.8:
+        print(f"🚨 [DNA 검증 인프라 대량 실패 {fail_rate:.0%}] 개별 부적격이 아닌 장애로 판단 → 검증 게이트 우회, 점수순 폴백 적용")
+        validated_pool = list(pre_pool)
+
     validated_pool.sort(key=lambda x: x['score'], reverse=True)
     pool_150 = validated_pool[:150]
     pool_str = "\n".join([c['info'] for c in pool_150])
@@ -580,7 +590,8 @@ try:
         현재 국내 증시는 역대급 패닉 폭락 장세인 [{korean_market_status}] 상태입니다.
         자산을 사수하기 위한 강력한 경고 메시지와 전원 사격 중지(현금 100% 관망)의 당위성을 거시 매크로 분석과 함께 1페이지 분량으로 묵직하게 작성하십시오. 정중한 하십시오체를 사용하십시오. 작성일: {today_korean}"""
     else:
-        macro_prompt = f"""귀하는 HYEOKS 리서치 센터의 수석 퀀트 애널리스트입니다. 아래 데이터를 바탕으로 '오늘의 시황 및 매크로 브리핑'을 1페이지 분량으로 상세히 작성하십시오. 작성일: {today_korean} 매크로: 나스닥 {nasdaq}, 환율 {exchange}, 국내증시 {status_txt} 뉴스 키워드: {news_keywords}"""
+        macro_prompt = f"""귀하는 HYEOKS 리서치 센터의 수석 퀀트 애널리스트입니다. 아래 데이터를 바탕으로 '오늘의 시황 및 매크로 브리핑'을 1페이지 분량으로 상세히 작성하십시오. 작성일: {today_korean} 매크로: 나스닥 {nasdaq}, 환율 {exchange}, 국내증시 {status_txt} 뉴스 키워드: {news_keywords}
+[엄수 규칙] 키워드는 뉴스 빈도일 뿐 검증된 테마가 아닙니다. 의미가 불명확한 단일 단어(예: 색깔/형용사/추상어)를 근거로 실재하지 않는 신규 테마나 종목군을 창작·명명하지 마십시오. 출처가 불분명한 키워드는 해석을 보류하거나 언급하지 않습니다."""
     
     market_summary = safe_generate_content(macro_prompt).text
  
