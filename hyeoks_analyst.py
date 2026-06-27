@@ -252,18 +252,30 @@ try:
     except: pass
  
     market_summary_data = doc.worksheet("시장요약").get_all_values()
-    korean_market_status = clean_emojis(market_summary_data[1][8]) if len(market_summary_data) > 1 and len(market_summary_data[1]) > 8 else "확인불가"
-    is_warning_market = "하락" in korean_market_status or "이탈" in korean_market_status
- 
+    korean_market_status = clean_emojis(market_summary_data[1][8]) if len(market_summary_data) > 1 and len(market_summary_data[1]) > 8 else ""
+
+    # ①/8 [시황 안전판]: 시장상태 셀이 비면 공격(STAGE1)이 아니라 방어(STAGE2)가 기본값 + 코스피 등락률 숫자 폴백 병행
+    status_is_blank = (not korean_market_status.strip()) or ("확인불가" in korean_market_status)
+    kospi_rate_fallback = 0.0
+    try:
+        _k = requests.get(f"https://m.stock.naver.com/api/index/KOSPI/basic?_={int(time.time()*1000)}", headers={'User-Agent': 'Mozilla/5.0'}, verify=False, timeout=3).json()
+        kospi_rate_fallback = float(str(_k.get("fluctuationsRatio", "0")).replace(',', ''))
+    except Exception as _e:
+        print(f"⚠️ 코스피 등락률 폴백 조회 실패(보수적 처리): {_e}")
+
+    is_warning_market = ("하락" in korean_market_status) or ("이탈" in korean_market_status) or status_is_blank or (kospi_rate_fallback <= -1.0)
+
     market_stage = 1
     stage_text = "STAGE 1 (정상 장세 - 공격형 추세 매매 가동)"
     if is_warning_market:
         market_stage = 2
         stage_text = "STAGE 2 (주의 장세 - 방어형/바닥주 SEED 포지션 제한)"
-    if any(kw in korean_market_status for kw in ["폭락", "패닉", "붕괴", "투매", "쇼크", "하락장 위험", "검은"]):
+        if status_is_blank:
+            stage_text = "STAGE 2 (시장상태 미확인 → 안전 기본값 방어 모드)"
+    if any(kw in korean_market_status for kw in ["폭락", "패닉", "붕괴", "투매", "쇼크", "하락장 위험", "검은"]) or (kospi_rate_fallback <= -3.0):
         market_stage = 3
         stage_text = "STAGE 3 (패닉 장세 - 서킷 위험 임계점 돌파,전원 사격 중지)"
-    print(f"📡 [실시간 시장 위험도 연산 판독 완료]: {stage_text} (상태: {korean_market_status})")
+    print(f"📡 [실시간 시장 위험도 연산 판독 완료]: {stage_text} (상태: {korean_market_status or '미확인'} / 코스피:{kospi_rate_fallback:.2f}%)")
  
     sys_instruction = "기업의 일반적인 소개는 일절 금지. 차트 지표, 타점, 수급 데이터를 바탕으로 '현재 기술적 위치'와 '앞으로의 대응 전략'만을 60~70자 내외로 매우 짧고 날카롭게 작성할 것."
  
@@ -472,10 +484,22 @@ try:
         
         tajeom_clean = tajeom_raw.split('⚠️')[0].strip()
         tajeom_clean = tajeom_clean.split('🎯')[0].strip()
-        
+
+        # ⑤ 추세 위상(trend phase)을 AI에 명시적으로 전달 (omakase 칼만 시크릿 텍스트에서 추출)
+        if any(k in tajeom_raw for k in ["📉", "하락 전환", "3파 익절", "고점 리스크", "반등 미확인", "하락장"]):
+            trend_phase_txt = "하락/고점주의"
+        elif any(k in tajeom_raw for k in ["가속", "2파"]):
+            trend_phase_txt = "상승가속"
+        elif any(k in tajeom_raw for k in ["전환", "1파"]):
+            trend_phase_txt = "상승전환초기"
+        elif "추세 유지" in tajeom_raw:
+            trend_phase_txt = "상승유지"
+        else:
+            trend_phase_txt = "중립"
+
         info = (
             f"종목:{name}({code}) | 현재가:{curr_p}원({chg}) | 차트점수(V1):{v1_score}점 | 수급점수(V2):{v2_score}점 | "
-            f"타점:{tajeom_clean} | 수급강도:{prog} | 유형:{seed_tag} | 테마:{theme_name}"
+            f"타점:{tajeom_clean} | 추세:{trend_phase_txt} | 수급강도:{prog} | 유형:{seed_tag} | 테마:{theme_name}"
         )
         cands_list.append({
             'name': name, 'code': code, 'score': combo_score, 'v1_score': v1_score, 'v2_score': v2_score,
@@ -515,6 +539,7 @@ try:
     [종목 선정 기준]
     1. 단기 슈팅 공략주 (short_term_code): 유형:NORMAL 종목 중 파괴력 있는 종목 1개 선별. (없으면 "000000")
     2. 중장기 모아가기주 (swing_code): 유형:SEED 종목 중 과열 배지가 없는 바닥 확인형 1개 선별. (없으면 "000000")
+    3. 🚨 [추세 절대 거부권 - 최우선 규칙]: '추세:하락/고점주의'이거나 타점에 '📉 / 3파 익절 / 하락 전환 / 반등 미확인'이 포함된 종목은 점수가 아무리 높아도 절대 선정하지 마십시오. 추세 반전이 확인되지 않은 '떨어지는 칼'은 반드시 "000000"으로 회피하십시오.
  
     [상위 150개 종목 리스트]
     {pool_str}
@@ -773,29 +798,31 @@ try:
         print("\n▶ [백테스트 V5] 리포팅 채널 기록 중...")
         bt_sheet = doc.worksheet("백테스트_로그")
         bt_data = bt_sheet.get_all_values()
-        header_row = ["진입일", "종목명", "종목코드", "주도 테마명", "진입가(추천가)", "마스터 타점유형", "선정카테고리", "V1 (차트점수)", "V2 (추천점수)", "외인/기관 수급상태", "T+1 수익률", "T+3 수익률", "T+5 수익률", "T+10 수익률"]
-        if not bt_data: bt_data = [header_row]
-        elif bt_data[0] != header_row: bt_data[0] = header_row
+        # 5번: 헤더 라벨을 omakase와 통일 ("V2 (수급점수)")
+        header_row = ["진입일", "종목명", "종목코드", "주도 테마명", "진입가(추천가)", "마스터 타점유형", "선정카테고리", "V1 (차트점수)", "V2 (수급점수)", "외인/기관 수급상태", "T+1 수익률", "T+3 수익률", "T+5 수익률", "T+10 수익률"]
+        # 6번 [레이스 방지]: 전체 batch_clear+rewrite 대신 신규 행만 append → omakase와 동시 실행 시 데이터 소실 차단
+        if not bt_data:
+            bt_sheet.append_row(header_row)
+            bt_data = [header_row]
         today_str = datetime.datetime.now(KST).strftime('%Y-%m-%d')
         existing_keys = set()
         for row in bt_data[1:]:
             if len(row) >= 7: existing_keys.add((str(row[0]).strip(), str(row[2]).replace("'", "").strip().zfill(6), str(row[6]).strip()))
-        
+
         report_picks = []
         if best_short: report_picks.append(best_short)
         if best_mid: report_picks.append(best_mid)
-        new_logs_count = 0
+        new_rows = []
         for cand in report_picks:
             s_code = str(cand['code']).replace("'", "").strip().zfill(6)
             if s_code == "000000": continue
             key = (today_str, s_code, "리포팅TOP2")
             if key not in existing_keys:
-                new_row = [today_str, cand['name'], f"'{s_code}", cand.get('theme_name', ''), cand['curr_p'], cand.get('type', ''), "리포팅TOP2", f"{cand['v1_score']}점", f"{cand['v2_score']}점", "", "", "", "", ""]
-                bt_data.append(new_row); existing_keys.add(key); new_logs_count += 1
-        if new_logs_count > 0:
-            bt_sheet.batch_clear(['A1:N5000'])
-            bt_sheet.update(range_name="A1", values=bt_data, value_input_option="USER_ENTERED")
-            print(f"✅ [백테스트 V5] 리포팅 채널 {new_logs_count}건 기록 완료.")
+                new_rows.append([today_str, cand['name'], f"'{s_code}", cand.get('theme_name', ''), cand['curr_p'], cand.get('type', ''), "리포팅TOP2", f"{cand['v1_score']}점", f"{cand['v2_score']}점", "", "", "", "", ""])
+                existing_keys.add(key)
+        if new_rows:
+            bt_sheet.append_rows(new_rows, value_input_option="USER_ENTERED")
+            print(f"✅ [백테스트 V5] 리포팅 채널 {len(new_rows)}건 append 완료 (전체 rewrite 제거).")
         else: print("⏭ [백테스트 V5] 리포팅 채널 — 변동 기록 없음.")
     except Exception as e: print(f"⚠️ [백테스트 V5] 리포팅 채널 기록 에러: {e}")
         
