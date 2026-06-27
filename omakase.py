@@ -636,6 +636,36 @@ def get_current_price_for_backtest(code):
 def update_recommendation_tracking(doc, top_20_results):
     pass
 
+# ── [백테스트 V6] 신 26열 스키마 & 진입 메타 캡처 헬퍼 (Step 1) ──
+BT_HEADER = [
+    "trade_id", "진입일", "채널", "종목명", "종목코드", "주도테마", "타점유형", "STAGE", "집중도",
+    "V1", "V2", "V2게이트", "수급상태", "벤치명", "기준종가", "진입지수", "진입가(T+1시가)",
+    "종목T+1", "종목T+3", "종목T+5", "종목T+10", "지수T+1", "지수T+3", "지수T+5", "지수T+10", "실제캡처거래일"
+]
+
+def get_market_name(code):
+    # 종목 상장시장(KOSPI/KOSDAQ) → 벤치마크 지수 매칭. 실패 시 KOSPI 기본.
+    try:
+        t = str(code).replace("'", "").strip().zfill(6)
+        j = GLOBAL_SESSION.get(f"https://m.stock.naver.com/api/stock/{t}/basic", verify=False, timeout=3).json()
+        nm = str(j.get("stockExchangeName", "")).upper()
+        return nm if nm in ("KOSPI", "KOSDAQ") else "KOSPI"
+    except Exception:
+        return "KOSPI"
+
+def get_index_close(index_name):
+    # 지수 당일 종가(fchart 마지막 일봉) — 진입지수(P열)용
+    try:
+        sym = "KOSDAQ" if str(index_name).upper() == "KOSDAQ" else "KOSPI"
+        url = f"https://fchart.stock.naver.com/sise.nhn?symbol={sym}&timeframe=day&count=3&requestType=0"
+        root = ET.fromstring(GLOBAL_SESSION.get(url, verify=False, timeout=4).text)
+        items = root.findall(".//item")
+        if items:
+            return float(items[-1].get("data").split("|")[4])
+    except Exception as e:
+        print(f"⚠️ [get_index_close {index_name}] {e}")
+    return 0.0
+
 # ==================================================================
 # 📊 [핵심 연산 레이어]: 순서 교정 및 선형 구조화 엔진 패치 완료
 # ==================================================================
@@ -1674,129 +1704,90 @@ def update_technical_data(df_theme, all_theme_map):
                 print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (하이재킹 버그 수정 및 데이터 영구 락 보존 완료)")
             except Exception as e: print(f"⚠️ [DB_스캐너 update Error] {e}")
 
+        # ==========================================================================
+        # 📊 [백테스트 V6 — Step 1] 진입 로그 (불변 append-only, 신 26열 스키마)
+        #   · 추적(T+N 캡처)은 Step 2에서 셀 타겟 업데이트로 별도 구현 — 이번 단계는 '진입 적재'만.
+        #   · 구 D1(가짜 T+N)·D6/D7(전체 rewrite) 로직 폐기.
+        # ==========================================================================
         try:
-            bt_sheet = doc.worksheet("백테스트_로그")
-            bt_data = bt_sheet.get_all_values()
-        except Exception:
-            bt_sheet = doc.add_worksheet(title="백테스트_로그", rows="3000", cols="14")
-            bt_data = []
-
-        header_row = [
-            "진입일", "종목명", "종목코드", "주도 테마명", "진입가(추천가)",
-            "마스터 타점유형", "선정카테고리", "V1 (차트점수)", "V2 (수급점수)",
-            "외인/기관 수급상태", "T+1 수익률", "T+3 수익률", "T+5 수익률", "T+10 수익률"
-        ]
-
-        MIGRATION_CUTOFF = datetime.date(2026, 6, 19)
-        legacy_rows, clean_rows = [], []
-
-        if len(bt_data) > 1:
-            for row in bt_data[1:]:
-                if not row or not str(row[0]).strip() or "진입" in str(row[0]): continue
-                row_date_str = str(row[0]).strip()
-                try: row_date = datetime.datetime.strptime(row_date_str, '%Y-%m-%d').date()
-                except Exception: row_date = None
-
-                is_legacy = (row_date is None or row_date < MIGRATION_CUTOFF or len(row) < 14 or (len(row) > 3 and "수동확인" in str(row[3])))
-                if is_legacy:
-                    while len(row) < 14: row.append("")
-                    if "수동확인" in str(row[3]): row[3] = "과거 선출 주도주"
-                    legacy_rows.append(row[:14])
-                else:
-                    while len(row) < 14: row.append("")
-                    clean_rows.append(row[:14])
-
-        if legacy_rows:
             try:
-                archive_sheet = doc.worksheet("백테스트_로그_아카이브")
-                if not archive_sheet.get_all_values(): archive_sheet.append_row(header_row)
+                bt_sheet = doc.worksheet("백테스트_로그")
+                bt_data = bt_sheet.get_all_values()
             except Exception:
-                archive_sheet = doc.add_worksheet(title="백테스트_로그_아카이브", rows="5000", cols="14")
-                archive_sheet.append_row(header_row)
-            archive_sheet.append_rows(legacy_rows, value_input_option="USER_ENTERED")
+                bt_sheet = doc.add_worksheet(title="백테스트_로그", rows="5000", cols="26")
+                bt_data = []
 
-        bt_data = [header_row] + clean_rows
-        today_str = today_date.strftime('%Y-%m-%d')
-        now_time_bt = datetime.datetime.now(KST)
-        
-        force_sync_sheet = True
-        updated = False
+            today_str = today_date.strftime('%Y-%m-%d')
+            now_time_bt = datetime.datetime.now(KST)
 
-        if is_official_reset_time and len(bt_data) > 1:
-            print("▶ [실증 엔진] V2 정예 진입 종목 성과 추적 가동...")
-            for i in range(1, len(bt_data)):
-                row = bt_data[i]
-                try:
-                    entry_date = datetime.datetime.strptime(str(row[0]).strip(), '%Y-%m-%d').date()
-                    days_elapsed = (today_date - entry_date).days
+            # ── 1회성 마이그레이션: 신 스키마(26열)가 아니면 기존 로그를 레거시로 통째 이관 후 새 헤더로 리셋 ──
+            is_new_schema = bool(bt_data) and len(bt_data[0]) >= 26 and str(bt_data[0][0]).strip() == "trade_id"
+            if not is_new_schema:
+                if len(bt_data) > 1:
+                    try: legacy_sheet = doc.worksheet("백테스트_로그_레거시")
+                    except Exception: legacy_sheet = doc.add_worksheet(title="백테스트_로그_레거시", rows="5000", cols="20")
+                    legacy_sheet.append_rows(bt_data, value_input_option="USER_ENTERED")
+                    print(f"📦 [마이그레이션] 구 백테스트 로그 {len(bt_data) - 1}행 → 백테스트_로그_레거시 격리 (D1 오염 데이터 분리)")
+                bt_sheet.clear()
+                bt_sheet.update(range_name="A1", values=[BT_HEADER], value_input_option="USER_ENTERED")
+                bt_data = [BT_HEADER]
+                print("🆕 [백테스트 V6] 신 26열 스키마로 초기화 (컷오프 이후 데이터만 유효 표본)")
 
-                    needs_t1  = (days_elapsed >= 1  and row[10] == "")
-                    needs_t3  = (days_elapsed >= 3  and row[11] == "")
-                    needs_t5  = (days_elapsed >= 5  and row[12] == "")
-                    needs_t10 = (days_elapsed >= 10 and row[13] == "")
+            existing_ids = set(str(row[0]).strip() for row in bt_data[1:] if row and str(row[0]).strip())
 
-                    if needs_t1 or needs_t3 or needs_t5 or needs_t10:
-                        t_code = str(row[2]).replace("'", "").strip().zfill(6)
-                        entry_p = parse_price_num(row[4])
-                        curr_p = get_current_price_for_backtest(t_code)
-                        if curr_p > 0 and entry_p > 0:
-                            rtn = ((curr_p - entry_p) / entry_p) * 100
-                            if needs_t1:  row[10] = f"{rtn:.2f}%"
-                            if needs_t3:  row[11] = f"{rtn:.2f}%"
-                            if needs_t5:  row[12] = f"{rtn:.2f}%"
-                            if needs_t10: row[13] = f"{rtn:.2f}%"
-                            updated = True
-                except Exception: pass
+            # ── 진입 적재 (15:00~15:30 EOD 윈도, append-only) ──
+            is_eod_log_window = (now_time_bt.hour == 15 and 0 <= now_time_bt.minute < 30)
+            new_rows = []
+            if is_eod_log_window:
+                entry_stage = 3 if kospi_rate <= -3.0 else (2 if is_warning_market else 1)
+                idx_close_cache = {"KOSPI": get_index_close("KOSPI"), "KOSDAQ": get_index_close("KOSDAQ")}
 
-        is_eod_log_window = (now_time_bt.hour == 15 and 0 <= now_time_bt.minute < 30)
-        existing_keys = set()
-        for row in bt_data[1:]:
-            if len(row) >= 7: existing_keys.add((str(row[0]).strip(), str(row[2]).replace("'", "").strip().zfill(6), str(row[6]).strip()))
+                positive_badges = ["🎯", "💎", "🌟", "👑", "📦", "🔍", "🚀", "🌱"]
+                negative_markers = ["📉", "관망", "조건미달", "🚫", "매매금지"]
+                candidate_pool = [r for r in results if len(r) >= 34
+                                  and not any(n in str(r[8]) for n in negative_markers)
+                                  and any(p in str(r[8]) for p in positive_badges)]
 
-        new_logs_count = 0
-        if is_eod_log_window:
-            positive_badges = ["🎯", "💎", "🌟", "👑", "📦", "🔍", "🚀", "🌱"]
-            negative_markers = ["📉", "관망", "조건미달", "🚫", "매매금지"]
+                chart_top2 = sorted(candidate_pool, key=lambda x: x[29], reverse=True)[:2]
+                gate_passed = [r for r in candidate_pool if r[33] == "GATE_PASS"]
+                supply_top2 = sorted(gate_passed, key=lambda x: x[31], reverse=True)[:2]
 
-            candidate_pool = []
-            for r in results:
-                if len(r) < 33: continue
-                tajeom = r[8]
-                if any(neg in tajeom for neg in negative_markers): continue
-                if not any(pos in tajeom for pos in positive_badges): continue
-                candidate_pool.append(r)
+                # 대조군 랜덤2: '배지필터 이전' 전체 results에서 결정론적 추출 (seed=날짜 → 재현가능, builtin hash() 비사용)
+                valid_results = [r for r in results if len(r) >= 34 and parse_price_num(r[2]) > 0]
+                rng = random.Random(today_str)
+                random2 = rng.sample(valid_results, 2) if len(valid_results) >= 2 else list(valid_results)
 
-            chart_top2  = sorted(candidate_pool, key=lambda x: x[29], reverse=True)[:2]
-            # 4번 [채널 독립성]: V2 게이트 미통과(GATE_FAIL)는 V1의 함수로 오염되므로 수급채널에서 배제
-            gate_passed_pool = [r for r in candidate_pool if len(r) > 33 and r[33] == "GATE_PASS"]
-            supply_top2 = sorted(gate_passed_pool, key=lambda x: x[31], reverse=True)[:2]
-            
-            channels = [("차트상위TOP2", chart_top2), ("수급상위TOP2", supply_top2)]
+                def add_channel(channel, picks):
+                    for r in picks:
+                        s_code = str(r[1]).replace("'", "").strip().zfill(6)
+                        tid = f"{today_str}_{channel}_{s_code}"
+                        if tid in existing_ids: continue
+                        bench = get_market_name(s_code)
+                        new_rows.append([
+                            tid, today_str, channel, r[0], f"'{s_code}", r[19], r[8], entry_stage, "",
+                            r[29], r[31], r[33], r[22], bench, r[2], idx_close_cache.get(bench, 0.0)
+                        ] + [""] * 10)
+                        existing_ids.add(tid)
 
-            for category, picks in channels:
-                today_logged_count = sum(1 for row in bt_data[1:] if len(row) >= 7 and str(row[0]).strip() == today_str and str(row[6]).strip() == category)
-                if today_logged_count >= 2: 
-                    continue
+                add_channel("차트TOP2", chart_top2)
+                add_channel("수급TOP2", supply_top2)
+                add_channel("랜덤2", random2)
 
-                for r in picks:
-                    s_code = str(r[1]).replace("'", "").strip().zfill(6)
-                    key = (today_str, s_code, category)
-                    if key not in existing_keys:
-                        v1_s, v2_s = r[29], r[31]
-                        new_row = [
-                            today_str, r[0], f"'{s_code}", r[19], r[2], r[8], category,
-                            f"{v1_s}점", f"{v2_s}점", r[22], "", "", "", ""
-                        ]
-                        bt_data.append(new_row)
-                        existing_keys.add(key)
-                        updated = True
-                        new_logs_count += 1
-            print(f"📊 [정밀 적재] 당일 핵심 주도주 중복 없이 정확히 하루 2개 표본 고정 잠금 완료.")
+                # 지수벤치(KOSPI 1행/일) — 순수 지수보유 베이스라인
+                tid_idx = f"{today_str}_지수벤치_KOSPI"
+                if tid_idx not in existing_ids:
+                    ixc = idx_close_cache.get("KOSPI", 0.0)
+                    new_rows.append([tid_idx, today_str, "지수벤치", "KOSPI", "'KOSPI", "", "지수보유", entry_stage, "",
+                                     "", "", "", "", "KOSPI", ixc, ixc] + [""] * 10)
+                    existing_ids.add(tid_idx)
 
-        if updated or len(legacy_rows) > 0 or force_sync_sheet:
-            bt_sheet.batch_clear(['A1:N5000'])
-            bt_sheet.update(range_name="A1", values=bt_data, value_input_option="USER_ENTERED")
-            print(f"✅ [백테스트 V5] 메인 테이블 14열 규격 포맷팅 및 동기화 완료.")
+            if new_rows:
+                bt_sheet.append_rows(new_rows, value_input_option="USER_ENTERED")
+                print(f"✅ [백테스트 V6 Step1] 진입 {len(new_rows)}행 append 완료 (차트/수급/랜덤/지수 · 추적은 Step2)")
+            else:
+                print("⏭ [백테스트 V6 Step1] 진입 추가 없음 (EOD 윈도 외 또는 전부 중복)")
+        except Exception as e:
+            print(f"⚠️ [백테스트 V6 Step1 에러] {e}")
 
     except Exception as e: print(f"❌ 전체 업데이트 에러: {e}")
 
