@@ -1668,16 +1668,43 @@ def update_technical_data(df_theme, all_theme_map):
         top_20_results = seed_final + normal_final
         top_20_codes = {str(x[2]).replace("'", "").strip().zfill(6) for x in top_20_results if len(x) > 2}
 
+        # 구출 시 stale 대신 '이번 스캔의 신선한 시장데이터'를 쓰기 위한 코드 인덱스 (주가데이터_보조에 이미 찍힌 그 값)
+        results_by_code = {str(r[1]).replace("'", "").strip().zfill(6): r for r in results if len(r) >= 29}
+
         if not is_official_reset_time:
             for c_code, data in existing_data.items():
                 if c_code not in top_20_codes:
                     briefing_text = str(data["briefing"]).strip()
-                    
-                    # 👑 [긴급 보정 3]: 리포트 2개 종목뿐만 아니라 일반 간단 브리핑이 주입된 주도주까지 전면 파괴 방어 구출 단락 확장
+
+                    # 👑 [구출] 리포트/간단 브리핑이 주입된 주도주가 top-20에서 밀려도 보존
                     if any(key in briefing_text for key in ["리포트 발송 완료", "리포트 작성 완료", "간단 브리핑"]):
-                        clean_row = list(data["raw_row"])
-                        if len(clean_row) > 8:
-                            clean_row[8] = str(clean_row[8]).replace("🎖️(코어픽/면책)", "").replace("(코어픽/면책)", "").replace("🎖️", "").strip()
+                        fresh = results_by_code.get(c_code)
+                        if fresh is not None and parse_score_num(fresh[2]) > 0:
+                            # ✅ 이번 스캔에서 분석됨 → 신선한 현재가/시간외/NXT/장구분으로 스캐너행 재구성
+                            #    (브리핑/타겟은 아래 1689 오버레이가 보존하므로 여기선 시장데이터만 fresh로)
+                            fr = fresh
+                            f_code = str(fr[1]).replace("'", "").zfill(6)
+                            f_tajeom = str(fr[8]).replace("🎖️(코어픽/면책)", "").replace("(코어픽/면책)", "").replace("🎖️", "").strip()
+                            f_v1 = parse_score_num(fr[29]) if len(fr) > 29 else 0
+                            f_v2 = parse_score_num(fr[31]) if len(fr) > 31 else 0
+                            f_link = f'=HYPERLINK("https://m.stock.naver.com/domestic/stock/{f_code}/total", "{str(fr[0]).strip()}")'
+                            clean_row = [
+                                f_link, fr[28] if (len(fr) > 28 and fr[28]) else "정규장", f"'{f_code}", fr[2], fr[3], fr[19], fr[7], fr[6],
+                                f_tajeom, fr[9], f"V1:{f_v1}점 / V2:{f_v2}점", fr[20], fr[21], fr[22], fr[23], fr[24], fr[26], fr[27], fr[28],
+                                f_v1, f_v2
+                            ]
+                        else:
+                            # ⚠️ 이번 스캔에 없던 종목 → 부득이 stale raw_row, 장구분만 정직 교정(정규장 아니면 장마감)
+                            clean_row = list(data["raw_row"])
+                            if len(clean_row) > 8:
+                                clean_row[8] = str(clean_row[8]).replace("🎖️(코어픽/면책)", "").replace("(코어픽/면책)", "").replace("🎖️", "").strip()
+                            now_mk = datetime.datetime.now(KST)
+                            is_reg_now = (9 <= now_mk.hour < 15) or (now_mk.hour == 15 and now_mk.minute <= 40)
+                            if not is_reg_now:
+                                while len(clean_row) <= 18: clean_row.append("")
+                                for idx in (1, 18):
+                                    if str(clean_row[idx]).strip() == "정규장 진행중":
+                                        clean_row[idx] = "장마감"
                         top_20_results.append(clean_row)
                         top_20_codes.add(c_code)
 
