@@ -1757,8 +1757,17 @@ def update_technical_data(df_theme, all_theme_map):
                 rng = random.Random(today_str)
                 random2 = rng.sample(valid_results, 2) if len(valid_results) >= 2 else list(valid_results)
 
-                def add_channel(channel, picks):
+                # 채널별 '오늘 이미 적재된 수'(이전 실행분 포함, bt_data 재독으로 반영) → 멀티런에도 하루 N개 고정
+                channel_today_count = {}
+                for row in bt_data[1:]:
+                    if len(row) > 2 and str(row[1]).strip() == today_str:
+                        ch = str(row[2]).strip()
+                        channel_today_count[ch] = channel_today_count.get(ch, 0) + 1
+
+                def add_channel(channel, picks, cap=2):
                     for r in picks:
+                        if channel_today_count.get(channel, 0) >= cap:
+                            break   # 오늘 이 채널 cap개 이미 확보 → 추가 실행의 중복 적재 차단(랜덤 폭증 버그 픽스)
                         s_code = str(r[1]).replace("'", "").strip().zfill(6)
                         tid = f"{today_str}_{channel}_{s_code}"
                         if tid in existing_ids: continue
@@ -1768,6 +1777,7 @@ def update_technical_data(df_theme, all_theme_map):
                             r[29], r[31], r[33], r[22], bench, r[2], idx_close_cache.get(bench, 0.0)
                         ] + [""] * 10)
                         existing_ids.add(tid)
+                        channel_today_count[channel] = channel_today_count.get(channel, 0) + 1
 
                 add_channel("차트TOP2", chart_top2)
                 add_channel("수급TOP2", supply_top2)
