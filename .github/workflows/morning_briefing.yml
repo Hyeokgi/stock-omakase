@@ -3,9 +3,9 @@ name: 🌅 HYEOKS 모닝 브리핑
 on:
   workflow_dispatch:
 
-# 💡 [방패 통합] 모든 워크플로우를 하나의 그룹으로 묶어 구글 시트 접근 충돌을 원천 차단합니다.
+# 쓰기 시트가 '브리핑_기록' 뿐이라 omakase와 무충돌 → 전용 그룹으로 분리해 10분 스캐너에 밀려 취소되던 기아 해소
 concurrency:
-  group: hyeoks-sheet-lock
+  group: hyeoks-morning-lock
   cancel-in-progress: false
 
 jobs:
