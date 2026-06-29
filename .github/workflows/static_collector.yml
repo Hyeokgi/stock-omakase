@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: hyeoks-sheet-lock     # 💡 omakase·analyst와 동일 그룹 = 시트 동시쓰기 레이스 차단
+  group: hyeoks-static-lock     # DB_정적데이터 단독 writer(omakase는 read만) → 전용 그룹으로 분리해 기아 방지
   cancel-in-progress: false
 
 jobs:
