@@ -1801,6 +1801,19 @@ def update_technical_data(df_theme, all_theme_map):
                     진입일 = str(row[1]).strip()
                     벤치 = str(row[13]).strip() or "KOSPI"
                     code = str(row[4]).replace("'", "").strip().zfill(6)
+
+                    # ⚡ 달력일 사전필터: 다음 미충족 호라이즌이 '달력상으로도' 도달 불가면 fetch 자체를 스킵.
+                    #    (거래일수 ≤ 달력일 이므로 달력일 < next_h 면 캡처 불가 → 불필요 fetch 제거, 아침 10분 재실행 부하 완화)
+                    next_h = next((h for h, (sidx, _ic) in horizon_map.items() if not str(row[sidx]).strip()), None)
+                    if next_h is None:
+                        continue
+                    try:
+                        _cal = (today_date - datetime.datetime.strptime(진입일, '%Y-%m-%d').date()).days
+                    except Exception:
+                        _cal = 999
+                    if _cal < next_h:
+                        continue
+
                     # 지수 base = 지수 T+1 시가 (§3 의도: 종목과 동일 보유창에서 알파 산출). P열(진입지수)은 참고용 신호일 종가.
                     idx_series = index_bars.get(벤치, index_bars["KOSPI"])
                     _ie = next((k for k, b in enumerate(idx_series) if b['date'] == 진입일), None)
