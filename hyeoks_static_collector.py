@@ -118,10 +118,11 @@ def main():
         # is_junk=True 만 적재. (시총=0: 게이트되어 무관 / 재무위험·만성적자는 Phase 2)
         rows = [[f"'{code}", name, 0, "True", "False", "False"] for code, name in junk.items()]
 
-        # 성공이 확정된 시점에만 원자적 교체 (clear→write 를 수집기가 단독 소유)
-        static_sheet.batch_clear(['A2:F'])
+        # 원자적 갱신: 먼저 새 데이터로 덮어쓰고(전부 빈 순간 없음), 그 아래 잔여행만 정리.
+        # → 전용 그룹 분리로 omakase가 동시에 read해도 항상 '구버전 완본' 또는 '신버전 완본'을 봐서 게이트가 꺼지지 않음.
         static_sheet.update(range_name="A2", values=rows, value_input_option="USER_ENTERED")
-        print(f"✅ DB_정적데이터 갱신 완료: is_junk {len(rows)}종목 기록 (clear→write 원자적 소유).")
+        static_sheet.batch_clear([f"A{len(rows) + 2}:F"])
+        print(f"✅ DB_정적데이터 갱신 완료: is_junk {len(rows)}종목 기록 (overwrite→trim 원자적 갱신).")
     except Exception as e:
         # 쓰기 단계 실패도 fail-closed: 알림만 보내고 비정상 종료(부분 기록 방지)
         telegram_warn(f"🚨 [정적데이터 수집기] 시트 쓰기 실패: {e}")
