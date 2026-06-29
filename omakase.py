@@ -666,6 +666,28 @@ def get_index_close(index_name):
         print(f"⚠️ [get_index_close {index_name}] {e}")
     return 0.0
 
+def get_daily_bars(symbol, count=80):
+    # fchart 일봉 OHLC 시리즈 → [{date, open, high, low, close}]. 종목·지수(KOSPI/KOSDAQ) 동일 포맷.
+    # 이 시리즈 자체가 '거래일 달력'(주말·공휴일 자동 제외)이라 거래일수/호라이즌 인덱싱에 그대로 사용.
+    try:
+        url = f"https://fchart.stock.naver.com/sise.nhn?symbol={symbol}&timeframe=day&count={count}&requestType=0"
+        root = ET.fromstring(GLOBAL_SESSION.get(url, verify=False, timeout=5).text)
+        bars = []
+        for item in root.findall(".//item"):
+            raw = item.get("data")
+            if not raw: continue
+            d = raw.split("|")
+            if len(d) < 5: continue
+            rd = d[0]
+            bars.append({
+                'date': f"{rd[:4]}-{rd[4:6]}-{rd[6:8]}",
+                'open': float(d[1]), 'high': float(d[2]), 'low': float(d[3]), 'close': float(d[4])
+            })
+        return bars
+    except Exception as e:
+        print(f"⚠️ [get_daily_bars {symbol}] {e}")
+        return []
+
 # ==================================================================
 # 📊 [핵심 연산 레이어]: 순서 교정 및 선형 구조화 엔진 패치 완료
 # ==================================================================
@@ -1761,6 +1783,68 @@ def update_technical_data(df_theme, all_theme_map):
                 print("🆕 [백테스트 V6] 신 26열 스키마로 초기화 (컷오프 이후 데이터만 유효 표본)")
 
             existing_ids = set(str(row[0]).strip() for row in bt_data[1:] if row and str(row[0]).strip())
+
+            # ── [Step 2] 추적: fchart 시리즈로 거래일·T+1시가·호라이즌종가 캡처·동결 (omakase 7시 단독, 셀 타겟 update) ──
+            if is_official_reset_time and len(bt_data) > 1:
+                print("▶ [백테스트 V6 Step2] 진입 종목 성과 추적 (거래일 기준 캡처·동결)...")
+                index_bars = {"KOSPI": get_daily_bars("KOSPI", 80), "KOSDAQ": get_daily_bars("KOSDAQ", 80)}
+                index_close_map = {k: {b['date']: b['close'] for b in v} for k, v in index_bars.items()}
+                horizon_map = {1: (17, 21), 3: (18, 22), 5: (19, 23), 10: (20, 24)}  # 호라이즌 → (종목col, 지수col) 0-based
+                changed_rows = set()
+
+                for i in range(1, len(bt_data)):
+                    row = bt_data[i]
+                    while len(row) < 26: row.append("")
+                    if str(row[20]).strip():   # 종목T+10 채워짐 = 완결 → skip (불필요 fetch 방지)
+                        continue
+                    채널 = str(row[2]).strip()
+                    진입일 = str(row[1]).strip()
+                    벤치 = str(row[13]).strip() or "KOSPI"
+                    code = str(row[4]).replace("'", "").strip().zfill(6)
+                    # 지수 base = 지수 T+1 시가 (§3 의도: 종목과 동일 보유창에서 알파 산출). P열(진입지수)은 참고용 신호일 종가.
+                    idx_series = index_bars.get(벤치, index_bars["KOSPI"])
+                    _ie = next((k for k, b in enumerate(idx_series) if b['date'] == 진입일), None)
+                    idx_base = idx_series[_ie + 1]['open'] if (_ie is not None and _ie + 1 < len(idx_series)) else 0.0
+
+                    bars = index_bars.get(벤치, index_bars["KOSPI"]) if 채널 == "지수벤치" else get_daily_bars(code, 80)
+                    if not bars: continue
+
+                    entry_idx = next((k for k, b in enumerate(bars) if b['date'] == 진입일), None)
+                    if entry_idx is None: continue
+                    elapsed_td = (len(bars) - 1) - entry_idx
+                    if elapsed_td < 1: continue
+
+                    # 진입가 Q(=T+1 시가) 1회 캡처
+                    if not str(row[16]).strip() and entry_idx + 1 < len(bars):
+                        q_open = bars[entry_idx + 1]['open']
+                        row[16] = int(q_open) if 채널 != "지수벤치" else round(q_open, 2)
+                        changed_rows.add(i)
+                    try: base = float(str(row[16]).replace(',', '')) if str(row[16]).strip() else 0.0
+                    except Exception: base = 0.0
+                    if base <= 0: continue
+
+                    idx_map = index_close_map.get(벤치, {})
+                    captured = []
+                    for h, (sidx, iidx) in horizon_map.items():
+                        if elapsed_td >= h and not str(row[sidx]).strip() and entry_idx + h < len(bars):
+                            s_close = bars[entry_idx + h]['close']
+                            row[sidx] = f"{(s_close - base) / base * 100:.2f}%"
+                            hdate = bars[entry_idx + h]['date']
+                            i_close = idx_map.get(hdate, 0)
+                            if i_close and idx_base > 0:
+                                row[iidx] = f"{(i_close - idx_base) / idx_base * 100:.2f}%"
+                            captured.append(f"T+{h}:{elapsed_td}")   # 실제 캡처 거래일수(미스 캡처 감사)
+                            changed_rows.add(i)
+                    if captured:
+                        prev_z = str(row[25]).strip()
+                        row[25] = (prev_z + "," if prev_z else "") + ",".join(captured)
+
+                if changed_rows:
+                    updates = [{'range': f'Q{i + 1}:Z{i + 1}', 'values': [bt_data[i][16:26]]} for i in sorted(changed_rows)]
+                    bt_sheet.batch_update(updates, value_input_option="USER_ENTERED")
+                    print(f"✅ [백테스트 V6 Step2] {len(changed_rows)}행 추적 셀 업데이트 (호라이즌별 캡처·동결 · 전체 rewrite 없음)")
+                else:
+                    print("⏭ [백테스트 V6 Step2] 추적 변경 없음")
 
             # ── 진입 적재 (15:00~15:30 EOD 윈도, append-only) ──
             is_eod_log_window = (now_time_bt.hour == 15 and 0 <= now_time_bt.minute < 30)
