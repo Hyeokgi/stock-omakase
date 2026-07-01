@@ -1362,8 +1362,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             high_250d_ratio = current_price / high_250d_calc if high_250d_calc > 0 else 0.0
             is_absolute_liquidity = (trading_value >= 15_000_000_000)
             is_volume_shuting = (vol_ratio_yest >= 150.0)
-            is_proper_position = (0.70 <= high_250d_ratio <= 1.00)
-            is_v2_gate_passed = is_absolute_liquidity and is_volume_shuting and is_proper_position
+            # 위치요건(고가 근처 0.70~1.00) 제거: 수급(매집)은 바닥에서도 일어나 스캐너의 종베·바닥 픽과 상충 → 수급TOP2 영구 사망.
+            #   유동성(150억)+거래량폭발(전일비 150%)의 '실거래 품질'만으로 게이트 → 수급 강한 종목이 차트 위치 불문 통과.
+            is_v2_gate_passed = is_absolute_liquidity and is_volume_shuting
         except: is_v2_gate_passed = False
 
         if is_v2_gate_passed:
