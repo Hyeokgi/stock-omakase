@@ -256,10 +256,13 @@ try:
  
     # 실시간 토큰 주입 파트
     KIS_TOKEN = ""
+    last_published_date = ""  # 🛡️ [예외 재실행 안전장치] 오늘 이미 발행됐는지 확인용
     try:
         for row in doc.worksheet("⚙️설정").get_all_values():
-            if len(row) >= 2 and row[0] == "KIS_TOKEN": KIS_TOKEN = row[1]; break
+            if len(row) >= 2 and row[0] == "KIS_TOKEN": KIS_TOKEN = row[1]
+            if len(row) >= 2 and row[0] == "마지막_리포트_발행일": last_published_date = row[1].strip()
     except: pass
+    FORCE_RESEND = os.environ.get("FORCE_RESEND", "false").strip().lower() == "true"
  
     market_summary_data = doc.worksheet("시장요약").get_all_values()
     korean_market_status = clean_emojis(market_summary_data[1][8]) if len(market_summary_data) > 1 and len(market_summary_data[1]) > 8 else ""
@@ -806,11 +809,28 @@ try:
         except Exception as e: 
             print(f"⚠️ 구글 드라이브 업로드 실패: {e}")
  
-    if TELEGRAM_BOT_TOKEN:
+    # 🛡️ [예외 재실행 안전장치]: 오늘 이미 발행된 경우, 강제 재발송(FORCE_RESEND=true)이 아니면 중복 텔레그램 발송을 막는다.
+    today_pub_str = datetime.datetime.now(KST).strftime('%Y-%m-%d')
+    already_published_today = (last_published_date == today_pub_str)
+    if already_published_today and not FORCE_RESEND:
+        print(f"⏭ [중복 발송 차단] 오늘({today_pub_str}) 이미 발행됨. 재발송하려면 워크플로 수동 실행 시 force_resend 입력을 true로 설정하십시오.")
+    elif TELEGRAM_BOT_TOKEN:
+        if already_published_today and FORCE_RESEND:
+            print("⚠️ [강제 재발송 모드] 오늘 이미 발행됐지만 FORCE_RESEND=true로 재실행합니다.")
         print("▶ 텔레그램 발송 진행 중...")
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument", 
                       files={'document': open(pdf_file, 'rb')}, data={'chat_id': TELEGRAM_CHAT_ID, 'caption': "[HYEOKS] AI 심층 리서치 비상 보고서" if market_stage==3 else "[HYEOKS] AI 심층 리서치 보고서"})
         print("✅ 텔레그램 발송 완료!")
+        try:
+            setting_sheet = doc.worksheet("⚙️설정")
+            setting_rows = setting_sheet.get_all_values()
+            flag_row_idx = next((i for i, r in enumerate(setting_rows) if len(r) >= 1 and r[0] == "마지막_리포트_발행일"), None)
+            if flag_row_idx is not None:
+                setting_sheet.update(range_name=f"B{flag_row_idx + 1}", values=[[today_pub_str]])
+            else:
+                setting_sheet.append_row(["마지막_리포트_발행일", today_pub_str])
+        except Exception as e:
+            print(f"⚠️ 발행일 플래그 기록 실패(다음 실행에 영향 없음): {e}")
  
     # ==========================================
     # 👑 [HYEOKS 백테스트 V5] 리포팅 채널 연동
