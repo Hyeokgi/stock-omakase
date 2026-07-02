@@ -1550,7 +1550,23 @@ def update_technical_data(df_theme, all_theme_map):
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
             future_to_name = {executor.submit(analyze_single_stock, name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db, theme_historical_max, long_term_stocks, index_above_ma5): name for name, code in target_dict.items()}
+            # ⏱️ [15분 자체 데드라인]: GAS가 10분 간격으로 재기동하므로, 스캔이 밀리면 무한정 붙잡고 있지 않고
+            # 15분 시점에서 지금까지 모인 부분 결과만으로 마감 절차(시트 기록)로 넘어간다. 리포트가 절대 스킵되면 안 되므로
+            # omakase가 오래 걸릴수록 뒷 워크플로가 밀리는 걸 여기서 원천 차단.
+            SCAN_DEADLINE_SEC = 15 * 60
+            scan_start_ts = time.time()
+            deadline_hit = False
             for future in concurrent.futures.as_completed(future_to_name):
+                if not deadline_hit and (time.time() - scan_start_ts) >= SCAN_DEADLINE_SEC:
+                    deadline_hit = True
+                    done_cnt = len(results)
+                    total_cnt = len(target_dict)
+                    print(f"⏱️ [15분 타임아웃] 스캔 조기 종료 — {done_cnt}/{total_cnt}개 완료분으로 마감 절차 진행 (미완료 종목은 이번 회차 스킵)")
+                    for f in future_to_name:
+                        if not f.done(): f.cancel()
+                    # 아직 시작 안 한(대기 중인) 종목은 즉시 취소, 이미 실행 중인 최대 worker_count개는 자연 종료까지만 대기(타임아웃 상한이 있어 유한 시간 내 종료)
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    break
                 stock_name = future_to_name[future]
                 try:
                     res, _ = future.result()
