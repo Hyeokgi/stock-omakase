@@ -10,6 +10,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 17  # 💡 [하드 백스톱] 코드 내 15분 자체 데드라인이 어떤 이유로든 안 걸리면 GitHub가 강제 종료 → 다음 대기열이 밀리지 않게 보장
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
