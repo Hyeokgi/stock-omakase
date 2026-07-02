@@ -240,7 +240,17 @@ try:
     doc = gc.open_by_url(SHEET_URL)
     db_sheet = doc.worksheet("DB_스캐너")
     db_rows = db_sheet.get_all_values()
-    
+
+    # 🕰️ [락 분리 안전판]: 리포트 lock을 omakase와 분리하면서 유일하게 남는 좁은 충돌 창구 —
+    # 07:00 리포트 트리거가 omakase의 DB_스캐너 리셋 시간대(07:00~08:50)와 겹치면 빈/리셋 직후 데이터를 읽을 수 있음.
+    # 데이터가 비정상적으로 적으면(리셋 직후로 추정) 최대 2회, 20초 간격으로 짧게 재조회.
+    _retry_left = 2
+    while len(db_rows) <= 2 and _retry_left > 0:
+        print(f"⚠️ [DB_스캐너 데이터 부족 감지] omakase 리셋 시간대와 겹쳤을 가능성 → 20초 후 재조회 ({_retry_left}회 남음)")
+        time.sleep(20)
+        db_rows = db_sheet.get_all_values()
+        _retry_left -= 1
+
     cleanup_and_reorder(doc, "접속로그", 1)
     cleanup_and_reorder(doc, "DB_중장기", 0)
  
