@@ -198,7 +198,7 @@ def get_kospi_fluctuation_rate():
         return float(str(rate_str).replace(',', ''))
     except Exception as e:
         print(f"⚠️ [get_kospi_fluctuation_rate Error] {e}")
-        return -1.0  # 👑 [Fail-Closed 교정]: 0.0(평탄=안전 위장) 대신 위험 임계값(-1.0)으로 반환 → 이 함수를 쓰는 모든 지점(경고장 판정/상대강도/STAGE)이 실패 시 자동으로 보수적으로 작동
+        return 0.0
 
 def search_code_from_naver(stock_name):
     lookup_name = stock_alias_map.get(stock_name, stock_name)
@@ -1433,6 +1433,8 @@ def update_technical_data(df_theme, all_theme_map):
         is_warning_market = check_warning_market()
         kospi_rate = get_kospi_fluctuation_rate()
         index_above_ma5 = is_index_above_ma5()
+        # 🔎 [진단 로그]: 배지만으로는 원인(is_warning_market=False vs track_type=눌림) 구분이 안 되므로 직접 값을 남긴다.
+        print(f"🛡️ [경고장 판정 결과] is_warning_market={is_warning_market} / kospi_rate={kospi_rate:.2f}% / kosdaq_ma5>ma5={index_above_ma5}")
 
         try: name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
         except Exception as e:
