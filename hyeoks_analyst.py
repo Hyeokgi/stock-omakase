@@ -383,7 +383,7 @@ try:
     # ==========================================
     # 📡 [장중 스냅샷 실시간 업데이트 루프 - 15시 외 가동]
     # ==========================================
-    if current_hour != 15:
+    if current_hour != 15 and not FORCE_RESEND:
         print(f"▶ [{current_hour}시 모드] 메인 리포트 시간이 아니므로, 실시간 대기 종목의 정밀 요격 브리핑을 개시합니다.")
         for i, row in enumerate(db_rows[1:], start=2):
             if len(row) > 9 and not any(key in str(row[9]) for key in ["리포트 발송 완료", "리포트 작성 완료"]):  
@@ -448,6 +448,8 @@ try:
     # ==========================================
     # 🔴 [메인 15시 리포트 발급 마스터 파이프라인]
     # ==========================================
+    if FORCE_RESEND and current_hour != 15:
+        print(f"\n🛡️ [강제 재실행] 현재 {current_hour}시지만 FORCE_RESEND=true로 시간 게이트를 우회해 메인 리포트 파이프라인을 실행합니다.")
     print("\n▶ [15시 메인 리포트 모드] 주가데이터_보조 상위 150개 풀에서 HYEOKS 알파 종목 발굴 시작...")
     
     macro_data = doc.worksheet("시장요약").get_all_values()
