@@ -274,6 +274,9 @@ def get_real_money_themes():
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
         table = soup.find('table', {'class': 'theme_area'}) or soup.find('table', {'class': 'type_1'})
         if not table:
+            # 🔎 [진단 로그]: 예전엔 여기서 아무 흔적 없이 조용히 빈 값 반환 → 테마복기 정지 원인 추적 불가했음.
+            print(f"❌ [get_real_money_themes] 테마 테이블을 찾지 못함 — status={res.status_code}, 응답길이={len(res.text)}자, "
+                  f"제목태그={soup.title.text.strip() if soup.title else '없음'}")
             return pd.DataFrame(), is_market_closed, {}
 
         raw_themes = [{'name': a.text.strip(), 'url': "https://finance.naver.com" + a['href']} for tds in [tr.find_all('td') for tr in table.find_all('tr')] if len(tds) > 1 for a in [tds[0].find('a')] if a]
@@ -1433,8 +1436,6 @@ def update_technical_data(df_theme, all_theme_map):
         is_warning_market = check_warning_market()
         kospi_rate = get_kospi_fluctuation_rate()
         index_above_ma5 = is_index_above_ma5()
-        # 🔎 [진단 로그]: 배지만으로는 원인(is_warning_market=False vs track_type=눌림) 구분이 안 되므로 직접 값을 남긴다.
-        print(f"🛡️ [경고장 판정 결과] is_warning_market={is_warning_market} / kospi_rate={kospi_rate:.2f}% / kosdaq_ma5>ma5={index_above_ma5}")
 
         try: name_to_code = {str(row[0]).strip(): str(row[2]).strip().zfill(6) for row in doc.worksheet("기업정보").get_all_values()[1:] if len(row) >= 3}
         except Exception as e:
