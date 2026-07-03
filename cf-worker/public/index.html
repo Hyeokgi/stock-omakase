@@ -845,32 +845,38 @@ function renderSchedule() {
     head.textContent = g.month;
     list.appendChild(head);
     g.items.forEach(it => {
-      const [mm, dd] = it.date.split('.');
-      const evDate = new Date(`2026-${mm}-${dd}`);
-      const soon = (evDate - today) / 86400000 <= 14 && (evDate - today) >= 0;
-      const item = document.createElement('div');
-      item.className = 'list-item';
-      const eventsHtml = it.events.map((e, idx) => {
-        const key = `${it.date}|${idx}`;
-        const hasBrief = !!e.brief;
-        const isOpen = openScheduleKey === key;
-        return `<div class="sched-event ${hasBrief ? 'has-brief' : ''}" data-key="${key}">
-            <div class="sched-title"><span class="sched-pin">${hasBrief ? '🧠' : '📌'}</span>${e.title}${hasBrief ? '<span class="sched-chevron">▾</span>' : ''}</div>
-            ${hasBrief ? `<div class="sched-brief ${isOpen ? 'open' : ''}"><div class="sched-brief-inner">${e.brief}</div></div>` : ''}
+      try {
+        const [mm, dd] = it.date.split('.');
+        const evDate = new Date(`2026-${mm}-${dd}`);
+        const soon = (evDate - today) / 86400000 <= 14 && (evDate - today) >= 0;
+        const item = document.createElement('div');
+        item.className = 'list-item';
+        // 🔧 [방어 코드] GAS가 아직 구버전(titles 배열)을 내려주는 경우까지 안 죽고 표시되도록 자동 변환
+        const events = it.events || (it.titles || []).map(t => ({ title: t, brief: null }));
+        const eventsHtml = events.map((e, idx) => {
+          const key = `${it.date}|${idx}`;
+          const hasBrief = !!e.brief;
+          const isOpen = openScheduleKey === key;
+          return `<div class="sched-event ${hasBrief ? 'has-brief' : ''}" data-key="${key}">
+              <div class="sched-title"><span class="sched-pin">${hasBrief ? '🧠' : '📌'}</span>${e.title}${hasBrief ? '<span class="sched-chevron">▾</span>' : ''}</div>
+              ${hasBrief ? `<div class="sched-brief ${isOpen ? 'open' : ''}"><div class="sched-brief-inner">${e.brief}</div></div>` : ''}
+            </div>`;
+        }).join('');
+        item.innerHTML = `<div class="sched-row" style="flex:1;">
+            <span class="sched-date ${soon?'soon':''}">${it.date}</span>
+            <div style="flex:1;">${eventsHtml}</div>
           </div>`;
-      }).join('');
-      item.innerHTML = `<div class="sched-row" style="flex:1;">
-          <span class="sched-date ${soon?'soon':''}">${it.date}</span>
-          <div style="flex:1;">${eventsHtml}</div>
-        </div>`;
-      item.querySelectorAll('.sched-event.has-brief').forEach(el => {
-        el.addEventListener('click', () => {
-          const key = el.dataset.key;
-          openScheduleKey = (openScheduleKey === key) ? null : key;
-          renderSchedule();
+        item.querySelectorAll('.sched-event.has-brief').forEach(el => {
+          el.addEventListener('click', () => {
+            const key = el.dataset.key;
+            openScheduleKey = (openScheduleKey === key) ? null : key;
+            renderSchedule();
+          });
         });
-      });
-      list.appendChild(item);
+        list.appendChild(item);
+      } catch (err) {
+        console.error('일정 항목 렌더링 오류(건너뜀):', it, err);
+      }
     });
   });
 }
