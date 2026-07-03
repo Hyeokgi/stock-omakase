@@ -262,6 +262,16 @@
   .sched-date.soon { color: var(--gold); }
   .sched-title { font-size: 13.5px; font-weight: 600; line-height: 1.4; }
   .sched-pin { color: var(--text-3); margin-right: 4px; }
+  .sched-event { margin-bottom: 4px; }
+  .sched-event.has-brief { cursor: pointer; }
+  .sched-chevron { font-size: 10px; color: var(--gold); margin-left: 4px; }
+  .sched-brief { max-height: 0; overflow: hidden; transition: max-height 0.25s ease; }
+  .sched-brief.open { max-height: 600px; margin-top: 6px; }
+  .sched-brief-inner {
+    background: var(--surface-hi); border-radius: 10px; padding: 10px 12px;
+    font-size: 11.5px; color: var(--text-2); line-height: 1.65; white-space: pre-wrap;
+    border-left: 2px solid var(--gold);
+  }
 
   .rank-num { width: 22px; font-size: 13px; font-weight: 800; color: var(--text-3); flex-shrink:0; }
   .rank-name { font-size: 14px; font-weight: 700; flex: 1; }
@@ -524,21 +534,21 @@ const DEMO_HISTORY = [
 
 const DEMO_SCHEDULE = [
   {month:"2026년 07월", items:[
-    {date:"07.07", titles:["나토(NATO·북대서양조약기구) 정상회의"]},
-    {date:"07.10", titles:["대만) TSMC 6월 매출"]},
-    {date:"07.13", titles:["크래프톤 플라이웨이게임즈, '어센드투제로' 글로벌 정식 출시"]},
-    {date:"07.16", titles:["금융통화위원회"]},
-    {date:"07.22", titles:["무인이동체·민군협력 엑스포","한국디스플레이산업전시회(K-Display)"]},
-    {date:"07.29", titles:["美) FOMC 회의 발표"]}
+    {date:"07.07", events:[{title:"나토(NATO·북대서양조약기구) 정상회의", brief:null}]},
+    {date:"07.10", events:[{title:"대만) TSMC 6월 매출", brief:null}]},
+    {date:"07.13", events:[{title:"크래프톤 플라이웨이게임즈, '어센드투제로' 글로벌 정식 출시", brief:null}]},
+    {date:"07.16", events:[{title:"금융통화위원회", brief:null}]},
+    {date:"07.22", events:[{title:"무인이동체·민군협력 엑스포", brief:null},{title:"한국디스플레이산업전시회(K-Display)", brief:null}]},
+    {date:"07.30", events:[{title:"美) FOMC 회의 발표", brief:"[핵심]\n- 하반기 첫 FOMC로, 금리인하 사이클 지속 여부가 최대 관심사\n\n[주식시장 영향]\n- 인하 시그널 강화 시 성장주·반도체 중심 유동성 랠리 기대\n- 매파적 동결 시 단기 조정 가능성\n\n[주목 섹터]\n- 반도체, 2차전지, 성장주 전반\n\n[체크포인트]\n- 점도표 발표 여부(9월 회의가 본 회의)\n- 파월 후임 워시 의장의 발언 톤"}]}
   ]},
   {month:"2026년 08월", items:[
-    {date:"08.14", titles:["12월 결산법인 반기보고서 제출기한"]}
+    {date:"08.14", events:[{title:"12월 결산법인 반기보고서 제출기한", brief:null}]}
   ]},
   {month:"2026년 09월", items:[
-    {date:"09.01", titles:["존 터너스 애플 신임 CEO 취임"]},
-    {date:"09.04", titles:["IFA 2026(유럽 최대 가전전시회) 개최"]},
-    {date:"09.08", titles:["한·아프리카 경제협력 협의체(KOAFEC) 개최"]},
-    {date:"09.12", titles:["세계폐암학회(WCLC) 개최"]}
+    {date:"09.01", events:[{title:"존 터너스 애플 신임 CEO 취임", brief:null}]},
+    {date:"09.04", events:[{title:"IFA 2026(유럽 최대 가전전시회) 개최", brief:null}]},
+    {date:"09.08", events:[{title:"한·아프리카 경제협력 협의체(KOAFEC) 개최", brief:null}]},
+    {date:"09.12", events:[{title:"세계폐암학회(WCLC) 개최", brief:null}]}
   ]}
 ];
 
@@ -822,6 +832,8 @@ function renderHistory() {
   });
 }
 
+let openScheduleKey = null;
+
 function renderSchedule() {
   const groups = D('schedule', DEMO_SCHEDULE);
   const list = document.getElementById('scheduleList');
@@ -838,10 +850,26 @@ function renderSchedule() {
       const soon = (evDate - today) / 86400000 <= 14 && (evDate - today) >= 0;
       const item = document.createElement('div');
       item.className = 'list-item';
+      const eventsHtml = it.events.map((e, idx) => {
+        const key = `${it.date}|${idx}`;
+        const hasBrief = !!e.brief;
+        const isOpen = openScheduleKey === key;
+        return `<div class="sched-event ${hasBrief ? 'has-brief' : ''}" data-key="${key}">
+            <div class="sched-title"><span class="sched-pin">${hasBrief ? '🧠' : '📌'}</span>${e.title}${hasBrief ? '<span class="sched-chevron">▾</span>' : ''}</div>
+            ${hasBrief ? `<div class="sched-brief ${isOpen ? 'open' : ''}"><div class="sched-brief-inner">${e.brief}</div></div>` : ''}
+          </div>`;
+      }).join('');
       item.innerHTML = `<div class="sched-row" style="flex:1;">
           <span class="sched-date ${soon?'soon':''}">${it.date}</span>
-          <div>${it.titles.map(t => `<div class="sched-title"><span class="sched-pin">📌</span>${t}</div>`).join('')}</div>
+          <div style="flex:1;">${eventsHtml}</div>
         </div>`;
+      item.querySelectorAll('.sched-event.has-brief').forEach(el => {
+        el.addEventListener('click', () => {
+          const key = el.dataset.key;
+          openScheduleKey = (openScheduleKey === key) ? null : key;
+          renderSchedule();
+        });
+      });
       list.appendChild(item);
     });
   });
