@@ -1122,8 +1122,8 @@ function enableWatchlistDrag(list) {
 
   list.addEventListener('touchmove', (e) => {
     if (!dragEl) return;
-    const deltaY = e.touches[0].clientY - startY;
-    dragEl.style.transform = `translateY(${deltaY}px)`;
+    const currentY = e.touches[0].clientY;
+    dragEl.style.transform = `translateY(${currentY - startY}px)`;
 
     const rows = [...list.querySelectorAll('.watchlist-row')].filter(el => el !== dragEl);
     const dragRect = dragEl.getBoundingClientRect();
@@ -1133,8 +1133,16 @@ function enableWatchlistDrag(list) {
       const sibRect = sib.getBoundingClientRect();
       const sibMid = sibRect.top + sibRect.height / 2;
       if (Math.abs(dragMid - sibMid) < itemHeight * 0.4) {
+        const beforeTop = dragEl.getBoundingClientRect().top; // 트랜스폼 포함, 재배치 직전 실제 화면 위치
         if (dragMid < sibMid) list.insertBefore(dragEl, sib);
         else list.insertBefore(dragEl, sib.nextSibling);
+
+        // 🔧 재배치로 레이아웃상 위치가 바뀌었으니, 화면 위치가 그대로 이어지도록 startY를 다시 계산
+        //    (이전엔 여기서 누적 오차가 생겨서 한 칸만 옮겨야 하는데 맨 위/아래로 튕기는 버그가 있었음)
+        dragEl.style.transform = 'none';
+        const layoutTop = dragEl.getBoundingClientRect().top; // 트랜스폼 없는 순수 레이아웃 위치
+        startY = currentY - beforeTop + layoutTop;
+        dragEl.style.transform = `translateY(${currentY - startY}px)`;
         break;
       }
     }
