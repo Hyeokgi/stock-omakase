@@ -424,10 +424,7 @@
 </div>
 
 <div class="view" id="view-news">
-  <div class="controls">
-    <div class="search-box"><span style="color:var(--text-3); font-size:13px;">⌕</span>
-      <input id="newsSearch" placeholder="뉴스 검색" /></div>
-  </div>
+  <div class="tab-header"><div class="tab-title">주요뉴스</div></div>
   <main id="newsList" style="padding-top:0;"></main>
 </div>
 
@@ -609,7 +606,7 @@ const DEMO_SEARCHTOP = [
 
 let liveData = null;
 let currentTab = 'scanner';
-let currentFilter = 'all', sortMode = 'default', searchTerm = '', openCard = null, newsSearchTerm = '';
+let currentFilter = 'all', sortMode = 'default', searchTerm = '', openCard = null;
 let favorites = new Set(); // ★ 관심종목 코드 목록 (기기에 영구 저장)
 let prevPriceMap = {};     // 🆕 가격 변동 플래시용: 직전 갱신 시점의 종목별 현재가
 
@@ -716,7 +713,7 @@ function buildStockCardHtml(r) {
   return `
       <div class="card-top" data-code="${r.code}">
         <div class="name-block">
-          <div class="name-row">${stockLogoHtml(r.code)}${starButtonHtml(r.code)}<span class="stock-name">${r.name}</span><span class="market-tag">${r.market || ''}</span></div>
+          <div class="name-row">${stockLogoHtml(r.code)}${starButtonHtml(r.code)}<span class="stock-name">${r.name}</span><span class="market-tag">${r.market || ''}</span>${r.fromPool ? '<span class="market-tag" style="color:var(--gold); border-color:rgba(212,162,76,0.3);">전체풀</span>' : ''}</div>
           <span class="theme-name">${r.themeAge ? (r.themeAge === '당일' ? '🆕' : '🕰️') + ' ' : ''}${r.theme || ''}</span>
         </div>
         <div class="price-block ${priceFlash}">
@@ -778,9 +775,19 @@ function attachCardHandlers(card, r, isOpen, setOpen, rerenderFn) {
 
 function renderScanner() {
   const rows = D('scanner', DEMO_SCANNER);
-  let filtered = rows.filter(r => {
-    if (currentFilter !== 'all' && tierOf(r.tajeom) !== currentFilter) return false;
-    if (searchTerm && !(r.name.includes(searchTerm) || r.theme.includes(searchTerm))) return false;
+  const searchActive = !!searchTerm;
+
+  // 🔍 검색어가 있을 때만 주가데이터_보조 전체 풀(~150개)까지 확장 — 기본 화면은 오늘의 상위 20개 그대로 유지
+  let sourceRows = rows;
+  if (searchActive) {
+    const poolRows = D('pool', []);
+    const rowCodes = new Set(rows.map(r => r.code));
+    sourceRows = [...rows, ...poolRows.filter(r => !rowCodes.has(r.code)).map(r => ({ ...r, fromPool: true }))];
+  }
+
+  let filtered = sourceRows.filter(r => {
+    if (!searchActive && currentFilter !== 'all' && tierOf(r.tajeom) !== currentFilter) return false;
+    if (searchTerm && !(r.name.includes(searchTerm) || (r.theme||'').includes(searchTerm))) return false;
     return true;
   });
   if (sortMode === 'v1') filtered.sort((a,b) => b.v1 - a.v1);
@@ -789,7 +796,7 @@ function renderScanner() {
 
   document.getElementById('countMeta').textContent = `${filtered.length}개 종목`;
 
-  // 🆕 오늘 한눈에 요약 스트립 (필터와 무관하게 전체 기준)
+  // 🆕 오늘 한눈에 요약 스트립 (검색과 무관하게 항상 오늘 상위 20개 기준)
   const tierCounts = {};
   rows.forEach(r => { const t = tierOf(r.tajeom); tierCounts[t] = (tierCounts[t] || 0) + 1; });
   const stripEl = document.getElementById('todayStrip');
@@ -867,11 +874,10 @@ function renderTheme() {
 
 function renderNews() {
   const rows = D('news', DEMO_NEWS);
-  const filtered = newsSearchTerm ? rows.filter(n => n.title.includes(newsSearchTerm)) : rows;
   const list = document.getElementById('newsList');
   list.innerHTML = '';
-  if (!filtered.length) { list.innerHTML = '<div class="empty-state">뉴스가 없습니다</div>'; return; }
-  filtered.forEach(n => {
+  if (!rows.length) { list.innerHTML = '<div class="empty-state">뉴스가 없습니다</div>'; return; }
+  rows.forEach(n => {
     const item = document.createElement('div');
     item.className = 'list-item link';
     item.innerHTML = `<div class="news-item"><div class="news-title">${n.title}</div>
@@ -1038,14 +1044,26 @@ function renderWatchlist() {
 
   const scannerRows = D('scanner', DEMO_SCANNER);
   const poolRows = D('pool', []);
+  const searchTopRows = D('searchTop', DEMO_SEARCHTOP);
 
   codes.forEach(code => {
-    // 1순위: DB_스캐너(오늘 상위권, 최신) → 2순위: 주가데이터_보조(전체 스캔풀 폴백)
+    // 1순위: DB_스캐너(오늘 상위권) → 2순위: 주가데이터_보조(전체 스캔풀) → 3순위: 검색상위(네이버 실시간, HYEOKS 스캔 대상 밖인 대형주 등)
     const r = scannerRows.find(x => x.code === code) || poolRows.find(x => x.code === code);
     if (!r) {
+      const st = searchTopRows.find(x => x.code === code);
       const item = document.createElement('div');
       item.className = 'list-item';
-      item.innerHTML = `<span class="rank-name">${code}</span><span style="color:var(--text-3); font-size:12px;">오늘 스캔 범위 밖 (데이터 없음)</span>${starButtonHtml(code)}`;
+      if (st) {
+        item.style.cursor = 'pointer';
+        item.innerHTML = `<div style="display:flex; align-items:center; gap:8px; min-width:0;">${stockLogoHtml(code)}<span class="rank-name">${st.name}</span></div>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <div style="text-align:right;"><div class="rank-price mono">${fmtPrice(st.price)}</div>${changeSpan(st.change)}</div>
+            ${starButtonHtml(code)}
+          </div>`;
+        item.addEventListener('click', (e) => { if (!e.target.closest('[data-star-code]')) window.open(`https://m.stock.naver.com/domestic/stock/${code}/total`, '_blank'); });
+      } else {
+        item.innerHTML = `<span class="rank-name">${code}</span><span style="color:var(--text-3); font-size:12px;">오늘 스캔 범위 밖 (데이터 없음)</span>${starButtonHtml(code)}`;
+      }
       bindStarButtons(item, renderWatchlist);
       list.appendChild(item);
       return;
@@ -1124,7 +1142,6 @@ document.querySelectorAll('.chip').forEach(chip => {
     renderScanner();
   });
 });
-document.getElementById('newsSearch').addEventListener('input', e => { newsSearchTerm = e.target.value.trim(); renderNews(); });
 
 /* ── 좌우 스와이프로 탭 전환 ── */
 (function enableSwipeNav() {
