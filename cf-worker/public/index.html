@@ -1032,6 +1032,39 @@ function renderSearchTop() {
 
 let openWatchlistCard = null;
 
+function flattenThemeStocks() {
+  const groups = D('theme', DEMO_THEME);
+  const flat = [];
+  groups.forEach(g => (g.stocks || []).forEach(s => { if (s.code) flat.push(s); }));
+  return flat;
+}
+
+function findFavoriteData(code) {
+  const scannerRows = D('scanner', DEMO_SCANNER);
+  const poolRows = D('pool', []);
+  const full = scannerRows.find(x => x.code === code) || poolRows.find(x => x.code === code);
+  if (full) return { tier: 'full', data: full };
+
+  const st = D('searchTop', DEMO_SEARCHTOP).find(x => x.code === code);
+  if (st) return { tier: 'simple', data: { name: st.name, price: st.price, change: st.change } };
+
+  const th = flattenThemeStocks().find(x => x.code === code);
+  if (th) return { tier: 'simple', data: { name: th.name, price: null, change: th.change, val: th.val } };
+
+  return { tier: 'none', data: null };
+}
+
+function buildSimpleRowHtml(code, data) {
+  const priceHtml = (data.price != null) ? `<div class="rank-price mono">${fmtPrice(data.price)}</div>` : '';
+  const valHtml = (data.val != null) ? `<span class="mono" style="color:var(--text-3); font-size:11px;">🪙${fmtEok(data.val)}</span>` : '';
+  return `<div style="display:flex; align-items:center; gap:8px; min-width:0;">${stockLogoHtml(code)}<span class="rank-name">${data.name}</span></div>
+    <div style="display:flex; align-items:center; gap:10px;">
+      ${valHtml}
+      <div style="text-align:right;">${priceHtml}${changeSpan(data.change)}</div>
+      ${starButtonHtml(code)}
+    </div>`;
+}
+
 function renderWatchlist() {
   const codes = [...favorites];
   const list = document.getElementById('watchlistList');
@@ -1042,38 +1075,31 @@ function renderWatchlist() {
     return;
   }
 
-  const scannerRows = D('scanner', DEMO_SCANNER);
-  const poolRows = D('pool', []);
-  const searchTopRows = D('searchTop', DEMO_SEARCHTOP);
-
   codes.forEach(code => {
-    // 1순위: DB_스캐너(오늘 상위권) → 2순위: 주가데이터_보조(전체 스캔풀) → 3순위: 검색상위(네이버 실시간, HYEOKS 스캔 대상 밖인 대형주 등)
-    const r = scannerRows.find(x => x.code === code) || poolRows.find(x => x.code === code);
-    if (!r) {
-      const st = searchTopRows.find(x => x.code === code);
-      const item = document.createElement('div');
-      item.className = 'list-item';
-      if (st) {
-        item.style.cursor = 'pointer';
-        item.innerHTML = `<div style="display:flex; align-items:center; gap:8px; min-width:0;">${stockLogoHtml(code)}<span class="rank-name">${st.name}</span></div>
-          <div style="display:flex; align-items:center; gap:10px;">
-            <div style="text-align:right;"><div class="rank-price mono">${fmtPrice(st.price)}</div>${changeSpan(st.change)}</div>
-            ${starButtonHtml(code)}
-          </div>`;
-        item.addEventListener('click', (e) => { if (!e.target.closest('[data-star-code]')) window.open(`https://m.stock.naver.com/domestic/stock/${code}/total`, '_blank'); });
-      } else {
-        item.innerHTML = `<span class="rank-name">${code}</span><span style="color:var(--text-3); font-size:12px;">오늘 스캔 범위 밖 (데이터 없음)</span>${starButtonHtml(code)}`;
-      }
-      bindStarButtons(item, renderWatchlist);
-      list.appendChild(item);
+    // 1순위: DB_스캐너 → 2순위: 주가데이터_보조 → 3순위: 검색상위(대형주 등) → 4순위: 오늘의 테마(별도 수집 경로)
+    const { tier, data } = findFavoriteData(code);
+
+    if (tier === 'full') {
+      const card = document.createElement('div');
+      const isOpen = openWatchlistCard === data.code;
+      card.className = 'card' + (isOpen ? ' open' : '');
+      card.innerHTML = buildStockCardHtml(data);
+      attachCardHandlers(card, data, isOpen, (v) => { openWatchlistCard = v; }, renderWatchlist);
+      list.appendChild(card);
       return;
     }
-    const card = document.createElement('div');
-    const isOpen = openWatchlistCard === r.code;
-    card.className = 'card' + (isOpen ? ' open' : '');
-    card.innerHTML = buildStockCardHtml(r);
-    attachCardHandlers(card, r, isOpen, (v) => { openWatchlistCard = v; }, renderWatchlist);
-    list.appendChild(card);
+
+    const item = document.createElement('div');
+    item.className = 'list-item';
+    if (tier === 'simple') {
+      item.style.cursor = 'pointer';
+      item.innerHTML = buildSimpleRowHtml(code, data);
+      item.addEventListener('click', (e) => { if (!e.target.closest('[data-star-code]')) window.open(`https://m.stock.naver.com/domestic/stock/${code}/total`, '_blank'); });
+    } else {
+      item.innerHTML = `<span class="rank-name">${code}</span><span style="color:var(--text-3); font-size:12px;">오늘 스캔 범위 밖 (데이터 없음)</span>${starButtonHtml(code)}`;
+    }
+    bindStarButtons(item, renderWatchlist);
+    list.appendChild(item);
   });
 }
 
