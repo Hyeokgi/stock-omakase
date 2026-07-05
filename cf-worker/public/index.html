@@ -329,7 +329,10 @@
     flex: 1; display:flex; flex-direction:column; align-items:center; gap:2px;
     padding: 6px 0; border: none; background: transparent; color: var(--text-3); cursor:pointer;
   }
-  .tab-btn .tab-icon { font-size: 16px; }
+  .tab-btn .tab-icon {
+    font-size: 16px; display: flex; align-items: center; justify-content: center;
+    height: 20px; line-height: 1;
+  }
   .tab-btn .tab-label { font-size: 9.5px; font-weight: 600; white-space: nowrap; }
   .tab-btn.active { color: var(--gold); }
 
