@@ -187,6 +187,18 @@
 
   .empty-star-cta { text-align:center; padding: 60px 24px; color: var(--text-3); font-size: 13px; line-height: 1.7; }
 
+  .watchlist-row { display: flex; align-items: flex-start; gap: 6px; background: transparent; }
+  .watchlist-row.dragging { z-index: 20; opacity: 0.9; }
+  .watchlist-row.dragging .card, .watchlist-row.dragging .list-item { box-shadow: 0 8px 20px rgba(0,0,0,0.35); }
+  .watchlist-row-inner { flex: 1; min-width: 0; }
+  .watchlist-row-inner .card, .watchlist-row-inner .list-item { margin-bottom: 0; }
+  .drag-handle {
+    flex-shrink: 0; width: 26px; height: 44px; display: flex; align-items: center; justify-content: center;
+    color: var(--text-3); font-size: 17px; letter-spacing: -1px; cursor: grab; touch-action: none;
+    margin-top: 8px;
+  }
+  .drag-handle:active { cursor: grabbing; color: var(--gold); }
+
   .price-block { text-align: right; flex-shrink: 0; }
   .price { font-size: 15.5px; font-weight: 700; }
   .change { font-size: 12.5px; font-weight: 700; }
@@ -212,10 +224,10 @@
   }
   .score-pill.hi { color: var(--text); border-color: var(--text-3); }
 
-  .chevron { font-size: 11px; color: var(--text-3); transition: transform 0.2s; margin-left: 4px; }
+  .chevron { font-size: 11px; color: var(--text-3); transition: transform 0.42s cubic-bezier(0.22, 1, 0.36, 1); margin-left: 4px; }
   .card.open .chevron { transform: rotate(180deg); }
 
-  .card-detail { max-height: 0; overflow: hidden; transition: max-height 0.25s ease, margin-top 0.25s ease; }
+  .card-detail { max-height: 0; overflow: hidden; transition: max-height 0.42s cubic-bezier(0.22, 1, 0.36, 1), margin-top 0.42s cubic-bezier(0.22, 1, 0.36, 1); }
   .card.open .card-detail { max-height: 900px; margin-top: 11px; }
   .detail-grid {
     display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px;
@@ -607,7 +619,7 @@ const DEMO_SEARCHTOP = [
 let liveData = null;
 let currentTab = 'scanner';
 let currentFilter = 'all', sortMode = 'default', searchTerm = '', openCard = null;
-let favorites = new Set(); // ★ 관심종목 코드 목록 (기기에 영구 저장)
+let favorites = []; // ★ 관심종목 코드 목록, 순서 유지 (기기에 영구 저장)
 let prevPriceMap = {};     // 🆕 가격 변동 플래시용: 직전 갱신 시점의 종목별 현재가
 
 function D(key, demo) { return (liveData && liveData[key]) ? liveData[key] : demo; }
@@ -615,15 +627,16 @@ function D(key, demo) { return (liveData && liveData[key]) ? liveData[key] : dem
 async function loadFavorites() {
   try {
     const raw = await safeGet('favorites');
-    favorites = new Set(raw ? JSON.parse(raw) : []);
-  } catch { favorites = new Set(); }
+    favorites = raw ? JSON.parse(raw) : [];
+  } catch { favorites = []; }
 }
 async function toggleFavorite(code) {
-  if (favorites.has(code)) favorites.delete(code); else favorites.add(code);
-  await safeSet('favorites', JSON.stringify([...favorites]));
+  const idx = favorites.indexOf(code);
+  if (idx !== -1) favorites.splice(idx, 1); else favorites.push(code);
+  await safeSet('favorites', JSON.stringify(favorites));
 }
 function starButtonHtml(code) {
-  const on = favorites.has(code);
+  const on = favorites.includes(code);
   return `<span class="star-btn ${on ? 'on' : ''}" data-star-code="${code}">${on ? '★' : '☆'}</span>`;
 }
 function bindStarButtons(container, onToggleRender) {
@@ -763,8 +776,33 @@ function attachCardHandlers(card, r, isOpen, setOpen, rerenderFn) {
 
   cardTop.addEventListener('click', () => {
     if (longPressFired) { longPressFired = false; return; } // 롱프레스로 이미 처리됐으면 펼치기 클릭은 무시
-    setOpen(isOpen ? null : r.code);
-    rerenderFn();
+
+    const container = card.parentElement;
+    const prevOpen = container ? container.querySelector('.card.open') : null;
+    const willOpen = !card.classList.contains('open');
+    const beforeTop = card.getBoundingClientRect().top;
+
+    if (prevOpen && prevOpen !== card) prevOpen.classList.remove('open');
+    card.classList.toggle('open', willOpen);
+    setOpen(willOpen ? r.code : null); // 데이터 갱신 시 상태만 맞춰두고, 지금 당장은 리렌더하지 않음(애니메이션 유지)
+
+    // 🆕 펼치기/접기 애니메이션이 끝나면, 탭한 종목이 화면상 같은 위치에 있도록 스크롤 보정
+    //    (위에 열려있던 카드가 접히며 전체가 쑥 올라가는 느낌을 없앰)
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      const afterTop = card.getBoundingClientRect().top;
+      const delta = afterTop - beforeTop;
+      if (Math.abs(delta) > 1) window.scrollBy(0, delta);
+    };
+    const myDetail = card.querySelector('.card-detail');
+    if (myDetail) myDetail.addEventListener('transitionend', settle, { once: true });
+    if (prevOpen && prevOpen !== card) {
+      const prevDetail = prevOpen.querySelector('.card-detail');
+      if (prevDetail) prevDetail.addEventListener('transitionend', settle, { once: true });
+    }
+    setTimeout(settle, 500); // 혹시 transitionend가 안 걸리는 예외 상황 대비 안전장치
   });
   card.querySelector('.naver-link-btn').addEventListener('click', (e) => {
     e.stopPropagation();
@@ -1065,6 +1103,54 @@ function buildSimpleRowHtml(code, data) {
     </div>`;
 }
 
+let watchlistDragBound = false;
+function enableWatchlistDrag(list) {
+  if (watchlistDragBound) return;
+  watchlistDragBound = true;
+
+  let dragEl = null, startY = 0, itemHeight = 0;
+
+  list.addEventListener('touchstart', (e) => {
+    const handle = e.target.closest('.drag-handle');
+    if (!handle) return;
+    dragEl = handle.closest('.watchlist-row');
+    if (!dragEl) return;
+    startY = e.touches[0].clientY;
+    itemHeight = dragEl.offsetHeight;
+    dragEl.classList.add('dragging');
+  }, { passive: true });
+
+  list.addEventListener('touchmove', (e) => {
+    if (!dragEl) return;
+    const deltaY = e.touches[0].clientY - startY;
+    dragEl.style.transform = `translateY(${deltaY}px)`;
+
+    const rows = [...list.querySelectorAll('.watchlist-row')].filter(el => el !== dragEl);
+    const dragRect = dragEl.getBoundingClientRect();
+    const dragMid = dragRect.top + dragRect.height / 2;
+
+    for (const sib of rows) {
+      const sibRect = sib.getBoundingClientRect();
+      const sibMid = sibRect.top + sibRect.height / 2;
+      if (Math.abs(dragMid - sibMid) < itemHeight * 0.4) {
+        if (dragMid < sibMid) list.insertBefore(dragEl, sib);
+        else list.insertBefore(dragEl, sib.nextSibling);
+        break;
+      }
+    }
+  }, { passive: true });
+
+  list.addEventListener('touchend', async () => {
+    if (!dragEl) return;
+    dragEl.classList.remove('dragging');
+    dragEl.style.transform = '';
+    const newOrder = [...list.querySelectorAll('.watchlist-row')].map(el => el.dataset.favCode);
+    favorites = newOrder;
+    await safeSet('favorites', JSON.stringify(favorites));
+    dragEl = null;
+  }, { passive: true });
+}
+
 function renderWatchlist() {
   const codes = [...favorites];
   const list = document.getElementById('watchlistList');
@@ -1079,28 +1165,44 @@ function renderWatchlist() {
     // 1순위: DB_스캐너 → 2순위: 주가데이터_보조 → 3순위: 검색상위(대형주 등) → 4순위: 오늘의 테마(별도 수집 경로)
     const { tier, data } = findFavoriteData(code);
 
+    const row = document.createElement('div');
+    row.className = 'watchlist-row';
+    row.dataset.favCode = code;
+
+    const handle = document.createElement('span');
+    handle.className = 'drag-handle';
+    handle.textContent = '⠿';
+    row.appendChild(handle);
+
+    const inner = document.createElement('div');
+    inner.className = 'watchlist-row-inner';
+    row.appendChild(inner);
+
     if (tier === 'full') {
       const card = document.createElement('div');
       const isOpen = openWatchlistCard === data.code;
       card.className = 'card' + (isOpen ? ' open' : '');
       card.innerHTML = buildStockCardHtml(data);
       attachCardHandlers(card, data, isOpen, (v) => { openWatchlistCard = v; }, renderWatchlist);
-      list.appendChild(card);
-      return;
+      inner.appendChild(card);
+    } else {
+      const item = document.createElement('div');
+      item.className = 'list-item';
+      if (tier === 'simple') {
+        item.style.cursor = 'pointer';
+        item.innerHTML = buildSimpleRowHtml(code, data);
+        item.addEventListener('click', (e) => { if (!e.target.closest('[data-star-code]')) window.open(`https://m.stock.naver.com/domestic/stock/${code}/total`, '_blank'); });
+      } else {
+        item.innerHTML = `<span class="rank-name">${code}</span><span style="color:var(--text-3); font-size:12px;">오늘 스캔 범위 밖 (데이터 없음)</span>${starButtonHtml(code)}`;
+      }
+      bindStarButtons(item, renderWatchlist);
+      inner.appendChild(item);
     }
 
-    const item = document.createElement('div');
-    item.className = 'list-item';
-    if (tier === 'simple') {
-      item.style.cursor = 'pointer';
-      item.innerHTML = buildSimpleRowHtml(code, data);
-      item.addEventListener('click', (e) => { if (!e.target.closest('[data-star-code]')) window.open(`https://m.stock.naver.com/domestic/stock/${code}/total`, '_blank'); });
-    } else {
-      item.innerHTML = `<span class="rank-name">${code}</span><span style="color:var(--text-3); font-size:12px;">오늘 스캔 범위 밖 (데이터 없음)</span>${starButtonHtml(code)}`;
-    }
-    bindStarButtons(item, renderWatchlist);
-    list.appendChild(item);
+    list.appendChild(row);
   });
+
+  enableWatchlistDrag(list);
 }
 
 const RENDERERS = { scanner:renderScanner, watchlist:renderWatchlist, report:renderReport, theme:renderTheme, news:renderNews, history:renderHistory, schedule:renderSchedule, search:renderSearchTop };
@@ -1175,7 +1277,7 @@ document.querySelectorAll('.chip').forEach(chip => {
   const SWIPE_MIN_DIST = 65;
   const body = document.body;
   body.addEventListener('touchstart', e => {
-    if (e.target.closest('.chip-row') || e.target.closest('.card-detail')) { tracking = false; return; }
+    if (e.target.closest('.chip-row') || e.target.closest('.card-detail') || e.target.closest('.drag-handle')) { tracking = false; return; }
     const t = e.touches[0];
     startX = t.clientX; startY = t.clientY; tracking = true;
   }, {passive:true});
