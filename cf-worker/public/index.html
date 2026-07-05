@@ -780,29 +780,26 @@ function attachCardHandlers(card, r, isOpen, setOpen, rerenderFn) {
     const container = card.parentElement;
     const prevOpen = container ? container.querySelector('.card.open') : null;
     const willOpen = !card.classList.contains('open');
-    const beforeTop = card.getBoundingClientRect().top;
 
     if (prevOpen && prevOpen !== card) prevOpen.classList.remove('open');
     card.classList.toggle('open', willOpen);
     setOpen(willOpen ? r.code : null); // 데이터 갱신 시 상태만 맞춰두고, 지금 당장은 리렌더하지 않음(애니메이션 유지)
 
-    // 🆕 펼치기/접기 애니메이션이 끝나면, 탭한 종목이 화면상 같은 위치에 있도록 스크롤 보정
-    //    (위에 열려있던 카드가 접히며 전체가 쑥 올라가는 느낌을 없앰)
-    let settled = false;
-    const settle = () => {
-      if (settled) return;
-      settled = true;
-      const afterTop = card.getBoundingClientRect().top;
-      const delta = afterTop - beforeTop;
-      if (Math.abs(delta) > 1) window.scrollBy(0, delta);
-    };
-    const myDetail = card.querySelector('.card-detail');
-    if (myDetail) myDetail.addEventListener('transitionend', settle, { once: true });
-    if (prevOpen && prevOpen !== card) {
-      const prevDetail = prevOpen.querySelector('.card-detail');
-      if (prevDetail) prevDetail.addEventListener('transitionend', settle, { once: true });
+    // 🆕 애니메이션이 진행되는 매 프레임마다 탭한 카드의 화면 위치를 붙잡아 둠
+    //    (끝난 뒤 한 번에 보정하면 "따로 노는 두 박자"처럼 어색해서, 실시간으로 계속 따라붙게 함)
+    let anchorTop = card.getBoundingClientRect().top;
+    const start = performance.now();
+    const DURATION = 460; // CSS 트랜지션(0.42s)보다 살짝 여유
+    function tick(now) {
+      const currentTop = card.getBoundingClientRect().top;
+      const drift = currentTop - anchorTop;
+      if (Math.abs(drift) > 0.5) {
+        window.scrollBy(0, drift);
+        anchorTop = card.getBoundingClientRect().top;
+      }
+      if (now - start < DURATION) requestAnimationFrame(tick);
     }
-    setTimeout(settle, 500); // 혹시 transitionend가 안 걸리는 예외 상황 대비 안전장치
+    requestAnimationFrame(tick);
   });
   card.querySelector('.naver-link-btn').addEventListener('click', (e) => {
     e.stopPropagation();
