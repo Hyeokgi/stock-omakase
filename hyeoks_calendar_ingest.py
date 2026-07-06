@@ -118,30 +118,69 @@ def extract_schedule_with_gemini(pdf_text, source_name):
         return []
 
 
-def append_to_schedule_sheet(doc, new_items):
-    """기존 주요일정 시트에 중복 없이 추가 (날짜+제목 기준 dedup)."""
-    if not new_items:
-        return 0
-    sheet = doc.worksheet("주요일정")
-    existing = sheet.get_all_values()[1:]
-    existing_keys = set(f"{str(r[0]).strip()}|{str(r[1]).replace(' ', '').strip()}" for r in existing if len(r) >= 2)
+def normalize_date(raw):
+    """'2026. 7. 1', '2026-7-1' 등 다양한 표기를 'yyyy-MM-dd'로 통일. 실패하면 None."""
+    s = str(raw).strip().replace('.', '-').replace(' ', '').strip('-')
+    try:
+        return datetime.datetime.strptime(s, '%Y-%m-%d').strftime('%Y-%m-%d')
+    except Exception:
+        return None
 
-    rows_to_add = []
-    for item in new_items:
-        date_str = str(item.get("날짜", "")).strip()
+
+def append_to_schedule_sheet(doc, new_items):
+    """기존 주요일정 시트 전체를 읽어 신규 항목과 합친 뒤, 날짜 정규화 + 정렬까지 마쳐서 다시 씀.
+       (기존엔 append_rows로 끝에만 붙여서 정렬이 안 됐던 문제 수정)"""
+    sheet = doc.worksheet("주요일정")
+    header = sheet.row_values(1) or ["날짜", "일정내용", "테마구분"]
+    existing = sheet.get_all_values()[1:]
+
+    all_rows = []
+    existing_keys = set()
+    for r in existing:
+        if len(r) < 2 or not r[0]:
+            continue
+        nd = normalize_date(r[0])
+        if nd is None:
+            all_rows.append(r)  # 날짜 인식 실패한 행은 원본 그대로 보존(유실 방지), 정렬에서만 맨 뒤로
+            continue
+        title = str(r[1]).strip()
+        cat = r[2] if len(r) > 2 else "기타"
+        all_rows.append([nd, title, cat])
+        existing_keys.add(f"{nd}|{title.replace(' ', '')}")
+
+    added = 0
+    for item in new_items or []:
+        nd = normalize_date(item.get("날짜", ""))
         title = str(item.get("일정내용", "")).strip()
         category = str(item.get("테마구분", "기타")).strip()
-        if not date_str or not title:
+        if not nd or not title:
             continue
-        key = f"{date_str}|{title.replace(' ', '')}"
+        key = f"{nd}|{title.replace(' ', '')}"
         if key in existing_keys:
             continue
-        rows_to_add.append([date_str, title, category])
+        all_rows.append([nd, title, category])
         existing_keys.add(key)
+        added += 1
 
-    if rows_to_add:
-        sheet.append_rows(rows_to_add, value_input_option="USER_ENTERED")
-    return len(rows_to_add)
+    def sort_key(row):
+        nd = normalize_date(row[0])
+        return nd if nd else "9999-99-99"  # 날짜 인식 실패 행은 맨 뒤로
+
+    all_rows.sort(key=sort_key)
+
+    # 🔎 [중복 후보 안내] 같은 날짜에 항목이 여럿이면 제목만 나란히 출력 — 자동 삭제는 안 하고 눈으로 확인하시라고 표시만
+    by_date = {}
+    for r in all_rows:
+        nd = normalize_date(r[0])
+        if nd:
+            by_date.setdefault(nd, []).append(r[1])
+    for d, titles in by_date.items():
+        if len(titles) > 1:
+            print(f"   🔎 {d} 같은 날짜 {len(titles)}건 — 중복 후보 여부 확인해보세요: {titles}")
+
+    sheet.clear()
+    sheet.update(range_name="A1", values=[header] + all_rows, value_input_option="USER_ENTERED")
+    return added
 
 
 if __name__ == "__main__":
