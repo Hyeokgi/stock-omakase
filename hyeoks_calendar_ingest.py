@@ -168,6 +168,15 @@ def append_to_schedule_sheet(doc, new_items):
 
     all_rows.sort(key=sort_key)
 
+    # 🗑️ [보관 정책] 오늘 기준 60일(2개월)보다 오래된 행은 완전히 삭제. 날짜 인식 실패 행은 유실 방지 위해 보존.
+    today_str = datetime.datetime.now(KST).strftime('%Y-%m-%d')
+    cutoff_str = (datetime.datetime.now(KST).date() - datetime.timedelta(days=60)).strftime('%Y-%m-%d')
+    before_count = len(all_rows)
+    all_rows = [r for r in all_rows if (normalize_date(r[0]) is None) or (normalize_date(r[0]) >= cutoff_str)]
+    removed = before_count - len(all_rows)
+    if removed > 0:
+        print(f"🗑️ [보관 정책] {cutoff_str} 이전 일정 {removed}건 삭제")
+
     # 🔎 [중복 후보 안내] 같은 날짜에 항목이 여럿이면 제목만 나란히 출력 — 자동 삭제는 안 하고 눈으로 확인하시라고 표시만
     by_date = {}
     for r in all_rows:
@@ -180,6 +189,39 @@ def append_to_schedule_sheet(doc, new_items):
 
     sheet.clear()
     sheet.update(range_name="A1", values=[header] + all_rows, value_input_option="USER_ENTERED")
+
+    # 👁️ [오늘 이전 숨김] 정렬돼있으므로 과거 구간은 맨 앞에 연속으로 몰려있음 — 그 구간만 숨김 처리
+    try:
+        sheet_id = sheet.id
+        requests_list = [{
+            "updateDimensionProperties": {
+                "range": {"sheetId": sheet_id, "dimension": "ROWS", "startIndex": 1, "endIndex": len(all_rows) + 1},
+                "properties": {"hiddenByUser": False},
+                "fields": "hiddenByUser"
+            }
+        }]
+        hide_start, hide_end = -1, -1
+        for i, row in enumerate(all_rows):
+            nd = normalize_date(row[0])
+            if nd and nd < today_str:
+                if hide_start == -1: hide_start = i + 1
+                hide_end = i + 2
+            else:
+                break  # 정렬돼있어서 과거 구간은 항상 맨 앞에 연속으로만 존재
+        if hide_start != -1:
+            requests_list.append({
+                "updateDimensionProperties": {
+                    "range": {"sheetId": sheet_id, "dimension": "ROWS", "startIndex": hide_start, "endIndex": hide_end},
+                    "properties": {"hiddenByUser": True},
+                    "fields": "hiddenByUser"
+                }
+            })
+        doc.batch_update({"requests": requests_list})
+        if hide_start != -1:
+            print(f"👁️ [숨김 처리] 오늘({today_str}) 이전 {hide_end - hide_start}건 숨김")
+    except Exception as e:
+        print(f"⚠️ [숨김 처리 실패, 데이터엔 영향 없음] {e}")
+
     return added
 
 
@@ -190,7 +232,9 @@ if __name__ == "__main__":
 
     new_files = list_new_pdfs(drive, processed_ids)
     if not new_files:
-        print("ℹ️ 새로 처리할 캘린더 PDF가 없습니다.")
+        print("ℹ️ 새로 처리할 캘린더 PDF는 없음 — 보관정책(60일 삭제)·숨김 처리만 매일 갱신")
+        append_to_schedule_sheet(doc, [])  # 새 항목 없이도 정렬/삭제/숨김은 매일 돌아가야 함
+        print("🎉 캘린더 수집기 작업 완료!")
         exit(0)
 
     for f in new_files:
