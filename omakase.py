@@ -1167,20 +1167,24 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         # 🆕 [수정] DB_중장기(산업리포트 픽) 이후 이미 크게 오른 종목은 "코어픽" 배지 제외 — 이미 시세가 다 나온 종목 대신
         #    아직 안 오른 종목만 배지가 붙도록. 이미 갖고 있는 250일치 history로 픽 날짜 시점 종가를 역추적해서 비교.
-        LONG_TERM_ALREADY_SURGED_THRESHOLD = 0.50  # 픽 이후 +50% 이상 올랐으면 "이미 시세 나옴"으로 간주 (조정 가능)
+        # 🔧 [수정] 현재가만 비교하면 한 번 크게 올랐다가 눌린 종목은 배지가 다시 붙어버림 → 픽 이후 "최고가" 기준으로
+        #    한 번이라도 임계값을 넘었으면 그 뒤로 계속 배제되도록 변경(되돌아와도 배지 부활 안 함).
+        LONG_TERM_ALREADY_SURGED_THRESHOLD = 0.50  # 픽 이후 최고가가 +50% 이상이면 "이미 시세 나옴"으로 간주 (조정 가능)
         is_already_surged_since_pick = False
         pick_date_str = long_term_stocks.get(name) if isinstance(long_term_stocks, dict) else None
         if pick_date_str:
             try:
                 pick_date_compact = pick_date_str.replace("-", "")  # history의 date는 "yyyymmdd" 원본 포맷
                 pick_price = None
+                max_high_since_pick = 0
                 for h in history:
                     if h['date'] >= pick_date_compact:
-                        pick_price = h['close']
-                        break
+                        if pick_price is None:
+                            pick_price = h['close']  # 픽 날짜(또는 그 이후 첫 거래일) 종가를 기준가로
+                        max_high_since_pick = max(max_high_since_pick, h['high'])
                 if pick_price and pick_price > 0:
-                    pct_since_pick = (current_price - pick_price) / pick_price
-                    if pct_since_pick >= LONG_TERM_ALREADY_SURGED_THRESHOLD:
+                    max_pct_since_pick = (max_high_since_pick - pick_price) / pick_price
+                    if max_pct_since_pick >= LONG_TERM_ALREADY_SURGED_THRESHOLD:
                         is_already_surged_since_pick = True
             except Exception as e:
                 print(f"⚠️ [코어픽 픽이후상승률 계산 에러 for {name}] {e}")
