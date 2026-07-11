@@ -289,89 +289,7 @@ try:
         market_stage = 3
         stage_text = "STAGE 3 (패닉 장세 - 서킷 위험 임계점 돌파,전원 사격 중지)"
     print(f"📡 [실시간 시장 위험도 연산 판독 완료]: {stage_text} (상태: {korean_market_status or '미확인'} / 코스피:{kospi_rate_fallback:.2f}%)")
- # ── [신규] 주요일정 이슈브리핑 — 굵직한 일정을 골라 AI가 섹터영향/체크포인트 분석 (주 1회만 실행) ──
-    def generate_schedule_briefings(doc):
-        try:
-            now = datetime.datetime.now(KST)
-            # 🛡️ 비용/시간 관리: 매주 월요일에만 실행 (요일 바꾸고 싶으면 0=월,1=화... 숫자만 조정)
-            if now.weekday() != 0:
-                print("ℹ️ [이슈브리핑] 오늘은 실행일이 아님 (월요일 전용)")
-                return
-
-            sched_rows = doc.worksheet("주요일정").get_all_values()[1:]
-            today_str = now.strftime('%Y-%m-%d')
-            horizon_str = (now + datetime.timedelta(days=14)).strftime('%Y-%m-%d')
-
-            # 📅 자동수집(당일) = 뉴스 스크래핑 결과라 제외. 미리 정해진 굵직한 일정만 대상.
-            EXCLUDE_CATS = {"📅 자동수집(당일)"}
-            candidates = []
-            for row in sched_rows:
-                if len(row) < 3: continue
-                title = str(row[1]).strip()
-                cat = str(row[2]).strip()
-                if not title or cat in EXCLUDE_CATS: continue
-                date_raw = str(row[0]).strip()
-                date_norm = date_raw.replace('. ', '-').replace('.', '-').strip('-')
-                parts = date_norm.split('-')
-                if len(parts) == 3:
-                    date_norm = f"{parts[0]}-{parts[1].zfill(2)}-{parts[2].zfill(2)}"
-                else:
-                    continue
-                if today_str <= date_norm <= horizon_str:
-                    candidates.append({'date': date_norm, 'title': title, 'cat': cat})
-
-            if not candidates:
-                print("ℹ️ [이슈브리핑] 향후 14일 내 분석 대상 일정 없음")
-                return
-
-            try:
-                brief_sheet = doc.worksheet("이슈브리핑")
-            except Exception:
-                brief_sheet = doc.add_worksheet(title="이슈브리핑", rows="500", cols="4")
-                brief_sheet.append_row(["날짜", "일정내용", "테마구분", "AI분석"])
-
-            existing_rows = brief_sheet.get_all_values()[1:]
-            existing_keys = set(f"{r[0]}|{r[1]}" for r in existing_rows if len(r) >= 2)
-
-            new_rows = []
-            for c in candidates[:8]:  # 한 번에 최대 8건만 (비용 관리, 남으면 다음주에 이어서)
-                key = f"{c['date']}|{c['title']}"
-                if key in existing_keys:
-                    continue  # 이미 분석된 일정은 재생성하지 않음
-
-                prompt = f"""아래 증시 일정 하나를 분석해서, 정해진 형식으로만 한국어로 답변하세요.
-일정: {c['date']} - {c['title']} (분류: {c['cat']})
-
-다음 형식을 정확히 지켜 작성하십시오 (군더더기 설명·서론 없이 바로):
-[핵심]
-- (이 일정이 왜 중요한지 2줄 이내)
-[주식시장 영향]
-- (국내 증시에 미칠 영향 2~3줄)
-[주목 섹터]
-- (관련 섹터/테마 2~4개, 쉼표로 나열)
-[체크포인트]
-- (투자자가 확인해야 할 변수 2~3개)
-
-확인되지 않은 구체적 수치나 사실을 지어내지 말고, 일정의 성격과 일반적으로 알려진 배경지식에 기반한 분석만 작성하십시오."""
-
-                try:
-                    analysis = safe_generate_content(prompt, is_fast=True).text.strip()
-                except Exception as e:
-                    print(f"⚠️ [이슈브리핑 생성 실패] {c['title']}: {e}")
-                    continue
-
-                new_rows.append([c['date'], c['title'], c['cat'], analysis])
-                existing_keys.add(key)
-
-            if new_rows:
-                brief_sheet.append_rows(new_rows, value_input_option="USER_ENTERED")
-                print(f"✅ [이슈브리핑] {len(new_rows)}건 신규 생성 완료")
-            else:
-                print("⏭ [이슈브리핑] 신규 생성 대상 없음 (전부 기존 분석 보유)")
-        except Exception as e:
-            print(f"❌ [이슈브리핑 전체 에러] {e}")
-
-    generate_schedule_briefings(doc)
+ 
     sys_instruction = "기업의 일반적인 소개는 일절 금지. 차트 지표, 타점, 수급 데이터를 바탕으로 '현재 기술적 위치'와 '앞으로의 대응 전략'만을 60~70자 내외로 매우 짧고 날카롭게 작성할 것."
  
     if current_hour == 7:
@@ -950,22 +868,31 @@ try:
                     return "KOSPI"
 
             idx_cache = {"KOSPI": _idx_close("KOSPI"), "KOSDAQ": _idx_close("KOSDAQ")}
-            report_picks = [p for p in (best_short, best_mid) if p]
+            # 🔧 [수정] "집중도" 열이 계속 빈 값이던 문제 — 위에서 이미 읽어둔 _kw_rows(뉴스_키워드)로 1위:2위 언급횟수 기록
+            try:
+                _kw_counts = [int(re.sub(r'[^0-9]', '', str(kr[3]))) for kr in _kw_rows if len(kr) >= 4 and re.sub(r'[^0-9]', '', str(kr[3]))]
+                concentration_str = f"{_kw_counts[0]}:{_kw_counts[1]}" if len(_kw_counts) >= 2 else ""
+            except Exception:
+                concentration_str = ""
+            # 🔧 [수정] 단기(best_short)·중기(best_mid)는 완전히 다른 투자 논리라 채널명 자체를 분리.
+            #    기존엔 둘 다 "리포트TOP2"로 합쳐 기록돼서, 평가 시 서로 다른 성과가 섞여 뭉개지는 문제가 있었음.
+            report_picks = [(best_short, "리포트TOP2_단기"), (best_mid, "리포트TOP2_중기")]
             new_rows = []
-            for cand in report_picks:
+            for cand, channel_name in report_picks:
+                if not cand: continue
                 s_code = str(cand['code']).replace("'", "").strip().zfill(6)
                 if s_code == "000000": continue
-                tid = f"{today_str}_리포트TOP2_{s_code}"
+                tid = f"{today_str}_{channel_name}_{s_code}"
                 if tid in existing_ids: continue
                 bench = _market(s_code)
                 new_rows.append([
-                    tid, today_str, "리포트TOP2", cand['name'], f"'{s_code}", cand.get('theme_name', ''), "", market_stage, "",
+                    tid, today_str, channel_name, cand['name'], f"'{s_code}", cand.get('theme_name', ''), "", market_stage, concentration_str,
                     cand.get('v1_score', ''), cand.get('v2_score', ''), "", "", bench, cand.get('curr_p', ''), idx_cache.get(bench, 0.0)
                 ] + [""] * 10)
                 existing_ids.add(tid)
             if new_rows:
                 bt_sheet.append_rows(new_rows, value_input_option="USER_ENTERED")
-                print(f"✅ [백테스트 V6 Step1] 리포트 채널 {len(new_rows)}건 append 완료.")
+                print(f"✅ [백테스트 V6 Step1] 리포트 채널(단기/중기 분리) {len(new_rows)}건 append 완료.")
             else:
                 print("⏭ [백테스트 V6 Step1] 리포트 채널 — 추가 없음.")
     except Exception as e: print(f"⚠️ [백테스트 V6 Step1] 리포트 채널 기록 에러: {e}")
