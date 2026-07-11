@@ -1677,6 +1677,7 @@ def update_technical_data(df_theme, all_theme_map):
 
         # ④ [국면 정합성]: 뉴스 키워드 1위 테마가 2위를 압도하는 '압축 장세'면 SEED(바닥) 쿼터 5→2 축소
         seed_quota = 5
+        kw_counts = []  # 🔧 [수정] try 블록이 조기 실패해도 아래 백테스트 집중도 기록에서 참조 가능하도록 안전 기본값
         try:
             kw_rows = doc.worksheet("뉴스_키워드").get_all_values()[1:6]
             kw_counts = [int(re.sub(r'[^0-9]', '', str(kr[3]))) for kr in kw_rows if len(kr) >= 4 and re.sub(r'[^0-9]', '', str(kr[3]))]
@@ -1868,6 +1869,8 @@ def update_technical_data(df_theme, all_theme_map):
             new_rows = []
             if is_eod_log_window:
                 entry_stage = 3 if kospi_rate <= -3.0 else (2 if is_warning_market else 1)
+                # 🔧 [수정] "집중도" 열이 모든 채널에서 계속 빈 값이던 문제 — 이미 계산해둔 뉴스키워드 1위:2위 비율을 그대로 기록
+                concentration_str = f"{kw_counts[0]}:{kw_counts[1]}" if len(kw_counts) >= 2 else ""
                 idx_close_cache = {"KOSPI": get_index_close("KOSPI"), "KOSDAQ": get_index_close("KOSDAQ")}
 
                 positive_badges = ["🎯", "💎", "🌟", "👑", "📦", "🔍", "🚀", "🌱"]
@@ -1901,7 +1904,7 @@ def update_technical_data(df_theme, all_theme_map):
                         if tid in existing_ids: continue
                         bench = get_market_name(s_code)
                         new_rows.append([
-                            tid, today_str, channel, r[0], f"'{s_code}", r[19], r[8], entry_stage, "",
+                            tid, today_str, channel, r[0], f"'{s_code}", r[19], r[8], entry_stage, concentration_str,
                             r[29], r[31], r[33], r[22], bench, r[2], idx_close_cache.get(bench, 0.0)
                         ] + [""] * 10)
                         existing_ids.add(tid)
@@ -1915,7 +1918,7 @@ def update_technical_data(df_theme, all_theme_map):
                 tid_idx = f"{today_str}_지수벤치_KOSPI"
                 if tid_idx not in existing_ids:
                     ixc = idx_close_cache.get("KOSPI", 0.0)
-                    new_rows.append([tid_idx, today_str, "지수벤치", "KOSPI", "'KOSPI", "", "지수보유", entry_stage, "",
+                    new_rows.append([tid_idx, today_str, "지수벤치", "KOSPI", "'KOSPI", "", "지수보유", entry_stage, concentration_str,
                                      "", "", "", "", "KOSPI", ixc, ixc] + [""] * 10)
                     existing_ids.add(tid_idx)
 
