@@ -1164,7 +1164,28 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         track_type = "눌림" if (is_accumulation_cand or is_jongbe_cand or is_envelope_over_under) else ("돌파" if current_price >= ma20 else "눌림")
         is_core_buy_zone = (surge_rate_20d <= 0.25) and (change_rate < 0.07) and (current_price >= ma60 * 0.85)
-        is_long_term_pick = (name in long_term_stocks) and not is_recent_overheated and is_core_buy_zone
+
+        # 🆕 [수정] DB_중장기(산업리포트 픽) 이후 이미 크게 오른 종목은 "코어픽" 배지 제외 — 이미 시세가 다 나온 종목 대신
+        #    아직 안 오른 종목만 배지가 붙도록. 이미 갖고 있는 250일치 history로 픽 날짜 시점 종가를 역추적해서 비교.
+        LONG_TERM_ALREADY_SURGED_THRESHOLD = 0.50  # 픽 이후 +50% 이상 올랐으면 "이미 시세 나옴"으로 간주 (조정 가능)
+        is_already_surged_since_pick = False
+        pick_date_str = long_term_stocks.get(name) if isinstance(long_term_stocks, dict) else None
+        if pick_date_str:
+            try:
+                pick_date_compact = pick_date_str.replace("-", "")  # history의 date는 "yyyymmdd" 원본 포맷
+                pick_price = None
+                for h in history:
+                    if h['date'] >= pick_date_compact:
+                        pick_price = h['close']
+                        break
+                if pick_price and pick_price > 0:
+                    pct_since_pick = (current_price - pick_price) / pick_price
+                    if pct_since_pick >= LONG_TERM_ALREADY_SURGED_THRESHOLD:
+                        is_already_surged_since_pick = True
+            except Exception as e:
+                print(f"⚠️ [코어픽 픽이후상승률 계산 에러 for {name}] {e}")
+
+        is_long_term_pick = (name in long_term_stocks) and not is_recent_overheated and is_core_buy_zone and not is_already_surged_since_pick
         
         # 👑 [안전 고도화]: NameError 파쇄용 데이터 연산 및 Suffix 동적 초기화 구문 안착
         high_retention = current_price / today_high if today_high > 0 else 0
@@ -1421,15 +1442,18 @@ def update_technical_data(df_theme, all_theme_map):
         cleanup_and_reorder(doc, "접속로그", 1)
         cleanup_and_reorder(doc, "DB_중장기", 0)
 
-        long_term_stocks = set()
+        long_term_stocks = {}  # 🔧 [수정] 이름만 담던 set에서, "종목명 → 최신 픽 날짜" dict로 변경 (픽 이후 상승률 계산용)
         try:
             db_trend_data = doc.worksheet("DB_중장기").get_all_values()
             for row in db_trend_data[1:]:
                 if len(row) >= 5:
+                    pick_date = str(row[0]).strip()
                     for col_idx in [3, 4]: 
                         if len(row) > col_idx and row[col_idx].strip():
                             stock_nm = row[col_idx].split('(')[0].strip() 
-                            long_term_stocks.add(stock_nm)
+                            # 같은 종목이 여러 리포트에 반복 등장하면, 가장 최신 픽 날짜를 기준으로 삼음(재확인된 픽으로 취급)
+                            if stock_nm not in long_term_stocks or pick_date > long_term_stocks[stock_nm]:
+                                long_term_stocks[stock_nm] = pick_date
         except Exception as e: print(f"⚠️ [DB_중장기 Parsing Error] {e}")
 
         print("▶️ 기술적 지표 초고속 멀티프로세싱 판독 시작...")
