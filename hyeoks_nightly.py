@@ -293,7 +293,7 @@ def main():
     # ── 종목별 처리 루프 ────────────────────
     for idx in range(1, len(all_data)):
         row = all_data[idx]
-        while len(row) < 23:
+        while len(row) < 28:  # 🔧 26/27번 칸까지 안전하게 쓰려면 23으로는 부족해서 28로 확장
             row.append("")
 
         if not row[0].strip() or not row[1].strip():
@@ -303,8 +303,10 @@ def main():
         code = str(row[1]).replace("'", "").strip().zfill(6)
 
         # 기존 값 보존 (Phase가 해당 없을 때 덮어쓰지 않음)
-        single_val = row[20] if row[20] else "기록없음"
-        nxt_val    = row[22] if row[22] else "미수집"
+        # 🔧 [수정] 기존 20/22번 칸은 "프로그램"/"기관·외인 누적" 컬럼이라, 시간외/NXT 데이터를 쓰면 그 원래 데이터를
+        #    덮어쓰는 사고였음. hyeoks_morning.py가 실제로 읽는 26/27번(시간외단일가/NXT야간종가)으로 정정.
+        single_val = row[26] if len(row) > 26 and row[26] else "기록없음"
+        nxt_val    = row[27] if len(row) > 27 and row[27] else "미수집"
         ma20_text  = row[5]
         high60_text= row[12]
 
@@ -352,8 +354,8 @@ def main():
         # 변경값 반영
         row[5]  = ma20_text
         row[12] = high60_text
-        row[20] = single_val
-        row[22] = nxt_val
+        row[26] = single_val
+        row[27] = nxt_val
         all_data[idx] = row
 
         success_count += 1
@@ -365,7 +367,7 @@ def main():
     # ── Google Sheets 저장 ──────────────────
     try:
         target_sheet.update(
-            range_name=f"A1:W{len(all_data)}",
+            range_name=f"A1:AB{len(all_data)}",  # 🔧 26/27번 칸(AA/AB열)까지 쓰도록 범위 확장 (기존 W열까지라 실제로 저장 자체가 안 됐음)
             values=all_data,
             value_input_option="USER_ENTERED"
         )
