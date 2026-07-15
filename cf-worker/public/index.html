@@ -158,7 +158,7 @@
   }
   .theme-name { font-size: 11.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
 
-  .star-btn { font-size: 17px; color: var(--text-3); cursor: pointer; line-height: 1; padding: 2px; flex-shrink: 0; }
+  .star-btn { font-size: 17px; color: var(--text-3); cursor: pointer; line-height: 1; padding: 6px; margin: -6px -2px -6px 2px; flex-shrink: 0; }
   .stock-logo-wrap {
     width: 22px; height: 22px; border-radius: 6px; background: #fff; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center; overflow: hidden; border: 1px solid var(--border);
@@ -390,12 +390,6 @@
 <div id="demoModeBanner" style="display:none; background:#3d2a10; color:#F5C97B; font-size:12px; font-weight:700; text-align:center; padding:8px 12px; border-bottom:1px solid rgba(212,162,76,0.35);">
   ⚠️ 데모 데이터 표시 중 — 실시간 연동이 안 된 상태입니다. ⚙에서 URL을 다시 확인해주세요.
 </div>
-<div id="loadingOverlay" style="display:none; position:fixed; inset:0; z-index:60; background:rgba(10,13,18,0.75); backdrop-filter:blur(3px); align-items:center; justify-content:center; flex-direction:column; gap:14px;">
-  <div style="width:34px; height:34px; border:3px solid var(--border); border-top-color:var(--gold); border-radius:50%; animation:spin 0.8s linear infinite;"></div>
-  <div style="color:var(--text); font-size:13px; font-weight:700;">최신 데이터 불러오는 중…</div>
-  <div style="color:var(--text-3); font-size:11px;">시트가 커서 최대 15~20초 걸릴 수 있어요. 다시 누르지 않아도 됩니다.</div>
-</div>
-<style>@keyframes spin { to { transform: rotate(360deg); } }</style>
 
 <div id="viewport">
 <div class="view active" id="view-scanner">
@@ -642,12 +636,35 @@ function starButtonHtml(code) {
   const on = favorites.includes(code);
   return `<span class="star-btn ${on ? 'on' : ''}" data-star-code="${code}">${on ? '★' : '☆'}</span>`;
 }
+let toastTimer = null;
+function showStarToast(message, undoFn) {
+  let toast = document.getElementById('starToast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'starToast';
+    toast.style.cssText = 'position:fixed; left:50%; bottom:calc(84px + var(--safe-bottom) + 10px); transform:translateX(-50%); background:var(--overlay-96); backdrop-filter:blur(10px); border:1px solid var(--border); border-radius:12px; padding:10px 16px; display:flex; align-items:center; gap:14px; font-size:13px; font-weight:600; color:var(--text); z-index:80; box-shadow:0 6px 20px rgba(0,0,0,0.25); opacity:0; pointer-events:none; transition:opacity 0.2s;';
+    document.body.appendChild(toast);
+  }
+  clearTimeout(toastTimer);
+  toast.innerHTML = `<span>${message}</span>` + (undoFn ? `<span id="toastUndoBtn" style="color:var(--gold); font-weight:800; cursor:pointer;">실행취소</span>` : '');
+  toast.style.opacity = '1';
+  toast.style.pointerEvents = 'auto';
+  if (undoFn) document.getElementById('toastUndoBtn').onclick = () => { undoFn(); toast.style.opacity = '0'; toast.style.pointerEvents = 'none'; };
+  toastTimer = setTimeout(() => { toast.style.opacity = '0'; toast.style.pointerEvents = 'none'; }, 2500);
+}
 function bindStarButtons(container, onToggleRender) {
   container.querySelectorAll('[data-star-code]').forEach(el => {
     el.addEventListener('click', async (e) => {
       e.stopPropagation();
-      await toggleFavorite(el.dataset.starCode);
+      const code = el.dataset.starCode;
+      const wasOn = favorites.includes(code);
+      await toggleFavorite(code);
       onToggleRender();
+      // 🆕 [수정] 실수로 눌렀을 때를 대비한 안전망 — 2.5초 안에 "실행취소"로 바로 되돌릴 수 있음
+      showStarToast(wasOn ? '☆ 관심종목에서 제거됨' : '★ 관심종목에 추가됨', async () => {
+        await toggleFavorite(code);
+        onToggleRender();
+      });
     });
   });
 }
@@ -729,7 +746,7 @@ function buildStockCardHtml(r) {
   return `
       <div class="card-top" data-code="${r.code}">
         <div class="name-block">
-          <div class="name-row">${stockLogoHtml(r.code)}${starButtonHtml(r.code)}<span class="stock-name">${r.name}</span><span class="market-tag">${r.market || ''}</span>${r.fromPool ? '<span class="market-tag" style="color:var(--gold); border-color:rgba(212,162,76,0.3);">전체풀</span>' : ''}</div>
+          <div class="name-row">${stockLogoHtml(r.code)}<span class="stock-name">${r.name}</span><span class="market-tag">${r.market || ''}</span>${r.fromPool ? '<span class="market-tag" style="color:var(--gold); border-color:rgba(212,162,76,0.3);">전체풀</span>' : ''}${starButtonHtml(r.code)}</div>
           <span class="theme-name">${r.themeAge ? (r.themeAge === '당일' ? '🆕' : '🕰️') + ' ' : ''}${r.theme || ''}</span>
         </div>
         <div class="price-block ${priceFlash}">
@@ -900,7 +917,7 @@ function renderTheme() {
       const row = document.createElement('div');
       row.className = 'theme-stock-row';
       row.style.cursor = 'pointer';
-      row.innerHTML = `<div style="display:flex; align-items:center; gap:6px; min-width:0;">${s.code ? stockLogoHtml(s.code) : ''}${s.code ? starButtonHtml(s.code) : ''}<span class="theme-stock-name">${s.name}</span></div><div style="display:flex; gap:10px; align-items:center;">${s.val?`<span class="theme-stock-val mono">🪙${fmtEok(s.val)}</span>`:''}${changeSpan(s.change)}</div>`;
+      row.innerHTML = `<div style="display:flex; align-items:center; gap:6px; min-width:0;">${s.code ? stockLogoHtml(s.code) : ''}<span class="theme-stock-name">${s.name}</span></div><div style="display:flex; gap:10px; align-items:center;">${s.val?`<span class="theme-stock-val mono">🪙${fmtEok(s.val)}</span>`:''}${changeSpan(s.change)}${s.code ? starButtonHtml(s.code) : ''}</div>`;
       if (s.code) row.addEventListener('click', () => window.open(`https://m.stock.naver.com/domestic/stock/${s.code}/total`, '_blank'));
       bindStarButtons(row, renderTheme);
       card.appendChild(row);
@@ -1060,8 +1077,8 @@ function renderSearchTop() {
   rows.forEach(r => {
     const item = document.createElement('div');
     item.className = 'list-item' + (r.code ? ' link' : '');
-    item.innerHTML = `<span class="rank-num mono">${r.rank}</span>${r.code ? stockLogoHtml(r.code) : ''}${r.code ? starButtonHtml(r.code) : ''}<span class="rank-name">${r.name}</span>
-      <div style="text-align:right;"><div class="rank-price mono">${fmtPrice(r.price)}</div>${changeSpan(r.change)}</div>`;
+    item.innerHTML = `<span class="rank-num mono">${r.rank}</span>${r.code ? stockLogoHtml(r.code) : ''}<span class="rank-name">${r.name}</span>
+      <div style="display:flex; align-items:center; gap:8px;"><div style="text-align:right;"><div class="rank-price mono">${fmtPrice(r.price)}</div>${changeSpan(r.change)}</div>${r.code ? starButtonHtml(r.code) : ''}</div>`;
     if (r.code) item.addEventListener('click', () => window.open(`https://m.stock.naver.com/domestic/stock/${r.code}/total`, '_blank'));
     bindStarButtons(item, renderSearchTop);
     list.appendChild(item);
@@ -1159,7 +1176,7 @@ function enableWatchlistDrag(list) {
   }, { passive: true });
 }
 
-function renderWatchlist() {
+async function renderWatchlist() {
   const codes = [...favorites];
   const list = document.getElementById('watchlistList');
   list.innerHTML = '';
@@ -1169,9 +1186,31 @@ function renderWatchlist() {
     return;
   }
 
+  // 1~4순위(스캐너·주가데이터_보조·검색상위·오늘의 테마)로 먼저 찾고, 그래도 없는 코드만 모아서 5순위(네이버 실시간 직접조회)
+  const resolved = {};
+  const unresolved = [];
   codes.forEach(code => {
-    // 1순위: DB_스캐너 → 2순위: 주가데이터_보조 → 3순위: 검색상위(대형주 등) → 4순위: 오늘의 테마(별도 수집 경로)
     const { tier, data } = findFavoriteData(code);
+    if (tier !== 'none') resolved[code] = { tier, data };
+    else unresolved.push(code);
+  });
+
+  if (unresolved.length) {
+    try {
+      const saved = await safeGet('gasUrl');
+      const lookupUrl = saved ? saved.replace(/\/api(\?.*)?$/, '/api/stocklookup') : '/api/stocklookup';
+      const res = await fetch(withCacheBust(`${lookupUrl}?codes=${unresolved.join(',')}`), { cache: 'no-store' });
+      const liveMap = await res.json();
+      unresolved.forEach(code => {
+        if (liveMap[code]) resolved[code] = { tier: 'simple', data: liveMap[code] };
+      });
+    } catch (e) {
+      console.error('관심종목 5순위(실시간 조회) 실패:', e);
+    }
+  }
+
+  codes.forEach(code => {
+    const { tier, data } = resolved[code] || { tier: 'none', data: null };
 
     const row = document.createElement('div');
     row.className = 'watchlist-row';
@@ -1201,7 +1240,7 @@ function renderWatchlist() {
         item.innerHTML = buildSimpleRowHtml(code, data);
         item.addEventListener('click', (e) => { if (!e.target.closest('[data-star-code]')) window.open(`https://m.stock.naver.com/domestic/stock/${code}/total`, '_blank'); });
       } else {
-        item.innerHTML = `<span class="rank-name">${code}</span><span style="color:var(--text-3); font-size:12px;">오늘 스캔 범위 밖 (데이터 없음)</span>${starButtonHtml(code)}`;
+        item.innerHTML = `<span class="rank-name">${code}</span><span style="color:var(--text-3); font-size:12px;">종목을 찾을 수 없음</span>${starButtonHtml(code)}`;
       }
       bindStarButtons(item, renderWatchlist);
       inner.appendChild(item);
@@ -1427,22 +1466,19 @@ async function attemptFetchOnce(url) {
 }
 
 async function fetchLive(url) {
-  const overlay = document.getElementById('loadingOverlay');
-  const overlayMsg = overlay.querySelector('div:nth-child(3)');
-  overlay.style.display = 'flex';
+  // 🔧 [수정] 전체화면을 가리는 오버레이 제거 — init()에서 데모로 화면을 먼저 채워두므로, 이제 헤더의 작은 상태 표시만으로 충분.
+  //    자동갱신(3분마다)·당겨서 새로고침 때도 화면이 갑자기 어두워지지 않음(그동안 계속 화면을 가리고 있던 게 "느리다"는 체감의 핵심 원인이었음).
+  const liveDot = document.getElementById('liveDot');
   const MAX_ATTEMPTS = 3;
   let lastErr = null;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    if (overlayMsg) overlayMsg.textContent = attempt === 1
-      ? '시트가 커서 최대 15~20초 걸릴 수 있어요.'
-      : `연동 재시도 중… (${attempt}/${MAX_ATTEMPTS})`;
+    liveDot.textContent = attempt === 1 ? '🔄 갱신 중…' : `🔄 재시도 중…(${attempt}/${MAX_ATTEMPTS})`;
     try {
       const data = await attemptFetchOnce(url);
       liveData = data;
-      document.getElementById('liveDot').textContent = '🟢 실시간 · ' + new Date().toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'});
+      liveDot.textContent = '🟢 실시간 · ' + new Date().toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'});
       renderAll();
-      overlay.style.display = 'none';
       return;
     } catch (err) {
       lastErr = err;
@@ -1451,10 +1487,12 @@ async function fetchLive(url) {
     }
   }
 
-  liveData = null;
-  document.getElementById('liveDot').textContent = '⚠️ 연동 실패(데모)';
+  // 첫 로딩부터 실패한 경우(liveData가 아직 한 번도 없었던 경우)에만 데모로 표시를 전환.
+  // 이미 실시간 데이터를 받아본 적 있다면, 일시적 갱신 실패로 화면의 실제 데이터를 데모로 되돌리지 않음.
+  const hadDataBefore = !!liveData;
+  if (!hadDataBefore) liveData = null;
+  liveDot.textContent = '⚠️ 연동 실패(' + (hadDataBefore ? '이전 데이터 유지' : '데모') + ')';
   renderAll();
-  overlay.style.display = 'none';
   console.error('fetchLive 최종 실패 (자동 재시도 3회 모두 실패):', lastErr);
 }
 
@@ -1483,10 +1521,18 @@ async function safeDelete(key) {
 (async function init() {
   const savedTheme = await safeGet('themeMode');
   await applyTheme((savedTheme === 'light' || savedTheme === 'auto') ? savedTheme : 'dark');
-  await loadFavorites();
+
+  // 🆕 [수정] 실제 데이터를 기다리지 않고, 화면부터 즉시 채움(데모 데이터로) — 체감 로딩 시간을 없앰.
+  //    실데이터는 아래에서 백그라운드로 이어 받아와서, 도착하는 즉시 자연스럽게 교체됨.
+  renderAll();
+
+  // 🔧 [수정] 즐겨찾기 로딩과 실제 데이터 fetch를 동시에 진행(기존엔 순차 대기라 그만큼 더 느렸음)
   const saved = await safeGet('gasUrl');
-  const apiUrl = saved || '/api';  // 🔧 같은 Worker에서 서비스하므로 기본값은 상대경로 (별도 URL 등록 불필요)
-  await fetchLive(apiUrl);
+  const apiUrl = saved || '/api';
+  await Promise.all([
+    loadFavorites().then(renderAll),  // 즐겨찾기 로딩이 끝나는 대로 별표 상태만 먼저 반영
+    fetchLive(apiUrl)
+  ]);
   startAutoRefresh(apiUrl);
 })();
 </script>
