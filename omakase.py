@@ -1300,19 +1300,59 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 target_price = int(display_high_60d) if display_high_60d > current_price else int(current_price * 1.05)
                 stop_loss = int(min(ma20, current_price * 0.95))
 
+        if is_foreigner_active_buy and not is_envelope_over_under:
+            stop_loss = int(current_price * 0.96) if not (is_accumulation_cand or is_long_term_pick) else stop_loss
+            target_price = int(current_price * 1.15) if not (is_accumulation_cand or is_long_term_pick) else target_price
+
+        # ==========================================================================
+        # 🛡️ [목표가/손절가 방어망] 데이터 검증 + 손익비 기반 목표가 재선택 + 손절폭 상하한
+        #    (외인 역발상 매집 재조정까지 다 반영된 "최종" target_price/stop_loss를 검증)
+        # ==========================================================================
+
+        # ① [데이터 검증] 60일 고가는 52주(250일) 고가를 수학적으로 넘을 수 없음 — 넘으면 이상치로 보고 눌러줌
+        if display_high_60d > display_high_250d and display_high_250d > 0:
+            display_high_60d = display_high_250d
+            if is_accumulation_cand or is_long_term_pick or (not is_kalman_uptrend and not is_envelope_over_under):
+                target_price = int(display_high_60d) if display_high_60d > current_price else target_price
+
+        MIN_RR_RATIO = 1.5     # 최소 손익비(상승여력 ÷ 하락위험) — 이 밑이면 목표가를 투사 방식으로 재선택
+        MIN_STOP_PCT = 0.035   # 손절폭 하한: 현재가 대비 -3.5%보다 타이트하면 정상 변동에도 털릴 위험
+        MAX_STOP_PCT = 0.16    # 손절폭 상한: 현재가 대비 -16%를 넘으면 손실 자체가 과도
+
+        is_stop_too_wide = False
+        if not is_envelope_over_under and target_price > 0 and stop_loss > 0 and current_price > 0:
+            risk = current_price - stop_loss
+            reward = target_price - current_price
+
+            # ② [손익비 기반 목표가 재선택] 과거 저항선(60일고가 등) 기준 목표가로는 손익비가 안 나오는 경우
+            #    (예: 이미 전고점 코앞까지 올라온 종목) → 미래 투사(ATR 기반) 목표가로 자동 전환
+            if risk > 0 and reward / risk < MIN_RR_RATIO:
+                projected_target = int(current_price + (atr_14 * 2.5))
+                if projected_target > target_price:
+                    target_price = projected_target
+
+            # ③ [손절폭 상하한] 계산 방식과 무관하게, 현재가 대비 손절폭이 항상 정상 범위 안에 있도록 강제
+            min_stop_price = int(current_price * (1 - MAX_STOP_PCT))  # 이보다 낮으면(=폭이 더 넓으면) 안 됨
+            max_stop_price = int(current_price * (1 - MIN_STOP_PCT))  # 이보다 높으면(=폭이 더 좁으면) 안 됨
+            if stop_loss < min_stop_price:
+                is_stop_too_wide = True  # 보정 "전" 상태를 먼저 기록해둬야 아래 ④에서 진짜 과도했는지 판단 가능
+            stop_loss = max(min_stop_price, min(stop_loss, max_stop_price))
+
+        # ④ [손절폭 과도 시 추천 자체 취소] 폭만 억지로 좁혀서 숫자를 그럴듯하게 만드는 대신,
+        #    애초에 정상적인 손절 범위를 못 잡을 만큼 불안정한 종목이라는 뜻이므로 관망으로 강등
+        if is_stop_too_wide and not is_envelope_over_under and "관망" not in master_tajeom and "매매금지" not in master_tajeom:
+            master_tajeom = "⏸ 관망 · 손절폭 과도(정상범위 밖)"
+            tajeom_multiplier = 0.0
+
         if secret_tajeom and "관망" not in master_tajeom and "매수금지" not in master_tajeom and not is_upper_limit:
             master_tajeom = f"{master_tajeom} | {secret_tajeom}"
 
         # 👑 [배지 부착 — 최종 위치]: master_tajeom이 완전히 확정된 이후에 부착해야 덮어쓰기로 소실되지 않는다.
-        if is_foreigner_active_buy: master_tajeom += " 💎(외인집중)"
-        elif is_long_term_pick:     master_tajeom += " 🎖️(코어픽)"
-        elif is_super_leader:       master_tajeom += " 🔥(절대대장)"
-
-        # 🎯 [가점제 전환]: 멀티플라이어를 무작정 max(1.2)로 뻥튀기하던 강제 보정 로직을 폐지합니다.
-        # 대신 기본 가격 방어선 밴드만 정상 설정하고, 핵심 등급에 맞게 계량 가산점 버프를 부여합니다.
-        if is_foreigner_active_buy and not is_envelope_over_under:
-            stop_loss = int(current_price * 0.96) if not (is_accumulation_cand or is_long_term_pick) else stop_loss
-            target_price = int(current_price * 1.15) if not (is_accumulation_cand or is_long_term_pick) else target_price
+        #    (🔧 "관망" 상태로 강등된 경우엔 모순되는 강세 배지가 덧붙지 않도록 가드 추가)
+        if "관망" not in master_tajeom:
+            if is_foreigner_active_buy: master_tajeom += " 💎(외인집중)"
+            elif is_long_term_pick:     master_tajeom += " 🎖️(코어픽)"
+            elif is_super_leader:       master_tajeom += " 🔥(절대대장)"
 
         # ==========================================================================
         # 📊 [트랙 1] V1 차트 기술점수 산출 엔진
