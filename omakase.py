@@ -1599,7 +1599,10 @@ def update_technical_data(df_theme, all_theme_map):
             for row in old_data[1:]:
                 if len(row) > 15:
                     saved_code = str(row[2]).replace("'", "").strip().zfill(6)
-                    existing_data[saved_code] = {"briefing": str(row[9]).strip(), "target": row[14], "stop": row[15], "raw_row": row}
+                    # 🆕 [수정] 22번째 칸(인덱스 21)에 "간단 브리핑 종목이 연속 몇 번 밀려났는지" 유예 카운터 저장
+                    grace_raw = str(row[21]).strip() if len(row) > 21 else ""
+                    grace_count = int(grace_raw) if grace_raw.isdigit() else 0
+                    existing_data[saved_code] = {"briefing": str(row[9]).strip(), "target": row[14], "stop": row[15], "raw_row": row, "grace_count": grace_count}
         except Exception as e: print(f"⚠️ [existing_data cache lookup Error] {e}")
 
         for r in results:
@@ -1629,7 +1632,16 @@ def update_technical_data(df_theme, all_theme_map):
             "기관/외인 누적(5일)", "목표가(AI)", "손절가(AI)", "종목쿼터", "시간외단일가(18시)", "NXT야간종가(20시)", "장구분",
             "V1 차트점수", "V1 표시", "V2 수급점수", "V2 표시"
         ]
-        helper_sheet_data = [extended_headers] + [(r[:33] + [""] * max(0, 33 - len(r[:33]))) for r in results]
+        def _row_for_helper_sheet(r):
+            # 🆕 [수정] "관망 · 조건미달"류(실제 매매 신호 없음)는 목표가/손절가도 "관망"으로 비워서,
+            #    기계적으로 계산된 숫자가 마치 근거 있는 추천처럼 보이지 않도록 함. results 자체는 안 건드림(DB_스캐너 선정에 영향 없게).
+            row = list(r[:33]) + [""] * max(0, 33 - len(r[:33]))
+            if len(row) > 8 and ("관망" in str(row[8]) or "매매금지" in str(row[8])):
+                if len(row) > 23: row[23] = "관망"
+                if len(row) > 24: row[24] = "관망"
+            return row
+
+        helper_sheet_data = [extended_headers] + [_row_for_helper_sheet(r) for r in results]
         try:
             helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
             helper_sheet.batch_clear([f"A{len(helper_sheet_data) + 1}:AG"])
@@ -1673,7 +1685,7 @@ def update_technical_data(df_theme, all_theme_map):
                 row_data = [
                     하이브리드_링크, r[28] if len(r) > 28 and r[28] else "정규장", f"'{종목코드}", r[2], r[3], r[19], r[7], r[6],
                     tajeom, r[9], combined_score_display, r[20], r[21], r[22], r[23], r[24], r[26], r[27], r[28],
-                    v1_num, v2_num
+                    v1_num, v2_num, "0"  # 🆕 자연 선정에 든 종목은 유예 카운터를 0으로 리셋
                 ]
                 all_candidates.append(row_data)
 
@@ -1726,47 +1738,69 @@ def update_technical_data(df_theme, all_theme_map):
         # 구출 시 stale 대신 '이번 스캔의 신선한 시장데이터'를 쓰기 위한 코드 인덱스 (주가데이터_보조에 이미 찍힌 그 값)
         results_by_code = {str(r[1]).replace("'", "").strip().zfill(6): r for r in results if len(r) >= 29}
 
+        GRACE_LIMIT = 3  # 🆕 간단 브리핑 종목이 기준선 근처에서 들락날락해도 이 횟수(사이클)까지는 버텨줌
+
         if not is_official_reset_time:
             for c_code, data in existing_data.items():
                 if c_code not in top_20_codes:
                     briefing_text = str(data["briefing"]).strip()
+                    is_full_report = any(key in briefing_text for key in ["리포트 발송 완료", "리포트 작성 완료"])
+                    is_simple_brief = ("간단 브리핑" in briefing_text) and not is_full_report
+                    prev_grace = data.get("grace_count", 0)
 
-                    # 👑 [구출] 리포트/간단 브리핑이 주입된 주도주가 top-20에서 밀려도 보존
-                    if any(key in briefing_text for key in ["리포트 발송 완료", "리포트 작성 완료", "간단 브리핑"]):
-                        fresh = results_by_code.get(c_code)
-                        if fresh is not None and parse_score_num(fresh[2]) > 0:
-                            # ✅ 이번 스캔에서 분석됨 → 신선한 현재가/시간외/NXT/장구분으로 스캐너행 재구성
-                            #    (브리핑/타겟은 아래 1689 오버레이가 보존하므로 여기선 시장데이터만 fresh로)
-                            fr = fresh
-                            f_code = str(fr[1]).replace("'", "").zfill(6)
-                            f_tajeom = str(fr[8]).replace("🎖️(코어픽/면책)", "").replace("(코어픽/면책)", "").replace("🎖️", "").strip()
-                            f_v1 = parse_score_num(fr[29]) if len(fr) > 29 else 0
-                            f_v2 = parse_score_num(fr[31]) if len(fr) > 31 else 0
-                            f_link = f'=HYPERLINK("https://m.stock.naver.com/domestic/stock/{f_code}/total", "{str(fr[0]).strip()}")'
-                            clean_row = [
-                                f_link, fr[28] if (len(fr) > 28 and fr[28]) else "정규장", f"'{f_code}", fr[2], fr[3], fr[19], fr[7], fr[6],
-                                f_tajeom, fr[9], f"V1:{f_v1}점 / V2:{f_v2}점", fr[20], fr[21], fr[22], fr[23], fr[24], fr[26], fr[27], fr[28],
-                                f_v1, f_v2
-                            ]
-                        else:
-                            # ⚠️ 이번 스캔에 없던 종목 → 부득이 stale raw_row, 장구분만 정직 교정(정규장 아니면 장마감)
-                            clean_row = list(data["raw_row"])
-                            if len(clean_row) > 8:
-                                clean_row[8] = str(clean_row[8]).replace("🎖️(코어픽/면책)", "").replace("(코어픽/면책)", "").replace("🎖️", "").strip()
-                            now_mk = datetime.datetime.now(KST)
-                            is_reg_now = (9 <= now_mk.hour < 15) or (now_mk.hour == 15 and now_mk.minute <= 40)
-                            if not is_reg_now:
-                                while len(clean_row) <= 18: clean_row.append("")
-                                for idx in (1, 18):
-                                    if str(clean_row[idx]).strip() == "정규장 진행중":
-                                        clean_row[idx] = "장마감"
-                        top_20_results.append(clean_row)
-                        top_20_codes.add(c_code)
+                    # 👑 [수정] 리포트는 기존대로 무제한 절대 보존. 간단 브리핑은 "연속 밀려난 횟수"가 GRACE_LIMIT 미만일 때만
+                    #    구제하고, 그 한도를 넘으면 더 이상 안 살려줌(기준선 근처 진동 종목이 무한정 안 쌓이게).
+                    if is_full_report:
+                        should_rescue, new_grace = True, 0
+                    elif is_simple_brief and prev_grace < GRACE_LIMIT:
+                        should_rescue, new_grace = True, prev_grace + 1
+                    else:
+                        should_rescue, new_grace = False, 0
+
+                    if not should_rescue:
+                        continue
+
+                    fresh = results_by_code.get(c_code)
+                    if fresh is not None and parse_score_num(fresh[2]) > 0:
+                        # ✅ 이번 스캔에서 분석됨 → 신선한 현재가/시간외/NXT/장구분으로 스캐너행 재구성
+                        #    (브리핑/타겟은 아래 1689 오버레이가 보존하므로 여기선 시장데이터만 fresh로)
+                        fr = fresh
+                        f_code = str(fr[1]).replace("'", "").zfill(6)
+                        f_tajeom = str(fr[8]).replace("🎖️(코어픽/면책)", "").replace("(코어픽/면책)", "").replace("🎖️", "").strip()
+                        f_v1 = parse_score_num(fr[29]) if len(fr) > 29 else 0
+                        f_v2 = parse_score_num(fr[31]) if len(fr) > 31 else 0
+                        f_link = f'=HYPERLINK("https://m.stock.naver.com/domestic/stock/{f_code}/total", "{str(fr[0]).strip()}")'
+                        clean_row = [
+                            f_link, fr[28] if (len(fr) > 28 and fr[28]) else "정규장", f"'{f_code}", fr[2], fr[3], fr[19], fr[7], fr[6],
+                            f_tajeom, fr[9], f"V1:{f_v1}점 / V2:{f_v2}점", fr[20], fr[21], fr[22], fr[23], fr[24], fr[26], fr[27], fr[28],
+                            f_v1, f_v2
+                        ]
+                    else:
+                        # ⚠️ 이번 스캔에 없던 종목 → 부득이 stale raw_row, 장구분만 정직 교정(정규장 아니면 장마감)
+                        clean_row = list(data["raw_row"])
+                        if len(clean_row) > 8:
+                            clean_row[8] = str(clean_row[8]).replace("🎖️(코어픽/면책)", "").replace("(코어픽/면책)", "").replace("🎖️", "").strip()
+                        now_mk = datetime.datetime.now(KST)
+                        is_reg_now = (9 <= now_mk.hour < 15) or (now_mk.hour == 15 and now_mk.minute <= 40)
+                        if not is_reg_now:
+                            while len(clean_row) <= 18: clean_row.append("")
+                            for idx in (1, 18):
+                                if str(clean_row[idx]).strip() == "정규장 진행중":
+                                    clean_row[idx] = "장마감"
+
+                    while len(clean_row) <= 21: clean_row.append("")
+                    clean_row[21] = str(new_grace)  # 🆕 이번에 구제됐다면 갱신된 유예 카운터를 기록
+                    top_20_results.append(clean_row)
+                    top_20_codes.add(c_code)
 
         top_20_results.sort(key=lambda x: max(get_v1_score(x), get_v2_score(x)), reverse=True)
 
-        if len(top_20_results) > 20:
-            top_20_results = top_20_results[:20]
+        # 🔧 [수정] 예전엔 무조건 20개로 잘라서, 구제된 종목(특히 간단 브리핑)이 다시 잘려나가는 문제가 있었음.
+        #    자연 선정은 이미 20개 이하로 구성되고, 구제분은 리포트=무제한/간단브리핑=유예한도로 이미 스스로 제한되므로
+        #    별도 절삭은 필요 없음. 다만 예기치 못한 폭증 방지용 안전 상한만 넉넉하게 둠.
+        SAFETY_CEILING = 40
+        if len(top_20_results) > SAFETY_CEILING:
+            top_20_results = top_20_results[:SAFETY_CEILING]
 
         if not is_official_reset_time:
             for row in top_20_results:
