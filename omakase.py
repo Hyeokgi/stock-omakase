@@ -424,7 +424,10 @@ def update_google_sheet(doc, df_theme, df_news, df_naver, df_main_news, is_marke
                 print("✅ [수급_실시간] 시트 갱신 완료")
             except Exception as e: print(f"❌ [수급_실시간] 업데이트 실패: {e}")
             now_check = datetime.datetime.now(KST)
-            is_real_closing = now_check.hour > 15 or (now_check.hour == 15 and now_check.minute >= 30) or now_check.hour < 9
+            # 🛡️ [수정] "now_check.hour < 9" 조건 삭제 — 이게 새벽~아침 9시 전 모든 실행을 "장마감 이후"로
+            #    오인시켜서, 원래 하루 한 번(진짜 장마감 15:30 이후)만 돌아야 할 수급_Raw 전체 재기록 로직이
+            #    장 시작 전 반복 실행되게 만든 버그였음 (2026-07-17 8:58 수급_Raw 전체 소실 사고의 원인).
+            is_real_closing = now_check.hour > 15 or (now_check.hour == 15 and now_check.minute >= 30)
             
             if is_market_closed or is_real_closing:
                 try:
@@ -433,11 +436,18 @@ def update_google_sheet(doc, df_theme, df_news, df_naver, df_main_news, is_marke
                     all_data = sheet_raw.get_all_values()
                     df_raw = df_theme.drop(columns=['시간'])
                     combined_data = df_raw.values.tolist() + [row for row in all_data[1:] if len(row) > 0 and row[0] != today_str]
-                    combined_data.sort(key=lambda x: int(x[1]) if str(x[1]).isdigit() else 999)
-                    combined_data.sort(key=lambda x: x[0], reverse=True)
-                    sheet_raw.batch_clear(['A2:Z'])
-                    sheet_raw.update(range_name="A2", values=combined_data, value_input_option="USER_ENTERED")
-                    print("✅ [수급_Raw] 누적 기록 완료")
+
+                    # 🛡️ [신규 안전장치] 기존 데이터가 꽤 있었는데(10행 초과) 새로 쓸 데이터가 절반 미만으로
+                    #    급감하면, 정상적인 하루치 갱신이 아니라 이상 상황으로 보고 중단(데이터 보존 최우선).
+                    #    GAS의 SYNC_REALTIME_TO_RAW에 넣었던 것과 동일한 안전장치를 여기에도 적용.
+                    if len(all_data) > 10 and len(combined_data) < (len(all_data) - 1) * 0.5:
+                        print(f"🚨 [수급_Raw 안전장치 발동] 기존 {len(all_data) - 1}행 → 새 데이터 {len(combined_data)}행으로 급감 감지, 기록 중단(데이터 보존 우선)")
+                    else:
+                        combined_data.sort(key=lambda x: int(x[1]) if str(x[1]).isdigit() else 999)
+                        combined_data.sort(key=lambda x: x[0], reverse=True)
+                        sheet_raw.batch_clear(['A2:Z'])
+                        sheet_raw.update(range_name="A2", values=combined_data, value_input_option="USER_ENTERED")
+                        print("✅ [수급_Raw] 누적 기록 완료")
                 except Exception as e: print(f"❌ [수급_Raw] 누적 기록 실패: {e}")
         else:
             print("⚠️ 수집된 테마 데이터가 없어 구글 시트 업데이트를 건너뜁니다.")
