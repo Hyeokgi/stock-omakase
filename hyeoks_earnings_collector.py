@@ -120,7 +120,12 @@ def extract_amount(items, fs_div, keywords, exclude=()):
 
 
 def to_quarterly(year_data):
-    """누적 수치를 분기 '단독' 수치로 환산: Q2=H1-Q1, Q3=9M-H1, Q4=FY-9M"""
+    """🔧 [수정] 실제 공개된 수치와 대조해서 확인한 DART의 실제 동작:
+       반기보고서(11012)·3분기보고서(11014)의 매출액/영업이익은 '누적치'가 아니라
+       이미 '그 분기 하나만의 값'으로 나옴 (1분기·사업보고서만 원래 성격대로 1분기단독/연간총합).
+       예전엔 이걸 다시 이전 구간을 빼는 역산을 해서, 2·3분기는 너무 작게, 그 여파로
+       4분기(연간-3분기값)는 1~3분기가 다 얹혀서 너무 크게 나오는 버그가 있었음.
+       → Q1·Q2·Q3는 받은 값을 그대로 쓰고, Q4만 "연간총합 - (Q1+Q2+Q3)"으로 역산."""
     def sub(a, b):
         if a is None or b is None:
             return None
@@ -130,12 +135,21 @@ def to_quarterly(year_data):
     quarters = {}
     if q1.get("revenue") is not None:
         quarters["Q1"] = {"revenue": q1["revenue"], "op_profit": q1.get("op_profit")}
-    if h1.get("revenue") is not None and q1.get("revenue") is not None:
-        quarters["Q2"] = {"revenue": sub(h1["revenue"], q1["revenue"]), "op_profit": sub(h1.get("op_profit"), q1.get("op_profit"))}
-    if m9.get("revenue") is not None and h1.get("revenue") is not None:
-        quarters["Q3"] = {"revenue": sub(m9["revenue"], h1["revenue"]), "op_profit": sub(m9.get("op_profit"), h1.get("op_profit"))}
-    if fy.get("revenue") is not None and m9.get("revenue") is not None:
-        quarters["Q4"] = {"revenue": sub(fy["revenue"], m9["revenue"]), "op_profit": sub(fy.get("op_profit"), m9.get("op_profit"))}
+    if h1.get("revenue") is not None:
+        quarters["Q2"] = {"revenue": h1["revenue"], "op_profit": h1.get("op_profit")}
+    if m9.get("revenue") is not None:
+        quarters["Q3"] = {"revenue": m9["revenue"], "op_profit": m9.get("op_profit")}
+
+    if fy.get("revenue") is not None and all(k in quarters and quarters[k].get("revenue") is not None for k in ("Q1", "Q2", "Q3")):
+        q1_3_rev_sum = quarters["Q1"]["revenue"] + quarters["Q2"]["revenue"] + quarters["Q3"]["revenue"]
+        q4_rev = sub(fy["revenue"], q1_3_rev_sum)
+
+        q4_op = None
+        if fy.get("op_profit") is not None and all(quarters[k].get("op_profit") is not None for k in ("Q1", "Q2", "Q3")):
+            q1_3_op_sum = quarters["Q1"]["op_profit"] + quarters["Q2"]["op_profit"] + quarters["Q3"]["op_profit"]
+            q4_op = sub(fy["op_profit"], q1_3_op_sum)
+
+        quarters["Q4"] = {"revenue": q4_rev, "op_profit": q4_op}
     return quarters
 
 
