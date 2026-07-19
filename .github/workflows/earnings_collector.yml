@@ -1,0 +1,40 @@
+name: 📊 HYEOKS 실적(매출액/영업이익) 수집기
+
+on:
+  schedule:
+    - cron: '0 21 * * *'   # 매일 06:00 KST (21:00 UTC 전날) — 장 시작 전, 캘린더 수집기(07:00)보다 살짝 앞
+  workflow_dispatch:        # 수동으로 바로 돌려서 테스트하고 싶을 때
+
+concurrency:
+  group: hyeoks-sheet-lock  # 💡 다른 시트 쓰기 작업과 동일한 락 그룹 — 동시 충돌 방지
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 📥 코드 가져오기
+      uses: actions/checkout@v4
+
+    - name: 🐍 파이썬 세팅
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: 📦 필수 라이브러리 설치
+      run: |
+        python -m pip install --upgrade pip
+        pip install gspread oauth2client requests
+
+    - name: 🚀 구글 시트 보안 인증 파일(secret.json) 생성
+      env:
+        SECRET_JSON: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+      run: |
+        echo "$SECRET_JSON" > secret.json
+
+    - name: 📊 실적(매출액/영업이익) 수집 및 DB_실적 반영
+      env:
+        DART_API_KEY: ${{ secrets.DART_API_KEY }}
+      run: |
+        python hyeoks_earnings_collector.py
