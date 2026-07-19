@@ -13,7 +13,7 @@ HYEOKS 실적(매출액/영업이익) 수집기 — 금융감독원 OpenDART 연
 필요 패키지: pip install gspread oauth2client requests --break-system-packages
 환경변수: DART_API_KEY (OpenDART에서 발급받은 인증키)
 """
-import os, time, datetime, zipfile, io
+import os, re, time, datetime, zipfile, io
 import requests
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -160,7 +160,6 @@ def summarize(quarters):
         op_growth = round((latest["op_profit"] - prev["op_profit"]) / abs(prev["op_profit"]) * 100, 1)
 
     # 🔎 [수정 여지] "실적개선"의 기준은 일단 "매출 증가 + 이번 분기 영업이익 흑자"로 단순하게 잡음.
-    #    나중에 V3 점수 설계할 때 더 정교한 기준(예: 영업이익률 추세 등)으로 다듬을 수 있음.
     is_improving = (rev_growth is not None and rev_growth > 0) and ((latest.get("op_profit") or 0) > 0)
 
     return {
@@ -173,12 +172,52 @@ def summarize(quarters):
     }
 
 
+def compute_v3_score(quarters, summary):
+    """V1(차트)/V2(수급)와 같은 0~100 스케일의 '실적' 축 점수.
+       단일 분기 반짝 성장이 아니라, 여러 분기 이어지는 추세를 더 높게 쳐주도록 설계
+       (강의 핵심 — '1~2분기 반짝'과 '구조적 성장'을 구분하려는 목적)."""
+    if not summary:
+        return 0, ""
+
+    rev_growth = summary["rev_growth_pct"]
+    op_growth = summary["op_growth_pct"]
+    is_profitable = (summary["latest_op_profit"] or 0) > 0
+
+    # 최근 것부터 거슬러 올라가며 "연속 매출 증가 분기 수" 계산
+    consec_rev_growth = 0
+    for i in range(len(quarters) - 1, 0, -1):
+        cur, pr = quarters[i], quarters[i - 1]
+        if cur["revenue"] is not None and pr["revenue"] and cur["revenue"] > pr["revenue"]:
+            consec_rev_growth += 1
+        else:
+            break
+
+    v3 = 15  # 기본점
+    if rev_growth != "":
+        if rev_growth >= 20: v3 += 30
+        elif rev_growth >= 10: v3 += 20
+        elif rev_growth > 0: v3 += 10
+        elif rev_growth < -10: v3 -= 15
+
+    if op_growth != "":
+        if op_growth >= 20: v3 += 25
+        elif op_growth >= 0: v3 += 10
+        elif op_growth < -20: v3 -= 20
+
+    v3 += 10 if is_profitable else -20  # 적자는 크게 감점
+
+    v3 += min(consec_rev_growth, 4) * 5  # 연속 성장 분기당 가산(최대 4분기 = 20점) — 단발성 반짝 성장과 구분하는 핵심 장치
+
+    v3 = max(0, min(100, int(v3)))
+    return v3, f"{consec_rev_growth}분기 연속"
+
+
 # ──────────────────────────────────────────────
 # ③ 대상 종목 목록 — 우선 DB_중장기 + DB_스캐너로 시작 (API 호출량 보수적 관리)
 # ──────────────────────────────────────────────
 def get_target_stocks(doc):
-    targets = {}  # code -> name
-
+    """반환: {종목코드: 종목명} 딕셔너리"""
+    names_from_trend = set()
     try:
         rows = doc.worksheet("DB_중장기").get_all_values()[1:]
         for row in rows:
@@ -186,32 +225,37 @@ def get_target_stocks(doc):
                 for col_idx in [3, 4]:
                     if len(row) > col_idx and row[col_idx].strip():
                         nm = row[col_idx].split('(')[0].strip()
-                        if nm: targets[nm] = None  # 종목코드는 아래에서 DB_스캐너/기업정보로 보강
+                        if nm: names_from_trend.add(nm)
     except Exception as e:
         print(f"⚠️ [DB_중장기 읽기 실패] {e}")
 
+    codes_from_scanner = {}  # code -> name(DB_스캐너 자체 표기, 하이퍼링크 수식일 수 있어 보정 필요)
     try:
         rows = doc.worksheet("DB_스캐너").get_all_values()[1:]
         for row in rows:
             if len(row) > 2 and row[2].strip():
                 code = str(row[2]).replace("'", "").strip().zfill(6)
-                targets[code] = code  # DB_스캐너는 이미 코드 형태
+                raw_name = str(row[0]).strip()
+                m = re.search(r',\s*"([^"]+)"\)', raw_name)  # =HYPERLINK(...,"종목명") 형태 대비
+                codes_from_scanner[code] = m.group(1).strip() if m else raw_name
     except Exception as e:
         print(f"⚠️ [DB_스캐너 읽기 실패] {e}")
 
-    # DB_중장기는 종목명만 있으므로, 기업정보 시트로 이름→코드 보강
+    result = {}
     try:
         name_to_code = {str(r[0]).strip(): str(r[2]).strip().zfill(6) for r in doc.worksheet("기업정보").get_all_values()[1:] if len(r) >= 3}
-        resolved = {}
-        for key, val in targets.items():
-            if val:  # 이미 코드인 경우(6자리 숫자)
-                resolved[val] = val
-            elif key in name_to_code:
-                resolved[name_to_code[key]] = name_to_code[key]
-        return list(resolved.keys())
+        code_to_name = {v: k for k, v in name_to_code.items()}
+
+        for nm in names_from_trend:
+            if nm in name_to_code:
+                result[name_to_code[nm]] = nm
+        for code, nm in codes_from_scanner.items():
+            result[code] = code_to_name.get(code, nm)  # 기업정보가 더 정확하면 그걸 우선
     except Exception as e:
         print(f"⚠️ [기업정보 이름→코드 매핑 실패] {e}")
-        return [v for v in targets.values() if v]
+        result = dict(codes_from_scanner)
+
+    return result
 
 
 if __name__ == "__main__":
@@ -221,17 +265,18 @@ if __name__ == "__main__":
 
     doc = get_doc()
     corp_map = load_or_build_corp_code_map(doc)
-    target_codes = get_target_stocks(doc)
-    print(f"▶️ 총 {len(target_codes)}개 종목의 실적 데이터를 수집합니다 (DB_중장기 + DB_스캐너 기준)...")
+    target_map = get_target_stocks(doc)  # {종목코드: 종목명}
+    print(f"▶️ 총 {len(target_map)}개 종목의 실적 데이터를 수집합니다 (DB_중장기 + DB_스캐너 기준)...")
 
     try:
         out_sheet = doc.worksheet("DB_실적")
     except Exception:
-        out_sheet = doc.add_worksheet(title="DB_실적", rows="1000", cols="10")
+        out_sheet = doc.add_worksheet(title="DB_실적", rows="1000", cols="12")
 
-    header = ["종목코드", "최신분기", "매출액", "영업이익", "매출증감률(QoQ,%)", "영업이익증감률(QoQ,%)", "실적개선여부", "갱신일시"]
+    header = ["종목코드", "종목명", "최신분기", "매출액", "영업이익", "매출증감률(QoQ,%)", "영업이익증감률(QoQ,%)", "실적개선여부", "V3(실적점수)", "연속성장", "갱신일시"]
     rows_out = [header]
     now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
+    target_codes = list(target_map.keys())
 
     for idx, code in enumerate(target_codes):
         corp_code = corp_map.get(code)
@@ -244,9 +289,10 @@ if __name__ == "__main__":
             if not summary:
                 print(f"⚠️ [{code}] 실적 데이터 부족 — 스킵")
                 continue
+            v3_score, streak_label = compute_v3_score(quarters, summary)
             rows_out.append([
-                code, summary["latest_label"], summary["latest_revenue"], summary["latest_op_profit"],
-                summary["rev_growth_pct"], summary["op_growth_pct"], summary["is_improving"], now_str
+                code, target_map.get(code, ""), summary["latest_label"], summary["latest_revenue"], summary["latest_op_profit"],
+                summary["rev_growth_pct"], summary["op_growth_pct"], summary["is_improving"], v3_score, streak_label, now_str
             ])
         except Exception as e:
             print(f"⚠️ [{code}] 실적 처리 실패: {e}")
