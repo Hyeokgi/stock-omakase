@@ -74,38 +74,49 @@ def load_or_build_corp_code_map(doc):
 # ──────────────────────────────────────────────
 # ② 특정 종목의 최근 N년치 분기 실적 조회 + 단독 수치 환산
 # ──────────────────────────────────────────────
-def fetch_year_accounts(corp_code, year):
-    """해당 연도의 4개 보고서(1분기/반기/3분기/사업)에서 매출액·영업이익 '누적' 수치를 가져옴."""
-    result = {}
-    for reprt_code, label in REPRT_CODES:
-        try:
-            url = "https://opendart.fss.or.kr/api/fnlttSinglAcnt.json"
-            params = {"crtfc_key": DART_API_KEY, "corp_code": corp_code, "bsns_year": str(year), "reprt_code": reprt_code}
-            res = SESSION.get(url, params=params, timeout=10).json()
-            if res.get("status") != "000":
-                continue  # 013(해당 데이터 없음) 등은 조용히 스킵 — 신규상장/비상장 등 정상적인 경우가 많음
+def fetch_raw_reports(corp_code, years):
+    """여러 연도의 4개 보고서(1분기/반기/3분기/사업) 원본 응답을 그대로 모아옴 (계정 추출은 나중에)."""
+    raw = {}  # (year, label) -> DART list 응답
+    for year in years:
+        for reprt_code, label in REPRT_CODES:
+            try:
+                url = "https://opendart.fss.or.kr/api/fnlttSinglAcnt.json"
+                params = {"crtfc_key": DART_API_KEY, "corp_code": corp_code, "bsns_year": str(year), "reprt_code": reprt_code}
+                res = SESSION.get(url, params=params, timeout=10).json()
+                if res.get("status") == "000":
+                    raw[(year, label)] = res.get("list", [])
+            except Exception as e:
+                print(f"⚠️ [DART fetch {corp_code} {year} {label}] {e}")
+            time.sleep(0.15)  # DART 호출 과다 방지
+    return raw
 
-            revenue, op_profit = None, None
-            # 연결재무제표(CFS) 우선, 없으면 별도재무제표(OFS)로 대체
-            for fs_pref in ["CFS", "OFS"]:
-                items = [r for r in res.get("list", []) if r.get("fs_div") == fs_pref and r.get("sj_div") == "IS"]
-                if not items:
-                    continue
-                for r in items:
-                    name = str(r.get("account_nm", ""))
-                    amt_str = str(r.get("thstrm_amount", "0")).replace(",", "").strip()
-                    amt = int(amt_str) if amt_str.lstrip("-").isdigit() else None
-                    if revenue is None and ("매출액" in name or name in ("수익(매출액)", "영업수익")):
-                        revenue = amt
-                    if op_profit is None and "영업이익" in name and "률" not in name and "율" not in name:
-                        op_profit = amt
-                if revenue is not None or op_profit is not None:
-                    break  # 이 fs_div(연결/별도)에서 이미 찾았으면 다른 쪽은 안 봄
-            result[label] = {"revenue": revenue, "op_profit": op_profit}
-        except Exception as e:
-            print(f"⚠️ [DART fetch {corp_code} {year} {label}] {e}")
-        time.sleep(0.15)  # DART 호출 과다 방지
-    return result
+
+def pick_consistent_fs_div(raw):
+    """🔧 [수정] 예전엔 보고서마다 따로 CFS(연결)/OFS(별도)를 골라서, 최근 분기는 아직 연결이
+       안 올라와 별도로 잡히고 과거 분기는 연결로 잡히는 식으로 회계 기준이 섞이는 버그가 있었음
+       (그 결과 모든 종목에서 실제와 무관하게 -60~70%대의 균일한 '착시 급감'이 나타났음).
+       → 이 회사의 전체 조회 기간에 걸쳐 CFS가 다 있으면 CFS로 통일, 하나라도 없으면 OFS로 통일."""
+    if not raw:
+        return "OFS"
+    has_cfs_everywhere = all(
+        any(r.get("fs_div") == "CFS" and r.get("sj_div") == "IS" for r in items)
+        for items in raw.values()
+    )
+    return "CFS" if has_cfs_everywhere else "OFS"
+
+
+def extract_amount(items, fs_div, keywords, exclude=()):
+    for r in items:
+        if r.get("fs_div") != fs_div or r.get("sj_div") != "IS":
+            continue
+        name = str(r.get("account_nm", ""))
+        if any(ex in name for ex in exclude):
+            continue
+        if name in keywords or any(kw in name for kw in keywords):
+            amt_str = str(r.get("thstrm_amount", "0")).replace(",", "").strip()
+            if amt_str.lstrip("-").isdigit():
+                return int(amt_str)
+    return None
 
 
 def to_quarterly(year_data):
@@ -129,20 +140,31 @@ def to_quarterly(year_data):
 
 
 def get_recent_quarters(corp_code, num_years=2):
-    """최근 num_years년치를 가져와서 시간순으로 정렬된 분기 리스트로 반환."""
+    """최근 num_years년치를 가져와서 시간순으로 정렬된 분기 리스트로 반환.
+       (회사 전체 기간에 걸쳐 동일한 회계 기준을 먼저 확정한 뒤 분기 환산)"""
     this_year = datetime.datetime.now(KST).year
+    years = list(range(this_year - num_years, this_year + 1))
+
+    raw = fetch_raw_reports(corp_code, years)
+    if not raw:
+        return [], "OFS"
+    fs_div = pick_consistent_fs_div(raw)
+
+    q_order = {"Q1": 1, "Q2": 2, "Q3": 3, "Q4": 4}
     all_quarters = []
-    for year in range(this_year - num_years, this_year + 1):
-        year_data = fetch_year_accounts(corp_code, year)
-        if not year_data:
-            continue
+    for year in years:
+        year_data = {}
+        for _, label in REPRT_CODES:
+            items = raw.get((year, label), [])
+            revenue = extract_amount(items, fs_div, {"매출액", "수익(매출액)", "영업수익"})
+            op_profit = extract_amount(items, fs_div, {"영업이익"}, exclude=("률", "율"))
+            year_data[label] = {"revenue": revenue, "op_profit": op_profit}
         q_map = to_quarterly(year_data)
-        q_order = {"Q1": 1, "Q2": 2, "Q3": 3, "Q4": 4}
         for q_name, vals in q_map.items():
             if vals.get("revenue") is not None:
                 all_quarters.append({"year": year, "quarter": q_name, "q_sort": q_order[q_name], "revenue": vals["revenue"], "op_profit": vals.get("op_profit")})
     all_quarters.sort(key=lambda x: (x["year"], x["q_sort"]))
-    return all_quarters
+    return all_quarters, fs_div
 
 
 def summarize(quarters):
@@ -273,10 +295,11 @@ if __name__ == "__main__":
     except Exception:
         out_sheet = doc.add_worksheet(title="DB_실적", rows="1000", cols="12")
 
-    header = ["종목코드", "종목명", "최신분기", "매출액", "영업이익", "매출증감률(QoQ,%)", "영업이익증감률(QoQ,%)", "실적개선여부", "V3(실적점수)", "연속성장", "갱신일시"]
+    header = ["종목코드", "종목명", "최신분기", "매출액", "영업이익", "매출증감률(QoQ,%)", "영업이익증감률(QoQ,%)", "실적개선여부", "V3(실적점수)", "연속성장", "재무제표기준", "갱신일시"]
     rows_out = [header]
     now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
     target_codes = list(target_map.keys())
+    fs_div_counter = {"CFS": 0, "OFS": 0}
 
     for idx, code in enumerate(target_codes):
         corp_code = corp_map.get(code)
@@ -284,15 +307,17 @@ if __name__ == "__main__":
             print(f"⚠️ [{code}] DART corp_code 매핑 없음 (비상장·최근상장 등) — 스킵")
             continue
         try:
-            quarters = get_recent_quarters(corp_code, num_years=2)
+            quarters, fs_div = get_recent_quarters(corp_code, num_years=2)
             summary = summarize(quarters)
             if not summary:
                 print(f"⚠️ [{code}] 실적 데이터 부족 — 스킵")
                 continue
+            fs_div_counter[fs_div] = fs_div_counter.get(fs_div, 0) + 1
             v3_score, streak_label = compute_v3_score(quarters, summary)
             rows_out.append([
                 code, target_map.get(code, ""), summary["latest_label"], summary["latest_revenue"], summary["latest_op_profit"],
-                summary["rev_growth_pct"], summary["op_growth_pct"], summary["is_improving"], v3_score, streak_label, now_str
+                summary["rev_growth_pct"], summary["op_growth_pct"], summary["is_improving"], v3_score, streak_label,
+                "연결" if fs_div == "CFS" else "별도", now_str
             ])
         except Exception as e:
             print(f"⚠️ [{code}] 실적 처리 실패: {e}")
@@ -304,6 +329,6 @@ if __name__ == "__main__":
     if len(rows_out) > 1:
         out_sheet.clear()
         out_sheet.update(range_name="A1", values=rows_out, value_input_option="RAW")
-        print(f"✅ [DB_실적] {len(rows_out) - 1}개 종목 기록 완료")
+        print(f"✅ [DB_실적] {len(rows_out) - 1}개 종목 기록 완료 (연결기준 {fs_div_counter.get('CFS',0)}개 / 별도기준 {fs_div_counter.get('OFS',0)}개)")
     else:
         print("⚠️ 수집된 실적 데이터가 없습니다.")
