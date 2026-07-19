@@ -481,7 +481,19 @@ try:
         print(f"⚠️ 역사적 주도 테마 대금 연산 보조맵 생성 누락: {e}")
  
     tech_data = doc.worksheet("주가데이터_보조").get_all_values()[1:]
-    
+
+    # 🆕 [V3 연결] DB_실적(hyeoks_earnings_collector.py가 채워둔 실적점수)을 종목코드 기준으로 미리 읽어둠.
+    #    아직 DB_중장기·DB_스캐너 종목만 커버하므로, 데이터가 없는 종목은 "모른다"로 두고 불이익 주지 않음(fail-open).
+    v3_map = {}
+    try:
+        earn_rows = doc.worksheet("DB_실적").get_all_values()[1:]
+        for row in earn_rows:
+            if len(row) > 8 and row[0].strip():
+                try: v3_map[str(row[0]).strip().zfill(6)] = int(row[8])
+                except Exception: pass
+    except Exception as e:
+        print(f"⚠️ [DB_실적 읽기 실패, V3 없이 진행] {e}")
+
     cands_list = []
     for r in tech_data:
         if len(r) < 21: continue
@@ -498,7 +510,13 @@ try:
         except: v2_score = 0
         combo_score = max(v1_score, v2_score)
         
-        if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|3년적자|스코어 미달|과거 주도주 이력 미달', tajeom_raw): continue 
+        if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|3년적자|스코어 미달|과거 주도주 이력 미달', tajeom_raw): continue
+
+        v3_score = v3_map.get(code)
+        # 🆕 [V3 필터] 중기 후보(SEED) 중, 실적 데이터가 실제로 확인됐는데 그 점수가 낮으면(=구조적 성장 근거 약함)
+        #    애초에 중기 후보에서 제외. 데이터가 아직 없는 종목(V3 미커버)은 불이익 없이 그대로 통과(fail-open).
+        if seed_tag == "SEED" and v3_score is not None and v3_score < 20:
+            continue
         
         tajeom_clean = tajeom_raw.split('⚠️')[0].strip()
         tajeom_clean = tajeom_clean.split('🎯')[0].strip()
@@ -515,12 +533,13 @@ try:
         else:
             trend_phase_txt = "중립"
 
+        v3_info_txt = f" | 실적점수(V3):{v3_score}점" if v3_score is not None else ""
         info = (
-            f"종목:{name}({code}) | 현재가:{curr_p}원({chg}) | 차트점수(V1):{v1_score}점 | 수급점수(V2):{v2_score}점 | "
+            f"종목:{name}({code}) | 현재가:{curr_p}원({chg}) | 차트점수(V1):{v1_score}점 | 수급점수(V2):{v2_score}점{v3_info_txt} | "
             f"타점:{tajeom_clean} | 추세:{trend_phase_txt} | 수급강도:{prog} | 유형:{seed_tag} | 테마:{theme_name}"
         )
         cands_list.append({
-            'name': name, 'code': code, 'score': combo_score, 'v1_score': v1_score, 'v2_score': v2_score,
+            'name': name, 'code': code, 'score': combo_score, 'v1_score': v1_score, 'v2_score': v2_score, 'v3_score': v3_score,
             'info': info, 'curr_p': int(curr_p.replace(',','').replace('원','')), 'type': seed_tag, 'theme_name': theme_name
         })
  
@@ -563,7 +582,11 @@ try:
  
     [종목 선정 기준]
     1. 단기 슈팅 공략주 (short_term_code): 유형:NORMAL 종목 중 파괴력 있는 종목 1개 선별. (없으면 "000000")
-    2. 중장기 모아가기주 (swing_code): 유형:SEED 종목 중 과열 배지가 없는 바닥 확인형 1개 선별. (없으면 "000000")
+    2. 중장기 모아가기주 (swing_code): 유형:SEED 종목 중 과열 배지가 없는 바닥 확인형 1개 선별.
+       실적점수(V3)가 표시된 종목은 그 정보를 적극 참고하십시오 — 실적점수가 높을수록(매출·영업이익이
+       여러 분기 꾸준히 개선 중일수록) 우선순위를 높게 두고, 실적점수가 낮게 명시된 종목은 기술적으로
+       좋아 보여도 피하십시오. 실적점수 표시가 없는 종목은 아직 데이터가 없는 것이니 기존 기준대로 판단하십시오.
+       (없으면 "000000")
     3. 🚨 [추세 절대 거부권 - 최우선 규칙]: '추세:하락/고점주의'이거나 타점에 '📉 / 3파 익절 / 하락 전환 / 반등 미확인'이 포함된 종목은 점수가 아무리 높아도 절대 선정하지 마십시오. 추세 반전이 확인되지 않은 '떨어지는 칼'은 반드시 "000000"으로 회피하십시오.
  
     [상위 150개 종목 리스트]
