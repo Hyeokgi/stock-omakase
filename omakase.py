@@ -439,15 +439,36 @@ def update_google_sheet(doc, df_theme, df_news, df_naver, df_main_news, is_marke
 
                     # 🛡️ [신규 안전장치] 기존 데이터가 꽤 있었는데(10행 초과) 새로 쓸 데이터가 절반 미만으로
                     #    급감하면, 정상적인 하루치 갱신이 아니라 이상 상황으로 보고 중단(데이터 보존 최우선).
-                    #    GAS의 SYNC_REALTIME_TO_RAW에 넣었던 것과 동일한 안전장치를 여기에도 적용.
                     if len(all_data) > 10 and len(combined_data) < (len(all_data) - 1) * 0.5:
                         print(f"🚨 [수급_Raw 안전장치 발동] 기존 {len(all_data) - 1}행 → 새 데이터 {len(combined_data)}행으로 급감 감지, 기록 중단(데이터 보존 우선)")
                     else:
                         combined_data.sort(key=lambda x: int(x[1]) if str(x[1]).isdigit() else 999)
                         combined_data.sort(key=lambda x: x[0], reverse=True)
-                        sheet_raw.batch_clear(['A2:Z'])
-                        sheet_raw.update(range_name="A2", values=combined_data, value_input_option="USER_ENTERED")
-                        print("✅ [수급_Raw] 누적 기록 완료")
+
+                        # 🛡️ [수정] "지우고 나서 쓰기" 순서 자체가 근본 위험이었음 — 쓰기가 중간에 실패하면
+                        #    (2026-07-17 8:57 사고: 구글시트 API 503 일시 오류로 clear는 성공, write가 실패)
+                        #    원본이 통째로 사라짐. → 먼저 새 데이터를 기존 자리에 "덮어쓰기"로 쓰고
+                        #    (이 자체는 지우는 동작이 아니라, 실패해도 원본이 보존됨), 성공을 확인한 뒤에만
+                        #    새 데이터보다 길게 남은 꼬리 부분만 지움. 503/429 같은 일시 오류는 잠깐 쉬었다 재시도.
+                        write_ok = False
+                        for attempt in range(3):
+                            try:
+                                sheet_raw.update(range_name="A2", values=combined_data, value_input_option="USER_ENTERED")
+                                write_ok = True
+                                break
+                            except Exception as e:
+                                print(f"⚠️ [수급_Raw 쓰기 재시도 {attempt + 1}/3] {e}")
+                                time.sleep(5 * (attempt + 1))
+
+                        if write_ok:
+                            old_row_count = len(all_data) - 1
+                            new_row_count = len(combined_data)
+                            if old_row_count > new_row_count:
+                                start_row = new_row_count + 2  # 헤더(1행) 다음부터, 새 데이터 마지막 다음 행부터
+                                sheet_raw.batch_clear([f"A{start_row}:Z{old_row_count + 1}"])
+                            print("✅ [수급_Raw] 누적 기록 완료")
+                        else:
+                            print("❌ [수급_Raw] 3회 재시도 모두 실패 — 원본 데이터는 그대로 보존됨(안전)")
                 except Exception as e: print(f"❌ [수급_Raw] 누적 기록 실패: {e}")
         else:
             print("⚠️ 수집된 테마 데이터가 없어 구글 시트 업데이트를 건너뜁니다.")
