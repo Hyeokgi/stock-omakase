@@ -300,6 +300,7 @@ if __name__ == "__main__":
     now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
     target_codes = list(target_map.keys())
     fs_div_counter = {"CFS": 0, "OFS": 0}
+    DEBUG_STOCKS = {"005930", "000660", "035420"}  # 🔎 [진단용] 삼성전자/SK하이닉스/NAVER — 분기별 원본 수치를 그대로 로그에 찍어서 확인
 
     for idx, code in enumerate(target_codes):
         corp_code = corp_map.get(code)
@@ -308,6 +309,12 @@ if __name__ == "__main__":
             continue
         try:
             quarters, fs_div = get_recent_quarters(corp_code, num_years=2)
+
+            if code in DEBUG_STOCKS:
+                print(f"🔎 [진단] {target_map.get(code, code)}({code}) 분기별 원본 수치 (기준: {fs_div}):")
+                for q in quarters:
+                    print(f"      {q['year']}{q['quarter']}: 매출액={q['revenue']:,}" + (f", 영업이익={q['op_profit']:,}" if q.get('op_profit') is not None else ""))
+
             summary = summarize(quarters)
             if not summary:
                 print(f"⚠️ [{code}] 실적 데이터 부족 — 스킵")
