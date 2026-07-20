@@ -1652,11 +1652,23 @@ def update_technical_data(df_theme, all_theme_map):
 
         results = []
         worker_count = bounded_workers(len(target_dict))
-        print(f"⚡ {len(target_dict)}개 고유 종목을 {worker_count}개의 스레드로 동시 타격합니다...")
+        SCAN_DEADLINE_SEC = 480  # 🆕 [수정] 8분 예산 — 10분 간격 트리거보다 여유 있게 짧게 잡아서, 느린 회차가
+        #    다음 트리거와 겹쳐 뒤로 줄줄이 밀리는 걸 방지 (예전엔 시간 제한이 아예 없어서 15분씩 걸리기도 했음)
+        scan_start = time.time()
+        print(f"⚡ {len(target_dict)}개 고유 종목을 {worker_count}개의 스레드로 동시 타격합니다... (최대 {SCAN_DEADLINE_SEC}초 예산)")
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=worker_count) as executor:
-            future_to_name = {executor.submit(analyze_single_stock, name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db, theme_historical_max, long_term_stocks, index_above_ma5): name for name, code in target_dict.items()}
-            for future in concurrent.futures.as_completed(future_to_name):
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=worker_count)
+        future_to_name = {executor.submit(analyze_single_stock, name, code, is_warning_market, theme_rank_dict, all_theme_map, kospi_rate, past_theme_map, static_db, theme_historical_max, long_term_stocks, index_above_ma5): name for name, code in target_dict.items()}
+
+        remaining = set(future_to_name.keys())
+        deadline_hit = False
+        while remaining:
+            left = SCAN_DEADLINE_SEC - (time.time() - scan_start)
+            if left <= 0:
+                deadline_hit = True
+                break
+            done, remaining = concurrent.futures.wait(remaining, timeout=left, return_when=concurrent.futures.FIRST_COMPLETED)
+            for future in done:
                 stock_name = future_to_name[future]
                 try:
                     res, _ = future.result()
@@ -1664,6 +1676,14 @@ def update_technical_data(df_theme, all_theme_map):
                 except Exception as e:
                     print(f"⚠️ [Thread Result Error for {stock_name}] {e}")
                     continue
+
+        if deadline_hit:
+            print(f"⏱️ [시간 예산 초과] {SCAN_DEADLINE_SEC}초 경과 — 남은 {len(remaining)}개 종목은 이번 회차에서 건너뜁니다(다음 회차에 자연스럽게 다시 스캔됨).")
+            executor.shutdown(wait=False, cancel_futures=True)  # 아직 시작 안 한 작업은 취소, 이미 실행 중인 건 기다리지 않고 바로 다음으로 진행
+        else:
+            executor.shutdown(wait=True)
+
+        print(f"⏱️ 스캔 소요시간: {time.time() - scan_start:.1f}초 ({len(results)}/{len(target_dict)}개 종목 처리 완료)")
 
         results.sort(key=lambda x: x[29] if len(x) > 29 else 0, reverse=True)
 
