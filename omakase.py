@@ -1963,6 +1963,13 @@ def update_technical_data(df_theme, all_theme_map):
                 bt_sheet.update(range_name="A1", values=[BT_HEADER], value_input_option="USER_ENTERED")
                 bt_data = [BT_HEADER]
                 print("🆕 [백테스트 V6] 신 26열 스키마로 초기화 (컷오프 이후 데이터만 유효 표본)")
+            elif len(bt_data[0]) < len(BT_HEADER):
+                # 🔧 [수정] "26열 이상이면 최신"이라는 위 판단이 26→32열 확장을 인식 못 해서, 데이터는 32칸으로
+                #    잘 쓰이는데 정작 제목줄(1행)이 안 바뀌어 새로 추가된 T+20/T+60/T+120 칸이 이름 없이
+                #    비어 보이던 문제. 기존 데이터 행은 전혀 안 건드리고 제목줄 한 줄만 안전하게 갱신.
+                bt_sheet.update(range_name="A1", values=[BT_HEADER], value_input_option="USER_ENTERED")
+                bt_data[0] = BT_HEADER
+                print(f"🔧 [백테스트 헤더 확장] {len(bt_data[0])}열 → {len(BT_HEADER)}열로 제목줄만 갱신 (기존 데이터는 그대로 보존)")
 
             existing_ids = set(str(row[0]).strip() for row in bt_data[1:] if row and str(row[0]).strip())
 
