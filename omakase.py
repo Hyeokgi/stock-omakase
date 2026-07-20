@@ -674,7 +674,11 @@ def update_recommendation_tracking(doc, top_20_results):
 BT_HEADER = [
     "trade_id", "진입일", "채널", "종목명", "종목코드", "주도테마", "타점유형", "STAGE", "집중도",
     "V1", "V2", "V2게이트", "수급상태", "벤치명", "기준종가", "진입지수", "진입가(T+1시가)",
-    "종목T+1", "종목T+3", "종목T+5", "종목T+10", "지수T+1", "지수T+3", "지수T+5", "지수T+10", "실제캡처거래일"
+    "종목T+1", "종목T+3", "종목T+5", "종목T+10", "지수T+1", "지수T+3", "지수T+5", "지수T+10", "실제캡처거래일",
+    "종목T+20", "종목T+60", "종목T+120", "지수T+20", "지수T+60", "지수T+120"
+    # 🆕 [수정] T+10(약 2주)까지만 추적하던 걸 T+20(약 1개월)·T+60(약 3개월)·T+120(약 6개월)까지 확장.
+    #    전략 자체가 6개월~1년짜리 구조적 성장을 겨냥하는데 2주 성과만으로는 검증이 안 됐던 문제 해결.
+    #    기존 컬럼 위치는 그대로 두고 끝에만 추가(다른 코드가 기존 인덱스로 읽는 부분이 안 깨지도록).
 ]
 
 def get_market_name(code):
@@ -1663,6 +1667,26 @@ def update_technical_data(df_theme, all_theme_map):
 
         results.sort(key=lambda x: x[29] if len(x) > 29 else 0, reverse=True)
 
+        # 🆕 [실적 악화 경고] DB_중장기(장기 보유 후보) 종목 중, 실적점수(V3)가 낮게 확인되는 종목에
+        #    경고 배지를 붙임 — "사놓고 방치"가 아니라 실적이 꺾이면 눈에 띄게 하려는 목적.
+        #    V3 데이터가 아직 없는 종목은 판단 근거가 없으니 경고하지 않음(fail-open).
+        try:
+            v3_warn_map = {}
+            earn_rows = doc.worksheet("DB_실적").get_all_values()[1:]
+            for row in earn_rows:
+                if len(row) > 8 and row[0].strip():
+                    try: v3_warn_map[str(row[0]).strip().zfill(6)] = int(row[8])
+                    except Exception: pass
+            EARNINGS_WARNING_THRESHOLD = 20  # hyeoks_analyst.py의 중기 픽 필터 기준과 통일
+            for r in results:
+                if len(r) > 1 and r[0] in long_term_stocks:
+                    r_code = str(r[1]).replace("'", "").strip().zfill(6)
+                    v3 = v3_warn_map.get(r_code)
+                    if v3 is not None and v3 < EARNINGS_WARNING_THRESHOLD:
+                        r[8] = str(r[8]) + " 🔻(실적 악화 주의)"
+        except Exception as e:
+            print(f"⚠️ [실적 악화 경고 배지 처리 스킵] {e}")
+
         existing_data = {}
         try:
             db_scanner_sheet = doc.worksheet("DB_스캐너")
@@ -1925,14 +1949,14 @@ def update_technical_data(df_theme, all_theme_map):
             # ── [Step 2] 추적: fchart 시리즈로 거래일·T+1시가·호라이즌종가 캡처·동결 (omakase 7시 단독, 셀 타겟 update) ──
             if is_official_reset_time and len(bt_data) > 1:
                 print("▶ [백테스트 V6 Step2] 진입 종목 성과 추적 (거래일 기준 캡처·동결)...")
-                index_bars = {"KOSPI": get_daily_bars("KOSPI", 80), "KOSDAQ": get_daily_bars("KOSDAQ", 80)}
+                index_bars = {"KOSPI": get_daily_bars("KOSPI", 150), "KOSDAQ": get_daily_bars("KOSDAQ", 150)}  # 🔧 T+120 추적 위해 80→150일로 확장
                 index_close_map = {k: {b['date']: b['close'] for b in v} for k, v in index_bars.items()}
-                horizon_map = {1: (17, 21), 3: (18, 22), 5: (19, 23), 10: (20, 24)}  # 호라이즌 → (종목col, 지수col) 0-based
+                horizon_map = {1: (17, 21), 3: (18, 22), 5: (19, 23), 10: (20, 24), 20: (26, 29), 60: (27, 30), 120: (28, 31)}  # 호라이즌 → (종목col, 지수col) 0-based
                 changed_rows = set()
 
                 for i in range(1, len(bt_data)):
                     row = bt_data[i]
-                    while len(row) < 26: row.append("")
+                    while len(row) < 32: row.append("")
                     if str(row[20]).strip():   # 종목T+10 채워짐 = 완결 → skip (불필요 fetch 방지)
                         continue
                     채널 = str(row[2]).strip()
@@ -1957,7 +1981,7 @@ def update_technical_data(df_theme, all_theme_map):
                     _ie = next((k for k, b in enumerate(idx_series) if b['date'] == 진입일), None)
                     idx_base = idx_series[_ie + 1]['open'] if (_ie is not None and _ie + 1 < len(idx_series)) else 0.0
 
-                    bars = index_bars.get(벤치, index_bars["KOSPI"]) if 채널 == "지수벤치" else get_daily_bars(code, 80)
+                    bars = index_bars.get(벤치, index_bars["KOSPI"]) if 채널 == "지수벤치" else get_daily_bars(code, 150)  # 🔧 T+120 추적 위해 80→150일로 확장
                     if not bars: continue
 
                     entry_idx = next((k for k, b in enumerate(bars) if b['date'] == 진입일), None)
@@ -1991,7 +2015,7 @@ def update_technical_data(df_theme, all_theme_map):
                         row[25] = (prev_z + "," if prev_z else "") + ",".join(captured)
 
                 if changed_rows:
-                    updates = [{'range': f'Q{i + 1}:Z{i + 1}', 'values': [bt_data[i][16:26]]} for i in sorted(changed_rows)]
+                    updates = [{'range': f'Q{i + 1}:AF{i + 1}', 'values': [bt_data[i][16:32]]} for i in sorted(changed_rows)]
                     bt_sheet.batch_update(updates, value_input_option="USER_ENTERED")
                     print(f"✅ [백테스트 V6 Step2] {len(changed_rows)}행 추적 셀 업데이트 (호라이즌별 캡처·동결 · 전체 rewrite 없음)")
                 else:
@@ -2039,7 +2063,7 @@ def update_technical_data(df_theme, all_theme_map):
                         new_rows.append([
                             tid, today_str, channel, r[0], f"'{s_code}", r[19], r[8], entry_stage, concentration_str,
                             r[29], r[31], r[33], r[22], bench, r[2], idx_close_cache.get(bench, 0.0)
-                        ] + [""] * 10)
+                        ] + [""] * 16)
                         existing_ids.add(tid)
                         channel_today_count[channel] = channel_today_count.get(channel, 0) + 1
 
@@ -2052,7 +2076,7 @@ def update_technical_data(df_theme, all_theme_map):
                 if tid_idx not in existing_ids:
                     ixc = idx_close_cache.get("KOSPI", 0.0)
                     new_rows.append([tid_idx, today_str, "지수벤치", "KOSPI", "'KOSPI", "", "지수보유", entry_stage, concentration_str,
-                                     "", "", "", "", "KOSPI", ixc, ixc] + [""] * 10)
+                                     "", "", "", "", "KOSPI", ixc, ixc] + [""] * 16)
                     existing_ids.add(tid_idx)
 
             if new_rows:
