@@ -209,6 +209,7 @@
   .change-pill { display: inline-flex; align-items: center; gap: 2px; padding: 3px 7px; border-radius: 8px; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .change-pill.up { color: var(--up); background: color-mix(in srgb, var(--up) 12%, transparent); }
   .change-pill.down { color: var(--down); background: color-mix(in srgb, var(--down) 12%, transparent); }
+  .change-pill.flat { color: var(--text-2); background: var(--surface-hi); }
 
   .badge-row { margin-top: 9px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .tajeom-badge {
@@ -745,7 +746,8 @@ function fmtEok(n) {
   return `${sign}${abs.toLocaleString('ko-KR')}억`;
 }
 function changeSpan(change) {
-  const isUp = change >= 0;
+  if (change === 0) return `<span class="change-pill flat">− 0.00%</span>`;
+  const isUp = change > 0;
   return `<span class="change-pill ${isUp?'up':'down'}">${isUp?'▲':'▼'} ${Math.abs(change).toFixed(2)}%</span>`;
 }
 
@@ -785,7 +787,7 @@ function buildStockCardHtml(r) {
         </div>
         <div class="price-block ${priceFlash}">
           <div class="price mono">${fmtPrice(r.price)}</div>
-          <div class="change mono ${isUp ? 'up' : 'down'}">${isUp ? '▲' : '▼'} ${Math.abs(r.change).toFixed(2)}%</div>
+          <div class="change">${changeSpan(r.change)}</div>
         </div>
       </div>
       <div class="badge-row">
