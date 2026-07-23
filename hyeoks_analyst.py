@@ -313,7 +313,13 @@ try:
         stage_text = "STAGE 2 (주의 장세 - 방어형/바닥주 SEED 포지션 제한)"
         if status_is_blank:
             stage_text = "STAGE 2 (시장상태 미확인 → 안전 기본값 방어 모드)"
-    if any(kw in korean_market_status for kw in ["폭락", "패닉", "붕괴", "투매", "쇼크", "하락장 위험", "검은"]) or (kospi_rate_fallback <= -3.0):
+    if (bool(korean_market_status.strip()) and any(kw in korean_market_status for kw in ["패닉", "붕괴", "투매", "하락장 위험"])) or (worst_live_rate <= -3.0):
+        # 🔧 [수정] "검은"·"폭락"·"쇼크" 등은 시스템이 다른 곳(HALLUC_KW)에서 이미 오독 위험이 크다고 판단해
+        #    걸러내는 단어들인데, 정작 여기 STAGE 3 판정에는 그대로 남아있었음. 만약 "시장요약" 탭에
+        #    과거 폭락장 때 적힌 낡은 문구("검은 금요일 장세" 등)가 안 지워진 채 남아있다면, 오늘 실제로는
+        #    폭등장이어도 이 텍스트 하나 때문에 전 종목이 강제로 말살(000000)될 위험이 있었음.
+        #    → 오독 위험이 큰 단어는 제거, 텍스트 조건은 시장요약이 실제로 채워져 있을 때만 적용,
+        #    실시간 수치는 코스피 단독이 아니라 코스피·코스닥 중 더 나쁜 쪽(worst_live_rate)으로 판단.
         market_stage = 3
         stage_text = "STAGE 3 (패닉 장세 - 서킷 위험 임계점 돌파,전원 사격 중지)"
     print(f"📡 [실시간 시장 위험도 연산 판독 완료]: {stage_text} (상태: {korean_market_status or '미확인'} / 코스피:{kospi_rate_fallback:.2f}%)")
