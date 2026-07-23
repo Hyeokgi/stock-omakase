@@ -1992,8 +1992,9 @@ def update_technical_data(df_theme, all_theme_map):
                         break
                     row = bt_data[i]
                     while len(row) < 32: row.append("")
-                    if str(row[20]).strip():   # 종목T+10 채워짐 = 완결 → skip (불필요 fetch 방지)
-                        continue
+                    if str(row[28]).strip():   # 🔧 [수정] row[20](종목T+10)이 아니라 최장 호라이즌인 row[28](종목T+120)이
+                        continue                # 채워졌을 때만 완결로 봄. 예전 체크는 T+10만 차도 "끝났다"고 오판해서
+                                                 # 새로 늘린 T+20/60/120 칸을 영원히 못 채우는 버그였음.
 
                     # 🛡️ [수정] 이 아래 전체를 종목별로 감쌈 — 예전엔 안전장치가 없어서, 특정 종목 하나에서
                     #    예기치 못한 오류가 나면 반복문 전체가 죽어서 그 뒤 종목들이 통째로 스킵되고 있었음
