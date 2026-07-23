@@ -279,16 +279,32 @@ try:
     market_summary_data = doc.worksheet("시장요약").get_all_values()
     korean_market_status = clean_emojis(market_summary_data[1][8]) if len(market_summary_data) > 1 and len(market_summary_data[1]) > 8 else ""
 
-    # ①/8 [시황 안전판]: 시장상태 셀이 비면 공격(STAGE1)이 아니라 방어(STAGE2)가 기본값 + 코스피 등락률 숫자 폴백 병행
-    status_is_blank = (not korean_market_status.strip()) or ("확인불가" in korean_market_status)
-    kospi_rate_fallback = 0.0
+    # 🔧 [수정] "시장요약" 탭은 더 이상 운영되지 않아 항상 빈 칸이었음 — 그런데 예전 로직은 이 칸이 비어있기만
+    #    해도 "확인불가"로 보고 무조건 STAGE 2(경고)로 진입시켰음. 그 결과 실제 코스피가 +4.4%로 강세인
+    #    날에도 "하락 장세"라며 전종목 매수 보류가 뜨는 오판이 매일 발생하고 있었음(2026-07-23 확인된 사고).
+    #    → 이제 실시간 코스피·코스닥 등락률(살아있는 소스) 조회를 우선 신뢰하고, 시장요약 텍스트는 실제로
+    #    "하락"/"이탈" 문구가 있을 때만 보조 신호로 씀. 둘 다 실시간 조회에 실패했을 때만 "확인불가" 처리.
+    kospi_rate_fallback, kosdaq_rate_fallback = 0.0, 0.0
+    kospi_fetch_ok, kosdaq_fetch_ok = False, False
     try:
         _k = requests.get(f"https://m.stock.naver.com/api/index/KOSPI/basic?_={int(time.time()*1000)}", headers={'User-Agent': 'Mozilla/5.0'}, verify=False, timeout=3).json()
         kospi_rate_fallback = float(str(_k.get("fluctuationsRatio", "0")).replace(',', ''))
+        kospi_fetch_ok = True
     except Exception as _e:
-        print(f"⚠️ 코스피 등락률 폴백 조회 실패(보수적 처리): {_e}")
+        print(f"⚠️ 코스피 등락률 실시간 조회 실패: {_e}")
+    try:
+        _q = requests.get(f"https://m.stock.naver.com/api/index/KOSDAQ/basic?_={int(time.time()*1000)}", headers={'User-Agent': 'Mozilla/5.0'}, verify=False, timeout=3).json()
+        kosdaq_rate_fallback = float(str(_q.get("fluctuationsRatio", "0")).replace(',', ''))
+        kosdaq_fetch_ok = True
+    except Exception as _e:
+        print(f"⚠️ 코스닥 등락률 실시간 조회 실패: {_e}")
 
-    is_warning_market = ("하락" in korean_market_status) or ("이탈" in korean_market_status) or status_is_blank or (kospi_rate_fallback <= -1.0)
+    _live_rates = [r for r, ok in [(kospi_rate_fallback, kospi_fetch_ok), (kosdaq_rate_fallback, kosdaq_fetch_ok)] if ok]
+    both_fetch_failed = len(_live_rates) == 0
+    worst_live_rate = min(_live_rates) if _live_rates else 0.0
+    status_is_blank = both_fetch_failed  # 실시간 조회가 둘 다 실패했을 때만 "진짜 확인불가"로 취급
+
+    is_warning_market = ("하락" in korean_market_status) or ("이탈" in korean_market_status) or status_is_blank or (worst_live_rate <= -1.0)
 
     market_stage = 1
     stage_text = "STAGE 1 (정상 장세 - 공격형 추세 매매 가동)"
@@ -912,7 +928,7 @@ try:
             # 🔧 [수정] "집중도" 열이 계속 빈 값이던 문제 — 위에서 이미 읽어둔 _kw_rows(뉴스_키워드)로 1위:2위 언급횟수 기록
             try:
                 _kw_counts = [int(re.sub(r'[^0-9]', '', str(kr[3]))) for kr in _kw_rows if len(kr) >= 4 and re.sub(r'[^0-9]', '', str(kr[3]))]
-                concentration_str = f"{_kw_counts[0]}:{_kw_counts[1]}" if len(_kw_counts) >= 2 else ""
+                concentration_str = f"'{_kw_counts[0]}:{_kw_counts[1]}" if len(_kw_counts) >= 2 else ""  # 🔧 앞에 ' 붙여 텍스트 강제(시:분으로 오인되던 버그 수정)
             except Exception:
                 concentration_str = ""
             # 🔧 [수정] 단기(best_short)·중기(best_mid)는 완전히 다른 투자 논리라 채널명 자체를 분리.
