@@ -1980,8 +1980,16 @@ def update_technical_data(df_theme, all_theme_map):
                 index_close_map = {k: {b['date']: b['close'] for b in v} for k, v in index_bars.items()}
                 horizon_map = {1: (17, 21), 3: (18, 22), 5: (19, 23), 10: (20, 24), 20: (26, 29), 60: (27, 30), 120: (28, 31)}  # 호라이즌 → (종목col, 지수col) 0-based
                 changed_rows = set()
+                TOTAL_BUDGET_SEC = 540  # 🆕 [수정] Step1+Step2 합쳐서 9분(10분 트리거보다 1분 여유) 안에는 끝내도록
+                #    전체 예산을 공유함. T+20/60/120 추가 이후 조회할 종목이 늘어나 Step2까지 포함한 전체 실행이
+                #    10분을 넘기면, 다음 트리거가 대기열에 밀렸다가 그다음 트리거에 취소되는 연쇄(깃허브의
+                #    대기열 자동정리 동작)가 오전 시간대(Step2가 도는 7~8:50시)에 몰려서 나타났을 가능성이 있음.
+                step2_deadline = scan_start + TOTAL_BUDGET_SEC
 
                 for i in range(1, len(bt_data)):
+                    if time.time() > step2_deadline:
+                        print(f"⏱️ [Step2 시간 예산 초과] 전체 실행 {TOTAL_BUDGET_SEC}초 경과 — 남은 행은 다음 실행에서 이어서 처리합니다.")
+                        break
                     row = bt_data[i]
                     while len(row) < 32: row.append("")
                     if str(row[20]).strip():   # 종목T+10 채워짐 = 완결 → skip (불필요 fetch 방지)
