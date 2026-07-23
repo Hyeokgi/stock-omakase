@@ -6,7 +6,10 @@ on:
   workflow_dispatch:        # 수동으로 바로 돌려서 테스트하고 싶을 때
 
 concurrency:
-  group: hyeoks-sheet-lock  # 💡 다른 시트 쓰기 작업과 동일한 락 그룹 — 동시 충돌 방지
+  group: hyeoks-earnings-lock  # 🔧 [수정] omakase.py와 같은 락(hyeoks-sheet-lock)을 썼다가, 이 스크립트가
+  #    DART API 불통으로 몇 시간씩 안 끝나면 스캐너 트리거들이 대기열에 밀려 취소되는 연쇄를 겪었음
+  #    (2026-07 사고). 실제로 겹치는 시트가 없어서(DB_실적·DB_기업코드매핑만 건드림) 같은 락을 쓸 이유가
+  #    없었음 — 전용 락으로 분리해서 서로 절대 안 막도록 함.
   cancel-in-progress: false
 
 jobs:
