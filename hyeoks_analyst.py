@@ -929,11 +929,35 @@ try:
                 new_rows.append([
                     tid, today_str, channel_name, cand['name'], f"'{s_code}", cand.get('theme_name', ''), "", market_stage, concentration_str,
                     cand.get('v1_score', ''), cand.get('v2_score', ''), "", "", bench, cand.get('curr_p', ''), idx_cache.get(bench, 0.0)
-                ] + [""] * 10)
+                ] + [""] * 16)  # 🔧 [수정] 26열(구)이 아니라 지금 BT_HEADER는 32열(T+20/60/120 추가됨) — 패딩도 맞춤
                 existing_ids.add(tid)
             if new_rows:
-                bt_sheet.append_rows(new_rows, value_input_option="USER_ENTERED")
-                print(f"✅ [백테스트 V6 Step1] 리포트 채널(단기/중기 분리) {len(new_rows)}건 append 완료.")
+                # 🛡️ [수정] omakase.py가 10분마다 같은 시트를 건드리는데, hyeoks_analyst.py(15시)와 락 그룹이
+                #    달라서 서로 안 기다려줌 → 거의 매일 15시 정각에 동시 쓰기가 겹칠 수 있음. append 자체는
+                #    "성공"으로 찍혀도, 그 직후 다른 스크립트의 쓰기와 충돌해 조용히 덮어써지는 사고(2026-07-16
+                #    이후 리포트TOP2_단기/중기 통째로 누락)가 있었음. → 쓰고 나서 실제로 남아있는지 재확인,
+                #    누락됐으면 그 종목만 다시 씀(최대 3회).
+                pending = list(new_rows)
+                verified = False
+                for attempt in range(3):
+                    try:
+                        bt_sheet.append_rows(pending, value_input_option="USER_ENTERED")
+                    except Exception as e:
+                        print(f"⚠️ [리포트 채널 append 시도 {attempt + 1}/3 실패] {e}")
+                        time.sleep(3)
+                        continue
+                    time.sleep(1.5)  # 구글시트 반영 시차 감안
+                    check_ids = set(str(row[0]).strip() for row in bt_sheet.get_all_values()[1:] if row and row[0])
+                    pending = [r for r in pending if r[0] not in check_ids]
+                    if not pending:
+                        verified = True
+                        break
+                    print(f"⚠️ [리포트 채널 기록 확인 실패, 재시도 {attempt + 1}/3] 누락: {[r[0] for r in pending]}")
+                    time.sleep(3)
+                if verified:
+                    print(f"✅ [백테스트 V6 Step1] 리포트 채널(단기/중기 분리) {len(new_rows)}건 append 및 확인 완료.")
+                else:
+                    print(f"❌ [백테스트 V6 Step1] 3회 재시도 후에도 확인 실패 — 누락: {[r[0] for r in pending]}")
             else:
                 print("⏭ [백테스트 V6 Step1] 리포트 채널 — 추가 없음.")
     except Exception as e: print(f"⚠️ [백테스트 V6 Step1] 리포트 채널 기록 에러: {e}")
