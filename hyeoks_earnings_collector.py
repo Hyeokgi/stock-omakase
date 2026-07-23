@@ -74,6 +74,17 @@ def load_or_build_corp_code_map(doc):
 # ──────────────────────────────────────────────
 # ② 특정 종목의 최근 N년치 분기 실적 조회 + 단독 수치 환산
 # ──────────────────────────────────────────────
+class DartUnreachableError(Exception):
+    """DART API가 이번 실행에서 아예 응답하지 않는 것으로 판단될 때 던져서 전체 실행을 조기 종료시킴."""
+    pass
+
+
+_consecutive_failures = [0]  # 🆕 [회로차단기] 리스트로 감싸서 여러 함수에서 공유(모듈 전역 카운터)
+CIRCUIT_BREAKER_THRESHOLD = 15  # 연속 이 횟수만큼 연결 실패하면 "API 자체가 불통"으로 판단하고 전체 중단
+#    (2026-07-?? 사고: DART 연결이 매 요청 10초씩 실패, 134개 종목 전체를 끝까지 시도하느라 4시간 34분 소요.
+#     첫 15회 연속 실패만으로도 이미 "이번엔 안 되는 상황"이라고 판단하기 충분함 — 15×10초 ≈ 2.5분 안에 조기 종료)
+
+
 def fetch_raw_reports(corp_code, years):
     """여러 연도의 4개 보고서(1분기/반기/3분기/사업) 원본 응답을 그대로 모아옴 (계정 추출은 나중에)."""
     raw = {}  # (year, label) -> DART list 응답
@@ -82,11 +93,15 @@ def fetch_raw_reports(corp_code, years):
             try:
                 url = "https://opendart.fss.or.kr/api/fnlttSinglAcnt.json"
                 params = {"crtfc_key": DART_API_KEY, "corp_code": corp_code, "bsns_year": str(year), "reprt_code": reprt_code}
-                res = SESSION.get(url, params=params, timeout=10).json()
+                res = SESSION.get(url, params=params, timeout=7).json()  # 🔧 10초→7초로 단축(회로차단 반응 속도 개선)
+                _consecutive_failures[0] = 0  # 한 번이라도 성공하면 카운터 리셋
                 if res.get("status") == "000":
                     raw[(year, label)] = res.get("list", [])
             except Exception as e:
                 print(f"⚠️ [DART fetch {corp_code} {year} {label}] {e}")
+                _consecutive_failures[0] += 1
+                if _consecutive_failures[0] >= CIRCUIT_BREAKER_THRESHOLD:
+                    raise DartUnreachableError(f"DART API 연속 {CIRCUIT_BREAKER_THRESHOLD}회 연결 실패 — 이번 실행에서 API 자체가 응답하지 않는 것으로 판단")
             time.sleep(0.15)  # DART 호출 과다 방지
     return raw
 
@@ -340,6 +355,10 @@ if __name__ == "__main__":
                 summary["rev_growth_pct"], summary["op_growth_pct"], summary["is_improving"], v3_score, streak_label,
                 "연결" if fs_div == "CFS" else "별도", now_str
             ])
+        except DartUnreachableError as e:
+            print(f"🚨 [회로차단기 발동] {e}")
+            print("⏭ 이번 실행은 여기서 조기 종료합니다 — 다음 스케줄 실행에서 다시 시도됩니다.")
+            break
         except Exception as e:
             print(f"⚠️ [{code}] 실적 처리 실패: {e}")
             continue
