@@ -207,8 +207,8 @@
   .price { font-size: 15.5px; font-weight: 700; }
   .change { font-size: 12.5px; font-weight: 700; }
   .change-pill { display: inline-flex; align-items: center; gap: 2px; padding: 3px 7px; border-radius: 8px; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
-  .change-pill.up { color: var(--up); background: color-mix(in srgb, var(--up) 12%, transparent); }
-  .change-pill.down { color: var(--down); background: color-mix(in srgb, var(--down) 12%, transparent); }
+  .change-pill.up { color: var(--up); background: color-mix(in srgb, var(--up) 18%, transparent); }
+  .change-pill.down { color: var(--down); background: color-mix(in srgb, var(--down) 18%, transparent); }
   .change-pill.flat { color: var(--text-2); background: var(--surface-hi); }
 
   .badge-row { margin-top: 9px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -320,14 +320,16 @@
   .cal-month-label { font-size: 15px; font-weight: 800; }
   .cal-weekdays { display:grid; grid-template-columns: repeat(7, 1fr); text-align:center; font-size:11px; color:var(--text-3); padding-bottom:6px; font-weight:600; }
   .cal-grid { display:grid; grid-template-columns: repeat(7, 1fr); gap: 3px; margin-bottom: 12px; }
-  .cal-day { aspect-ratio: 1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; border-radius: 11px; cursor:pointer; }
+  .cal-day { aspect-ratio: 1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; border-radius: 11px; cursor:pointer; transition: background 0.12s; }
   .cal-day:active { background: var(--surface-hi); }
   .cal-day.other-month { opacity: 0.22; pointer-events:none; }
+  .cal-day.has-data { background: color-mix(in srgb, var(--gold) 6%, var(--surface)); }
   .cal-day-num { font-size: 12.5px; font-weight: 600; }
+  .cal-day.today { background: color-mix(in srgb, var(--gold) 18%, var(--surface)); }
   .cal-day.today .cal-day-num { color: var(--gold); font-weight: 800; }
   .cal-day.selected { background: var(--surface-hi); border: 1.5px solid var(--gold); }
-  .cal-dot-row { display:flex; gap: 3px; height: 5px; }
-  .cal-dot { width: 4px; height: 4px; border-radius: 50%; display:inline-block; }
+  .cal-dot-row { display:flex; gap: 3px; height: 6px; }
+  .cal-dot { width: 5px; height: 5px; border-radius: 50%; display:inline-block; }
   .cal-legend { display:flex; gap: 16px; font-size: 11px; color: var(--text-3); padding: 0 2px 14px; }
   .cal-legend span { display:flex; align-items:center; gap: 5px; }
   .cal-detail-date { font-size: 13.5px; font-weight: 800; color: var(--text-2); padding: 2px 2px 10px; border-top: 1px solid var(--border); padding-top: 14px; }
@@ -1066,7 +1068,7 @@ function renderCalendarGrid() {
     let dots = '';
     if (hasHistory) dots += `<i class="cal-dot" style="background:var(--down);"></i>`;
     if (hasSchedule) dots += `<i class="cal-dot" style="background:var(--gold);"></i>`;
-    html += `<div class="cal-day ${dateStr===todayStr?'today':''} ${dateStr===calSelectedDate?'selected':''}" data-date="${dateStr}">
+    html += `<div class="cal-day ${dateStr===todayStr?'today':''} ${dateStr===calSelectedDate?'selected':''} ${(hasHistory||hasSchedule)?'has-data':''}" data-date="${dateStr}">
         <span class="cal-day-num">${d}</span><div class="cal-dot-row">${dots}</div>
       </div>`;
   }
