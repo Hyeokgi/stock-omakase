@@ -28,7 +28,10 @@ def run_sniper_bot():
     
     for r in tech_data:
         if len(r) < 21: continue
-        name, code, curr_p, chg, tajeom, vol, prog = r[0], r[1].replace("'", "").zfill(6), r[2], r[3], r[9], r[18], r[20]
+        # 🔧 [수정] tajeom을 r[9](브리핑상태)가 아니라 r[8](마스터타점)에서 가져오도록 정정.
+        #    r[9]는 "AI 브리핑 대기중" 같은 브리핑 상태 텍스트라 "눌림"/"이평수렴"/"플랫폼" 같은
+        #    실제 기술적 배지 키워드가 애초에 안 들어있어서, 봇이 매일 조건에 부합하는 종목을 못 찾고 있었음.
+        name, code, curr_p, chg, tajeom, vol, prog = r[0], r[1].replace("'", "").zfill(6), r[2], r[3], r[8], r[18], r[20]
         
         # 💡 [필터링] 적자 기업, 윗꼬리 저항 배제 / 눌림 및 에너지응축 관련 타점만 수집
         if "3년적자" in tajeom or "저항 출회" in r[14]: continue
