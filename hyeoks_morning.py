@@ -123,24 +123,31 @@ def get_yesterday_korean_context():
 
     valid_candidates = []
     for r in scanner_data:
-        if len(r) > 20 and r[0]:
+        if len(r) > 31 and r[0]:
             name, code_str = str(r[0]).strip(), str(r[1]).replace("'", "").strip()
-            current_price, score_str, tajeom = str(r[2]).strip(), str(r[8]).strip(), str(r[9]).strip()
+            # 🔧 [수정] 예전엔 r[8](마스터타점 텍스트)을 "점수"로 잘못 읽어서, 거기서 숫자를 못 뽑아 num_score가
+            #    거의 항상 0으로 나오고 있었음(→ 35점 필터를 사실상 아무도 통과 못 함 → 매일 "관망" 오판).
+            #    지금 스키마 기준 마스터타점은 r[8], 실제 V1/V2 점수는 각각 r[29]/r[31]에 있음.
+            current_price, tajeom = str(r[2]).strip(), str(r[8]).strip()
             theme, vol_status, program_text = str(r[19]).strip(), str(r[18]).strip(), str(r[20]).strip()
-            
+
             # 💡 [데이터 파이프라인 추가] 시간외 및 NXT 데이터 매핑
             krx_after = str(r[26]).strip() if len(r) > 26 else ""
             nxt_after = str(r[27]).strip() if len(r) > 27 else ""
-            
+
             if name == "시장관망" or "000000" in code_str: continue
             if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|적자', tajeom): continue
             if "저항 출회" in str(r[14]) or "윗꼬리" in tajeom: continue
             if "관망" in tajeom and "관심" not in tajeom: continue
 
-            try: num_score = int(re.search(r'(-?\d+)점', score_str).group(1)) if re.search(r'(-?\d+)점', score_str) else 0
-            except: num_score = 0
-            
+            try: v1_num = float(str(r[29]).strip())
+            except Exception: v1_num = 0.0
+            try: v2_num = float(str(r[31]).strip())
+            except Exception: v2_num = 0.0
+            num_score = max(v1_num, v2_num)  # omakase.py의 실제 후보 선정 기준(max(V1,V2))과 일치시킴
+
             if num_score < 35: continue
+            score_str = f"V1:{int(v1_num)}점 / V2:{int(v2_num)}점"
 
             valid_candidates.append({
                 'name': name, 'code': code_str, 'price': current_price, 'theme': theme,
@@ -268,8 +275,11 @@ def batch_generate_briefings():
         for r in tech_data:
             if len(r) < 21: continue
             name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
-            curr_p, tajeom_raw = str(r[2]).strip(), str(r[9]).strip()
-            seed_tag = str(r[25]).strip() if len(r) > 25 else "NORMAL"
+            # 🔧 [수정] r[9](브리핑상태)가 아니라 r[8](마스터타점)을 읽어야 함 — 아래 제외 조건들이
+            #    전부 타점 분류 키워드('매매제한','관망' 등)인데 브리핑상태 텍스트("AI 브리핑 대기중" 등)에는
+            #    이 단어들이 안 나와서 사실상 아무것도 걸러지지 않고, Gemini에게도 엉뚱한 정보가 전달되고 있었음.
+            curr_p, tajeom_raw = str(r[2]).strip(), str(r[8]).strip()
+            seed_tag = str(r[25]).strip() if len(r) > 25 else "NORMAL"  # ⚠️ [확인 필요] 이 칸도 실제로 SEED/NORMAL 표기가 맞는지 별도 확인 필요(아래 설명 참고)
             
             if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|3년적자|스코어 미달|관망', tajeom_raw): continue 
             tajeom_clean = tajeom_raw.split('⚠️')[0].strip().split('🎯')[0].strip()
