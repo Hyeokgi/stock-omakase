@@ -1986,60 +1986,68 @@ def update_technical_data(df_theme, all_theme_map):
                     while len(row) < 32: row.append("")
                     if str(row[20]).strip():   # 종목T+10 채워짐 = 완결 → skip (불필요 fetch 방지)
                         continue
-                    채널 = str(row[2]).strip()
-                    진입일 = str(row[1]).strip()
-                    벤치 = str(row[13]).strip() or "KOSPI"
-                    code = str(row[4]).replace("'", "").strip().zfill(6)
 
-                    # ⚡ 달력일 사전필터: 다음 미충족 호라이즌이 '달력상으로도' 도달 불가면 fetch 자체를 스킵.
-                    #    (거래일수 ≤ 달력일 이므로 달력일 < next_h 면 캡처 불가 → 불필요 fetch 제거, 아침 10분 재실행 부하 완화)
-                    next_h = next((h for h, (sidx, _ic) in horizon_map.items() if not str(row[sidx]).strip()), None)
-                    if next_h is None:
-                        continue
+                    # 🛡️ [수정] 이 아래 전체를 종목별로 감쌈 — 예전엔 안전장치가 없어서, 특정 종목 하나에서
+                    #    예기치 못한 오류가 나면 반복문 전체가 죽어서 그 뒤 종목들이 통째로 스킵되고 있었음
+                    #    (2026-07-16 배치에서 위더스제약만 처리되고 나머지 5개가 계속 비어있던 사고 원인).
                     try:
-                        _cal = (today_date - datetime.datetime.strptime(진입일, '%Y-%m-%d').date()).days
-                    except Exception:
-                        _cal = 999
-                    if _cal < next_h:
-                        continue
+                        채널 = str(row[2]).strip()
+                        진입일 = str(row[1]).strip()
+                        벤치 = str(row[13]).strip() or "KOSPI"
+                        code = str(row[4]).replace("'", "").strip().zfill(6)
 
-                    # 지수 base = 지수 T+1 시가 (§3 의도: 종목과 동일 보유창에서 알파 산출). P열(진입지수)은 참고용 신호일 종가.
-                    idx_series = index_bars.get(벤치, index_bars["KOSPI"])
-                    _ie = next((k for k, b in enumerate(idx_series) if b['date'] == 진입일), None)
-                    idx_base = idx_series[_ie + 1]['open'] if (_ie is not None and _ie + 1 < len(idx_series)) else 0.0
+                        # ⚡ 달력일 사전필터: 다음 미충족 호라이즌이 '달력상으로도' 도달 불가면 fetch 자체를 스킵.
+                        #    (거래일수 ≤ 달력일 이므로 달력일 < next_h 면 캡처 불가 → 불필요 fetch 제거, 아침 10분 재실행 부하 완화)
+                        next_h = next((h for h, (sidx, _ic) in horizon_map.items() if not str(row[sidx]).strip()), None)
+                        if next_h is None:
+                            continue
+                        try:
+                            _cal = (today_date - datetime.datetime.strptime(진입일, '%Y-%m-%d').date()).days
+                        except Exception:
+                            _cal = 999
+                        if _cal < next_h:
+                            continue
 
-                    bars = index_bars.get(벤치, index_bars["KOSPI"]) if 채널 == "지수벤치" else get_daily_bars(code, 150)  # 🔧 T+120 추적 위해 80→150일로 확장
-                    if not bars: continue
+                        # 지수 base = 지수 T+1 시가 (§3 의도: 종목과 동일 보유창에서 알파 산출). P열(진입지수)은 참고용 신호일 종가.
+                        idx_series = index_bars.get(벤치, index_bars["KOSPI"])
+                        _ie = next((k for k, b in enumerate(idx_series) if b['date'] == 진입일), None)
+                        idx_base = idx_series[_ie + 1]['open'] if (_ie is not None and _ie + 1 < len(idx_series)) else 0.0
 
-                    entry_idx = next((k for k, b in enumerate(bars) if b['date'] == 진입일), None)
-                    if entry_idx is None: continue
-                    elapsed_td = (len(bars) - 1) - entry_idx
-                    if elapsed_td < 1: continue
+                        bars = index_bars.get(벤치, index_bars["KOSPI"]) if 채널 == "지수벤치" else get_daily_bars(code, 150)  # 🔧 T+120 추적 위해 80→150일로 확장
+                        if not bars: continue
 
-                    # 진입가 Q(=T+1 시가) 1회 캡처
-                    if not str(row[16]).strip() and entry_idx + 1 < len(bars):
-                        q_open = bars[entry_idx + 1]['open']
-                        row[16] = int(q_open) if 채널 != "지수벤치" else round(q_open, 2)
-                        changed_rows.add(i)
-                    try: base = float(str(row[16]).replace(',', '')) if str(row[16]).strip() else 0.0
-                    except Exception: base = 0.0
-                    if base <= 0: continue
+                        entry_idx = next((k for k, b in enumerate(bars) if b['date'] == 진입일), None)
+                        if entry_idx is None: continue
+                        elapsed_td = (len(bars) - 1) - entry_idx
+                        if elapsed_td < 1: continue
 
-                    idx_map = index_close_map.get(벤치, {})
-                    captured = []
-                    for h, (sidx, iidx) in horizon_map.items():
-                        if elapsed_td >= h and not str(row[sidx]).strip() and entry_idx + h < len(bars):
-                            s_close = bars[entry_idx + h]['close']
-                            row[sidx] = f"{(s_close - base) / base * 100:.2f}%"
-                            hdate = bars[entry_idx + h]['date']
-                            i_close = idx_map.get(hdate, 0)
-                            if i_close and idx_base > 0:
-                                row[iidx] = f"{(i_close - idx_base) / idx_base * 100:.2f}%"
-                            captured.append(f"T+{h}:{elapsed_td}")   # 실제 캡처 거래일수(미스 캡처 감사)
+                        # 진입가 Q(=T+1 시가) 1회 캡처
+                        if not str(row[16]).strip() and entry_idx + 1 < len(bars):
+                            q_open = bars[entry_idx + 1]['open']
+                            row[16] = int(q_open) if 채널 != "지수벤치" else round(q_open, 2)
                             changed_rows.add(i)
-                    if captured:
-                        prev_z = str(row[25]).strip()
-                        row[25] = (prev_z + "," if prev_z else "") + ",".join(captured)
+                        try: base = float(str(row[16]).replace(',', '')) if str(row[16]).strip() else 0.0
+                        except Exception: base = 0.0
+                        if base <= 0: continue
+
+                        idx_map = index_close_map.get(벤치, {})
+                        captured = []
+                        for h, (sidx, iidx) in horizon_map.items():
+                            if elapsed_td >= h and not str(row[sidx]).strip() and entry_idx + h < len(bars):
+                                s_close = bars[entry_idx + h]['close']
+                                row[sidx] = f"{(s_close - base) / base * 100:.2f}%"
+                                hdate = bars[entry_idx + h]['date']
+                                i_close = idx_map.get(hdate, 0)
+                                if i_close and idx_base > 0:
+                                    row[iidx] = f"{(i_close - idx_base) / idx_base * 100:.2f}%"
+                                captured.append(f"T+{h}:{elapsed_td}")   # 실제 캡처 거래일수(미스 캡처 감사)
+                                changed_rows.add(i)
+                        if captured:
+                            prev_z = str(row[25]).strip()
+                            row[25] = (prev_z + "," if prev_z else "") + ",".join(captured)
+                    except Exception as e:
+                        print(f"⚠️ [백테스트 V6 Step2] {row[3] if len(row) > 3 else '?'}({row[4] if len(row) > 4 else '?'}) 추적 중 오류로 스킵(다음 종목은 계속 진행): {e}")
+                        continue
 
                 if changed_rows:
                     updates = [{'range': f'Q{i + 1}:AF{i + 1}', 'values': [bt_data[i][16:32]]} for i in sorted(changed_rows)]
@@ -2054,7 +2062,7 @@ def update_technical_data(df_theme, all_theme_map):
             if is_eod_log_window:
                 entry_stage = 3 if kospi_rate <= -3.0 else (2 if is_warning_market else 1)
                 # 🔧 [수정] "집중도" 열이 모든 채널에서 계속 빈 값이던 문제 — 이미 계산해둔 뉴스키워드 1위:2위 비율을 그대로 기록
-                concentration_str = f"{kw_counts[0]}:{kw_counts[1]}" if len(kw_counts) >= 2 else ""
+                concentration_str = f"'{kw_counts[0]}:{kw_counts[1]}" if len(kw_counts) >= 2 else ""  # 🔧 앞에 ' 붙여 텍스트 강제(시:분으로 오인되던 버그 수정)
                 idx_close_cache = {"KOSPI": get_index_close("KOSPI"), "KOSDAQ": get_index_close("KOSDAQ")}
 
                 positive_badges = ["🎯", "💎", "🌟", "👑", "📦", "🔍", "🚀", "🌱"]
