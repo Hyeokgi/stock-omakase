@@ -2,7 +2,7 @@ name: 📊 HYEOKS 실적(매출액/영업이익) 수집기
 
 on:
   schedule:
-    - cron: '0 19 * * *'   # 매일 04:00 KST (19:00 UTC 전날) — 새벽에 조용히 돌도록 이동 (20~30분 소요 감안)
+    - cron: '0 11 * * *'   # 매일 20:00 KST (11:00 UTC) — 새벽 시간대(04:00)에 DART 접속이 계속 실패해서 저녁으로 이동해봄
   workflow_dispatch:        # 수동으로 바로 돌려서 테스트하고 싶을 때
 
 concurrency:
