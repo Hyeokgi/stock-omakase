@@ -646,6 +646,47 @@ try:
             print(f"⚠️ [AI Memory 성과 요약 실패, 참고자료 없이 진행] {e}")
             return ""
 
+    def get_dominant_sector_summary(doc):
+        """🆕 [국면 판별 확장] STAGE(변동성 기반)만으로는 '오늘이 어떤 장세인지'를 다 설명하지 못함.
+           최근 며칠간 수급_Raw의 테마 순위를 보고, 특정 섹터가 계속 1~2위를 지키고 있으면
+           '주도 섹터 장세'로 태깅해서 참고자료로 얹음. 새 데이터 소스 없이 기존 데이터만 사용."""
+        try:
+            raw = doc.worksheet("수급_Raw").get_all_values()[1:]
+            if not raw:
+                return ""
+            by_date = {}
+            for row in raw:
+                if len(row) < 3: continue
+                date_str, rank_str, theme = str(row[0]).strip(), str(row[1]).strip(), str(row[2]).strip()
+                if not date_str or not theme: continue
+                try:
+                    rank = int(rank_str)
+                except Exception:
+                    continue
+                if rank in (1, 2):
+                    by_date.setdefault(date_str, {})[rank] = theme
+
+            recent_dates = sorted(by_date.keys())[-5:]  # 최근 5거래일
+            if len(recent_dates) < 3:
+                return ""  # 데이터가 며칠치 안 쌓였으면 판단 보류
+
+            theme_count = {}
+            for d in recent_dates:
+                for rank in (1, 2):
+                    t = by_date[d].get(rank)
+                    if t:
+                        theme_count[t] = theme_count.get(t, 0) + 1
+
+            if not theme_count:
+                return ""
+            top_theme, top_count = max(theme_count.items(), key=lambda x: x[1])
+            if top_count >= 3:  # 최근 5일 중 3일 이상 1~2위를 지켰으면 "주도 섹터"로 판단
+                return f"- 최근 {len(recent_dates)}거래일 중 {top_count}일 동안 '{top_theme}' 테마가 1~2위를 유지 → 지금은 이 섹터가 시장을 주도하는 장세일 가능성이 높습니다. 이 테마와 무관한 종목을 추천할 땐 조금 더 신중하게 판단하십시오."
+            return ""
+        except Exception as e:
+            print(f"⚠️ [국면 판별 확장 실패, 참고자료 없이 진행] {e}")
+            return ""
+
     recent_perf_str = get_recent_performance_summary(doc)
     recent_perf_block = f"""
     [📈 최근 성과 참고자료 — AI Memory]
@@ -654,11 +695,18 @@ try:
     {recent_perf_str}
     """ if recent_perf_str else ""
 
+    dominant_sector_str = get_dominant_sector_summary(doc)
+    dominant_sector_block = f"""
+    [🧭 시장 국면 참고자료 — 주도 섹터 판별]
+    {dominant_sector_str}
+    """ if dominant_sector_str else ""
+
     pick_prompt = f"""
     당신은 세계 최고의 애널리스트 집단이 검증하는 HYEOKS 퀀트 분석가입니다.
      아래는 HYEOKS 퀀트 점수와 역사적 주도주 DNA 검증이 끝난 최상위 150개 종목 리스트입니다.
     현재 시장 리스크 매트릭스는 [{stage_text}] 단계입니다.
     {recent_perf_block}
+    {dominant_sector_block}
     [🚨 국면별 종목 선정 제약 지침]
     - 만약 현재 시장이 STAGE 2(주의 장세)라면 단기 슈팅 종목을 극도로 보수적으로 판단하고, 애매하면 단기 픽 자리에 "000000"을 출력하십시오.
     - 만약 현재 시장이 STAGE 3(패닉 장세)라면, 자산을 사수하기 위해 단기(short_term_code) 및 중기(swing_code)를 불문하고 억지로 추천을 내지 말고 둘 다 무조건 "000000"을 반환해야 합니다.
