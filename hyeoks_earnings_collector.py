@@ -217,29 +217,45 @@ def get_recent_quarters(corp_code, num_years=2):
     return all_quarters, fs_div
 
 
-def fetch_consensus_estimates(code):
+def fetch_consensus_estimates(code, debug=False):
     """네이버금융 종목 페이지의 '기업실적분석' 표에서 애널리스트 컨센서스(추정치) 분기 실적을 가져옴.
        🔒 [개인용 한정] 이 데이터는 금융정보업체가 집계한 상업적 컨센서스 데이터라, 개인·가족 소수 인원
        참고용으로만 쓰고 외부 배포·공개하지 않는 것을 전제로 함. DART 기반 V3와는 완전히 분리해서 저장.
-       ⚠️ 네이버 페이지 실제 HTML 구조를 직접 확인 못 하고 작성한 코드라, 처음 실행 시 셀렉터가 안 맞으면
-       조정이 필요할 수 있음(아래 여러 셀렉터를 순서대로 시도하도록 방어적으로 짜둠)."""
+       ⚠️ 네이버 페이지 실제 HTML 구조를 직접 확인 못 하고 작성한 코드라 셀렉터가 안 맞을 수 있음 —
+       debug=True인 종목은 각 단계에서 뭘 찾았는지 로그로 남겨서, 다음 실행에서 원인을 바로 알 수 있게 함."""
     try:
         url = f"https://finance.naver.com/item/main.naver?code={code}"
         res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=7)
+        if debug:
+            print(f"🔎 [컨센서스 진단 {code}] HTTP 상태: {res.status_code}, 응답 길이: {len(res.text)}자")
         res.encoding = 'euc-kr'
         soup = BeautifulSoup(res.text, 'html.parser')
 
         table = None
+        matched_sel = None
         for sel in ["div.cop_analysis table.gHead01", "table.tb_type1_ifrs", "div.section.cop_analysis table"]:
             table = soup.select_one(sel)
             if table:
+                matched_sel = sel
                 break
+        if debug:
+            all_tables = soup.select("table")
+            print(f"🔎 [컨센서스 진단 {code}] 페이지 내 전체 <table> 개수: {len(all_tables)}개, 매칭된 셀렉터: {matched_sel}")
+            for t in all_tables[:10]:
+                cls = t.get("class")
+                print(f"      - table class={cls} id={t.get('id')}")
         if not table:
+            if debug:
+                print(f"⚠️ [컨센서스 진단 {code}] 실적분석 표를 못 찾음 — 셀렉터 조정 필요")
             return None
 
         headers = [th.get_text(strip=True) for th in table.select("thead th")]
+        if debug:
+            print(f"🔎 [컨센서스 진단 {code}] 헤더: {headers}")
         estimate_cols = [i for i, h in enumerate(headers) if "(E)" in h]  # "(E)" 표시된 칸만 추정치로 인정
         if not estimate_cols:
+            if debug:
+                print(f"⚠️ [컨센서스 진단 {code}] 헤더는 찾았는데 '(E)' 표시가 있는 칸이 없음")
             return None
 
         result = {}
@@ -260,6 +276,8 @@ def fetch_consensus_estimates(code):
                     except Exception:
                         continue
                     result.setdefault(headers[col_idx], {})[label] = val
+        if debug:
+            print(f"🔎 [컨센서스 진단 {code}] 최종 파싱 결과: {result}")
         return result if result else None
     except Exception as e:
         print(f"⚠️ [컨센서스 조회 실패 {code}] {e}")
@@ -461,7 +479,7 @@ if __name__ == "__main__":
             ])
 
             # 🆕 [개인용 참고자료] 애널리스트 컨센서스 — DART 확정치(V3)와는 완전히 분리해서 별도 시트에 기록
-            consensus = fetch_consensus_estimates(code)
+            consensus = fetch_consensus_estimates(code, debug=(code in DEBUG_STOCKS))
             if consensus:
                 for q_label, vals in consensus.items():
                     consensus_rows_out.append([
