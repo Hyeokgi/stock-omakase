@@ -85,6 +85,22 @@ CIRCUIT_BREAKER_THRESHOLD = 15  # 연속 이 횟수만큼 연결 실패하면 "A
 #    (2026-07-?? 사고: DART 연결이 매 요청 10초씩 실패, 134개 종목 전체를 끝까지 시도하느라 4시간 34분 소요.
 #     첫 15회 연속 실패만으로도 이미 "이번엔 안 되는 상황"이라고 판단하기 충분함 — 15×10초 ≈ 2.5분 안에 조기 종료)
 
+_recent_results = []  # 🆕 [회로차단기 보강] 최근 요청들의 성공/실패를 순서대로 담아둠(최대 WINDOW개)
+ROLLING_WINDOW = 40
+ROLLING_FAIL_RATE_THRESHOLD = 0.5  # 연속 실패가 아니어도, 최근 40번 중 절반 이상 실패하면 "간헐적 불통"으로 판단
+#    (2026-07-23 이후 사고: DART가 완전히 끊긴 게 아니라 간헐적으로만 실패해서, 연속 카운터는 15에
+#     한 번도 안 걸렸지만 누적 지연이 20~30분씩 쌓여 매번 시간 초과로 강제 종료되던 문제 재발 방지)
+
+
+def _record_result(ok):
+    _recent_results.append(ok)
+    if len(_recent_results) > ROLLING_WINDOW:
+        _recent_results.pop(0)
+    if len(_recent_results) >= ROLLING_WINDOW:
+        fail_rate = 1 - (sum(_recent_results) / len(_recent_results))
+        if fail_rate >= ROLLING_FAIL_RATE_THRESHOLD:
+            raise DartUnreachableError(f"최근 {ROLLING_WINDOW}회 요청 중 실패율 {fail_rate*100:.0f}% — 연속은 아니지만 간헐적으로 계속 불안정한 것으로 판단")
+
 
 def fetch_raw_reports(corp_code, years):
     """여러 연도의 4개 보고서(1분기/반기/3분기/사업) 원본 응답을 그대로 모아옴 (계정 추출은 나중에)."""
@@ -96,11 +112,15 @@ def fetch_raw_reports(corp_code, years):
                 params = {"crtfc_key": DART_API_KEY, "corp_code": corp_code, "bsns_year": str(year), "reprt_code": reprt_code}
                 res = SESSION.get(url, params=params, timeout=7).json()  # 🔧 10초→7초로 단축(회로차단 반응 속도 개선)
                 _consecutive_failures[0] = 0  # 한 번이라도 성공하면 카운터 리셋
+                _record_result(True)
                 if res.get("status") == "000":
                     raw[(year, label)] = res.get("list", [])
+            except DartUnreachableError:
+                raise
             except Exception as e:
                 print(f"⚠️ [DART fetch {corp_code} {year} {label}] {e}")
                 _consecutive_failures[0] += 1
+                _record_result(False)
                 if _consecutive_failures[0] >= CIRCUIT_BREAKER_THRESHOLD:
                     raise DartUnreachableError(f"DART API 연속 {CIRCUIT_BREAKER_THRESHOLD}회 연결 실패 — 이번 실행에서 API 자체가 응답하지 않는 것으로 판단")
             time.sleep(0.15)  # DART 호출 과다 방지
@@ -404,7 +424,17 @@ if __name__ == "__main__":
     fs_div_counter = {"CFS": 0, "OFS": 0}
     DEBUG_STOCKS = {"005930", "000660", "035420"}  # 🔎 [진단용] 삼성전자/SK하이닉스/NAVER — 분기별 원본 수치를 그대로 로그에 찍어서 확인
 
+    # 🆕 [시간 예산] 워크플로의 하드 타임아웃(30분)에 강제 종료당하면 그때까지 모은 데이터가
+    #    단 한 줄도 저장 안 되는 문제가 있었음 — 그 전에 미리 멈추고 지금까지 모은 것만이라도 저장함.
+    SCRIPT_TIME_BUDGET_SEC = 25 * 60  # 하드 타임아웃(30분)보다 5분 여유
+    script_start = time.time()
+    time_budget_hit = False
+
     for idx, code in enumerate(target_codes):
+        if time.time() - script_start > SCRIPT_TIME_BUDGET_SEC:
+            print(f"⏱️ [시간 예산 초과] {SCRIPT_TIME_BUDGET_SEC}초 경과 — 남은 {len(target_codes) - idx}개 종목은 건너뛰고, 지금까지 모은 데이터부터 저장합니다.")
+            time_budget_hit = True
+            break
         corp_code = corp_map.get(code)
         if not corp_code:
             print(f"⚠️ [{code}] DART corp_code 매핑 없음 (비상장·최근상장 등) — 스킵")
@@ -450,10 +480,12 @@ if __name__ == "__main__":
         if (idx + 1) % 20 == 0:
             print(f"   ...{idx + 1}/{len(target_codes)} 진행 중")
 
+    partial_note = " (⏱️ 시간 예산 초과로 일부만 처리됨 — 나머지는 다음 실행에서 이어서 수집됩니다)" if time_budget_hit else ""
+
     if len(rows_out) > 1:
         out_sheet.clear()
         out_sheet.update(range_name="A1", values=rows_out, value_input_option="RAW")
-        print(f"✅ [DB_실적] {len(rows_out) - 1}개 종목 기록 완료 (연결기준 {fs_div_counter.get('CFS',0)}개 / 별도기준 {fs_div_counter.get('OFS',0)}개)")
+        print(f"✅ [DB_실적] {len(rows_out) - 1}개 종목 기록 완료 (연결기준 {fs_div_counter.get('CFS',0)}개 / 별도기준 {fs_div_counter.get('OFS',0)}개){partial_note}")
     else:
         print("⚠️ 수집된 실적 데이터가 없습니다.")
 
@@ -464,6 +496,6 @@ if __name__ == "__main__":
             consensus_sheet = doc.add_worksheet(title="DB_컨센서스", rows="1000", cols="8")
         consensus_sheet.clear()
         consensus_sheet.update(range_name="A1", values=consensus_rows_out, value_input_option="RAW")
-        print(f"✅ [DB_컨센서스 · 개인 참고용] {len(consensus_rows_out) - 1}행 기록 완료")
+        print(f"✅ [DB_컨센서스 · 개인 참고용] {len(consensus_rows_out) - 1}행 기록 완료{partial_note}")
     else:
         print("⚠️ 컨센서스 데이터가 하나도 안 잡혔습니다 — 네이버 페이지 셀렉터 조정이 필요할 수 있습니다.")
