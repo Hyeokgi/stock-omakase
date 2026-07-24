@@ -681,6 +681,105 @@ BT_HEADER = [
     #    기존 컬럼 위치는 그대로 두고 끝에만 추가(다른 코드가 기존 인덱스로 읽는 부분이 안 깨지도록).
 ]
 
+def sort_and_format_backtest_log(doc, bt_sheet):
+    """🆕 [정렬+서식] 백테스트_로그를 진입일 최신순으로 정렬하고, 채널별 배경색(조건부 서식)과
+       날짜가 바뀌는 지점에 실제 구분선(테두리)을 적용해서 한눈에 보기 쉽게 만듦.
+       정렬은 '먼저 쓰고 나중에 지우기'와 동일한 안전 원칙(재시도)으로 처리."""
+    all_data = bt_sheet.get_all_values()
+    if len(all_data) < 3:
+        return
+    header, rows = all_data[0], all_data[1:]
+    rows.sort(key=lambda r: str(r[2]) if len(r) > 2 else "")                    # 2차: 채널명 정순(같은 날짜 안에서 묶임)
+    rows.sort(key=lambda r: str(r[1]) if len(r) > 1 else "", reverse=True)      # 1차: 진입일 역순(최신이 위로)
+    combined = [header] + rows
+
+    write_ok = False
+    for attempt in range(3):
+        try:
+            bt_sheet.update(range_name="A1", values=combined, value_input_option="USER_ENTERED")
+            write_ok = True
+            break
+        except Exception as e:
+            print(f"⚠️ [백테스트_로그 정렬 쓰기 재시도 {attempt + 1}/3] {e}")
+            time.sleep(3)
+    if not write_ok:
+        print("❌ [백테스트_로그 정렬] 재시도 후에도 실패 — 다음 회차에서 다시 시도")
+        return
+    print(f"✅ [백테스트_로그 정렬] {len(rows)}행 최신순 정렬 완료")
+
+    try:
+        apply_backtest_formatting(doc, bt_sheet, rows)
+    except Exception as e:
+        print(f"⚠️ [백테스트_로그 서식 적용 실패] {e}")
+
+
+def apply_backtest_formatting(doc, bt_sheet, sorted_rows):
+    """채널별 배경색은 조건부 서식으로 등록해 새 행에도 자동 유지되게 하고,
+       날짜 구분선은 조건부 서식이 테두리를 지원하지 않아 실제 테두리로 매번 재계산해서 적용."""
+    sheet_id = bt_sheet.id
+    n_rows = len(sorted_rows)
+
+    # ① 기존 조건부 서식 규칙 전부 삭제(재실행할 때마다 중복 누적되는 것 방지)
+    meta = doc.fetch_sheet_metadata()
+    existing_count = 0
+    for s in meta.get("sheets", []):
+        if s.get("properties", {}).get("sheetId") == sheet_id:
+            existing_count = len(s.get("conditionalFormats", []))
+            break
+    requests_list = [{"deleteConditionalFormatRule": {"sheetId": sheet_id, "index": 0}} for _ in range(existing_count)]
+
+    # ② 채널별 배경색 규칙 추가 (C열=채널 값으로 행 전체를 물들임)
+    channel_colors = {
+        "차트TOP2": (0.85, 0.92, 1.0), "수급TOP2": (1.0, 0.93, 0.82),
+        "랜덤2": (0.93, 0.93, 0.93), "지수벤치": (0.85, 0.97, 0.87),
+        "리포트TOP2_단기": (1.0, 0.87, 0.87), "리포트TOP2_중기": (0.93, 0.87, 1.0),
+        "리포트TOP2": (0.95, 0.87, 0.95),
+    }
+    grid_range = {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": 1 + n_rows, "startColumnIndex": 0, "endColumnIndex": 32}
+    for ch, (r, g, b) in channel_colors.items():
+        requests_list.append({
+            "addConditionalFormatRule": {
+                "rule": {
+                    "ranges": [grid_range],
+                    "booleanRule": {
+                        "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f'=$C2="{ch}"'}]},
+                        "format": {"backgroundColor": {"red": r, "green": g, "blue": b}}
+                    }
+                },
+                "index": 0
+            }
+        })
+
+    # ③ 기존 테두리 초기화(재정렬로 행 위치가 바뀌므로, 새로 계산한 구분선만 남도록 먼저 지움)
+    requests_list.append({
+        "updateBorders": {
+            "range": grid_range,
+            "top": {"style": "NONE"}, "bottom": {"style": "NONE"},
+            "left": {"style": "NONE"}, "right": {"style": "NONE"},
+            "innerHorizontal": {"style": "NONE"}, "innerVertical": {"style": "NONE"}
+        }
+    })
+
+    # ④ 날짜(B열=진입일)가 바뀌는 행 위쪽에 실제 구분선(굵은 테두리) 적용
+    border_count = 0
+    prev_date = None
+    for idx, row in enumerate(sorted_rows):
+        cur_date = str(row[1]) if len(row) > 1 else ""
+        if prev_date is not None and cur_date != prev_date:
+            sheet_row_idx = idx + 1  # 헤더가 0행이므로, 데이터의 idx번째 행은 시트상 (idx+1)번째(0-based) 행
+            requests_list.append({
+                "updateBorders": {
+                    "range": {"sheetId": sheet_id, "startRowIndex": sheet_row_idx, "endRowIndex": sheet_row_idx + 1, "startColumnIndex": 0, "endColumnIndex": 32},
+                    "top": {"style": "SOLID_THICK", "color": {"red": 0.12, "green": 0.12, "blue": 0.12}}
+                }
+            })
+            border_count += 1
+        prev_date = cur_date
+
+    doc.batch_update({"requests": requests_list})
+    print(f"✅ [백테스트_로그 서식] 채널별 색상 {len(channel_colors)}종 + 날짜 구분선 {border_count}개 적용 완료")
+
+
 def get_market_name(code):
     # 종목 상장시장(KOSPI/KOSDAQ) → 벤치마크 지수 매칭. 실패 시 KOSPI 기본.
     try:
@@ -2126,6 +2225,7 @@ def update_technical_data(df_theme, all_theme_map):
             if new_rows:
                 bt_sheet.append_rows(new_rows, value_input_option="USER_ENTERED")
                 print(f"✅ [백테스트 V6 Step1] 진입 {len(new_rows)}행 append 완료 (차트/수급/랜덤/지수 · 추적은 Step2)")
+                sort_and_format_backtest_log(doc, bt_sheet)  # 🆕 새 행이 추가된 직후에만 정렬+서식 재적용
             else:
                 print("⏭ [백테스트 V6 Step1] 진입 추가 없음 (EOD 윈도 외 또는 전부 중복)")
         except Exception as e:
