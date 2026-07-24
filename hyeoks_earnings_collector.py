@@ -15,6 +15,7 @@ HYEOKS 실적(매출액/영업이익) 수집기 — 금융감독원 OpenDART 연
 """
 import os, re, time, datetime, zipfile, io
 import requests
+from bs4 import BeautifulSoup
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import xml.etree.ElementTree as ET
@@ -196,6 +197,55 @@ def get_recent_quarters(corp_code, num_years=2):
     return all_quarters, fs_div
 
 
+def fetch_consensus_estimates(code):
+    """네이버금융 종목 페이지의 '기업실적분석' 표에서 애널리스트 컨센서스(추정치) 분기 실적을 가져옴.
+       🔒 [개인용 한정] 이 데이터는 금융정보업체가 집계한 상업적 컨센서스 데이터라, 개인·가족 소수 인원
+       참고용으로만 쓰고 외부 배포·공개하지 않는 것을 전제로 함. DART 기반 V3와는 완전히 분리해서 저장.
+       ⚠️ 네이버 페이지 실제 HTML 구조를 직접 확인 못 하고 작성한 코드라, 처음 실행 시 셀렉터가 안 맞으면
+       조정이 필요할 수 있음(아래 여러 셀렉터를 순서대로 시도하도록 방어적으로 짜둠)."""
+    try:
+        url = f"https://finance.naver.com/item/main.naver?code={code}"
+        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=7)
+        res.encoding = 'euc-kr'
+        soup = BeautifulSoup(res.text, 'html.parser')
+
+        table = None
+        for sel in ["div.cop_analysis table.gHead01", "table.tb_type1_ifrs", "div.section.cop_analysis table"]:
+            table = soup.select_one(sel)
+            if table:
+                break
+        if not table:
+            return None
+
+        headers = [th.get_text(strip=True) for th in table.select("thead th")]
+        estimate_cols = [i for i, h in enumerate(headers) if "(E)" in h]  # "(E)" 표시된 칸만 추정치로 인정
+        if not estimate_cols:
+            return None
+
+        result = {}
+        for row in table.select("tbody tr"):
+            th = row.select_one("th")
+            if not th:
+                continue
+            label = th.get_text(strip=True)
+            if label not in ("매출액", "영업이익", "당기순이익"):
+                continue
+            tds = row.select("td")
+            for col_idx in estimate_cols:
+                td_idx = col_idx - 1  # th가 0번째 칸을 차지해서 td 목록은 한 칸씩 밀림
+                if 0 <= td_idx < len(tds):
+                    val_str = tds[td_idx].get_text(strip=True).replace(",", "")
+                    try:
+                        val = float(val_str)
+                    except Exception:
+                        continue
+                    result.setdefault(headers[col_idx], {})[label] = val
+        return result if result else None
+    except Exception as e:
+        print(f"⚠️ [컨센서스 조회 실패 {code}] {e}")
+        return None
+
+
 def find_same_quarter_last_year(quarters, latest):
     """latest와 같은 분기(Q1/Q2/Q3/Q4)의 1년 전 수치를 찾음 — 계절성을 통제한 전년동기 비교용."""
     target_year, target_q = latest["year"] - 1, latest["quarter"]
@@ -347,6 +397,8 @@ if __name__ == "__main__":
 
     header = ["종목코드", "종목명", "최신분기", "매출액", "영업이익", "매출증감률(YoY,%)", "영업이익증감률(YoY,%)", "매출증감률(QoQ,%)", "영업이익증감률(QoQ,%)", "실적개선여부", "V3(실적점수)", "연속성장", "재무제표기준", "갱신일시"]
     rows_out = [header]
+    consensus_header = ["종목코드", "종목명", "추정분기", "추정매출액", "추정영업이익", "추정당기순이익", "갱신일시"]
+    consensus_rows_out = [consensus_header]
     now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
     target_codes = list(target_map.keys())
     fs_div_counter = {"CFS": 0, "OFS": 0}
@@ -377,6 +429,16 @@ if __name__ == "__main__":
                 summary["is_improving"], v3_score, streak_label,
                 "연결" if fs_div == "CFS" else "별도", now_str
             ])
+
+            # 🆕 [개인용 참고자료] 애널리스트 컨센서스 — DART 확정치(V3)와는 완전히 분리해서 별도 시트에 기록
+            consensus = fetch_consensus_estimates(code)
+            if consensus:
+                for q_label, vals in consensus.items():
+                    consensus_rows_out.append([
+                        code, target_map.get(code, ""), q_label,
+                        vals.get("매출액", ""), vals.get("영업이익", ""), vals.get("당기순이익", ""), now_str
+                    ])
+            time.sleep(0.2)  # 네이버 호출 과다 방지
         except DartUnreachableError as e:
             print(f"🚨 [회로차단기 발동] {e}")
             print("⏭ 이번 실행은 여기서 조기 종료합니다 — 다음 스케줄 실행에서 다시 시도됩니다.")
@@ -394,3 +456,14 @@ if __name__ == "__main__":
         print(f"✅ [DB_실적] {len(rows_out) - 1}개 종목 기록 완료 (연결기준 {fs_div_counter.get('CFS',0)}개 / 별도기준 {fs_div_counter.get('OFS',0)}개)")
     else:
         print("⚠️ 수집된 실적 데이터가 없습니다.")
+
+    if len(consensus_rows_out) > 1:
+        try:
+            consensus_sheet = doc.worksheet("DB_컨센서스")
+        except Exception:
+            consensus_sheet = doc.add_worksheet(title="DB_컨센서스", rows="1000", cols="8")
+        consensus_sheet.clear()
+        consensus_sheet.update(range_name="A1", values=consensus_rows_out, value_input_option="RAW")
+        print(f"✅ [DB_컨센서스 · 개인 참고용] {len(consensus_rows_out) - 1}행 기록 완료")
+    else:
+        print("⚠️ 컨센서스 데이터가 하나도 안 잡혔습니다 — 네이버 페이지 셀렉터 조정이 필요할 수 있습니다.")
