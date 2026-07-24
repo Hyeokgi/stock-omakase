@@ -196,49 +196,70 @@ def get_recent_quarters(corp_code, num_years=2):
     return all_quarters, fs_div
 
 
+def find_same_quarter_last_year(quarters, latest):
+    """latest와 같은 분기(Q1/Q2/Q3/Q4)의 1년 전 수치를 찾음 — 계절성을 통제한 전년동기 비교용."""
+    target_year, target_q = latest["year"] - 1, latest["quarter"]
+    for q in quarters:
+        if q["year"] == target_year and q["quarter"] == target_q:
+            return q
+    return None
+
+
 def summarize(quarters):
-    """가장 최근 분기 기준 전분기 대비(QoQ) 증감률과 실적개선여부 계산."""
+    """가장 최근 분기 기준 전분기(QoQ)와 전년동기(YoY) 증감률을 함께 계산.
+       🔧 [수정] 원래 QoQ만 보고 있었는데, 계절적으로 강한 분기(보통 4분기) 바로 다음 분기와 비교하면
+       회사가 실제로 안 나빠졌어도 계절성만으로 큰 폭의 '착시 감소'가 나오는 문제가 있었음
+       (예: 4분기가 원래 제일 센 회사는 1분기와 QoQ 비교하면 항상 나빠 보임). 이제 전년동기(YoY)를
+       실적개선 판단의 주된 근거로 삼고, QoQ는 최근 모멘텀 참고용 보조 지표로만 씀."""
     if len(quarters) < 2:
         return None
     latest, prev = quarters[-1], quarters[-2]
 
-    rev_growth = None
-    if prev["revenue"]:
-        rev_growth = round((latest["revenue"] - prev["revenue"]) / abs(prev["revenue"]) * 100, 1)
+    def pct(a, b):
+        if a is None or not b:
+            return None
+        return round((a - b) / abs(b) * 100, 1)
 
-    op_growth = None
-    if latest.get("op_profit") is not None and prev.get("op_profit"):
-        op_growth = round((latest["op_profit"] - prev["op_profit"]) / abs(prev["op_profit"]) * 100, 1)
+    rev_growth_qoq = pct(latest["revenue"], prev["revenue"])
+    op_growth_qoq = pct(latest.get("op_profit"), prev.get("op_profit"))
 
-    # 🔎 [수정 여지] "실적개선"의 기준은 일단 "매출 증가 + 이번 분기 영업이익 흑자"로 단순하게 잡음.
-    is_improving = (rev_growth is not None and rev_growth > 0) and ((latest.get("op_profit") or 0) > 0)
+    yoy_ref = find_same_quarter_last_year(quarters, latest)
+    rev_growth_yoy = pct(latest["revenue"], yoy_ref["revenue"]) if yoy_ref else None
+    op_growth_yoy = pct(latest.get("op_profit"), yoy_ref.get("op_profit")) if yoy_ref else None
+
+    # 실적개선 판단은 전년동기(YoY)를 우선 기준으로 삼음. YoY 비교 대상이 아직 안 쌓였으면 QoQ로 대체.
+    primary_rev_growth = rev_growth_yoy if rev_growth_yoy is not None else rev_growth_qoq
+    is_improving = (primary_rev_growth is not None and primary_rev_growth > 0) and ((latest.get("op_profit") or 0) > 0)
 
     return {
         "latest_label": f"{latest['year']}{latest['quarter']}",
         "latest_revenue": latest["revenue"],
         "latest_op_profit": latest.get("op_profit"),
-        "rev_growth_pct": rev_growth if rev_growth is not None else "",
-        "op_growth_pct": op_growth if op_growth is not None else "",
+        "rev_growth_pct": rev_growth_qoq if rev_growth_qoq is not None else "",
+        "op_growth_pct": op_growth_qoq if op_growth_qoq is not None else "",
+        "rev_growth_yoy_pct": rev_growth_yoy if rev_growth_yoy is not None else "",
+        "op_growth_yoy_pct": op_growth_yoy if op_growth_yoy is not None else "",
         "is_improving": "개선" if is_improving else ""
     }
 
 
 def compute_v3_score(quarters, summary):
     """V1(차트)/V2(수급)와 같은 0~100 스케일의 '실적' 축 점수.
-       단일 분기 반짝 성장이 아니라, 여러 분기 이어지는 추세를 더 높게 쳐주도록 설계
-       (강의 핵심 — '1~2분기 반짝'과 '구조적 성장'을 구분하려는 목적)."""
+       🔧 [수정] 계절성 왜곡을 피하려고 전년동기(YoY) 성장률을 주된 근거로 삼고,
+       직전분기(QoQ) 흐름은 더 이상 점수에 직접 반영하지 않음(참고 표시로만 남김).
+       단일 분기 반짝이 아니라 여러 분기 이어지는 추세를 더 높게 쳐주는 원래 설계 의도는 그대로 유지."""
     if not summary:
         return 0, ""
 
-    rev_growth = summary["rev_growth_pct"]
-    op_growth = summary["op_growth_pct"]
+    rev_growth = summary["rev_growth_yoy_pct"] if summary["rev_growth_yoy_pct"] != "" else summary["rev_growth_pct"]
+    op_growth = summary["op_growth_yoy_pct"] if summary["op_growth_yoy_pct"] != "" else summary["op_growth_pct"]
     is_profitable = (summary["latest_op_profit"] or 0) > 0
 
-    # 최근 것부터 거슬러 올라가며 "연속 매출 증가 분기 수" 계산
+    # 연속 성장 분기 수도 전년동기(YoY) 기준으로 계산 — 계절성과 무관하게 진짜 추세만 잡기 위함
     consec_rev_growth = 0
-    for i in range(len(quarters) - 1, 0, -1):
-        cur, pr = quarters[i], quarters[i - 1]
-        if cur["revenue"] is not None and pr["revenue"] and cur["revenue"] > pr["revenue"]:
+    for q in reversed(quarters):
+        ref = find_same_quarter_last_year(quarters, q)
+        if ref and q["revenue"] is not None and ref["revenue"] and q["revenue"] > ref["revenue"]:
             consec_rev_growth += 1
         else:
             break
@@ -260,7 +281,7 @@ def compute_v3_score(quarters, summary):
     v3 += min(consec_rev_growth, 4) * 5  # 연속 성장 분기당 가산(최대 4분기 = 20점) — 단발성 반짝 성장과 구분하는 핵심 장치
 
     v3 = max(0, min(100, int(v3)))
-    return v3, f"{consec_rev_growth}분기 연속"
+    return v3, (f"{consec_rev_growth}분기 연속(YoY)" if consec_rev_growth > 0 else "0분기 연속")
 
 
 # ──────────────────────────────────────────────
@@ -324,7 +345,7 @@ if __name__ == "__main__":
     except Exception:
         out_sheet = doc.add_worksheet(title="DB_실적", rows="1000", cols="12")
 
-    header = ["종목코드", "종목명", "최신분기", "매출액", "영업이익", "매출증감률(QoQ,%)", "영업이익증감률(QoQ,%)", "실적개선여부", "V3(실적점수)", "연속성장", "재무제표기준", "갱신일시"]
+    header = ["종목코드", "종목명", "최신분기", "매출액", "영업이익", "매출증감률(YoY,%)", "영업이익증감률(YoY,%)", "매출증감률(QoQ,%)", "영업이익증감률(QoQ,%)", "실적개선여부", "V3(실적점수)", "연속성장", "재무제표기준", "갱신일시"]
     rows_out = [header]
     now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
     target_codes = list(target_map.keys())
@@ -352,7 +373,8 @@ if __name__ == "__main__":
             v3_score, streak_label = compute_v3_score(quarters, summary)
             rows_out.append([
                 code, target_map.get(code, ""), summary["latest_label"], summary["latest_revenue"], summary["latest_op_profit"],
-                summary["rev_growth_pct"], summary["op_growth_pct"], summary["is_improving"], v3_score, streak_label,
+                summary["rev_growth_yoy_pct"], summary["op_growth_yoy_pct"], summary["rev_growth_pct"], summary["op_growth_pct"],
+                summary["is_improving"], v3_score, streak_label,
                 "연결" if fs_div == "CFS" else "별도", now_str
             ])
         except DartUnreachableError as e:
