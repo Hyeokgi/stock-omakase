@@ -228,7 +228,9 @@ def fetch_consensus_estimates(code, debug=False):
         res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=7)
         if debug:
             print(f"🔎 [컨센서스 진단 {code}] HTTP 상태: {res.status_code}, 응답 길이: {len(res.text)}자")
-        res.encoding = 'euc-kr'
+        res.encoding = 'utf-8'  # 🔧 [수정] 'euc-kr'로 강제했더니 실제로는 UTF-8 페이지라 한글이 깨져서
+        #    "매출액"/"영업이익" 라벨 매칭이 전부 실패하고 있었음(숫자·괄호는 아스키라 안 깨져서 헤더의
+        #    "(E)" 표시는 멀쩡히 보였지만, 정작 행 라벨이 깨져서 아무 것도 못 찾았던 것).
         soup = BeautifulSoup(res.text, 'html.parser')
 
         table = None
