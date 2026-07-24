@@ -254,10 +254,17 @@ def fetch_consensus_estimates(code, debug=False):
         headers = [th.get_text(strip=True) for th in table.select("thead th")]
         if debug:
             print(f"🔎 [컨센서스 진단 {code}] 헤더: {headers}")
-        estimate_cols = [i for i, h in enumerate(headers) if "(E)" in h]  # "(E)" 표시된 칸만 추정치로 인정
-        if not estimate_cols:
+
+        # 🔧 [수정] "주요재무정보"·"최근 연간 실적" 같은 그룹 라벨이 헤더 앞에 섞여 있어서, 예전처럼
+        #    "th 하나만큼 밀림"으로 단순 계산하면 실제 데이터 칸과 어긋남(연간(E) 자리에 분기 실제값이
+        #    들어가는 사고 있었음). 실제 "YYYY.MM" 형태의 날짜 헤더만 정규식으로 골라내서, 그 순번이
+        #    tbody의 td 순번과 정확히 1:1 대응하도록 다시 짬(그룹 라벨은 데이터 칸이 아니라 자동 제외됨).
+        date_pattern = re.compile(r'^\d{4}\.\d{2}(\(E\))?$')
+        date_headers = [h for h in headers if date_pattern.match(h)]  # 실제 데이터 컬럼만, 순서 그대로
+        estimate_slots = [(i, h) for i, h in enumerate(date_headers) if "(E)" in h]  # (실제 td 인덱스, 헤더명)
+        if not estimate_slots:
             if debug:
-                print(f"⚠️ [컨센서스 진단 {code}] 헤더는 찾았는데 '(E)' 표시가 있는 칸이 없음")
+                print(f"⚠️ [컨센서스 진단 {code}] 날짜 헤더는 {len(date_headers)}개 찾았는데 '(E)' 표시가 있는 칸이 없음")
             return None
 
         result = {}
@@ -269,15 +276,14 @@ def fetch_consensus_estimates(code, debug=False):
             if label not in ("매출액", "영업이익", "당기순이익"):
                 continue
             tds = row.select("td")
-            for col_idx in estimate_cols:
-                td_idx = col_idx - 1  # th가 0번째 칸을 차지해서 td 목록은 한 칸씩 밀림
+            for td_idx, h in estimate_slots:
                 if 0 <= td_idx < len(tds):
                     val_str = tds[td_idx].get_text(strip=True).replace(",", "")
                     try:
                         val = float(val_str)
                     except Exception:
                         continue
-                    result.setdefault(headers[col_idx], {})[label] = val
+                    result.setdefault(h, {})[label] = val
         if debug:
             print(f"🔎 [컨센서스 진단 {code}] 최종 파싱 결과: {result}")
         return result if result else None
@@ -446,7 +452,7 @@ if __name__ == "__main__":
 
     # 🆕 [시간 예산] 워크플로의 하드 타임아웃(30분)에 강제 종료당하면 그때까지 모은 데이터가
     #    단 한 줄도 저장 안 되는 문제가 있었음 — 그 전에 미리 멈추고 지금까지 모은 것만이라도 저장함.
-    SCRIPT_TIME_BUDGET_SEC = 25 * 60  # 하드 타임아웃(30분)보다 5분 여유
+    SCRIPT_TIME_BUDGET_SEC = 55 * 60  # 하드 타임아웃(60분)보다 5분 여유
     script_start = time.time()
     time_budget_hit = False
 
