@@ -15,7 +15,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 20  # 💡 [하드 백스톱] 회로차단기가 어떤 이유로든 안 걸리면 깃허브가 강제 종료 (2026-07 DART 불통 4시간34분 사고 재발 방지)
+    timeout-minutes: 30  # 💡 [하드 백스톱] 컨센서스 수집(종목당 네이버 조회 1회 추가)으로 소요 시간이 늘어서 20→30분 상향
 
     steps:
     - name: 📥 코드 가져오기
