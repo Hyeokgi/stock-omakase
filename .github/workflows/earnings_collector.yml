@@ -15,7 +15,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30  # 💡 [하드 백스톱] 컨센서스 수집(종목당 네이버 조회 1회 추가)으로 소요 시간이 늘어서 20→30분 상향
+    timeout-minutes: 60  # 💡 [하드 백스톱] 30분도 여유가 부족해서 1시간으로 상향 (내부 시간 예산도 55분으로 맞춤)
 
     steps:
     - name: 📥 코드 가져오기
