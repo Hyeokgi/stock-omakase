@@ -542,6 +542,10 @@ try:
         except: v1_score = 0
         try: v2_score = int(r[31]) if len(r) > 31 else 0
         except: v2_score = 0
+        # 🆕 [RS등급] 전종목 상대강도 백분위(1~99) — 표본 부족한 날은 빈 칸이라 그런 경우엔 프롬프트에서 아예 생략
+        rs_grade_raw = str(r[33]).strip() if len(r) > 33 else ""
+        try: rs_grade = int(rs_grade_raw) if rs_grade_raw else None
+        except: rs_grade = None
         combo_score = max(v1_score, v2_score)
         
         if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|3년적자|스코어 미달|과거 주도주 이력 미달', tajeom_raw): continue
@@ -570,13 +574,14 @@ try:
             trend_phase_txt = "중립"
 
         v3_info_txt = f" | 실적점수(V3):{v3_score}점" if v3_score is not None else ""
+        rs_info_txt = f" | RS등급(상대강도):{rs_grade}" if rs_grade is not None else ""
         info = (
-            f"종목:{name}({code}) | 현재가:{curr_p}원({chg}) | 차트점수(V1):{v1_score}점 | 수급점수(V2):{v2_score}점{v3_info_txt} | "
+            f"종목:{name}({code}) | 현재가:{curr_p}원({chg}) | 차트점수(V1):{v1_score}점 | 수급점수(V2):{v2_score}점{v3_info_txt}{rs_info_txt} | "
             f"타점:{tajeom_clean} | 추세:{trend_phase_txt} | 수급강도:{prog} | 유형:{seed_tag} | 테마:{theme_name}"
         )
         cands_list.append({
             'name': name, 'code': code, 'score': combo_score, 'v1_score': v1_score, 'v2_score': v2_score, 'v3_score': v3_score,
-            'info': info, 'curr_p': int(curr_p.replace(',','').replace('원','')), 'type': seed_tag, 'theme_name': theme_name
+            'rs_grade': rs_grade, 'info': info, 'curr_p': int(curr_p.replace(',','').replace('원','')), 'type': seed_tag, 'theme_name': theme_name
         })
  
     high_score_cands = [c for c in cands_list if c['score'] >= 30]
@@ -723,6 +728,9 @@ try:
        실적점수 표시 자체가 없는 종목은 아직 데이터가 없는 것이니 기존 기준대로 판단하십시오.
        (없으면 "000000")
     3. 🚨 [추세 절대 거부권 - 최우선 규칙]: '추세:하락/고점주의'이거나 타점에 '📉 / 3파 익절 / 하락 전환 / 반등 미확인'이 포함된 종목은 점수가 아무리 높아도 절대 선정하지 마십시오. 추세 반전이 확인되지 않은 '떨어지는 칼'은 반드시 "000000"으로 회피하십시오.
+    4. 🆕 [RS등급 활용 — 참고용 우선순위, 절대 기준 아님]: RS등급(상대강도, 1~99 백분위)은 전종목 대비 상대적 강도를 나타냅니다.
+       다른 조건(타점·추세·V1·V2)이 비슷한 후보가 여럿이라면 RS등급이 높은 쪽을 우선하십시오.
+       단, RS등급이 낮거나 표시가 없다는 이유만으로 다른 조건이 확실히 좋은 종목을 배제하지는 마십시오 — 어디까지나 동점자 처리용 참고 지표입니다.
  
     [상위 150개 종목 리스트]
     {pool_str}
