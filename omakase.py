@@ -1675,16 +1675,21 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         # 👑 [배지 부착 — 최종 위치]: master_tajeom이 완전히 확정된 이후에 부착해야 덮어쓰기로 소실되지 않는다.
         #    (🔧 "관망" 상태로 강등된 경우엔 모순되는 강세 배지가 덧붙지 않도록 가드 추가)
         # 🆕 [추세템플릿] 미너비니 스타일 8계명 중 7개(RS등급 제외 — 전종목 상대비교가 필요해 별도 작업 필요) 체크
+        minervini_diag = None
         is_minervini_template = False
         if ma50 and ma150 and ma200 and ma200_1mo_ago and low_52w > 0:
-            is_minervini_template = (
-                current_price > ma150 and current_price > ma200 and      # ①②
-                ma150 > ma200 and                                        # ③
-                ma200 > ma200_1mo_ago and                                # ④ 200일선 우상향(1개월 전 대비)
-                ma50 > ma150 and ma50 > ma200 and current_price > ma50 and  # ⑤⑥
-                current_price >= low_52w * 1.30 and                      # ⑦ 52주 신저가 대비 +30% 이상
-                current_price >= display_high_250d * 0.75                # ⑧ 52주 신고가 대비 -25% 이내
-            )
+            cond1 = current_price > ma150 and current_price > ma200
+            cond2 = ma150 > ma200
+            cond3 = ma200 > ma200_1mo_ago
+            cond4 = ma50 > ma150 and ma50 > ma200 and current_price > ma50
+            cond5 = current_price >= low_52w * 1.30
+            cond6 = current_price >= display_high_250d * 0.75
+            is_minervini_template = cond1 and cond2 and cond3 and cond4 and cond5 and cond6
+            # 🆕 [진단용] 0개가 나왔을 때 "정상적으로 희귀해서"인지 "조건이 잘못돼서"인지 구분하기 위해
+            #    조건별 통과 여부를 따로 기록 — 스캔 끝난 뒤 집계해서 로그로 남김
+            minervini_diag = {"has_data": True, "c1": cond1, "c2": cond2, "c3": cond3, "c4": cond4, "c5": cond5, "c6": cond6}
+        else:
+            minervini_diag = {"has_data": False}
 
         if "관망" not in master_tajeom:
             if is_foreigner_active_buy: master_tajeom += " 💎(외인집중)"
@@ -1806,7 +1811,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             raw_rs_score if raw_rs_score is not None else "",  # 🆕 인덱스 33 — 스캔 완료 후 백분위(RS등급)로 덮어써짐
             v2_gate_flag
         ]
-        return result_row, None
+        return result_row, minervini_diag
     except Exception as e:
         print(f"❌ 분석 에러 [{name}]: {e}")
         return fail_fallback, None
@@ -1955,6 +1960,7 @@ def update_technical_data(df_theme, all_theme_map):
             if code and code not in target_dict.values(): target_dict[name] = code
 
         results = []
+        minervini_diags = []
         worker_count = bounded_workers(len(target_dict))
         SCAN_DEADLINE_SEC = 480  # 🆕 [수정] 8분 예산 — 10분 간격 트리거보다 여유 있게 짧게 잡아서, 느린 회차가
         #    다음 트리거와 겹쳐 뒤로 줄줄이 밀리는 걸 방지 (예전엔 시간 제한이 아예 없어서 15분씩 걸리기도 했음)
@@ -1975,8 +1981,10 @@ def update_technical_data(df_theme, all_theme_map):
             for future in done:
                 stock_name = future_to_name[future]
                 try:
-                    res, _ = future.result()
-                    if res: results.append(res)
+                    res, diag = future.result()
+                    if res:
+                        results.append(res)
+                        if diag: minervini_diags.append(diag)
                 except Exception as e:
                     print(f"⚠️ [Thread Result Error for {stock_name}] {e}")
                     continue
@@ -2004,6 +2012,18 @@ def update_technical_data(df_theme, all_theme_map):
             for r in results:
                 if len(r) > 33: r[33] = ""
             print(f"⏭ [RS등급] 표본 부족({len(rs_candidates)}개)으로 이번 회차는 건너뜀")
+
+        # 🆕 [진단용] 미너비니 추세템플릿 0개가 "정상적으로 희귀해서"인지 "조건이 잘못돼서"인지 구분하기 위해
+        #    조건별 통과 종목 수를 집계해서 로그로 남김. 특정 조건 하나만 유독 0에 가깝다면 그 조건을 의심할 것.
+        with_data = [d for d in minervini_diags if d.get("has_data")]
+        if with_data:
+            n = len(with_data)
+            c_counts = {k: sum(1 for d in with_data if d[k]) for k in ["c1", "c2", "c3", "c4", "c5", "c6"]}
+            all_pass = sum(1 for d in with_data if all(d[k] for k in ["c1", "c2", "c3", "c4", "c5", "c6"]))
+            print(f"🔎 [추세템플릿 진단] 150·200일선 데이터 보유 {n}개 종목 기준 — "
+                  f"①현재가>150·200일선:{c_counts['c1']} ②150>200일선:{c_counts['c2']} "
+                  f"③200일선우상향:{c_counts['c3']} ④50일선정배열:{c_counts['c4']} "
+                  f"⑤신저가+30%:{c_counts['c5']} ⑥신고가-25%:{c_counts['c6']} → 전체충족:{all_pass}개")
 
         results.sort(key=lambda x: x[29] if len(x) > 29 else 0, reverse=True)
 
