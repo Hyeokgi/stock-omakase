@@ -681,6 +681,84 @@ BT_HEADER = [
     #    기존 컬럼 위치는 그대로 두고 끝에만 추가(다른 코드가 기존 인덱스로 읽는 부분이 안 깨지도록).
 ]
 
+def compute_channel_kelly(doc):
+    """🆕 [하프켈리 베팅비중 참고자료] 채널별로 승률·손익비를 계산해서 켈리 공식으로 베팅비중을 추정.
+       표본이 통계적으로 의미 있는 최소치(30건) 미만이면 숫자를 내지 않고 '데이터 부족'으로 표시함.
+       추정 오차에 대한 안전마진으로 풀켈리가 아니라 절반(하프켈리)만 씀. 자동 매매 실행이 아니라
+       참고용 표시 목적 — 종목/테마 단위는 반복 표본이 근본적으로 부족해 채널 단위로만 계산."""
+    MIN_SAMPLE = 30
+    MAX_HALF_KELLY_CAP = 0.25  # 하프켈리라도 25%를 넘지 않도록 안전 상한
+
+    # 채널별로 어느 호라이즌을 기준으로 볼지 — 단기 성격 채널은 T+5, 중기(SEED) 성격 채널은 T+20
+    CHANNEL_HORIZON = {
+        "차트TOP2": 5, "수급TOP2": 5, "랜덤2": 5,
+        "리포트TOP2": 5, "리포트TOP2_단기": 5, "리포트TOP2_중기": 20,
+    }
+    horizon_col = {1: 17, 3: 18, 5: 19, 10: 20, 20: 26, 60: 27, 120: 28}  # 종목 수익률 컬럼(0-based)
+
+    try:
+        bt_data = doc.worksheet("백테스트_로그").get_all_values()
+    except Exception as e:
+        print(f"⚠️ [켈리 계산 실패] 백테스트_로그 읽기 실패: {e}")
+        return
+    if len(bt_data) < 2:
+        return
+    rows = bt_data[1:]
+
+    from collections import defaultdict
+    by_channel = defaultdict(list)
+    for r in rows:
+        if len(r) < 29: continue
+        ch = str(r[2]).strip()
+        if ch not in CHANNEL_HORIZON: continue
+        h = CHANNEL_HORIZON[ch]
+        col = horizon_col[h]
+        val_str = str(r[col]).strip().replace('%', '') if len(r) > col else ""
+        if not val_str: continue
+        try:
+            by_channel[ch].append(float(val_str))
+        except Exception:
+            continue
+
+    out_rows = [["채널", "기준호라이즌", "표본수", "승률(%)", "손익비", "풀켈리(%)", "하프켈리 추천(%)", "갱신일시"]]
+    now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
+    for ch, horizon in CHANNEL_HORIZON.items():
+        returns = by_channel.get(ch, [])
+        n = len(returns)
+        if n < MIN_SAMPLE:
+            out_rows.append([ch, f"T+{horizon}", n, "", "", "", "데이터 부족(최소 30건 필요)", now_str])
+            continue
+
+        wins = [x for x in returns if x > 0]
+        losses = [x for x in returns if x <= 0]
+        win_rate = len(wins) / n
+        avg_win = (sum(wins) / len(wins)) if wins else 0.0
+        avg_loss = abs(sum(losses) / len(losses)) if losses else 0.0
+
+        if avg_loss == 0 or win_rate <= 0:
+            out_rows.append([ch, f"T+{horizon}", n, round(win_rate * 100, 1), "", "", "권장 없음(손실 표본 없음 등)", now_str])
+            continue
+
+        rr = avg_win / avg_loss  # 손익비
+        full_kelly = win_rate - (1 - win_rate) / rr
+        half_kelly = max(0.0, min(full_kelly / 2, MAX_HALF_KELLY_CAP))  # 음수(마이너스 기대값)면 0으로, 상한 25%
+        out_rows.append([
+            ch, f"T+{horizon}", n, round(win_rate * 100, 1), round(rr, 2),
+            round(full_kelly * 100, 1), round(half_kelly * 100, 1), now_str
+        ])
+
+    try:
+        try:
+            kelly_sheet = doc.worksheet("베팅비중_참고")
+        except Exception:
+            kelly_sheet = doc.add_worksheet(title="베팅비중_참고", rows="50", cols="8")
+        kelly_sheet.clear()
+        kelly_sheet.update(range_name="A1", values=out_rows, value_input_option="RAW")
+        print(f"✅ [베팅비중_참고] 채널 {len(out_rows) - 1}개 갱신 완료 (하프켈리 기준, 최소표본 {MIN_SAMPLE}건)")
+    except Exception as e:
+        print(f"⚠️ [베팅비중_참고 기록 실패] {e}")
+
+
 def sort_and_format_backtest_log(doc, bt_sheet):
     """🆕 [정렬+서식] 백테스트_로그를 진입일 최신순으로 정렬하고, 채널별 배경색(조건부 서식)과
        날짜가 바뀌는 지점에 실제 구분선(테두리)을 적용해서 한눈에 보기 쉽게 만듦.
@@ -2226,6 +2304,7 @@ def update_technical_data(df_theme, all_theme_map):
                 bt_sheet.append_rows(new_rows, value_input_option="USER_ENTERED")
                 print(f"✅ [백테스트 V6 Step1] 진입 {len(new_rows)}행 append 완료 (차트/수급/랜덤/지수 · 추적은 Step2)")
                 sort_and_format_backtest_log(doc, bt_sheet)  # 🆕 새 행이 추가된 직후에만 정렬+서식 재적용
+                compute_channel_kelly(doc)  # 🆕 하프켈리 베팅비중 참고자료도 같이 갱신
             else:
                 print("⏭ [백테스트 V6 Step1] 진입 추가 없음 (EOD 윈도 외 또는 전부 중복)")
         except Exception as e:
