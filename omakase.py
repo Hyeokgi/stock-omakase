@@ -681,6 +681,93 @@ BT_HEADER = [
     #    기존 컬럼 위치는 그대로 두고 끝에만 추가(다른 코드가 기존 인덱스로 읽는 부분이 안 깨지도록).
 ]
 
+def compute_channel_comparison_dashboard(doc):
+    """🆕 [채널 비교 대시보드] 채널별로 T+1~T+120 여러 호라이즌의 평균수익률·초과수익(vs지수)·승률을
+       한 화면에서 비교할 수 있게 표로 정리. 초과수익 칸은 양수=초록/음수=빨강으로 색을 입혀서
+       한눈에 어느 채널이 지수를 이기고 있는지 바로 보이게 함."""
+    try:
+        bt_data = doc.worksheet("백테스트_로그").get_all_values()
+    except Exception as e:
+        print(f"⚠️ [채널비교 대시보드 실패] 백테스트_로그 읽기 실패: {e}")
+        return
+    if len(bt_data) < 2:
+        return
+    rows = bt_data[1:]
+
+    horizons = [(1, 17, 21), (3, 18, 22), (5, 19, 23), (10, 20, 24), (20, 26, 29), (60, 27, 30), (120, 28, 31)]
+    channels = ["차트TOP2", "수급TOP2", "랜덤2", "리포트TOP2", "리포트TOP2_단기", "리포트TOP2_중기"]
+
+    from collections import defaultdict
+    by_channel = defaultdict(lambda: defaultdict(list))
+    for r in rows:
+        ch = str(r[2]).strip() if len(r) > 2 else ""
+        if ch not in channels: continue
+        for h, s_col, i_col in horizons:
+            if len(r) <= max(s_col, i_col): continue
+            s_str = str(r[s_col]).strip().replace('%', '')
+            i_str = str(r[i_col]).strip().replace('%', '')
+            if not s_str or not i_str: continue
+            try:
+                by_channel[ch][h].append((float(s_str), float(i_str)))
+            except Exception:
+                continue
+
+    header = ["채널"]
+    for h, _, _ in horizons:
+        header += [f"T+{h} 표본", f"T+{h} 평균수익률(%)", f"T+{h} 초과수익(%)", f"T+{h} 승률(%)"]
+    out_rows = [header]
+
+    for ch in channels:
+        row = [ch]
+        for h, _, _ in horizons:
+            pairs = by_channel[ch].get(h, [])
+            n = len(pairs)
+            if n == 0:
+                row += ["", "", "", ""]
+                continue
+            avg_s = sum(p[0] for p in pairs) / n
+            avg_i = sum(p[1] for p in pairs) / n
+            win = sum(1 for p in pairs if p[0] > 0) / n * 100
+            row += [n, round(avg_s, 2), round(avg_s - avg_i, 2), round(win, 1)]
+        out_rows.append(row)
+
+    now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
+
+    try:
+        try:
+            dash_sheet = doc.worksheet("채널비교_대시보드")
+        except Exception:
+            dash_sheet = doc.add_worksheet(title="채널비교_대시보드", rows="20", cols="30")
+        dash_sheet.clear()
+        dash_sheet.update(range_name="A1", values=out_rows, value_input_option="RAW")
+        dash_sheet.update(range_name=f"A{len(out_rows) + 2}", values=[[f"갱신: {now_str}"]], value_input_option="RAW")
+
+        # 기존 조건부 서식 삭제 후, 초과수익 칸에만 양/음수 색상 규칙 새로 등록(중복 누적 방지)
+        sheet_id = dash_sheet.id
+        meta = doc.fetch_sheet_metadata()
+        existing_count = 0
+        for s in meta.get("sheets", []):
+            if s.get("properties", {}).get("sheetId") == sheet_id:
+                existing_count = len(s.get("conditionalFormats", []))
+                break
+        requests_list = [{"deleteConditionalFormatRule": {"sheetId": sheet_id, "index": 0}} for _ in range(existing_count)]
+
+        n_channels = len(channels)
+        for idx, (h, _, _) in enumerate(horizons):
+            col_idx = 1 + idx * 4 + 2  # "T+h 초과수익(%)" 칸의 0-based 열 인덱스
+            col_range = {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": 1 + n_channels, "startColumnIndex": col_idx, "endColumnIndex": col_idx + 1}
+            requests_list.append({"addConditionalFormatRule": {"rule": {"ranges": [col_range], "booleanRule": {
+                "condition": {"type": "NUMBER_GREATER", "values": [{"userEnteredValue": "0"}]},
+                "format": {"backgroundColor": {"red": 0.85, "green": 0.95, "blue": 0.85}}}}, "index": 0}})
+            requests_list.append({"addConditionalFormatRule": {"rule": {"ranges": [col_range], "booleanRule": {
+                "condition": {"type": "NUMBER_LESS", "values": [{"userEnteredValue": "0"}]},
+                "format": {"backgroundColor": {"red": 1.0, "green": 0.88, "blue": 0.88}}}}, "index": 0}})
+        doc.batch_update({"requests": requests_list})
+        print(f"✅ [채널비교_대시보드] {n_channels}개 채널 × {len(horizons)}개 호라이즌 갱신 완료")
+    except Exception as e:
+        print(f"⚠️ [채널비교_대시보드 기록 실패] {e}")
+
+
 def compute_channel_kelly(doc):
     """🆕 [하프켈리 베팅비중 참고자료] 채널별로 승률·손익비를 계산해서 켈리 공식으로 베팅비중을 추정.
        표본이 통계적으로 의미 있는 최소치(30건) 미만이면 숫자를 내지 않고 '데이터 부족'으로 표시함.
@@ -1058,6 +1145,13 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         ma5 = int(df_hist['close'].tail(5).mean()) if len(df_hist) >= 5 else current_price
         ma20 = int(df_hist['close'].tail(20).mean()) if len(df_hist) >= 20 else current_price
         ma60 = int(df_hist['close'].tail(60).mean()) if len(df_hist) >= 60 else current_price
+        # 🆕 [추세템플릿] 미너비니 스타일 8계명 체크용 — 50일선·150일선·200일선, 그리고 200일선이
+        #    한 달 전보다 우상향인지 비교하기 위한 "한 달 전 시점의 200일선"까지 계산
+        ma50 = int(df_hist['close'].tail(50).mean()) if len(df_hist) >= 50 else None
+        ma150 = int(df_hist['close'].tail(150).mean()) if len(df_hist) >= 150 else None
+        ma200 = int(df_hist['close'].tail(200).mean()) if len(df_hist) >= 200 else None
+        ma200_1mo_ago = int(df_hist['close'].iloc[-220:-200].mean()) if len(df_hist) >= 220 else None
+        low_52w = int(df_hist['low'].min()) if len(df_hist) > 0 else current_price
 
         high_prices_120 = high_prices[-120:] if len(high_prices) >= 120 else high_prices
         low_prices_120 = [h['low'] for h in history[-120:]] if len(history) >= 120 else [h['low'] for h in history]
@@ -1561,10 +1655,23 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         # 👑 [배지 부착 — 최종 위치]: master_tajeom이 완전히 확정된 이후에 부착해야 덮어쓰기로 소실되지 않는다.
         #    (🔧 "관망" 상태로 강등된 경우엔 모순되는 강세 배지가 덧붙지 않도록 가드 추가)
+        # 🆕 [추세템플릿] 미너비니 스타일 8계명 중 7개(RS등급 제외 — 전종목 상대비교가 필요해 별도 작업 필요) 체크
+        is_minervini_template = False
+        if ma50 and ma150 and ma200 and ma200_1mo_ago and low_52w > 0:
+            is_minervini_template = (
+                current_price > ma150 and current_price > ma200 and      # ①②
+                ma150 > ma200 and                                        # ③
+                ma200 > ma200_1mo_ago and                                # ④ 200일선 우상향(1개월 전 대비)
+                ma50 > ma150 and ma50 > ma200 and current_price > ma50 and  # ⑤⑥
+                current_price >= low_52w * 1.30 and                      # ⑦ 52주 신저가 대비 +30% 이상
+                current_price >= display_high_250d * 0.75                # ⑧ 52주 신고가 대비 -25% 이내
+            )
+
         if "관망" not in master_tajeom:
             if is_foreigner_active_buy: master_tajeom += " 💎(외인집중)"
             elif is_long_term_pick:     master_tajeom += " 🎖️(코어픽)"
             elif is_super_leader:       master_tajeom += " 🔥(절대대장)"
+            if is_minervini_template:   master_tajeom += " 🏆(추세템플릿)"
 
         # ==========================================================================
         # 📊 [트랙 1] V1 차트 기술점수 산출 엔진
@@ -2245,6 +2352,7 @@ def update_technical_data(df_theme, all_theme_map):
                 compute_channel_kelly(doc)  # 🆕 [수정] Step1이 아니라 Step2 직후로 이동 — T+N 수익률이 실제로
                 #    갱신되는 건 Step2(매일 7~8:50시)라서, 켈리 계산도 여기 붙어야 맞음. Step1(15시)은
                 #    빈 칸인 새 행만 추가할 뿐이라 켈리 계산과 무관했음.
+                compute_channel_comparison_dashboard(doc)  # 🆕 채널별 T+1~T+120 비교 대시보드도 같이 갱신
 
             # ── 진입 적재 (15:00~15:30 EOD 윈도, append-only) ──
             is_eod_log_window = (now_time_bt.hour == 15 and 0 <= now_time_bt.minute < 30)
