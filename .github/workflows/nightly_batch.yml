@@ -15,6 +15,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    timeout-minutes: 30  # 💡 [하드 백스톱] 이 워크플로만 타임아웃이 없어서, 문제가 생기면 최장 6시간(깃허브 기본값)까지 대기열을 막을 위험이 있었음
     steps:
     - name: 📥 코드 가져오기
       uses: actions/checkout@v4
