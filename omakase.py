@@ -1695,7 +1695,11 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if is_foreigner_active_buy: master_tajeom += " 💎(외인집중)"
             elif is_long_term_pick:     master_tajeom += " 🎖️(코어픽)"
             elif is_super_leader:       master_tajeom += " 🔥(절대대장)"
-            if is_minervini_template:   master_tajeom += " 🏆(추세템플릿)"
+        # 🔧 [수정] 🏆(추세템플릿)만은 관망 게이트 밖으로 분리 — 미너비니 조건을 만족하는 종목은 이미 많이
+        #    올라있어 "손절폭 과도"·"3차 파동 리스크" 등 다른 사유로도 관망 판정을 같이 받을 구조적 가능성이
+        #    높음. 그 경우 조건은 만족해도 배지가 영원히 안 붙는 문제가 있어, 독립적으로 붙도록 분리함.
+        if is_minervini_template:
+            master_tajeom += " 🏆(추세템플릿)"
 
         # ==========================================================================
         # 📊 [트랙 1] V1 차트 기술점수 산출 엔진
