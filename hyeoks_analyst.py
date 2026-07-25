@@ -587,10 +587,10 @@ try:
     high_score_cands = [c for c in cands_list if c['score'] >= 30]
     if len(high_score_cands) < 15:
         cands_list.sort(key=lambda x: x['score'], reverse=True)
-        pre_pool = cands_list[:100]
+        pre_pool = cands_list[:150]  # 🔧 [수정] 100→150으로 확장 — 프롬프트가 "상위 150개"라 주장하면서 실제론 100개만 넘기던 불일치 해소
     else:
         high_score_cands.sort(key=lambda x: x['score'], reverse=True)
-        pre_pool = high_score_cands[:100]
+        pre_pool = high_score_cands[:150]
  
     print(f"🧬 후보군 {len(pre_pool)}개 종목의 역사적 수급 DNA 검증 돌입...")
     validated_pool = []
@@ -708,7 +708,7 @@ try:
 
     pick_prompt = f"""
     당신은 세계 최고의 애널리스트 집단이 검증하는 HYEOKS 퀀트 분석가입니다.
-     아래는 HYEOKS 퀀트 점수와 역사적 주도주 DNA 검증이 끝난 최상위 150개 종목 리스트입니다.
+     아래는 HYEOKS 퀀트 점수와 역사적 주도주 DNA 검증이 끝난 최상위 {len(pool_150)}개 종목 리스트입니다.
     현재 시장 리스크 매트릭스는 [{stage_text}] 단계입니다.
     {recent_perf_block}
     {dominant_sector_block}
@@ -732,19 +732,32 @@ try:
        다른 조건(타점·추세·V1·V2)이 비슷한 후보가 여럿이라면 RS등급이 높은 쪽을 우선하십시오.
        단, RS등급이 낮거나 표시가 없다는 이유만으로 다른 조건이 확실히 좋은 종목을 배제하지는 마십시오 — 어디까지나 동점자 처리용 참고 지표입니다.
  
-    [상위 150개 종목 리스트]
+    [🆕 판단 절차 — 반드시 이 순서를 지키십시오]
+    ① 먼저 단기·중기 각각 후보를 2~3개씩 내부적으로 추려내고, 위 1~4번 기준으로 각 후보의 장단점을 스스로 비교하십시오.
+    ② 그중 최종 1개씩을 선택하되, 선택 직전에 "이 종목이 3번 추세 거부권에 걸리지는 않는가?", "선정 기준에서 요구하는 조건을 실제로 만족하는가?"를 항목별로 다시 한번 점검하십시오.
+    ③ 점검 결과 어느 하나라도 애매하면 그 후보는 버리고 차순위 후보로 넘어가거나, 마땅한 후보가 없다면 "000000"을 반환하십시오.
+    ④ 🚨 중요: "000000"을 반환하는 것은 실패가 아니라 성공적인 판단입니다. 확신이 서지 않는 종목을 억지로 채워 넣는 것보다,
+       조건을 확실히 만족하는 종목이 없다는 걸 정직하게 인정하는 쪽이 훨씬 낫습니다. 애매하면 채우지 말고 비우십시오.
+    ⑤ 최종 응답에는 reasoning_short/reasoning_mid에 "왜 이 종목을 골랐는지"를 위 1~4번 기준 중 어떤 근거를 썼는지 구체적으로 1~2문장으로 남기십시오
+       (예: "V1 74점·RS등급 88로 상위권이며 타점이 코어픽이고 추세가 상승유지라 선정" 처럼 근거를 구체적으로 명시).
+       "000000"을 반환하는 경우에도 왜 마땅한 후보가 없었는지 1문장으로 남기십시오.
+    ⑥ 종목코드는 반드시 아래 리스트에 있는 6자리 코드를 정확히 그대로(오타 없이) 복사해서 사용하십시오. 리스트에 없는 코드를 만들어내지 마십시오.
+ 
+    [상위 {len(pool_150)}개 종목 리스트]
     {pool_str}
     
     반드시 아래 JSON 형식으로만 응답하세요. 다른 설명은 일절 배제하십시오.
     {{
-        "short_term_code": "종목코드6자리",
-        "swing_code": "종목코드6자리"
+        "short_term_code": "종목코드6자리 또는 000000",
+        "reasoning_short": "단기 픽 선정/보류 근거 1~2문장",
+        "swing_code": "종목코드6자리 또는 000000",
+        "reasoning_mid": "중기 픽 선정/보류 근거 1~2문장"
     }}
     """
     
     if market_stage == 3:
         print("🚨 [CRITICAL ALERT] STAGE 3 대피 패닉 장세가 발동되었습니다. 억지 종목 매수를 차단하기 위해 AI 픽을 전면 전면 취소(Zero Pick)합니다.")
-        picks_json = {"short_term_code": "000000", "swing_code": "000000"}
+        picks_json = {"short_term_code": "000000", "swing_code": "000000", "reasoning_short": "STAGE 3 패닉 장세로 인한 자동 제로픽", "reasoning_mid": "STAGE 3 패닉 장세로 인한 자동 제로픽"}
     else:
         result_text = safe_generate_content(pick_prompt).text
         cleaned_text = result_text.replace('```json', '').replace('```', '').strip()
@@ -752,6 +765,10 @@ try:
     
     code_short = picks_json.get('short_term_code', '')
     code_mid = picks_json.get('swing_code', '')
+    # 🆕 [근거 로그] Gemini가 왜 이 종목을(또는 왜 000000을) 골랐는지 콘솔에 남겨서, 나중에 픽 품질을
+    #    복기할 때 "이유를 알 수 없는 블랙박스" 상태가 아니라 근거를 추적할 수 있게 함.
+    print(f"🧠 [단기 픽 근거] {picks_json.get('reasoning_short', '(근거 없음)')}")
+    print(f"🧠 [중기 픽 근거] {picks_json.get('reasoning_mid', '(근거 없음)')}")
     
     best_short = next((c for c in pool_150 if c['code'] == code_short), None) if code_short != "000000" else None
     best_mid = next((c for c in pool_150 if c['code'] == code_mid), None) if code_mid != "000000" else None
