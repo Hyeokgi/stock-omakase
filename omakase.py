@@ -1153,6 +1153,25 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         ma200_1mo_ago = int(df_hist['close'].iloc[-220:-200].mean()) if len(df_hist) >= 220 else None
         low_52w = int(df_hist['low'].min()) if len(df_hist) > 0 else current_price
 
+        # 🆕 [RS등급] 전종목 상대순위를 매기기 위한 원점수 — 최근 분기에 더 큰 가중치를 주는 방식
+        #    (3개월 40% + 6·9·12개월 각 20%). 스캔이 다 끝난 뒤 전종목을 놓고 백분위로 변환해서
+        #    최종 RS등급(1~99)이 나옴 — 이 시점의 raw_rs_score는 그 전 단계의 원재료일 뿐.
+        close_list = df_hist['close'].tolist()
+
+        def _perf(days):
+            if len(close_list) <= days: return None
+            base = close_list[-1 - days]
+            return (close_list[-1] - base) / base if base > 0 else None
+
+        p3, p6, p9, p12 = _perf(63), _perf(126), _perf(189), _perf(250)
+        _periods = [(p3, 0.4), (p6, 0.2), (p9, 0.2), (p12, 0.2)]
+        _valid = [(p, w) for p, w in _periods if p is not None]
+        if _valid and p3 is not None:  # 최근 3개월 데이터는 최소한 있어야 의미 있는 점수로 인정
+            _wsum = sum(w for _, w in _valid)
+            raw_rs_score = sum(p * w for p, w in _valid) / _wsum
+        else:
+            raw_rs_score = None
+
         high_prices_120 = high_prices[-120:] if len(high_prices) >= 120 else high_prices
         low_prices_120 = [h['low'] for h in history[-120:]] if len(history) >= 120 else [h['low'] for h in history]
         highest_120d = max(high_prices_120[:-1]) if len(high_prices_120) > 1 else today_high
@@ -1784,6 +1803,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             krx_str, nxt_str, market_type, 
             quant_score, score_display,
             v2_quant_score, v2_score_display,
+            raw_rs_score if raw_rs_score is not None else "",  # 🆕 인덱스 33 — 스캔 완료 후 백분위(RS등급)로 덮어써짐
             v2_gate_flag
         ]
         return result_row, None
@@ -1969,6 +1989,22 @@ def update_technical_data(df_theme, all_theme_map):
 
         print(f"⏱️ 스캔 소요시간: {time.time() - scan_start:.1f}초 ({len(results)}/{len(target_dict)}개 종목 처리 완료)")
 
+        # 🆕 [RS등급] 전종목을 놓고 백분위 순위를 매겨서, 각 결과의 index 33(원점수)을 최종 RS등급(1~99)으로 덮어씀
+        rs_candidates = [(i, r[33]) for i, r in enumerate(results) if len(r) > 33 and isinstance(r[33], (int, float))]
+        if len(rs_candidates) >= 10:  # 표본이 너무 적으면 백분위 자체가 의미 없어서 스킵
+            ranked = sorted(rs_candidates, key=lambda x: x[1])
+            n = len(ranked)
+            for rank, (i, _) in enumerate(ranked):
+                percentile = int(1 + (rank / (n - 1)) * 98) if n > 1 else 50
+                results[i][33] = percentile
+                if percentile >= 90 and "관망" not in str(results[i][8]) and "매매금지" not in str(results[i][8]):
+                    results[i][8] = str(results[i][8]) + " ⭐(RS강세)"  # 🆕 상대강도 상위 10% 배지
+            print(f"✅ [RS등급] {n}개 종목 백분위 계산 완료 (1~99)")
+        else:
+            for r in results:
+                if len(r) > 33: r[33] = ""
+            print(f"⏭ [RS등급] 표본 부족({len(rs_candidates)}개)으로 이번 회차는 건너뜀")
+
         results.sort(key=lambda x: x[29] if len(x) > 29 else 0, reverse=True)
 
         # 🆕 [실적 악화 경고] DB_중장기(장기 보유 후보) 종목 중, 실적점수(V3)가 낮게 확인되는 종목에
@@ -2029,12 +2065,12 @@ def update_technical_data(df_theme, all_theme_map):
             "마스터타점", "브리핑상태", "당일고가", "당일저가", "60일고가", "시가총액", "캔들상태",
             "전고거리", "20일이격", "대장구분", "거래과열", "테마명", "프로그램", "52주고가",
             "기관/외인 누적(5일)", "목표가(AI)", "손절가(AI)", "종목쿼터", "시간외단일가(18시)", "NXT야간종가(20시)", "장구분",
-            "V1 차트점수", "V1 표시", "V2 수급점수", "V2 표시"
+            "V1 차트점수", "V1 표시", "V2 수급점수", "V2 표시", "RS등급"
         ]
         def _row_for_helper_sheet(r):
             # 🆕 [수정] "관망 · 조건미달"류(실제 매매 신호 없음)는 목표가/손절가도 "관망"으로 비워서,
             #    기계적으로 계산된 숫자가 마치 근거 있는 추천처럼 보이지 않도록 함. results 자체는 안 건드림(DB_스캐너 선정에 영향 없게).
-            row = list(r[:33]) + [""] * max(0, 33 - len(r[:33]))
+            row = list(r[:34]) + [""] * max(0, 34 - len(r[:34]))  # 🔧 33→34로 확장해서 RS등급(인덱스33) 포함, v2_gate_flag(34)는 여전히 제외
             if len(row) > 8 and ("관망" in str(row[8]) or "매매금지" in str(row[8])):
                 if len(row) > 23: row[23] = "관망"
                 if len(row) > 24: row[24] = "관망"
@@ -2084,7 +2120,8 @@ def update_technical_data(df_theme, all_theme_map):
                 row_data = [
                     하이브리드_링크, r[28] if len(r) > 28 and r[28] else "정규장", f"'{종목코드}", r[2], r[3], r[19], r[7], r[6],
                     tajeom, r[9], combined_score_display, r[20], r[21], r[22], r[23], r[24], r[26], r[27], r[28],
-                    v1_num, v2_num, "0"  # 🆕 자연 선정에 든 종목은 유예 카운터를 0으로 리셋
+                    v1_num, v2_num, "0",  # 🆕 자연 선정에 든 종목은 유예 카운터를 0으로 리셋
+                    r[33] if len(r) > 33 and r[33] != "" else ""  # 🆕 RS등급(1~99) — 그레이스 카운터 뒤에 추가해 기존 위치 안 건드림
                 ]
                 all_candidates.append(row_data)
 
@@ -2172,7 +2209,8 @@ def update_technical_data(df_theme, all_theme_map):
                         clean_row = [
                             f_link, fr[28] if (len(fr) > 28 and fr[28]) else "정규장", f"'{f_code}", fr[2], fr[3], fr[19], fr[7], fr[6],
                             f_tajeom, fr[9], f"V1:{f_v1}점 / V2:{f_v2}점", fr[20], fr[21], fr[22], fr[23], fr[24], fr[26], fr[27], fr[28],
-                            f_v1, f_v2
+                            f_v1, f_v2, "0",
+                            fr[33] if len(fr) > 33 and fr[33] != "" else ""  # 🆕 RS등급도 fresh 데이터에서 가져옴
                         ]
                     else:
                         # ⚠️ 이번 스캔에 없던 종목 → 부득이 stale raw_row, 장구분만 정직 교정(정규장 아니면 장마감)
@@ -2187,7 +2225,7 @@ def update_technical_data(df_theme, all_theme_map):
                                 if str(clean_row[idx]).strip() == "정규장 진행중":
                                     clean_row[idx] = "장마감"
 
-                    while len(clean_row) <= 21: clean_row.append("")
+                    while len(clean_row) <= 22: clean_row.append("")
                     clean_row[21] = str(new_grace)  # 🆕 이번에 구제됐다면 갱신된 유예 카운터를 기록
                     top_20_results.append(clean_row)
                     top_20_codes.add(c_code)
@@ -2365,16 +2403,16 @@ def update_technical_data(df_theme, all_theme_map):
 
                 positive_badges = ["🎯", "💎", "🌟", "👑", "📦", "🔍", "🚀", "🌱"]
                 negative_markers = ["📉", "관망", "조건미달", "🚫", "매매금지"]
-                candidate_pool = [r for r in results if len(r) >= 34
+                candidate_pool = [r for r in results if len(r) >= 35  # 🔧 r[34](v2_gate_flag)까지 안전하게 접근하려면 최소 35개 필요
                                   and not any(n in str(r[8]) for n in negative_markers)
                                   and any(p in str(r[8]) for p in positive_badges)]
 
                 chart_top2 = sorted(candidate_pool, key=lambda x: x[29], reverse=True)[:2]
-                gate_passed = [r for r in candidate_pool if r[33] == "GATE_PASS"]
+                gate_passed = [r for r in candidate_pool if r[34] == "GATE_PASS"]
                 supply_top2 = sorted(gate_passed, key=lambda x: x[31], reverse=True)[:2]
 
                 # 대조군 랜덤2: '배지필터 이전' 전체 results에서 결정론적 추출 (seed=날짜 → 재현가능, builtin hash() 비사용)
-                valid_results = [r for r in results if len(r) >= 34 and parse_price_num(r[2]) > 0]
+                valid_results = [r for r in results if len(r) >= 35 and parse_price_num(r[2]) > 0]
                 rng = random.Random(today_str)
                 random2 = rng.sample(valid_results, 2) if len(valid_results) >= 2 else list(valid_results)
 
@@ -2395,7 +2433,7 @@ def update_technical_data(df_theme, all_theme_map):
                         bench = get_market_name(s_code)
                         new_rows.append([
                             tid, today_str, channel, r[0], f"'{s_code}", r[19], r[8], entry_stage, concentration_str,
-                            r[29], r[31], r[33], r[22], bench, r[2], idx_close_cache.get(bench, 0.0)
+                            r[29], r[31], r[34], r[22], bench, r[2], idx_close_cache.get(bench, 0.0)
                         ] + [""] * 16)
                         existing_ids.add(tid)
                         channel_today_count[channel] = channel_today_count.get(channel, 0) + 1
