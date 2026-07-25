@@ -2242,6 +2242,10 @@ def update_technical_data(df_theme, all_theme_map):
                 else:
                     print("⏭ [백테스트 V6 Step2] 추적 변경 없음")
 
+                compute_channel_kelly(doc)  # 🆕 [수정] Step1이 아니라 Step2 직후로 이동 — T+N 수익률이 실제로
+                #    갱신되는 건 Step2(매일 7~8:50시)라서, 켈리 계산도 여기 붙어야 맞음. Step1(15시)은
+                #    빈 칸인 새 행만 추가할 뿐이라 켈리 계산과 무관했음.
+
             # ── 진입 적재 (15:00~15:30 EOD 윈도, append-only) ──
             is_eod_log_window = (now_time_bt.hour == 15 and 0 <= now_time_bt.minute < 30)
             new_rows = []
@@ -2304,7 +2308,6 @@ def update_technical_data(df_theme, all_theme_map):
                 bt_sheet.append_rows(new_rows, value_input_option="USER_ENTERED")
                 print(f"✅ [백테스트 V6 Step1] 진입 {len(new_rows)}행 append 완료 (차트/수급/랜덤/지수 · 추적은 Step2)")
                 sort_and_format_backtest_log(doc, bt_sheet)  # 🆕 새 행이 추가된 직후에만 정렬+서식 재적용
-                compute_channel_kelly(doc)  # 🆕 하프켈리 베팅비중 참고자료도 같이 갱신
             else:
                 print("⏭ [백테스트 V6 Step1] 진입 추가 없음 (EOD 윈도 외 또는 전부 중복)")
         except Exception as e:
