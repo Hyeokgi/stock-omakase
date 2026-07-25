@@ -854,7 +854,11 @@ def sort_and_format_backtest_log(doc, bt_sheet):
     if len(all_data) < 3:
         return
     header, rows = all_data[0], all_data[1:]
-    rows.sort(key=lambda r: str(r[2]) if len(r) > 2 else "")                    # 2차: 채널명 정순(같은 날짜 안에서 묶임)
+    # 🔧 [수정] 예전엔 채널명 가나다순(랜덤→리포트→수급→지수→차트)이라 우선순위가 뒤죽박죽이었음.
+    #    리포트(AI 선정) → 수급 → 차트 → 랜덤(대조군) → 지수(벤치마크) 순으로 고정 우선순위 지정.
+    CHANNEL_ORDER = {"리포트TOP2_단기": 0, "리포트TOP2_중기": 1, "리포트TOP2": 2,
+                      "수급TOP2": 3, "차트TOP2": 4, "랜덤2": 5, "지수벤치": 6}
+    rows.sort(key=lambda r: CHANNEL_ORDER.get(str(r[2]) if len(r) > 2 else "", 99))  # 2차: 채널 고정순(같은 날짜 안에서 묶임)
     rows.sort(key=lambda r: str(r[1]) if len(r) > 1 else "", reverse=True)      # 1차: 진입일 역순(최신이 위로)
     combined = [header] + rows
 
@@ -876,6 +880,42 @@ def sort_and_format_backtest_log(doc, bt_sheet):
         apply_backtest_formatting(doc, bt_sheet, rows)
     except Exception as e:
         print(f"⚠️ [백테스트_로그 서식 적용 실패] {e}")
+
+
+def apply_change_rate_formatting(doc, sheet, num_rows, col_index, extra_numeric_rules=None):
+    """🆕 [등락률 색상 + 선택적 숫자 강조] 국내 증시 관행대로 음수=파랑 굵게, 양수=빨강 굵게로 표시.
+       "%" 문자열 텍스트라 숫자 비교가 아니라 커스텀 수식(맨 앞 글자가 '-'인지)으로 판정.
+       extra_numeric_rules로 다른 숫자 컬럼(예: RS등급)에 대한 임계값 강조도 같은 배치로 같이 적용 가능
+       — 별도 함수로 두 번 지우고 추가하면 서로의 규칙을 지워버리는 충돌이 생기므로 한 번에 처리.
+       기존 조건부 서식 규칙은 먼저 지우고 새로 등록해서 재실행마다 중복 누적되는 걸 방지."""
+    try:
+        sheet_id = sheet.id
+        meta = doc.fetch_sheet_metadata()
+        existing_count = 0
+        for s in meta.get("sheets", []):
+            if s.get("properties", {}).get("sheetId") == sheet_id:
+                existing_count = len(s.get("conditionalFormats", []))
+                break
+        requests_list = [{"deleteConditionalFormatRule": {"sheetId": sheet_id, "index": 0}} for _ in range(existing_count)]
+
+        col_letter = chr(ord('A') + col_index)
+        rng = {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": num_rows, "startColumnIndex": col_index, "endColumnIndex": col_index + 1}
+        requests_list.append({"addConditionalFormatRule": {"rule": {"ranges": [rng], "booleanRule": {
+            "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f'=LEFT({col_letter}2,1)="-"'}]},
+            "format": {"textFormat": {"foregroundColor": {"red": 0.15, "green": 0.35, "blue": 0.95}, "bold": True}}}}, "index": 0}})
+        requests_list.append({"addConditionalFormatRule": {"rule": {"ranges": [rng], "booleanRule": {
+            "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f'=AND(LEFT({col_letter}2,1)<>"-",{col_letter}2<>"0.00%",{col_letter}2<>"")'}]},
+            "format": {"textFormat": {"foregroundColor": {"red": 0.85, "green": 0.1, "blue": 0.1}, "bold": True}}}}, "index": 0}})
+
+        for extra_col, threshold, rgb in (extra_numeric_rules or []):
+            extra_rng = {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": num_rows, "startColumnIndex": extra_col, "endColumnIndex": extra_col + 1}
+            requests_list.append({"addConditionalFormatRule": {"rule": {"ranges": [extra_rng], "booleanRule": {
+                "condition": {"type": "NUMBER_GREATER_THAN_EQ", "values": [{"userEnteredValue": str(threshold)}]},
+                "format": {"textFormat": {"foregroundColor": rgb, "bold": True}}}}, "index": 0}})
+
+        doc.batch_update({"requests": requests_list})
+    except Exception as e:
+        print(f"⚠️ [등락률 색상 서식 실패] {e}")
 
 
 def apply_backtest_formatting(doc, bt_sheet, sorted_rows):
@@ -2104,6 +2144,8 @@ def update_technical_data(df_theme, all_theme_map):
         try:
             helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
             helper_sheet.batch_clear([f"A{len(helper_sheet_data) + 1}:AG"])
+            apply_change_rate_formatting(doc, helper_sheet, len(helper_sheet_data), col_index=3,
+                                          extra_numeric_rules=[(33, 90, {"red": 0.1, "green": 0.6, "blue": 0.2})])  # 🆕 등락률 색상 + RS등급 90↑ 초록 강조
         except Exception as e: print(f"⚠️ [helper_sheet update Error] {e}")
 
         portfolio_protected_names = set()
@@ -2278,6 +2320,8 @@ def update_technical_data(df_theme, all_theme_map):
             try:
                 db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
                 db_scanner_sheet.batch_clear([f"A{len(top_20_results) + 2}:AC"])
+                apply_change_rate_formatting(doc, db_scanner_sheet, len(top_20_results) + 1, col_index=4,
+                                              extra_numeric_rules=[(22, 90, {"red": 0.1, "green": 0.6, "blue": 0.2})])  # 🆕 등락률 색상 + RS등급 90↑ 초록 강조
                 print(f"🎯 DB_스캐너 {len(top_20_results)}개 전송 완료 (하이재킹 버그 수정 및 데이터 영구 락 보존 완료)")
             except Exception as e: print(f"⚠️ [DB_스캐너 update Error] {e}")
 
