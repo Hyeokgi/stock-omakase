@@ -7,14 +7,13 @@ HYEOKS 증시 캘린더 자동 수집기
 `주요일정` 시트에 자동으로 추가한다. 이미 처리한 파일은 `캘린더_처리이력` 시트에 기록해 중복 방지.
 
 필요 패키지 (기존 환경에 추가 설치 필요):
-    pip install google-api-python-client pdfplumber --break-system-packages
+    pip install google-api-python-client --break-system-packages
 """
 import os, re, io, datetime, time
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
-import pdfplumber
 from google import genai
 
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit"
@@ -74,7 +73,15 @@ def list_new_pdfs(drive, processed_ids):
     return [f for f in files if f['id'] not in processed_ids]
 
 
-def download_pdf_text(drive, file_id):
+def download_pdf_bytes(drive, file_id):
+    """🔧 [수정] 예전엔 여기서 pdfplumber로 텍스트를 미리 뽑아서 프롬프트에 텍스트로 넣었는데,
+       이 PDF들이 달력 격자 + 여러 사이드박스가 나란히 배치된 복잡한 인포그래픽 레이아웃이라,
+       단순 텍스트 추출이 서로 무관한 박스들의 내용을 한 줄로 뒤섞어버리는 문제가 있었음
+       (예: "FOMC 의사록 공개(19일) K-배터리쇼 2026(9~11일) 메타 커넥트..." 처럼 4개 항목이 뭉개짐).
+       그 결과 날짜가 비교적 깔끔하게 붙어있는 '실적발표'류만 안정적으로 뽑히고, 9월 예정 일정처럼
+       레이아웃이 복잡한 섹션은 Gemini가 날짜를 확신 못 해 정직하게 제외해버리고 있었음.
+       → 텍스트로 미리 뽑지 않고 PDF 원본을 그대로 Gemini에게 넘겨서, 시각적 배치를 보고
+       스스로 어떤 박스가 어떤 내용인지 구분하도록 함(멀티모달 PDF 이해가 복잡한 레이아웃엔 훨씬 강함)."""
     request = drive.files().get_media(fileId=file_id)
     buf = io.BytesIO()
     downloader = MediaIoBaseDownload(buf, request)
@@ -82,15 +89,10 @@ def download_pdf_text(drive, file_id):
     while not done:
         _, done = downloader.next_chunk()
     buf.seek(0)
-    text = ""
-    with pdfplumber.open(buf) as pdf:
-        for page in pdf.pages:
-            page_text = page.extract_text() or ""
-            text += page_text + "\n"
-    return text
+    return buf.read()
 
 
-def extract_schedule_with_gemini(pdf_text, source_name):
+def extract_schedule_with_gemini(pdf_bytes, source_name):
     prompt = f"""아래는 증권사가 발간한 "이달의 증시 캘린더" 문서에서 추출한 원문 텍스트입니다.
 여기서 날짜가 명시된 향후 일정(거시경제 지표, 실적발표, 컨퍼런스, 행사, 상장, 정책 이벤트 등)만 골라
 반드시 아래 JSON 배열 형식으로만 응답하십시오. 다른 설명은 절대 포함하지 마십시오.
@@ -104,12 +106,20 @@ def extract_schedule_with_gemini(pdf_text, source_name):
 - "테마구분"은 반드시 다음 목록 중 가장 가까운 것 하나만 골라 정확히 그대로 사용하십시오: {CATEGORY_LIST}
 - 날짜가 불명확하거나("이달 중", "추후 확정" 등) 특정 일자를 알 수 없는 항목은 제외하십시오.
 - 원문에 없는 내용을 지어내지 마십시오.
+- 🔎 [중요] 이 문서는 달력 격자와 여러 개의 사이드박스(당월 주요일정, 다음달 예정일정, 주간 반복
+  경제지표, 서술형 전망 등)가 한 페이지에 나란히 배치된 인포그래픽입니다. 각 박스는 서로 다른 내용을
+  담고 있으니 절대 섞어서 읽지 마십시오. 특히 "다음 달 주요 일정"처럼 당월 달력 밖에 별도로 정리된
+  목록도 놓치지 말고 전부 추출하십시오 — 이런 박스에는 날짜가 괄호로 표기된 경우가 많습니다
+  (예: "메타 커넥트 2026(23~24일)" → 그 박스가 다루는 달의 23일).
+- 매주 반복되는 정기 경제지표 발표(예: "주간 신규실업수당청구건수", "주간 원유재고" 등)처럼 특정
+  하루가 아니라 매주 여러 번 반복되는 항목은 제외하십시오 — 개별 날짜가 명확한 일정만 대상입니다.
 
-[원문 — 출처: {source_name}]
-{pdf_text[:15000]}
+첨부된 PDF 원본을 직접 보고 위 형식에 맞춰 JSON만 응답하십시오. (출처: {source_name})
 """
     try:
-        res_text = safe_generate_content(prompt).text
+        from google.genai import types
+        contents = [types.Part.from_bytes(data=pdf_bytes, mime_type='application/pdf'), prompt]
+        res_text = safe_generate_content(contents).text
         cleaned = res_text.replace('```json', '').replace('```', '').strip()
         import json
         return json.loads(cleaned)
@@ -240,12 +250,12 @@ if __name__ == "__main__":
     for f in new_files:
         print(f"▶ 처리 중: {f['name']}")
         try:
-            pdf_text = download_pdf_text(drive, f['id'])
-            if not pdf_text.strip():
-                print(f"⚠️ [{f['name']}] 텍스트 추출 결과가 비어있음 (스캔 이미지 PDF일 가능성) — 스킵")
+            pdf_bytes = download_pdf_bytes(drive, f['id'])
+            if not pdf_bytes:
+                print(f"⚠️ [{f['name']}] PDF 다운로드 결과가 비어있음 — 스킵")
                 continue
 
-            items = extract_schedule_with_gemini(pdf_text, f['name'])
+            items = extract_schedule_with_gemini(pdf_bytes, f['name'])
             added = append_to_schedule_sheet(doc, items)
             print(f"✅ [{f['name']}] {len(items)}건 추출 → {added}건 신규 추가")
 
