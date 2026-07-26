@@ -315,6 +315,31 @@
     border-left: 2px solid var(--gold);
   }
 
+  /* 🆕 [캘린더 통합] 예전엔 "복기"와 "일정"이 별개 탭이었는데, 하나의 달력 그리드로 합침 —
+     과거 날짜는 그날의 주도 테마를, 미래 날짜는 예정된 일정을 같은 화면에서 보여줌. */
+  .cal-nav { display:flex; align-items:center; justify-content:space-between; padding: 10px 16px 4px; }
+  .cal-nav button {
+    background: var(--surface); border: 1px solid var(--border); color: var(--text);
+    width: 36px; height: 36px; border-radius: 10px; font-size: 18px; cursor: pointer;
+  }
+  .cal-month-label { font-size: 15.5px; font-weight: 800; }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; padding: 8px 16px 4px; }
+  .cal-dow { text-align: center; font-size: 10.5px; color: var(--text-3); font-weight: 700; padding-bottom: 4px; }
+  .cal-day {
+    aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    border-radius: 10px; font-size: 12.5px; color: var(--text-2); cursor: pointer; gap: 3px; border: 1px solid transparent;
+  }
+  .cal-day.empty { visibility: hidden; cursor: default; }
+  .cal-day.has-data { background: color-mix(in srgb, var(--gold) 6%, var(--surface)); color: var(--text); font-weight: 700; }
+  .cal-day.today { background: color-mix(in srgb, var(--gold) 18%, var(--surface)); }
+  .cal-day.selected { border-color: var(--gold); }
+  .cal-dots { display: flex; gap: 3px; height: 5px; }
+  .cal-dot { width: 5px; height: 5px; border-radius: 50%; }
+  .cal-dot.past { background: var(--blue-watch); }
+  .cal-dot.future { background: var(--gold); }
+  .cal-detail-empty { text-align:center; padding: 30px 20px; color: var(--text-3); font-size: 12.5px; }
+  .cal-detail-head { font-size: 13px; font-weight: 800; color: var(--text-2); padding: 8px 2px 6px; }
+
   .rank-num { width: 22px; font-size: 13px; font-weight: 800; color: var(--text-3); flex-shrink:0; }
   .rank-name { font-size: 14px; font-weight: 700; flex: 1; }
   .rank-price { font-size: 13px; font-weight: 600; color: var(--text-2); }
@@ -330,10 +355,10 @@
     padding: 6px 0; border: none; background: transparent; color: var(--text-3); cursor:pointer;
   }
   .tab-btn .tab-icon {
-    font-size: 16px; display: flex; align-items: center; justify-content: center;
-    height: 20px; line-height: 1;
+    font-size: 20px; display: flex; align-items: center; justify-content: center;
+    height: 24px; line-height: 1;
   }
-  .tab-btn .tab-label { font-size: 9.5px; font-weight: 600; white-space: nowrap; }
+  .tab-btn .tab-label { font-size: 10.5px; font-weight: 600; white-space: nowrap; }
   .tab-btn.active { color: var(--gold); }
 
   .config-panel {
@@ -461,13 +486,15 @@
   <main id="newsList" style="padding-top:0;"></main>
 </div>
 
-<div class="view" id="view-history">
-  <div class="tab-header"><div class="tab-title">테마복기</div></div>
-  <main id="historyList"></main>
-</div>
-
-<div class="view" id="view-schedule">
-  <main id="scheduleList"></main>
+<div class="view" id="view-calendar">
+  <div class="tab-header"><div class="tab-title">📅 캘린더</div></div>
+  <div class="cal-nav">
+    <button id="calPrevBtn">‹</button>
+    <div class="cal-month-label" id="calMonthLabel"></div>
+    <button id="calNextBtn">›</button>
+  </div>
+  <div class="cal-grid" id="calGrid"></div>
+  <main id="calDetail" style="padding-top:4px;"></main>
 </div>
 
 <div class="view" id="view-search">
@@ -493,8 +520,7 @@
   <button class="tab-btn" data-tab="report"><span class="tab-icon">📄</span><span class="tab-label">리포트</span></button>
   <button class="tab-btn" data-tab="theme"><span class="tab-icon">📊</span><span class="tab-label">테마</span></button>
   <button class="tab-btn" data-tab="news"><span class="tab-icon">📰</span><span class="tab-label">뉴스</span></button>
-  <button class="tab-btn" data-tab="history"><span class="tab-icon">📅</span><span class="tab-label">복기</span></button>
-  <button class="tab-btn" data-tab="schedule"><span class="tab-icon">🗓</span><span class="tab-label">일정</span></button>
+  <button class="tab-btn" data-tab="calendar"><span class="tab-icon">📅</span><span class="tab-label">캘린더</span></button>
   <button class="tab-btn" data-tab="search"><span class="tab-icon">🔎</span><span class="tab-label">검색</span></button>
 </div>
 
@@ -766,7 +792,7 @@ function renderHeader() {
     if (stage.top1 >= stage.top2 * 1.5 && stage.top1 >= 10) tagsEl.innerHTML += `<span class="stage-tag">SEED 쿼터 5→2 축소</span>`;
   }
   document.getElementById('timeMeta').textContent = new Date().toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'}) + ' 기준';
-  const subs = { scanner:'오마카세 · 실시간 스캐너', watchlist:'내가 지켜보는 종목', report:'AI 심층 리서치 리포트', theme:'실시간 주도 테마', news:'네이버 증권 주요뉴스', history:'과거 테마 로그', schedule:'글로벌 매크로 캘린더', search:'네이버 검색상위 종목' };
+  const subs = { scanner:'오마카세 · 실시간 스캐너', watchlist:'내가 지켜보는 종목', report:'AI 심층 리서치 리포트', theme:'실시간 주도 테마', news:'네이버 증권 주요뉴스', calendar:'과거 테마 복기 · 미래 일정', search:'네이버 검색상위 종목' };
   document.getElementById('brandSub').textContent = subs[currentTab] || '';
 }
 
@@ -976,17 +1002,47 @@ function renderNews() {
   });
 }
 
-let openHistoryKey = null;
+// 🆕 [캘린더 통합] "복기"(과거 테마)와 "일정"(미래 이벤트)을 하나의 달력 그리드로 합침.
+//    기존 loadHistoryDetail의 종목 상세 조회 로직은 그대로 재사용하고, 화면 뼈대만 그리드로 교체.
 const historyDetailCache = {};
+let openHistoryKey = null;      // 달력 상세 패널 안에서 펼쳐진 "날짜|테마" 키
+let openScheduleKey = null;     // 달력 상세 패널 안에서 펼쳐진 "날짜|이벤트인덱스" 키
+let currentCalMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1); // 현재 보고 있는 달(1일 기준)
+let selectedCalDateStr = null;  // 선택된 날짜 "YYYY-MM-DD"
 
 function toDashDate(dotDate) { return dotDate.replace(/\./g, '-').replace(/-$/, ''); }
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+// 과거(복기)+미래(일정) 데이터를 "YYYY-MM-DD" 키 하나로 통합
+function buildCalDataMap() {
+  const map = {};
+  D('history', DEMO_HISTORY).forEach(h => {
+    const key = toDashDate(h.date);
+    if (!map[key]) map[key] = {};
+    map[key].themes = h.themes || [];
+    map[key].historyDate = h.date; // 기존 point-separated 형식 그대로 보존(상세조회 API 호출용)
+  });
+  D('schedule', DEMO_SCHEDULE).forEach(g => {
+    const m = g.month.match(/(\d{4})년\s*(\d{1,2})월/);
+    if (!m) return;
+    const year = m[1];
+    g.items.forEach(it => {
+      const [mm, dd] = (it.date || '').split('.');
+      if (!mm || !dd) return;
+      const key = `${year}-${pad2(mm)}-${pad2(dd)}`;
+      if (!map[key]) map[key] = {};
+      map[key].events = it.events || (it.titles || []).map(t => ({ title: t, brief: null }));
+    });
+  });
+  return map;
+}
 
 async function loadHistoryDetail(date, theme, key) {
-  if (historyDetailCache[key]) { renderHistory(); return; }
+  if (historyDetailCache[key]) { renderCalendar(); return; }
   const demoStocks = DEMO_HISTORY_STOCKS[key];
   if (!liveData) {
     historyDetailCache[key] = demoStocks || 'nodemo';
-    renderHistory();
+    renderCalendar();
     return;
   }
   const saved = await safeGet('gasUrl');
@@ -999,29 +1055,69 @@ async function loadHistoryDetail(date, theme, key) {
   } catch (err) {
     historyDetailCache[key] = 'error';
   }
-  renderHistory();
+  renderCalendar();
 }
 
-function renderHistory() {
-  const rows = D('history', DEMO_HISTORY);
-  const list = document.getElementById('historyList');
-  list.innerHTML = '';
-  rows.forEach(h => {
+function renderCalGrid(dataMap) {
+  const y = currentCalMonth.getFullYear(), m = currentCalMonth.getMonth();
+  document.getElementById('calMonthLabel').textContent = `${y}년 ${m + 1}월`;
+  const grid = document.getElementById('calGrid');
+  grid.innerHTML = '';
+  ['일','월','화','수','목','금','토'].forEach(d => {
+    const el = document.createElement('div');
+    el.className = 'cal-dow';
+    el.textContent = d;
+    grid.appendChild(el);
+  });
+  const firstDow = new Date(y, m, 1).getDay();
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const todayStr = (() => { const t = new Date(); return `${t.getFullYear()}-${pad2(t.getMonth()+1)}-${pad2(t.getDate())}`; })();
+
+  for (let i = 0; i < firstDow; i++) {
+    const el = document.createElement('div');
+    el.className = 'cal-day empty';
+    grid.appendChild(el);
+  }
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${y}-${pad2(m + 1)}-${pad2(d)}`;
+    const data = dataMap[dateStr];
+    const hasThemes = data && data.themes && data.themes.length > 0;
+    const hasEvents = data && data.events && data.events.length > 0;
+    const hasData = hasThemes || hasEvents;
+    const el = document.createElement('div');
+    el.className = 'cal-day' + (hasData ? ' has-data' : '') + (dateStr === todayStr ? ' today' : '') + (dateStr === selectedCalDateStr ? ' selected' : '');
+    el.dataset.date = dateStr;
+    el.innerHTML = `<span>${d}</span><div class="cal-dots">${hasThemes ? '<span class="cal-dot past"></span>' : ''}${hasEvents ? '<span class="cal-dot future"></span>' : ''}</div>`;
+    el.addEventListener('click', () => { selectedCalDateStr = (selectedCalDateStr === dateStr) ? null : dateStr; renderCalendar(); });
+    grid.appendChild(el);
+  }
+}
+
+function renderCalDetail(dataMap) {
+  const wrap = document.getElementById('calDetail');
+  wrap.innerHTML = '';
+  if (!selectedCalDateStr) { wrap.innerHTML = '<div class="cal-detail-empty">날짜를 선택하면 그날의 주도 테마 또는 예정 일정이 표시됩니다.</div>'; return; }
+  const data = dataMap[selectedCalDateStr] || {};
+  const historyDate = data.historyDate || selectedCalDateStr.replace(/-/g, '.');
+
+  const head = document.createElement('div');
+  head.className = 'cal-detail-head';
+  head.textContent = selectedCalDateStr;
+  wrap.appendChild(head);
+
+  // 과거 테마 (복기)
+  if (data.themes && data.themes.length > 0) {
     const item = document.createElement('div');
     item.className = 'list-item';
     item.style.flexDirection = 'column';
     item.style.alignItems = 'stretch';
-    const hasData = h.themes && h.themes.length > 0;
-    const tagsHtml = hasData
-      ? h.themes.map((t,i) => {
-          const key = `${h.date}|${t}`;
-          const isActive = openHistoryKey === key;
-          return `<span class="history-tag ${i===0?'r1':'r2'} ${isActive?'active-tag':''}" data-key="${key}" data-date="${h.date}" data-theme="${t}">${i+1}. ${t}</span>`;
-        }).join('')
-      : `<span class="history-empty">데이터 없음</span>`;
-
+    const tagsHtml = data.themes.map((t, i) => {
+      const key = `${historyDate}|${t}`;
+      const isActive = openHistoryKey === key;
+      return `<span class="history-tag ${i===0?'r1':'r2'} ${isActive?'active-tag':''}" data-key="${key}" data-date="${historyDate}" data-theme="${t}">${i+1}. ${t}</span>`;
+    }).join('');
     let detailHtml = '';
-    if (openHistoryKey && h.themes.includes(openHistoryKey.split('|')[1]) && openHistoryKey.startsWith(h.date + '|')) {
+    if (openHistoryKey && openHistoryKey.startsWith(historyDate + '|') && data.themes.includes(openHistoryKey.split('|')[1])) {
       const cached = historyDetailCache[openHistoryKey];
       if (!cached) detailHtml = `<div class="history-detail open"><div class="history-loading">불러오는 중...</div></div>`;
       else if (cached === 'nodemo') detailHtml = `<div class="history-detail open"><div class="history-nodata">⚙에서 실시간 연동하면 종목 목록이 표시됩니다.</div></div>`;
@@ -1031,17 +1127,12 @@ function renderHistory() {
         detailHtml = `<div class="history-detail open">${rowsHtml}</div>`;
       }
     }
-
-    item.innerHTML = `<div class="history-row">
-        <span class="history-date ${hasData?'has-data':''}">${h.date}</span>
-        <div class="history-themes">${tagsHtml}</div>
-      </div>${detailHtml}`;
-
+    item.innerHTML = `<div class="history-row"><span class="history-date has-data">주도 테마</span><div class="history-themes">${tagsHtml}</div></div>${detailHtml}`;
     item.querySelectorAll('.history-tag').forEach(tag => {
       tag.addEventListener('click', () => {
         const key = tag.dataset.key;
         openHistoryKey = (openHistoryKey === key) ? null : key;
-        renderHistory();
+        renderCalendar();
         if (openHistoryKey === key) loadHistoryDetail(tag.dataset.date, tag.dataset.theme, key);
       });
     });
@@ -1049,59 +1140,55 @@ function renderHistory() {
       const code = row.dataset.code;
       if (code) row.addEventListener('click', () => window.open(`https://m.stock.naver.com/domestic/stock/${code}/total`, '_blank'));
     });
+    wrap.appendChild(item);
+  }
 
-    list.appendChild(item);
-  });
-}
-
-let openScheduleKey = null;
-
-function renderSchedule() {
-  const groups = D('schedule', DEMO_SCHEDULE);
-  const list = document.getElementById('scheduleList');
-  list.innerHTML = '';
-  const today = new Date('2026-07-02');
-  groups.forEach(g => {
-    const head = document.createElement('div');
-    head.className = 'month-head';
-    head.textContent = g.month;
-    list.appendChild(head);
-    g.items.forEach(it => {
-      try {
-        const [mm, dd] = it.date.split('.');
-        const evDate = new Date(`2026-${mm}-${dd}`);
-        const soon = (evDate - today) / 86400000 <= 14 && (evDate - today) >= 0;
-        const item = document.createElement('div');
-        item.className = 'list-item';
-        // 🔧 [방어 코드] GAS가 아직 구버전(titles 배열)을 내려주는 경우까지 안 죽고 표시되도록 자동 변환
-        const events = it.events || (it.titles || []).map(t => ({ title: t, brief: null }));
-        const eventsHtml = events.map((e, idx) => {
-          const key = `${it.date}|${idx}`;
-          const hasBrief = !!e.brief;
-          const isOpen = openScheduleKey === key;
-          return `<div class="sched-event ${hasBrief ? 'has-brief' : ''}" data-key="${key}">
-              <div class="sched-title"><span class="sched-pin">${hasBrief ? '🧠' : '📌'}</span>${e.title}${hasBrief ? '<span class="sched-chevron">▾</span>' : ''}</div>
-              ${hasBrief ? `<div class="sched-brief ${isOpen ? 'open' : ''}"><div class="sched-brief-inner">${e.brief}</div></div>` : ''}
-            </div>`;
-        }).join('');
-        item.innerHTML = `<div class="sched-row" style="flex:1;">
-            <span class="sched-date ${soon?'soon':''}">${it.date}</span>
-            <div style="flex:1;">${eventsHtml}</div>
-          </div>`;
-        item.querySelectorAll('.sched-event.has-brief').forEach(el => {
-          el.addEventListener('click', () => {
-            const key = el.dataset.key;
-            openScheduleKey = (openScheduleKey === key) ? null : key;
-            renderSchedule();
-          });
-        });
-        list.appendChild(item);
-      } catch (err) {
-        console.error('일정 항목 렌더링 오류(건너뜀):', it, err);
-      }
+  // 미래 일정
+  if (data.events && data.events.length > 0) {
+    const item = document.createElement('div');
+    item.className = 'list-item';
+    item.style.flexDirection = 'column';
+    item.style.alignItems = 'stretch';
+    item.style.marginTop = (data.themes && data.themes.length) ? '8px' : '0';
+    const eventsHtml = data.events.map((e, idx) => {
+      const key = `${selectedCalDateStr}|${idx}`;
+      const hasBrief = !!e.brief;
+      const isOpen = openScheduleKey === key;
+      return `<div class="sched-event ${hasBrief ? 'has-brief' : ''}" data-key="${key}">
+          <div class="sched-title"><span class="sched-pin">${hasBrief ? '🧠' : '📌'}</span>${e.title}${hasBrief ? '<span class="sched-chevron">▾</span>' : ''}</div>
+          ${hasBrief ? `<div class="sched-brief ${isOpen ? 'open' : ''}"><div class="sched-brief-inner">${e.brief}</div></div>` : ''}
+        </div>`;
+    }).join('');
+    item.innerHTML = eventsHtml;
+    item.querySelectorAll('.sched-event.has-brief').forEach(el => {
+      el.addEventListener('click', () => {
+        const key = el.dataset.key;
+        openScheduleKey = (openScheduleKey === key) ? null : key;
+        renderCalendar();
+      });
     });
-  });
+    wrap.appendChild(item);
+  }
+
+  if (!(data.themes && data.themes.length) && !(data.events && data.events.length)) {
+    wrap.innerHTML += '<div class="cal-detail-empty">이 날짜엔 기록된 테마나 일정이 없습니다.</div>';
+  }
 }
+
+function renderCalendar() {
+  const dataMap = buildCalDataMap();
+  renderCalGrid(dataMap);
+  renderCalDetail(dataMap);
+}
+
+document.getElementById('calPrevBtn').addEventListener('click', () => {
+  currentCalMonth = new Date(currentCalMonth.getFullYear(), currentCalMonth.getMonth() - 1, 1);
+  renderCalendar();
+});
+document.getElementById('calNextBtn').addEventListener('click', () => {
+  currentCalMonth = new Date(currentCalMonth.getFullYear(), currentCalMonth.getMonth() + 1, 1);
+  renderCalendar();
+});
 
 function renderSearchTop() {
   const rows = D('searchTop', DEMO_SEARCHTOP);
@@ -1285,10 +1372,10 @@ async function renderWatchlist() {
   enableWatchlistDrag(list);
 }
 
-const RENDERERS = { scanner:renderScanner, watchlist:renderWatchlist, report:renderReport, theme:renderTheme, news:renderNews, history:renderHistory, schedule:renderSchedule, search:renderSearchTop };
+const RENDERERS = { scanner:renderScanner, watchlist:renderWatchlist, report:renderReport, theme:renderTheme, news:renderNews, calendar:renderCalendar, search:renderSearchTop };
 function renderAll() { renderHeader(); (RENDERERS[currentTab] || renderScanner)(); }
 
-const TAB_ORDER = ['scanner','watchlist','report','theme','news','history','schedule','search'];
+const TAB_ORDER = ['scanner','watchlist','report','theme','news','calendar','search'];
 let isTransitioning = false;
 
 function switchTab(tabName) {
