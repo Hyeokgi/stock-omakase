@@ -39,17 +39,53 @@ def clean_emojis(text):
     for e in emojis: text = text.replace(e, '')
     return text.replace('  ', ' ').strip()
  
+class GeminiUnreachableError(Exception):
+    """🆕 [회로차단기] 제미나이가 실제로 다운/불통 상태로 판단될 때 던지는 전용 예외.
+       일반 예외와 구분해서, 이걸 잡은 상위 로직이 '오늘은 AI 없이 안전하게 종료'를 선택할 수 있게 함."""
+    pass
+
+# 🆕 [회로차단기] DART 수집기 때와 동일한 패턴 — 최근 N회 호출 중 실패율이 임계치를 넘으면
+#    "일시적 지연"이 아니라 "진짜 불통"으로 판단하고, 헛되이 재시도로 시간을 낭비하는 대신
+#    즉시 포기하고 다음 예약 실행에서 자연스럽게 복구되게 함.
+_gemini_recent_results = []
+GEMINI_ROLLING_WINDOW = 20
+GEMINI_FAIL_RATE_THRESHOLD = 0.6
+_gemini_consecutive_fails = 0
+GEMINI_CONSECUTIVE_FAIL_LIMIT = 5
+
+def _record_gemini_result(ok):
+    global _gemini_consecutive_fails
+    _gemini_recent_results.append(ok)
+    if len(_gemini_recent_results) > GEMINI_ROLLING_WINDOW:
+        _gemini_recent_results.pop(0)
+    _gemini_consecutive_fails = 0 if ok else _gemini_consecutive_fails + 1
+    if _gemini_consecutive_fails >= GEMINI_CONSECUTIVE_FAIL_LIMIT:
+        raise GeminiUnreachableError(f"제미나이 연속 {_gemini_consecutive_fails}회 실패 — 완전 불통으로 판단")
+    if len(_gemini_recent_results) >= 10:
+        fail_rate = 1 - (sum(_gemini_recent_results) / len(_gemini_recent_results))
+        if fail_rate >= GEMINI_FAIL_RATE_THRESHOLD:
+            raise GeminiUnreachableError(f"제미나이 최근 {len(_gemini_recent_results)}회 중 실패율 {fail_rate:.0%} — 간헐적 불통으로 판단")
+
+
 def safe_generate_content(contents, is_fast=False):
     model_name = 'gemini-2.5-flash' if is_fast else 'gemini-2.5-pro'
     for i in range(5): 
         try: 
-            return client.models.generate_content(model=model_name, contents=contents)
+            result = client.models.generate_content(model=model_name, contents=contents)
+            _record_gemini_result(True)
+            return result
+        except GeminiUnreachableError:
+            raise  # 회로차단기가 이미 발동한 거라 더 재시도하지 않고 바로 위로 전파
         except Exception as e:
             if "503" in str(e) or "429" in str(e) or "quota" in str(e).lower():
+                _record_gemini_result(False)  # 회로차단기 임계치 넘으면 여기서 GeminiUnreachableError로 즉시 중단됨
                 wait_time = 10 * (i + 1)
                 print(f"⚠️ 구글 API 지연. {wait_time}초 대기 후 재시도...")
                 time.sleep(wait_time)
-            else: raise e 
+            else:
+                _record_gemini_result(False)
+                raise e 
+    _record_gemini_result(False)
     raise Exception("❌ 구글 서버 할당량 초과 또는 무응답으로 최종 실패")
  
 def parse_ai_json(text):
@@ -185,7 +221,7 @@ def generate_deep_report(st_type, best_cand, is_warning_market=False, KIS_TOKEN=
 {strategy_instruction}
 
 [HYEOKS 딥리딩 절대 지침 - 명심하십시오]
-1. 분량 및 깊이: 귀하의 최고 수준의 통찰력을 발휘하여 충분히 길고 논리적으로 1.5~2페이지 분량이 나오도록 상세히 서술하십시오.
+1. 분량 및 깊이: 귀하의 최고 수준의 통찰력을 발휘하여 논리적으로 서술하되, 전체 분량이 A4 최대 2페이지를 넘지 않도록 하십시오.
 2. 🚨 [할루시네이션(거짓 정보) 엄격 금지]: 차트를 판독하여 지지/저항선을 제시할 때, 반드시 위 [입력 데이터]에 제공된 ★확정 현재가({best_cand['curr_p']}원)를 기준으로 상/하단 가격을 논리적으로 계산하십시오.
 3. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'O' if st_type=='mid' else 'X'} 형식으로 숫자로만 출력하십시오.{earnings_instruction}
 
@@ -198,16 +234,22 @@ def generate_deep_report(st_type, best_cand, is_warning_market=False, KIS_TOKEN=
 
 <div class="summary-box">
 [HYEOKS 핵심 모멘텀 요약]
-🚨 [가독성 극대화 지침]: 여기에는 부차적인 수급 설명이나 주절주절 긴 문장을 절대 작성하지 마십시오. 수석 트레이더가 한눈에 직관적으로 파악할 수 있도록 핵심 호재와 차트 위치만 압축하여 "역대급 거래대금 동반 장기 박스권 상단 돌파로 단기 슈팅 초입 국면 판독." 과 같이 구두점 포함 반드시 '50자 이내의 완결된 딱 한 문장'으로만 끝내십시오. 문장 뒤에 다른 사족을 붙여 길어지게 만들면 시스템 탈락 처리됩니다.
+🚨 [작성 지침]: 첫 문장은 반드시 구두점 포함 '50자 이내의 완결된 딱 한 문장'으로, 핵심 호재와 차트 위치만 압축한 헤드라인으로 작성하십시오
+(예: "역대급 거래대금 동반 장기 박스권 상단 돌파로 단기 슈팅 초입 국면 판독."). 이 첫 문장은 다른 시스템에서 그대로 발췌되니 반드시 이 한 문장 안에서 완결되어야 합니다.
+그 뒤에 이어서, 진짜 증권사 리포트의 총평처럼 2~3문장을 추가로 덧붙여 이 종목의 투자 포인트를 조금 더 풍부하게 설명하십시오
+(핵심 근거 한 문장 + 리스크 요인 한 문장 정도의 균형 잡힌 총평). 전체 문단이 5문장을 넘지는 마십시오.
 </div>
 
 ## 1. 펀더멘털 및 매크로 유동성 심층 고찰
-(FRED 지표 흐름 해석 및 당일 뉴스를 바탕으로 숨겨진 진짜 모멘텀을 심층 분석)
+(FRED 지표 흐름 해석을 바탕으로 숨겨진 진짜 모멘텀을 심층 분석. 뉴스·이슈는 아래 2번 섹션에서 별도로 다루니 여기선 매크로·펀더멘털에 집중하십시오.)
 
-## 2. 시각적 차트 판독 및 거래량 딥리딩
+## 2. 뉴스 및 이슈 분석
+(위 [입력 데이터]의 최신 뉴스를 바탕으로, 이 종목과 직접 관련된 이슈·재료가 주가에 미치는 영향을 애널리스트 관점으로 분석. 뉴스가 빈약하거나 무관하면 "특기할 만한 개별 뉴스 없음. 수급·차트 동력 중심의 접근이 유효"처럼 정직하게 명시하고 억지로 서술을 늘리지 마십시오.)
+
+## 3. 시각적 차트 판독 및 거래량 딥리딩
 (주요 매물대, 이평선 이격도, 최근 스마트머니의 거래량 증감 해부)
 
-## 3. 실전 타점 시나리오 및 리스크 관리 전략
+## 4. 실전 타점 시나리오 및 리스크 관리 전략
 (시간외 데이터를 반영한 익일 시가 갭 대응 시나리오, 1차/2차 진입 가격대, 목표가/손절가를 매우 상세하게 작성할 것)
 
 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'O' if st_type=='mid' else 'X'} """
@@ -788,8 +830,38 @@ try:
         현재 국내 증시는 역대급 패닉 폭락 장세인 [{korean_market_status}] 상태입니다.
         자산을 사수하기 위한 강력한 경고 메시지와 전원 사격 중지(현금 100% 관망)의 당위성을 거시 매크로 분석과 함께 1페이지 분량으로 묵직하게 작성하십시오. 정중한 하십시오체를 사용하십시오. 작성일: {today_korean}"""
     else:
-        macro_prompt = f"""귀하는 HYEOKS 리서치 센터의 수석 퀀트 애널리스트입니다. 아래 데이터를 바탕으로 '오늘의 시황 및 매크로 브리핑'을 1페이지 분량으로 상세히 작성하십시오. 작성일: {today_korean} 매크로: 나스닥 {nasdaq}, 환율 {exchange}, 국내증시 {status_txt} 뉴스 키워드: {news_keywords}
-[엄수 규칙] 키워드는 뉴스 빈도일 뿐 검증된 테마가 아닙니다. 의미가 불명확한 단일 단어(예: 색깔/형용사/추상어)를 근거로 실재하지 않는 신규 테마나 종목군을 창작·명명하지 마십시오. 출처가 불분명한 키워드는 해석을 보류하거나 언급하지 않습니다."""
+        # 🔧 [수정] 예전엔 "1페이지 분량으로"라는 느슨한 지시만 있어서 실제로는 자주 2페이지를 넘겨
+        #    추천주 리포트가 3페이지부터 시작하는 문제가 있었음. 열린 산문 대신 불릿·문장수 상한을 강제하는
+        #    구조로 바꿔서, 진짜로 "그날의 엑기스"만 한눈에 들어오도록 압축.
+        macro_prompt = f"""귀하는 HYEOKS 리서치 센터의 수석 퀀트 애널리스트입니다. 아래 데이터를 바탕으로 '오늘의 시황 브리핑'을 작성하십시오. 작성일: {today_korean}
+매크로: 나스닥 {nasdaq}, 환율 {exchange}, 국내증시 {status_txt}
+뉴스 키워드: {news_keywords}
+
+[🚨 분량 절대 규칙 — 반드시 지키십시오]
+전체가 A4 1페이지를 절대 넘지 않아야 합니다. 아래 양식의 각 항목별 문장 수 상한을 넘기지 마십시오.
+장황한 수식어·반복 설명·완곡한 서두를 전부 배제하고, 핵심 사실과 판단만 압축해서 쓰십시오.
+
+[엄수 규칙] 키워드는 뉴스 빈도일 뿐 검증된 테마가 아닙니다. 의미가 불명확한 단일 단어(예: 색깔/형용사/추상어)를 근거로 실재하지 않는 신규 테마나 종목군을 창작·명명하지 마십시오. 출처가 불분명한 키워드는 해석을 보류하거나 언급하지 않습니다.
+
+[출력 양식 — 아래 HTML 구조를 그대로 따르십시오]
+
+<div class="summary-box">
+<b>[오늘의 3줄 요약]</b>
+<ul>
+<li>(해외 매크로 핵심 한 줄 — 25자 이내)</li>
+<li>(국내 증시 상황 핵심 한 줄 — 25자 이내)</li>
+<li>(오늘의 투자 시사점 핵심 한 줄 — 25자 이내)</li>
+</ul>
+</div>
+
+## 해외 매크로
+(나스닥·환율 흐름과 그 의미를 정확히 2~3문장으로만. 그 이상 쓰지 마십시오.)
+
+## 국내 수급 및 이슈
+(국내 증시 현황과 뉴스 키워드 중 의미 있는 것만 골라 정확히 2~3문장으로만. 그 이상 쓰지 마십시오.)
+
+## 오늘의 시사점
+(위 내용을 종합한 실전 투자 판단을 정확히 1~2문장으로만. 그 이상 쓰지 마십시오.)"""
     
     market_summary = safe_generate_content(macro_prompt).text
  
@@ -1105,5 +1177,9 @@ try:
     except Exception as e: print(f"⚠️ [백테스트 V6 Step1] 리포트 채널 기록 에러: {e}")
         
     print(f"🎉 모든 작업이 성공적으로 완료되었습니다: {pdf_file}")
+except GeminiUnreachableError as e:
+    print(f"\n🚨 [제미나이 회로차단기 발동] {e}")
+    print("   → 헛되이 재시도하며 시간을 낭비하지 않고 여기서 안전하게 종료합니다. 다음 예약 실행에서 자연스럽게 복구됩니다.")
+    exit(1)
 except Exception as e:
     print(f"\n❌ 시스템 에러: {e}"); exit(1)
