@@ -53,7 +53,7 @@
     margin: 0; padding: 0; background: var(--bg); color: var(--text);
     min-height: 100vh; overscroll-behavior-y: contain;
   }
-  .mono { font-family: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", monospace; font-variant-numeric: tabular-nums; letter-spacing: -0.2px; }
+  .mono { font-family: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", monospace; }
   a { color: inherit; text-decoration: none; }
 
   .pulse-bar {
@@ -137,21 +137,17 @@
   }
   .chip.active { background: var(--text); color: var(--bg); border-color: var(--text); font-weight: 600; }
 
-  main { padding: 10px 16px calc(84px + var(--safe-bottom)); display: flex; flex-direction: column; gap: 12px; }
+  main { padding: 10px 16px calc(84px + var(--safe-bottom)); display: flex; flex-direction: column; gap: 10px; }
   #viewport { position: relative; overflow: hidden; }
-  .view { display: none; flex-direction: column; gap: 12px; width: 100%; }
+  .view { display: none; flex-direction: column; gap: 10px; width: 100%; }
   .view.active { display: flex; }
 
   .empty-state { text-align:center; padding: 60px 20px; color: var(--text-3); font-size: 13px; }
 
   .card {
     background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
-    padding: 14px 15px; transition: background 0.15s, box-shadow 0.15s;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.06), 0 6px 16px -8px rgba(0,0,0,0.18);
+    padding: 13px 14px; transition: background 0.15s;
   }
-  .card.open { box-shadow: 0 2px 4px rgba(0,0,0,0.08), 0 10px 24px -10px rgba(0,0,0,0.24); }
-  .card.accent-up { border-left: 3px solid color-mix(in srgb, var(--up) 45%, var(--border)); }
-  .card.accent-down { border-left: 3px solid color-mix(in srgb, var(--down) 45%, var(--border)); }
   .card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; cursor: pointer; }
   .name-block { display:flex; flex-direction: column; gap: 3px; min-width:0; }
   .name-row { display: flex; align-items: center; gap: 6px; }
@@ -206,10 +202,8 @@
   .price-block { text-align: right; flex-shrink: 0; }
   .price { font-size: 15.5px; font-weight: 700; }
   .change { font-size: 12.5px; font-weight: 700; }
-  .change-pill { display: inline-flex; align-items: center; gap: 2px; padding: 3px 7px; border-radius: 8px; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
-  .change-pill.up { color: var(--up); background: color-mix(in srgb, var(--up) 18%, transparent); }
-  .change-pill.down { color: var(--down); background: color-mix(in srgb, var(--down) 18%, transparent); }
-  .change-pill.flat { color: var(--text-2); background: var(--surface-hi); }
+  .change.up { color: var(--up); }
+  .change.down { color: var(--down); }
 
   .badge-row { margin-top: 9px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .tajeom-badge {
@@ -261,7 +255,6 @@
   .list-item {
     background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
     padding: 12px 14px; display:flex; align-items:center; justify-content: space-between; gap: 10px;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.05), 0 4px 12px -8px rgba(0,0,0,0.16);
   }
   .list-item.link { cursor:pointer; }
   .list-item.link:active { background: var(--surface-hi); }
@@ -314,26 +307,6 @@
   .sched-event { margin-bottom: 4px; }
   .sched-event.has-brief { cursor: pointer; }
   .sched-chevron { font-size: 10px; color: var(--gold); margin-left: 4px; }
-
-  .cal-nav { display:flex; align-items:center; justify-content:space-between; padding: 8px 4px 12px; }
-  .cal-nav-btn { background: var(--surface); border: 1px solid var(--border); color: var(--text-2); font-size:18px; width:32px; height:32px; border-radius:10px; }
-  .cal-month-label { font-size: 15px; font-weight: 800; }
-  .cal-weekdays { display:grid; grid-template-columns: repeat(7, 1fr); text-align:center; font-size:11px; color:var(--text-3); padding-bottom:6px; font-weight:600; }
-  .cal-grid { display:grid; grid-template-columns: repeat(7, 1fr); gap: 3px; margin-bottom: 12px; }
-  .cal-day { aspect-ratio: 1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; border-radius: 11px; cursor:pointer; transition: background 0.12s; }
-  .cal-day:active { background: var(--surface-hi); }
-  .cal-day.other-month { opacity: 0.22; pointer-events:none; }
-  .cal-day.has-data { background: color-mix(in srgb, var(--gold) 6%, var(--surface)); }
-  .cal-day-num { font-size: 12.5px; font-weight: 600; }
-  .cal-day.today { background: color-mix(in srgb, var(--gold) 18%, var(--surface)); }
-  .cal-day.today .cal-day-num { color: var(--gold); font-weight: 800; }
-  .cal-day.selected { background: var(--surface-hi); border: 1.5px solid var(--gold); }
-  .cal-dot-row { display:flex; gap: 3px; height: 6px; }
-  .cal-dot { width: 5px; height: 5px; border-radius: 50%; display:inline-block; }
-  .cal-legend { display:flex; gap: 16px; font-size: 11px; color: var(--text-3); padding: 0 2px 14px; }
-  .cal-legend span { display:flex; align-items:center; gap: 5px; }
-  .cal-detail-date { font-size: 13.5px; font-weight: 800; color: var(--text-2); padding: 2px 2px 10px; border-top: 1px solid var(--border); padding-top: 14px; }
-  .cal-section-label { font-size: 12px; font-weight: 700; color: var(--text-3); margin: 12px 2px 8px; }
   .sched-brief { max-height: 0; overflow: hidden; transition: max-height 0.25s ease; }
   .sched-brief.open { max-height: 600px; margin-top: 6px; }
   .sched-brief-inner {
@@ -355,7 +328,6 @@
   .tab-btn {
     flex: 1; display:flex; flex-direction:column; align-items:center; gap:2px;
     padding: 6px 0; border: none; background: transparent; color: var(--text-3); cursor:pointer;
-    position: relative;
   }
   .tab-btn .tab-icon {
     font-size: 16px; display: flex; align-items: center; justify-content: center;
@@ -363,10 +335,6 @@
   }
   .tab-btn .tab-label { font-size: 9.5px; font-weight: 600; white-space: nowrap; }
   .tab-btn.active { color: var(--gold); }
-  .tab-btn.active::after {
-    content: ''; position: absolute; bottom: 2px; left: 50%; transform: translateX(-50%);
-    width: 4px; height: 4px; border-radius: 50%; background: var(--gold);
-  }
 
   .config-panel {
     position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 50;
@@ -389,6 +357,30 @@
   .config-btn { flex: 1; padding: 11px; border-radius: 10px; border: none; font-weight: 700; font-size: 13.5px; cursor: pointer; }
   .config-btn.primary { background: var(--gold); color: #1A1408; }
   .config-btn.ghost { background: var(--surface-hi); color: var(--text-2); border: 1px solid var(--border); }
+  /* 🆕 [매뉴얼 삽입] 지인·가족에게 앱만 전달하면 매뉴얼도 그 안에서 바로 볼 수 있도록 —
+     별도 파일을 매번 따로 보낼 필요 없이, 앱 자체에 통째로 내장. */
+  .manual-fab {
+    position: fixed; left: 16px; bottom: 76px; z-index: 36;
+    width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--border);
+    background: var(--surface); color: var(--gold); font-size: 19px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3); display:flex; align-items:center; justify-content:center;
+    cursor: pointer;
+  }
+  .manual-modal-overlay {
+    display: none; position: fixed; inset: 0; z-index: 200;
+    background: rgba(0,0,0,0.6);
+  }
+  .manual-modal-overlay.open { display: flex; flex-direction: column; }
+  .manual-modal-bar {
+    flex: 0 0 auto; display:flex; align-items:center; justify-content:space-between;
+    padding: calc(10px + var(--safe-top)) 16px 10px; background: var(--surface); border-bottom: 1px solid var(--border);
+  }
+  .manual-modal-bar .title { font-weight: 700; font-size: 15px; color: var(--text); }
+  .manual-modal-bar button {
+    border: none; background: transparent; color: var(--text-2); font-size: 22px; line-height:1; cursor: pointer; padding: 4px 8px;
+  }
+  .manual-modal-frame-wrap { flex: 1 1 auto; overflow: hidden; }
+  .manual-modal-frame-wrap iframe { width: 100%; height: 100%; border: none; background: #fff; }
 </style>
 </head>
 <body>
@@ -469,19 +461,13 @@
   <main id="newsList" style="padding-top:0;"></main>
 </div>
 
-<div class="view" id="view-calendar">
-  <div class="tab-header"><div class="tab-title">캘린더</div></div>
-  <main id="calendarList" style="padding-top:0;">
-    <div class="cal-nav">
-      <button id="calPrevBtn" class="cal-nav-btn">‹</button>
-      <div class="cal-month-label" id="calMonthLabel"></div>
-      <button id="calNextBtn" class="cal-nav-btn">›</button>
-    </div>
-    <div class="cal-weekdays"><span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span></div>
-    <div class="cal-grid" id="calGrid"></div>
-    <div class="cal-legend"><span><i class="cal-dot" style="background:var(--down);"></i> 그날의 테마</span><span><i class="cal-dot" style="background:var(--gold);"></i> 예정된 일정</span></div>
-    <div id="calDetail"></div>
-  </main>
+<div class="view" id="view-history">
+  <div class="tab-header"><div class="tab-title">테마복기</div></div>
+  <main id="historyList"></main>
+</div>
+
+<div class="view" id="view-schedule">
+  <main id="scheduleList"></main>
 </div>
 
 <div class="view" id="view-search">
@@ -492,13 +478,23 @@
 
 <button id="backToTopBtn" style="display:none; position:fixed; right:16px; bottom:76px; z-index:35; width:40px; height:40px; border-radius:50%; border:1px solid var(--border); background:var(--surface); color:var(--text-2); font-size:16px; box-shadow:0 4px 12px rgba(0,0,0,0.3);">↑</button>
 
+<button class="manual-fab" id="manualFab" title="시스템 매뉴얼">📖</button>
+<div class="manual-modal-overlay" id="manualModalOverlay">
+  <div class="manual-modal-bar">
+    <div class="title">📖 HYEOKS 시스템 매뉴얼</div>
+    <button id="manualCloseBtn">✕</button>
+  </div>
+  <div class="manual-modal-frame-wrap" id="manualFrameWrap"></div>
+</div>
+
 <div class="tabbar" id="tabbar">
   <button class="tab-btn active" data-tab="scanner"><span class="tab-icon">☰</span><span class="tab-label">스캐너</span></button>
   <button class="tab-btn" data-tab="watchlist"><span class="tab-icon">★</span><span class="tab-label">관심</span></button>
   <button class="tab-btn" data-tab="report"><span class="tab-icon">📄</span><span class="tab-label">리포트</span></button>
   <button class="tab-btn" data-tab="theme"><span class="tab-icon">📊</span><span class="tab-label">테마</span></button>
   <button class="tab-btn" data-tab="news"><span class="tab-icon">📰</span><span class="tab-label">뉴스</span></button>
-  <button class="tab-btn" data-tab="calendar"><span class="tab-icon">🗓</span><span class="tab-label">캘린더</span></button>
+  <button class="tab-btn" data-tab="history"><span class="tab-icon">📅</span><span class="tab-label">복기</span></button>
+  <button class="tab-btn" data-tab="schedule"><span class="tab-icon">🗓</span><span class="tab-label">일정</span></button>
   <button class="tab-btn" data-tab="search"><span class="tab-icon">🔎</span><span class="tab-label">검색</span></button>
 </div>
 
@@ -748,9 +744,8 @@ function fmtEok(n) {
   return `${sign}${abs.toLocaleString('ko-KR')}억`;
 }
 function changeSpan(change) {
-  if (change === 0) return `<span class="change-pill flat">− 0.00%</span>`;
-  const isUp = change > 0;
-  return `<span class="change-pill ${isUp?'up':'down'}">${isUp?'▲':'▼'} ${Math.abs(change).toFixed(2)}%</span>`;
+  const isUp = change >= 0;
+  return `<span class="mono ${isUp?'up':'down'}" style="font-weight:700;">${isUp?'▲':'▼'} ${Math.abs(change).toFixed(2)}%</span>`;
 }
 
 function renderHeader() {
@@ -789,7 +784,7 @@ function buildStockCardHtml(r) {
         </div>
         <div class="price-block ${priceFlash}">
           <div class="price mono">${fmtPrice(r.price)}</div>
-          <div class="change">${changeSpan(r.change)}</div>
+          <div class="change mono ${isUp ? 'up' : 'down'}">${isUp ? '▲' : '▼'} ${Math.abs(r.change).toFixed(2)}%</div>
         </div>
       </div>
       <div class="badge-row">
@@ -905,7 +900,7 @@ function renderScanner() {
   filtered.forEach(r => {
     const card = document.createElement('div');
     const isOpen = openCard === r.code;
-    card.className = 'card' + (isOpen ? ' open' : '') + (r.change >= 0 ? ' accent-up' : ' accent-down');
+    card.className = 'card' + (isOpen ? ' open' : '');
     card.innerHTML = buildStockCardHtml(r);
     attachCardHandlers(card, r, isOpen, (v) => { openCard = v; }, renderScanner);
     list.appendChild(card);
@@ -983,17 +978,15 @@ function renderNews() {
 
 let openHistoryKey = null;
 const historyDetailCache = {};
-let openScheduleKey = null;
-let calYear = null, calMonth = null, calSelectedDate = null;
 
 function toDashDate(dotDate) { return dotDate.replace(/\./g, '-').replace(/-$/, ''); }
 
 async function loadHistoryDetail(date, theme, key) {
-  if (historyDetailCache[key]) { renderCalendarDetail(); return; }
+  if (historyDetailCache[key]) { renderHistory(); return; }
   const demoStocks = DEMO_HISTORY_STOCKS[key];
   if (!liveData) {
     historyDetailCache[key] = demoStocks || 'nodemo';
-    renderCalendarDetail();
+    renderHistory();
     return;
   }
   const saved = await safeGet('gasUrl');
@@ -1006,141 +999,106 @@ async function loadHistoryDetail(date, theme, key) {
   } catch (err) {
     historyDetailCache[key] = 'error';
   }
-  renderCalendarDetail();
+  renderHistory();
 }
 
-// 🆕 [통합] 테마복기(과거)와 주요일정(미래)을 하나의 날짜 지도로 합침 — 캘린더 한 칸 한 칸이
-//    "그날 뭐가 있었는지/있을지"를 dataMap[yyyy-MM-dd] = {themes?, events?} 형태로 가짐
-function buildCalendarDataMap() {
-  const map = {};
-  D('history', DEMO_HISTORY).forEach(h => {
-    if (h.themes && h.themes.length) {
-      map[h.date] = map[h.date] || {};
-      map[h.date].themes = h.themes;
-    }
-  });
-  D('schedule', DEMO_SCHEDULE).forEach(g => {
-    const mMatch = g.month.match(/(\d{4})년\s*(\d{1,2})월/);
-    if (!mMatch) return;
-    const yyyy = mMatch[1];
-    g.items.forEach(it => {
-      const [mm, dd] = it.date.split('.');
-      if (!mm || !dd) return;
-      const dateStr = `${yyyy}-${mm.padStart(2,'0')}-${dd.padStart(2,'0')}`;
-      const events = it.events || (it.titles || []).map(t => ({ title: t, brief: null }));
-      map[dateStr] = map[dateStr] || {};
-      map[dateStr].events = events;
-    });
-  });
-  return map;
-}
+function renderHistory() {
+  const rows = D('history', DEMO_HISTORY);
+  const list = document.getElementById('historyList');
+  list.innerHTML = '';
+  rows.forEach(h => {
+    const item = document.createElement('div');
+    item.className = 'list-item';
+    item.style.flexDirection = 'column';
+    item.style.alignItems = 'stretch';
+    const hasData = h.themes && h.themes.length > 0;
+    const tagsHtml = hasData
+      ? h.themes.map((t,i) => {
+          const key = `${h.date}|${t}`;
+          const isActive = openHistoryKey === key;
+          return `<span class="history-tag ${i===0?'r1':'r2'} ${isActive?'active-tag':''}" data-key="${key}" data-date="${h.date}" data-theme="${t}">${i+1}. ${t}</span>`;
+        }).join('')
+      : `<span class="history-empty">데이터 없음</span>`;
 
-function renderCalendar() {
-  if (calYear === null) {
-    const now = new Date();
-    calYear = now.getFullYear();
-    calMonth = now.getMonth() + 1;
-  }
-  document.getElementById('calPrevBtn').onclick = () => { calMonth--; if (calMonth < 1) { calMonth = 12; calYear--; } renderCalendarGrid(); };
-  document.getElementById('calNextBtn').onclick = () => { calMonth++; if (calMonth > 12) { calMonth = 1; calYear++; } renderCalendarGrid(); };
-  renderCalendarGrid();
-  renderCalendarDetail();
-}
-
-function renderCalendarGrid() {
-  const grid = document.getElementById('calGrid');
-  const dataMap = buildCalendarDataMap();
-  const now = new Date();
-  const todayStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
-  document.getElementById('calMonthLabel').textContent = `${calYear}년 ${calMonth}월`;
-
-  const firstWeekday = new Date(calYear, calMonth - 1, 1).getDay();
-  const daysInMonth = new Date(calYear, calMonth, 0).getDate();
-  const daysInPrevMonth = new Date(calYear, calMonth - 1, 0).getDate();
-
-  let html = '';
-  for (let i = firstWeekday - 1; i >= 0; i--) html += `<div class="cal-day other-month"><span class="cal-day-num">${daysInPrevMonth - i}</span></div>`;
-  for (let d = 1; d <= daysInMonth; d++) {
-    const dateStr = `${calYear}-${String(calMonth).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-    const info = dataMap[dateStr];
-    const hasHistory = !!(info && info.themes && info.themes.length);
-    const hasSchedule = !!(info && info.events && info.events.length);
-    let dots = '';
-    if (hasHistory) dots += `<i class="cal-dot" style="background:var(--down);"></i>`;
-    if (hasSchedule) dots += `<i class="cal-dot" style="background:var(--gold);"></i>`;
-    html += `<div class="cal-day ${dateStr===todayStr?'today':''} ${dateStr===calSelectedDate?'selected':''} ${(hasHistory||hasSchedule)?'has-data':''}" data-date="${dateStr}">
-        <span class="cal-day-num">${d}</span><div class="cal-dot-row">${dots}</div>
-      </div>`;
-  }
-  const trailing = (7 - ((firstWeekday + daysInMonth) % 7)) % 7;
-  for (let d = 1; d <= trailing; d++) html += `<div class="cal-day other-month"><span class="cal-day-num">${d}</span></div>`;
-
-  grid.innerHTML = html;
-  grid.querySelectorAll('.cal-day:not(.other-month)').forEach(cell => {
-    cell.addEventListener('click', () => {
-      calSelectedDate = (calSelectedDate === cell.dataset.date) ? null : cell.dataset.date;
-      openHistoryKey = null; openScheduleKey = null;
-      renderCalendarGrid();
-      renderCalendarDetail();
-    });
-  });
-}
-
-function renderCalendarDetail() {
-  const detail = document.getElementById('calDetail');
-  if (!calSelectedDate) { detail.innerHTML = `<div class="history-empty" style="padding:24px 4px; text-align:center;">날짜를 눌러 그날의 테마·일정을 확인하세요.</div>`; return; }
-
-  const info = buildCalendarDataMap()[calSelectedDate];
-  if (!info) { detail.innerHTML = `<div class="cal-detail-date">${calSelectedDate}</div><div class="history-empty" style="padding:20px 4px;">이 날짜엔 기록된 정보가 없습니다.</div>`; return; }
-
-  let html = `<div class="cal-detail-date">${calSelectedDate}</div>`;
-
-  if (info.themes && info.themes.length) {
-    const tagsHtml = info.themes.map((t,i) => {
-      const key = `${calSelectedDate}|${t}`;
-      return `<span class="history-tag ${i===0?'r1':'r2'} ${openHistoryKey===key?'active-tag':''}" data-key="${key}" data-date="${calSelectedDate}" data-theme="${t}">${i+1}. ${t}</span>`;
-    }).join('');
-    let themeDetailHtml = '';
-    if (openHistoryKey && openHistoryKey.startsWith(calSelectedDate + '|')) {
+    let detailHtml = '';
+    if (openHistoryKey && h.themes.includes(openHistoryKey.split('|')[1]) && openHistoryKey.startsWith(h.date + '|')) {
       const cached = historyDetailCache[openHistoryKey];
-      if (!cached) themeDetailHtml = `<div class="history-detail open"><div class="history-loading">불러오는 중...</div></div>`;
-      else if (cached === 'nodemo') themeDetailHtml = `<div class="history-detail open"><div class="history-nodata">⚙에서 실시간 연동하면 종목 목록이 표시됩니다.</div></div>`;
-      else if (cached === 'nodata' || cached === 'error') themeDetailHtml = `<div class="history-detail open"><div class="history-nodata">종목 데이터를 불러오지 못했습니다.</div></div>`;
-      else themeDetailHtml = `<div class="history-detail open">${cached.map(s => `<div class="history-stock-row" data-code="${s.code||''}"><span>${s.name}</span><div style="display:flex; gap:8px;">${s.val?`<span class="mono" style="color:var(--text-3);">${fmtEok(s.val)}</span>`:''}${changeSpan(s.change)}</div></div>`).join('')}</div>`;
+      if (!cached) detailHtml = `<div class="history-detail open"><div class="history-loading">불러오는 중...</div></div>`;
+      else if (cached === 'nodemo') detailHtml = `<div class="history-detail open"><div class="history-nodata">⚙에서 실시간 연동하면 종목 목록이 표시됩니다.</div></div>`;
+      else if (cached === 'nodata' || cached === 'error') detailHtml = `<div class="history-detail open"><div class="history-nodata">종목 데이터를 불러오지 못했습니다.</div></div>`;
+      else {
+        const rowsHtml = cached.map(s => `<div class="history-stock-row" data-code="${s.code||''}"><span>${s.name}</span><div style="display:flex; gap:8px;">${s.val?`<span class="mono" style="color:var(--text-3);">${fmtEok(s.val)}</span>`:''}${changeSpan(s.change)}</div></div>`).join('');
+        detailHtml = `<div class="history-detail open">${rowsHtml}</div>`;
+      }
     }
-    html += `<div class="cal-section-label">🕰️ 그날의 테마</div><div class="history-themes" style="flex-wrap:wrap;">${tagsHtml}</div>${themeDetailHtml}`;
-  }
 
-  if (info.events && info.events.length) {
-    const eventsHtml = info.events.map((e, idx) => {
-      const key = `${calSelectedDate}|${idx}`;
-      const hasBrief = !!e.brief;
-      return `<div class="sched-event ${hasBrief ? 'has-brief' : ''}" data-key="${key}">
-          <div class="sched-title"><span class="sched-pin">${hasBrief ? '🧠' : '📌'}</span>${e.title}${hasBrief ? '<span class="sched-chevron">▾</span>' : ''}</div>
-          ${hasBrief ? `<div class="sched-brief ${openScheduleKey===key ? 'open' : ''}"><div class="sched-brief-inner">${e.brief}</div></div>` : ''}
-        </div>`;
-    }).join('');
-    html += `<div class="cal-section-label">🗓 예정된 일정</div><div>${eventsHtml}</div>`;
-  }
+    item.innerHTML = `<div class="history-row">
+        <span class="history-date ${hasData?'has-data':''}">${h.date}</span>
+        <div class="history-themes">${tagsHtml}</div>
+      </div>${detailHtml}`;
 
-  detail.innerHTML = html;
-  detail.querySelectorAll('.history-tag').forEach(tag => {
-    tag.addEventListener('click', () => {
-      const key = tag.dataset.key;
-      openHistoryKey = (openHistoryKey === key) ? null : key;
-      renderCalendarDetail();
-      if (openHistoryKey === key) loadHistoryDetail(tag.dataset.date, tag.dataset.theme, key);
+    item.querySelectorAll('.history-tag').forEach(tag => {
+      tag.addEventListener('click', () => {
+        const key = tag.dataset.key;
+        openHistoryKey = (openHistoryKey === key) ? null : key;
+        renderHistory();
+        if (openHistoryKey === key) loadHistoryDetail(tag.dataset.date, tag.dataset.theme, key);
+      });
     });
+    item.querySelectorAll('.history-stock-row').forEach(row => {
+      const code = row.dataset.code;
+      if (code) row.addEventListener('click', () => window.open(`https://m.stock.naver.com/domestic/stock/${code}/total`, '_blank'));
+    });
+
+    list.appendChild(item);
   });
-  detail.querySelectorAll('.history-stock-row').forEach(row => {
-    const code = row.dataset.code;
-    if (code) row.addEventListener('click', () => window.open(`https://m.stock.naver.com/domestic/stock/${code}/total`, '_blank'));
-  });
-  detail.querySelectorAll('.sched-event.has-brief').forEach(el => {
-    el.addEventListener('click', () => {
-      const key = el.dataset.key;
-      openScheduleKey = (openScheduleKey === key) ? null : key;
-      renderCalendarDetail();
+}
+
+let openScheduleKey = null;
+
+function renderSchedule() {
+  const groups = D('schedule', DEMO_SCHEDULE);
+  const list = document.getElementById('scheduleList');
+  list.innerHTML = '';
+  const today = new Date('2026-07-02');
+  groups.forEach(g => {
+    const head = document.createElement('div');
+    head.className = 'month-head';
+    head.textContent = g.month;
+    list.appendChild(head);
+    g.items.forEach(it => {
+      try {
+        const [mm, dd] = it.date.split('.');
+        const evDate = new Date(`2026-${mm}-${dd}`);
+        const soon = (evDate - today) / 86400000 <= 14 && (evDate - today) >= 0;
+        const item = document.createElement('div');
+        item.className = 'list-item';
+        // 🔧 [방어 코드] GAS가 아직 구버전(titles 배열)을 내려주는 경우까지 안 죽고 표시되도록 자동 변환
+        const events = it.events || (it.titles || []).map(t => ({ title: t, brief: null }));
+        const eventsHtml = events.map((e, idx) => {
+          const key = `${it.date}|${idx}`;
+          const hasBrief = !!e.brief;
+          const isOpen = openScheduleKey === key;
+          return `<div class="sched-event ${hasBrief ? 'has-brief' : ''}" data-key="${key}">
+              <div class="sched-title"><span class="sched-pin">${hasBrief ? '🧠' : '📌'}</span>${e.title}${hasBrief ? '<span class="sched-chevron">▾</span>' : ''}</div>
+              ${hasBrief ? `<div class="sched-brief ${isOpen ? 'open' : ''}"><div class="sched-brief-inner">${e.brief}</div></div>` : ''}
+            </div>`;
+        }).join('');
+        item.innerHTML = `<div class="sched-row" style="flex:1;">
+            <span class="sched-date ${soon?'soon':''}">${it.date}</span>
+            <div style="flex:1;">${eventsHtml}</div>
+          </div>`;
+        item.querySelectorAll('.sched-event.has-brief').forEach(el => {
+          el.addEventListener('click', () => {
+            const key = el.dataset.key;
+            openScheduleKey = (openScheduleKey === key) ? null : key;
+            renderSchedule();
+          });
+        });
+        list.appendChild(item);
+      } catch (err) {
+        console.error('일정 항목 렌더링 오류(건너뜀):', it, err);
+      }
     });
   });
 }
@@ -1303,7 +1261,7 @@ async function renderWatchlist() {
     if (tier === 'full') {
       const card = document.createElement('div');
       const isOpen = openWatchlistCard === data.code;
-      card.className = 'card' + (isOpen ? ' open' : '') + (data.change >= 0 ? ' accent-up' : ' accent-down');
+      card.className = 'card' + (isOpen ? ' open' : '');
       card.innerHTML = buildStockCardHtml(data);
       attachCardHandlers(card, data, isOpen, (v) => { openWatchlistCard = v; }, renderWatchlist);
       inner.appendChild(card);
@@ -1327,10 +1285,10 @@ async function renderWatchlist() {
   enableWatchlistDrag(list);
 }
 
-const RENDERERS = { scanner:renderScanner, watchlist:renderWatchlist, report:renderReport, theme:renderTheme, news:renderNews, calendar:renderCalendar, search:renderSearchTop };
+const RENDERERS = { scanner:renderScanner, watchlist:renderWatchlist, report:renderReport, theme:renderTheme, news:renderNews, history:renderHistory, schedule:renderSchedule, search:renderSearchTop };
 function renderAll() { renderHeader(); (RENDERERS[currentTab] || renderScanner)(); }
 
-const TAB_ORDER = ['scanner','watchlist','report','theme','news','calendar','search'];
+const TAB_ORDER = ['scanner','watchlist','report','theme','news','history','schedule','search'];
 let isTransitioning = false;
 
 function switchTab(tabName) {
@@ -1593,6 +1551,24 @@ async function safeDelete(key) {
   } catch { try { localStorage.removeItem(key); } catch {} }
 }
 
+// 🆕 [매뉴얼 삽입] iframe+srcdoc 방식으로 열어서, 매뉴얼 자체 CSS가 앱 스타일과 절대 섞이지 않게 격리.
+//    평소엔 iframe을 만들지 않다가 열 때만 생성하고 닫으면 제거 — 메모리 낭비 방지.
+function openManual() {
+  const wrap = document.getElementById('manualFrameWrap');
+  if (!wrap.querySelector('iframe')) {
+    const tpl = document.getElementById('manual-html-content');
+    const iframe = document.createElement('iframe');
+    iframe.srcdoc = tpl.innerHTML;
+    wrap.appendChild(iframe);
+  }
+  document.getElementById('manualModalOverlay').classList.add('open');
+}
+function closeManual() {
+  document.getElementById('manualModalOverlay').classList.remove('open');
+}
+document.getElementById('manualFab').addEventListener('click', openManual);
+document.getElementById('manualCloseBtn').addEventListener('click', closeManual);
+
 (async function init() {
   const savedTheme = await safeGet('themeMode');
   await applyTheme((savedTheme === 'light' || savedTheme === 'auto') ? savedTheme : 'dark');
@@ -1611,5 +1587,1439 @@ async function safeDelete(key) {
   startAutoRefresh(apiUrl);
 })();
 </script>
+<template id="manual-html-content"><!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HYEOKS QUANT SYSTEM — 마스터 가이드북 v2</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+KR:wght@400;700;900&family=Noto+Sans+KR:wght@300;400;500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --navy: #0f1f3d;
+  --blue: #1a4480;
+  --sky: #2563a8;
+  --gold: #c8973a;
+  --gold-light: #f0c060;
+  --red: #c0392b;
+  --green: #1a7a4a;
+  --bg: #f4f1eb;
+  --paper: #fffdf8;
+  --ink: #1a1a2e;
+  --gray: #6b7280;
+  --border: #d4c9b0;
+  --shadow: rgba(15,31,61,0.12);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Noto Sans KR', sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  line-height: 1.85;
+  font-size: 15px;
+}
+
+/* ── 목차 사이드바 ── */
+#toc {
+  position: fixed;
+  top: 0; left: 0;
+  width: 268px; height: 100vh;
+  background: linear-gradient(180deg, var(--navy) 0%, #0a1730 100%);
+  color: #c8d8f0;
+  padding: 30px 0;
+  overflow-y: auto;
+  z-index: 100;
+  transition: transform 0.3s;
+  box-shadow: 4px 0 24px rgba(0,0,0,0.25);
+}
+#toc .toc-logo {
+  padding: 0 24px 24px;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+  margin-bottom: 20px;
+}
+#toc .toc-logo span {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 3px;
+  color: var(--gold);
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+#toc .toc-logo h3 {
+  font-family: 'Noto Serif KR', serif;
+  font-size: 17px;
+  color: #fff;
+  line-height: 1.4;
+}
+#toc .toc-ver { display: inline-block; margin-top: 10px; font-size: 10px; color: #6a8aaa; border: 1px solid rgba(255,255,255,0.15); padding: 2px 8px; border-radius: 10px; }
+#toc a {
+  display: block;
+  padding: 9px 24px;
+  color: #a0b4cc;
+  text-decoration: none;
+  font-size: 13px;
+  transition: all 0.2s;
+  border-left: 3px solid transparent;
+}
+#toc a:hover, #toc a.active {
+  color: #fff;
+  background: rgba(255,255,255,0.07);
+  border-left-color: var(--gold);
+}
+#toc a.ch { font-weight: 700; color: #d0e0f4; margin-top: 8px; font-size: 12px; letter-spacing: 1px; }
+#toc a.sub { padding-left: 36px; font-size: 12px; }
+#toc a.new-tag::after { content: 'NEW'; font-size: 8px; color: var(--navy); background: var(--gold-light); padding: 1px 5px; border-radius: 6px; margin-left: 6px; font-weight: 900; }
+
+/* ── 모바일 햄버거 ── */
+#menu-btn {
+  display: none;
+  position: fixed; top: 15px; left: 15px;
+  z-index: 200;
+  background: var(--navy);
+  color: #fff;
+  border: none;
+  width: 44px; height: 44px;
+  border-radius: 10px;
+  font-size: 20px;
+  cursor: pointer;
+  box-shadow: 0 4px 12px var(--shadow);
+}
+#toc-overlay {
+  display: none;
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 99;
+}
+
+/* ── 메인 콘텐츠 ── */
+main {
+  margin-left: 268px;
+  min-height: 100vh;
+}
+
+/* ── 표지 ── */
+.cover {
+  background: linear-gradient(160deg, var(--navy) 0%, #1e3a6e 50%, #0a1628 100%);
+  color: #fff;
+  padding: 120px 80px 100px;
+  position: relative;
+  overflow: hidden;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.cover::before {
+  content: '';
+  position: absolute; inset: 0;
+  background-image: radial-gradient(circle at 20% 50%, rgba(200,151,58,0.08) 0%, transparent 50%),
+    radial-gradient(circle at 80% 20%, rgba(37,99,168,0.15) 0%, transparent 40%);
+}
+.cover-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--gold);
+  color: var(--gold);
+  font-size: 11px;
+  letter-spacing: 4px;
+  padding: 6px 16px;
+  margin-bottom: 40px;
+  font-weight: 700;
+  width: fit-content;
+}
+.cover-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); }
+.cover h1 {
+  font-family: 'Noto Serif KR', serif;
+  font-size: clamp(2.4rem, 5vw, 4rem);
+  font-weight: 900;
+  line-height: 1.15;
+  letter-spacing: -1px;
+  margin-bottom: 24px;
+  position: relative;
+}
+.cover h1 em {
+  display: block;
+  font-style: normal;
+  color: var(--gold-light);
+}
+.cover .cover-desc {
+  font-size: 1.15rem;
+  color: #8fb0d8;
+  max-width: 540px;
+  line-height: 1.9;
+  margin-bottom: 60px;
+}
+.cover-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 40px;
+  border-top: 1px solid rgba(255,255,255,0.15);
+  padding-top: 30px;
+  font-size: 12px;
+  color: #6a8aaa;
+  letter-spacing: 1px;
+}
+.cover-meta strong { display: block; color: #a0c4e8; font-size: 14px; margin-bottom: 4px; }
+.cover-changelog {
+  margin-top: 34px;
+  padding: 16px 20px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 10px;
+  max-width: 540px;
+  font-size: 12.5px;
+  color: #9db8d8;
+  line-height: 2;
+}
+.cover-changelog strong { color: var(--gold-light); }
+
+/* ── 섹션 공통 ── */
+.section {
+  padding: 80px 80px 60px;
+  border-bottom: 1px solid var(--border);
+  background: var(--paper);
+  scroll-margin-top: 20px;
+}
+.section:nth-child(even) { background: #fafaf5; }
+
+.chapter-label {
+  font-size: 11px;
+  letter-spacing: 3px;
+  color: var(--gold);
+  font-weight: 700;
+  margin-bottom: 12px;
+  text-transform: uppercase;
+}
+.section h2 {
+  font-family: 'Noto Serif KR', serif;
+  font-size: clamp(1.6rem, 3vw, 2.2rem);
+  color: var(--navy);
+  font-weight: 900;
+  margin-bottom: 8px;
+  line-height: 1.3;
+}
+.section-intro {
+  font-size: 1.05rem;
+  color: var(--gray);
+  margin-bottom: 50px;
+  padding-bottom: 30px;
+  border-bottom: 1px solid var(--border);
+  max-width: 680px;
+}
+.section h3 {
+  font-family: 'Noto Serif KR', serif;
+  font-size: 1.25rem;
+  color: var(--navy);
+  margin: 50px 0 16px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.section h3::before {
+  content: '';
+  display: block;
+  width: 4px; height: 22px;
+  background: var(--gold);
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+p { margin-bottom: 18px; font-size: 1rem; line-height: 1.9; }
+
+/* ── 인용 박스 ── */
+.quote {
+  background: linear-gradient(135deg, #f0ebe0, #ede7d5);
+  border-left: 5px solid var(--gold);
+  padding: 32px 36px;
+  margin: 40px 0;
+  border-radius: 0 12px 12px 0;
+  font-family: 'Noto Serif KR', serif;
+  font-size: 1.05rem;
+  line-height: 2;
+  color: #2a2a4a;
+}
+.quote cite {
+  display: block;
+  text-align: right;
+  font-size: 0.9rem;
+  color: var(--gold);
+  font-weight: 700;
+  margin-top: 14px;
+  font-style: normal;
+}
+
+/* ── 하이라이트 텍스트 ── */
+mark { background: #fef3c7; padding: 1px 5px; border-radius: 3px; font-weight: 700; color: #92400e; }
+.red { color: var(--red); font-weight: 700; }
+.green { color: var(--green); font-weight: 700; }
+.blue { color: var(--sky); font-weight: 700; }
+
+/* ── 파라미터 테이블 ── */
+.param-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 30px 0;
+  font-size: 0.95rem;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 20px var(--shadow);
+}
+.param-table thead tr { background: var(--navy); color: #fff; }
+.param-table th { padding: 14px 20px; text-align: left; font-weight: 600; font-size: 0.88rem; letter-spacing: 0.5px; }
+.param-table td { padding: 14px 20px; border-bottom: 1px solid #e8e4da; vertical-align: top; }
+.param-table tr:last-child td { border-bottom: none; }
+.param-table tr:nth-child(even) td { background: #f8f5ee; }
+.param-table code {
+  font-family: 'JetBrains Mono', monospace;
+  background: #e8eef8;
+  color: var(--sky);
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 0.9em;
+  font-weight: 700;
+}
+
+/* ── SVG 차트 컨테이너 ── */
+.chart-box {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 24px;
+  margin: 30px 0;
+  box-shadow: 0 6px 24px var(--shadow);
+  overflow-x: auto;
+}
+.chart-box figcaption {
+  text-align: center;
+  font-size: 0.88rem;
+  color: var(--gray);
+  margin-top: 14px;
+  font-weight: 500;
+}
+.chart-box svg { width: 100%; height: auto; display: block; }
+
+/* ── 배지 카드 ── */
+.badge-card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 32px 36px;
+  position: relative;
+  box-shadow: 0 4px 16px var(--shadow);
+  transition: transform 0.2s, box-shadow 0.2s;
+  margin: 30px 0;
+}
+.badge-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 10px 30px var(--shadow);
+}
+.badge-card .track-no {
+  position: absolute;
+  top: -14px; left: 24px;
+  background: var(--navy);
+  color: var(--gold);
+  font-size: 11px;
+  letter-spacing: 2px;
+  font-weight: 700;
+  padding: 4px 14px;
+  border-radius: 20px;
+}
+.badge-card h4 {
+  font-family: 'Noto Serif KR', serif;
+  font-size: 1.2rem;
+  color: var(--navy);
+  margin-bottom: 14px;
+  font-weight: 700;
+}
+.badge-pill {
+  display: inline-block;
+  padding: 5px 13px;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  margin: 3px 3px 12px 0;
+}
+.pill-seed { background: #d1fae5; color: #065f46; border: 1px solid #6ee7b7; }
+.pill-night { background: #e0e7ff; color: #312e81; border: 1px solid #a5b4fc; }
+.pill-short { background: #fee2e2; color: #7f1d1d; border: 1px solid #fca5a5; }
+.pill-swing { background: #fef3c7; color: #78350f; border: 1px solid #fcd34d; }
+.pill-pull { background: #ede9fe; color: #4c1d95; border: 1px solid #c4b5fd; }
+.pill-watch { background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
+.pill-badge-new { background: #fff7ed; color: #9a3412; border: 1px solid #fdba74; }
+
+.badge-card .cond-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--gold);
+  margin: 18px 0 8px;
+  text-transform: uppercase;
+}
+.badge-card .action-box {
+  background: #f8f5ee;
+  border-left: 4px solid var(--gold);
+  padding: 14px 18px;
+  border-radius: 0 8px 8px 0;
+  margin-top: 16px;
+  font-size: 0.95rem;
+  line-height: 1.8;
+}
+
+/* ── 배지 사전(칩 목록) ── */
+.badge-dict { display: flex; flex-wrap: wrap; gap: 10px; margin: 24px 0; }
+.badge-dict-item {
+  display: flex; align-items: center; gap: 10px;
+  background: #fff; border: 1px solid var(--border); border-radius: 12px;
+  padding: 12px 16px; box-shadow: 0 2px 10px var(--shadow); flex: 1 1 260px;
+}
+.badge-dict-item .emoji { font-size: 1.3rem; flex-shrink: 0; }
+.badge-dict-item .txt strong { display: block; font-size: 0.9rem; color: var(--navy); }
+.badge-dict-item .txt span { font-size: 0.82rem; color: var(--gray); line-height: 1.5; }
+
+/* ── 수급 신호 테이블 ── */
+.signal-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.93rem;
+  margin: 24px 0;
+}
+.signal-table th {
+  background: var(--navy);
+  color: #fff;
+  padding: 12px 16px;
+  text-align: left;
+  font-size: 0.85rem;
+}
+.signal-table td { padding: 12px 16px; border-bottom: 1px solid #e8e4da; vertical-align: middle; }
+.signal-table tr:last-child td { border-bottom: none; }
+.signal-table tr:hover td { background: #f8f5ee; }
+.sig-buy { color: #c0392b; font-weight: 700; font-family: 'JetBrains Mono', monospace; font-size: 0.88em; }
+.sig-sell { color: #1a5c9e; font-weight: 700; font-family: 'JetBrains Mono', monospace; font-size: 0.88em; }
+.sig-neutral { color: #666; font-family: 'JetBrains Mono', monospace; font-size: 0.88em; }
+
+/* ── 케이스 스터디 ── */
+.case-study {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 36px;
+  margin: 30px 0;
+  box-shadow: 0 4px 20px var(--shadow);
+}
+.case-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 24px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+.case-no {
+  background: var(--navy);
+  color: var(--gold);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  padding: 5px 12px;
+  border-radius: 20px;
+}
+.case-title { font-family: 'Noto Serif KR', serif; font-size: 1.1rem; font-weight: 700; color: var(--navy); }
+.case-badges { margin-bottom: 20px; }
+.case-screen {
+  background: #0f1f3d;
+  color: #e2e8f0;
+  border-radius: 10px;
+  padding: 20px 24px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  line-height: 2;
+  margin: 16px 0;
+  overflow-x: auto;
+}
+.case-screen .label { color: #94a3b8; }
+.case-screen .value-buy { color: #f87171; }
+.case-screen .value-sell { color: #60a5fa; }
+.case-screen .value-gold { color: #fbbf24; }
+.case-screen .value-green { color: #34d399; }
+.thought-box {
+  background: linear-gradient(135deg, #f0f9ff, #e8f4fd);
+  border-left: 4px solid var(--sky);
+  padding: 20px 24px;
+  border-radius: 0 10px 10px 0;
+  margin-top: 20px;
+  font-size: 0.96rem;
+  line-height: 1.9;
+}
+.thought-box strong { color: var(--sky); }
+
+/* ── 경고/주의 박스 ── */
+.warning-box {
+  background: #fff5f5;
+  border: 1px solid #fecaca;
+  border-left: 5px solid var(--red);
+  border-radius: 0 12px 12px 0;
+  padding: 24px 28px;
+  margin: 24px 0;
+}
+.warning-box .w-title { font-weight: 700; color: var(--red); margin-bottom: 10px; font-size: 1rem; }
+.tip-box {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-left: 5px solid var(--green);
+  border-radius: 0 12px 12px 0;
+  padding: 24px 28px;
+  margin: 24px 0;
+}
+.tip-box .t-title { font-weight: 700; color: var(--green); margin-bottom: 10px; font-size: 1rem; }
+
+/* ── 흐름도 ── */
+.flow-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 30px 0;
+  position: relative;
+}
+.flow-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  padding: 20px 0;
+  position: relative;
+}
+.flow-step:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 19px; top: 54px;
+  width: 2px;
+  bottom: 0;
+  background: linear-gradient(to bottom, var(--gold), transparent);
+}
+.flow-no {
+  width: 40px; height: 40px;
+  background: var(--navy);
+  color: var(--gold);
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700;
+  font-size: 0.9rem;
+  flex-shrink: 0;
+  border: 2px solid var(--gold);
+}
+.flow-content h5 { font-size: 1rem; font-weight: 700; color: var(--navy); margin-bottom: 6px; }
+.flow-content p { font-size: 0.93rem; color: #4a4a6a; margin-bottom: 0; line-height: 1.7; }
+
+/* ── 퀀트 점수 시각화 ── */
+.score-viz {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 30px;
+  margin: 24px 0;
+  box-shadow: 0 4px 16px var(--shadow);
+}
+.score-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+.score-bar-label { font-size: 0.88rem; font-weight: 600; width: 130px; flex-shrink: 0; color: var(--ink); }
+.score-bar-track {
+  flex: 1;
+  height: 10px;
+  background: #e8e4da;
+  border-radius: 5px;
+  overflow: hidden;
+}
+.score-bar-fill {
+  height: 100%;
+  border-radius: 5px;
+  transition: width 0.6s ease;
+}
+.score-bar-val { font-size: 0.85rem; font-weight: 700; width: 50px; text-align: right; color: var(--gray); }
+
+/* ── 시스템 구조도 ── */
+.arch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 16px;
+  margin: 30px 0;
+}
+.arch-node {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  text-align: center;
+  box-shadow: 0 2px 8px var(--shadow);
+  transition: box-shadow 0.2s;
+}
+.arch-node:hover { box-shadow: 0 8px 22px var(--shadow); }
+.arch-node .node-icon { font-size: 2rem; margin-bottom: 10px; }
+.arch-node h5 { font-size: 0.9rem; font-weight: 700; color: var(--navy); margin-bottom: 6px; }
+.arch-node p { font-size: 0.82rem; color: var(--gray); margin-bottom: 0; line-height: 1.6; }
+.arch-node .node-time { display: inline-block; margin-top: 8px; font-size: 0.72rem; color: var(--gold); font-weight: 700; background: #fdf6e8; padding: 2px 8px; border-radius: 8px; }
+
+/* ── 방어망 단계 카드 ── */
+.defense-steps { display: flex; flex-direction: column; gap: 14px; margin: 30px 0; }
+.defense-step {
+  display: flex; gap: 20px; align-items: flex-start;
+  background: #fff; border: 1px solid var(--border); border-radius: 14px;
+  padding: 22px 26px; box-shadow: 0 4px 16px var(--shadow);
+}
+.defense-step .d-no {
+  flex-shrink: 0; width: 34px; height: 34px; border-radius: 50%;
+  background: var(--navy); color: var(--gold); font-weight: 900;
+  display: flex; align-items: center; justify-content: center; font-size: 0.95rem;
+}
+.defense-step h5 { font-size: 1rem; color: var(--navy); font-weight: 700; margin-bottom: 6px; }
+.defense-step p { font-size: 0.92rem; margin-bottom: 0; color: #4a4a6a; }
+
+/* ── 모바일 반응형 ── */
+@media (max-width: 900px) {
+  #toc { transform: translateX(-268px); }
+  #toc.open { transform: translateX(0); }
+  #toc-overlay.open { display: block; }
+  #menu-btn { display: flex; align-items: center; justify-content: center; }
+  main { margin-left: 0; }
+  .cover { padding: 80px 28px 70px; min-height: auto; padding-top: 90px; }
+  .section { padding: 60px 28px 50px; }
+  .badge-card { padding: 28px 24px; }
+  .case-study { padding: 28px 24px; }
+  .param-table { font-size: 0.88rem; }
+  .param-table th, .param-table td { padding: 10px 14px; }
+  .score-bar-label { width: 100px; font-size: 0.82rem; }
+  .defense-step { flex-direction: column; gap: 10px; }
+}
+@media (max-width: 480px) {
+  .cover h1 { font-size: 1.9rem; }
+  .cover-meta { flex-direction: column; gap: 20px; }
+  .arch-grid { grid-template-columns: 1fr 1fr; }
+}
+
+/* ── 인쇄 페이지 나눔 ── */
+@media print {
+  #toc, #menu-btn { display: none; }
+  main { margin-left: 0; }
+  .section { page-break-inside: avoid; }
+}
+</style>
+</head>
+<body>
+
+<button id="menu-btn" onclick="toggleMenu()">☰</button>
+<div id="toc-overlay" onclick="toggleMenu()"></div>
+
+<!-- 목차 사이드바 -->
+<nav id="toc">
+  <div class="toc-logo">
+    <span>OFFICIAL GUIDEBOOK</span>
+    <h3>HYEOKS QUANT<br>SYSTEM</h3>
+    <span class="toc-ver">v2 — 2026.07 개정판</span>
+  </div>
+  <a href="#cover" class="ch">◆ 표지 · 개정 안내</a>
+  <a href="#ch1" class="ch">CHAPTER 1</a>
+  <a href="#ch1-1" class="sub">시스템 전체 구조</a>
+  <a href="#ch1-2" class="sub">작동 타임라인</a>
+  <a href="#ch2" class="ch">CHAPTER 2</a>
+  <a href="#ch2-1" class="sub">칼만 필터의 원리</a>
+  <a href="#ch2-2" class="sub">파동 분류 체계</a>
+  <a href="#ch2-3" class="sub">파라미터 해설</a>
+  <a href="#ch3" class="ch">CHAPTER 3</a>
+  <a href="#ch3-1" class="sub">장기 추세추종 (SEED)</a>
+  <a href="#ch3-2" class="sub">단기 기술적 (NORMAL)</a>
+  <a href="#ch3-3" class="sub">역발상 · 관망형</a>
+  <a href="#ch3-4" class="sub new-tag">배지 사전</a>
+  <a href="#ch4" class="ch">CHAPTER 4</a>
+  <a href="#ch4-1" class="sub">수급 신호 해독</a>
+  <a href="#ch4-2" class="sub">거래량 배지 해독</a>
+  <a href="#ch4-3" class="sub">캔들 배지 해독</a>
+  <a href="#ch5" class="ch new-tag">CHAPTER 5</a>
+  <a href="#ch5-1" class="sub">4단 목표가·손절가 방어망</a>
+  <a href="#ch5-2" class="sub">손절폭 상하한</a>
+  <a href="#ch6" class="ch new-tag">CHAPTER 6</a>
+  <a href="#ch6-1" class="sub">V1·V2·V3 세 개의 축</a>
+  <a href="#ch6-2" class="sub">실적 악화 경고</a>
+  <a href="#ch7" class="ch">CHAPTER 7</a>
+  <a href="#ch7-1" class="sub">시장 위험도(STAGE) 판독</a>
+  <a href="#ch7-2" class="sub">STAGE별 대응 기준</a>
+  <a href="#ch8" class="ch new-tag">CHAPTER 8</a>
+  <a href="#ch8-1" class="sub">7개 탭 활용법</a>
+  <a href="#ch8-2" class="sub">캘린더 읽는 법</a>
+  <a href="#ch9" class="ch">CHAPTER 9</a>
+  <a href="#ch9-1" class="sub">CASE 1 — 추세 시작</a>
+  <a href="#ch9-2" class="sub">CASE 2 — 모아가기</a>
+  <a href="#ch9-3" class="sub">CASE 3 — 종가베팅</a>
+  <a href="#ch9-4" class="sub">CASE 4 — 절대 금지</a>
+  <a href="#ch9-5" class="sub new-tag">CASE 5 — 실적 경고</a>
+  <a href="#ch10" class="ch">CHAPTER 10</a>
+  <a href="#ch10-1" class="sub">황금 규칙 11계명</a>
+  <a href="#ch11" class="ch new-tag">CHAPTER 11</a>
+  <a href="#ch11-1" class="sub">추천 하나 뒤의 5단계 필터</a>
+  <a href="#ch11-2" class="sub">스스로 의심하도록 설계됨</a>
+  <a href="#ch12" class="ch new-tag">CHAPTER 12</a>
+  <a href="#ch12-1" class="sub">2026 하반기 업데이트 로그</a>
+</nav>
+
+<main>
+
+<!-- ── 표지 ── -->
+<section class="cover" id="cover">
+  <div class="cover-badge"><span class="dot"></span>OFFICIAL MASTER GUIDEBOOK · LIVE</div>
+  <h1>HYEOKS QUANT SYSTEM<em>마스터 가이드북</em></h1>
+  <p class="cover-desc">세력의 노이즈를 수학으로 꿰뚫는다.<br>칼만 필터·실시간 수급·분기 실적을 융합한<br>퀀트 자동화 투자 시스템의 모든 것을 담았습니다.</p>
+  <div class="cover-meta">
+    <div><strong>VERSION</strong>v2.1 · 2026.07 추가 개정</div>
+    <div><strong>대상 독자</strong>입문자 ~ 실전 트레이더</div>
+    <div><strong>수록 내용</strong>12 챕터 / 5개 실전 케이스</div>
+  </div>
+  <div class="cover-changelog">
+    <strong>◆ 이번 개정판에서 새로 추가된 것</strong><br>
+    · <strong>왜 이 시스템을 신뢰할 수 있는가</strong> — 추천 하나 뒤의 5단계 검증 과정 (CH.11)<br>
+    · <strong>RS등급·켈리비중·채널비교·회로차단기 등</strong> — 2026 하반기 업데이트 로그 (CH.12)<br>
+    · <strong>V3 실적점수</strong> — 분기 매출·영업이익 추이를 별도 축으로 반영 (CH.6)<br>
+    · <strong>목표가·손절가 4단 방어망</strong> — 손익비 기반 재산정 + 손절폭 상하한 (CH.5)<br>
+    · <strong>실시간 시장위험도(STAGE) 판독 방식 개편</strong> — 실시간 지수 조회 기반 (CH.7)<br>
+    · <strong>캘린더 탭</strong> — 테마 복기와 일정을 하나로 통합 (CH.8)
+  </div>
+</section>
+
+<!-- ── CH1: 시스템 개요 ── -->
+<section class="section" id="ch1">
+  <div class="chapter-label">CHAPTER 1</div>
+  <h2>시스템 전체 구조와 작동 원리</h2>
+  <p class="section-intro">HYEOKS 퀀트 시스템은 단순한 주식 알림 앱이 아닙니다. 매일 600여 개 상장 종목을 자동으로 스캔하고, AI가 전략을 수립해 리포트·텔레그램으로 배달하는 완전 자동화 투자 플랫폼입니다.</p>
+
+  <h3 id="ch1-1">시스템 전체 구조도</h3>
+  <p>시스템은 여러 개의 독립된 엔진이 구글 시트라는 하나의 데이터베이스를 매개로 협업합니다. 각 엔진의 역할을 먼저 이해하면 이후 내용이 훨씬 명확해집니다.</p>
+
+  <div class="arch-grid">
+    <div class="arch-node">
+      <div class="node-icon">📊</div>
+      <h5>omakase.py</h5>
+      <p>전 종목 차트·수급을 읽어 타점 배지·V1·V2 점수를 계산하고 구글 시트에 기록하는 메인 스캐너.</p>
+      <span class="node-time">10분마다</span>
+    </div>
+    <div class="arch-node">
+      <div class="node-icon">🤖</div>
+      <h5>hyeoks_analyst.py</h5>
+      <p>Gemini가 각 종목의 브리핑·목표가·손절가를 산출. 15시엔 메인 리포트, 그 외 시간엔 실시간 스냅샷 브리핑.</p>
+      <span class="node-time">15:00 + 상시</span>
+    </div>
+    <div class="arch-node">
+      <div class="node-icon">🌅</div>
+      <h5>hyeoks_morning.py</h5>
+      <p>글로벌 매크로·유동성 지표·전일 포착 종목을 융합한 모닝 브리핑을 발송.</p>
+      <span class="node-time">07:43경</span>
+    </div>
+    <div class="arch-node">
+      <div class="node-icon">🎯</div>
+      <h5>scanner_bot.py</h5>
+      <p>눌림목 조건에 부합하는 종가베팅 후보를 스나이퍼처럼 선별.</p>
+      <span class="node-time">오후 장마감 무렵</span>
+    </div>
+    <div class="arch-node">
+      <div class="node-icon">📅</div>
+      <h5>hyeoks_calendar_ingest.py</h5>
+      <p>증권사 캘린더 PDF를 자동 파싱해 주요일정 시트에 반영.</p>
+      <span class="node-time">07:55</span>
+    </div>
+    <div class="arch-node">
+      <div class="node-icon">💰</div>
+      <h5>hyeoks_earnings_collector.py</h5>
+      <p>금융감독원 OpenDART에서 분기 실적을 수집해 V3 실적점수를 산출.</p>
+      <span class="node-time">04:00</span>
+    </div>
+    <div class="arch-node">
+      <div class="node-icon">🛡️</div>
+      <h5>hyeoks_static_collector.py</h5>
+      <p>관리종목·거래정지·투자경고 같은 위험 종목 리스트를 갱신.</p>
+      <span class="node-time">07:30</span>
+    </div>
+  </div>
+
+  <h3 id="ch1-2">하루 작동 타임라인</h3>
+  <p>시스템이 하루 중 언제 무슨 일을 하는지 알면, 어떤 시간대에 어떤 배지와 브리핑을 참고해야 하는지 명확해집니다.</p>
+
+  <div class="flow-steps">
+    <div class="flow-step">
+      <div class="flow-no">04</div>
+      <div class="flow-content">
+        <h5>새벽 4:00 — 실적(V3) 수집</h5>
+        <p>DART 공시 데이터에서 분기 매출·영업이익을 가져와 실적점수를 갱신합니다. 장 시작 훨씬 전, 조용한 시간대에 돌도록 설계되어 있습니다.</p>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="flow-no">07</div>
+      <div class="flow-content">
+        <h5>오전 7:00~8:50 — DB 초기화 & 백테스트 추적</h5>
+        <p>어제 데이터를 오늘의 백지 상태로 초기화하고, 지난 진입 종목들의 성과(T+1~T+120)를 이 시간대에 몰아서 계산합니다.</p>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="flow-no">07:43</div>
+      <div class="flow-content">
+        <h5>오전 7:43 — 모닝 브리핑 발송</h5>
+        <p>간밤 미국 증시 흐름, 유동성 지표, 전날 포착된 종목들을 AI가 분석해 발송합니다. 장 시작 전 전략 수립의 핵심 자료입니다.</p>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="flow-no">09~15</div>
+      <div class="flow-content">
+        <h5>장중 (09:00~15:30) — 10분 단위 실시간 스캔</h5>
+        <p>수급 변화에 따라 타점 배지와 목표가·손절가가 실시간으로 갱신됩니다. 스캐너 탭이 항상 이 최신 스캔 결과를 보여줍니다.</p>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="flow-no">15:00</div>
+      <div class="flow-content">
+        <h5>오후 3시 — 메인 리포트 (핵심)</h5>
+        <p>Gemini가 전체 종목 풀에서 단기 슈팅 공략주 1개, 중장기 모아가기주 1개를 엄선하여 심층 리포트를 작성하고 발송합니다. V3 실적점수가 중장기 픽 선정에 반영됩니다.</p>
+      </div>
+    </div>
+    <div class="flow-step">
+      <div class="flow-no">15:30</div>
+      <div class="flow-content">
+        <h5>오후 3시 30분 무렵 — 종가베팅 & 야간 정리</h5>
+        <p>눌림목 조건 최적 종목을 선별하고, 시간외 단일가·NXT 데이터를 수집해 하루를 마감합니다.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="tip-box">
+    <div class="t-title">✅ 개정 포인트</div>
+    <p style="margin:0; font-size:0.95rem;">이전 버전에는 없던 <strong>실적(V3) 수집기</strong>가 매일 새벽 가장 먼저 돌아가서, 그날 하루 종일 쓰일 실적 데이터를 미리 준비해둡니다. 백테스트 추적 구간도 T+10에서 <strong>T+120(약 6개월)</strong>까지 확장되어, 장기 추세추종 픽의 진짜 성과를 검증할 수 있게 되었습니다.</p>
+  </div>
+</section>
+
+<!-- ── CH2: 칼만 필터 ── -->
+<section class="section" id="ch2">
+  <div class="chapter-label">CHAPTER 2</div>
+  <h2>엔진의 심장 : 시크릿 이평 (칼만 필터)</h2>
+  <p class="section-intro">일반 이동평균선의 치명적 한계를 극복하기 위해 항법 기술을 주식 차트에 이식했습니다. 이것이 시스템의 가장 핵심적인 경쟁 우위이며, 이 부분은 지난 버전에서 바뀌지 않은 핵심 이론입니다.</p>
+
+  <h3 id="ch2-1">왜 일반 이동평균선은 실전에서 실패하는가</h3>
+  <p>초보 투자자들이 가장 많이 배우는 것이 "5일선 위에서 사고, 이탈하면 손절하라"는 공식입니다. 하지만 세력은 바로 이 공식을 역이용합니다.</p>
+
+  <div class="warning-box">
+    <div class="w-title">⚠️ 세력의 노이즈 전략 — 개미 털기의 메커니즘</div>
+    <p style="margin:0; font-size:0.95rem;">장 초반 의도적으로 주가를 급락시켜 5일선을 이탈시킵니다 → 개미들이 공포에 손절합니다 → 세력이 그 물량을 밑에서 받습니다 → 다음 날 급등합니다. 단순 평균에 기반한 이동평균선은 이 '의도된 노이즈'에 속수무책으로 휩쓸립니다.</p>
+  </div>
+
+  <div class="chart-box">
+    <figure>
+      <svg viewBox="0 0 700 260" xmlns="http://www.w3.org/2000/svg" style="max-height:260px;">
+        <defs>
+          <linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#f8f5ee"/>
+            <stop offset="100%" stop-color="#ffffff"/>
+          </linearGradient>
+        </defs>
+        <rect width="700" height="260" fill="url(#bgGrad)" rx="8"/>
+        <line x1="60" y1="20" x2="60" y2="220" stroke="#e0dcd0" stroke-width="1"/>
+        <line x1="60" y1="220" x2="680" y2="220" stroke="#e0dcd0" stroke-width="1"/>
+        <line x1="60" y1="160" x2="680" y2="160" stroke="#e8e4da" stroke-width="0.5" stroke-dasharray="4,4"/>
+        <line x1="60" y1="110" x2="680" y2="110" stroke="#e8e4da" stroke-width="0.5" stroke-dasharray="4,4"/>
+        <line x1="60" y1="60" x2="680" y2="60" stroke="#e8e4da" stroke-width="0.5" stroke-dasharray="4,4"/>
+        <text x="50" y="165" text-anchor="end" font-size="10" fill="#9a9070">저가</text>
+        <text x="50" y="65" text-anchor="end" font-size="10" fill="#9a9070">고가</text>
+        <line x1="90" y1="120" x2="90" y2="155" stroke="#b0a090" stroke-width="1"/>
+        <rect x="84" y="128" width="12" height="20" fill="#c0392b" rx="1"/>
+        <line x1="115" y1="110" x2="115" y2="150" stroke="#b0a090" stroke-width="1"/>
+        <rect x="109" y="115" width="12" height="22" fill="#c0392b" rx="1"/>
+        <line x1="140" y1="115" x2="140" y2="165" stroke="#b0a090" stroke-width="1"/>
+        <rect x="134" y="118" width="12" height="30" fill="#2ecc71" rx="1"/>
+        <line x1="165" y1="125" x2="165" y2="195" stroke="#b0a090" stroke-width="1"/>
+        <rect x="159" y="148" width="12" height="40" fill="#c0392b" rx="1"/>
+        <text x="171" y="205" font-size="9" fill="#c0392b" font-weight="700">← 세력 흔들기</text>
+        <line x1="190" y1="120" x2="190" y2="175" stroke="#b0a090" stroke-width="1"/>
+        <rect x="184" y="130" width="12" height="35" fill="#c0392b" rx="1"/>
+        <line x1="215" y1="105" x2="215" y2="155" stroke="#b0a090" stroke-width="1"/>
+        <rect x="209" y="108" width="12" height="28" fill="#2ecc71" rx="1"/>
+        <line x1="240" y1="100" x2="240" y2="145" stroke="#b0a090" stroke-width="1"/>
+        <rect x="234" y="103" width="12" height="25" fill="#2ecc71" rx="1"/>
+        <line x1="265" y1="90" x2="265" y2="135" stroke="#b0a090" stroke-width="1"/>
+        <rect x="259" y="93" width="12" height="24" fill="#2ecc71" rx="1"/>
+        <line x1="290" y1="80" x2="290" y2="125" stroke="#b0a090" stroke-width="1"/>
+        <rect x="284" y="83" width="12" height="24" fill="#2ecc71" rx="1"/>
+        <line x1="315" y1="75" x2="315" y2="118" stroke="#b0a090" stroke-width="1"/>
+        <rect x="309" y="78" width="12" height="22" fill="#2ecc71" rx="1"/>
+        <line x1="340" y1="70" x2="340" y2="110" stroke="#b0a090" stroke-width="1"/>
+        <rect x="334" y="73" width="12" height="20" fill="#2ecc71" rx="1"/>
+        <line x1="365" y1="65" x2="365" y2="100" stroke="#b0a090" stroke-width="1"/>
+        <rect x="359" y="68" width="12" height="18" fill="#2ecc71" rx="1"/>
+        <polyline points="90,135 115,132 140,138 165,175 190,162 215,140 240,125 265,112 290,100 315,92 340,85 365,78" fill="none" stroke="#e67e22" stroke-width="2" stroke-dasharray="6,3"/>
+        <polyline points="90,132 115,130 140,128 165,130 190,128 215,120 240,112 265,102 290,92 315,85 340,78 365,72" fill="none" stroke="#1a4480" stroke-width="2.5"/>
+        <line x1="400" y1="50" x2="430" y2="50" stroke="#e67e22" stroke-width="2" stroke-dasharray="6,3"/>
+        <text x="435" y="54" font-size="11" fill="#666">일반 이동평균선 (노이즈에 흔들림)</text>
+        <line x1="400" y1="72" x2="430" y2="72" stroke="#1a4480" stroke-width="2.5"/>
+        <text x="435" y="76" font-size="11" fill="#666">시크릿 이평 / 칼만 필터 (추세 유지)</text>
+        <text x="400" y="100" font-size="10" fill="#c0392b">● 세력 흔들기 구간에서 일반 이평은</text>
+        <text x="400" y="115" font-size="10" fill="#c0392b">  5일선이 이탈되어 개미를 손절 유도</text>
+        <text x="400" y="135" font-size="10" fill="#1a4480">● 칼만 이평은 같은 구간에서 추세를</text>
+        <text x="400" y="150" font-size="10" fill="#1a4480">  유지하며 신호 유지</text>
+      </svg>
+      <figcaption>▲ 세력의 급락 노이즈(흔들기) 구간에서 일반 이평선과 칼만 이평선의 반응 비교</figcaption>
+    </figure>
+  </div>
+
+  <h3 id="ch2-2">시크릿 파동 3단계 분류 체계</h3>
+  <p>칼만 필터는 단순히 선을 그리는 것에서 끝나지 않습니다. 현재 주가가 추세상 어느 위치에 있는지를 <mark>1차, 2차, 3차 파동</mark>으로 자동 분류합니다. 이것이 '언제 사고, 언제 팔아야 하는가'에 대한 기계적 답입니다.</p>
+
+  <div class="chart-box">
+    <figure>
+      <svg viewBox="0 0 700 280" xmlns="http://www.w3.org/2000/svg" style="max-height:280px;">
+        <rect width="700" height="280" fill="#fafaf5" rx="8"/>
+        <rect x="60" y="20" width="120" height="200" fill="#d1fae5" opacity="0.4" rx="4"/>
+        <rect x="180" y="20" width="120" height="200" fill="#fef3c7" opacity="0.4" rx="4"/>
+        <rect x="300" y="20" width="120" height="200" fill="#fee2e2" opacity="0.4" rx="4"/>
+        <text x="120" y="240" text-anchor="middle" font-size="11" fill="#065f46" font-weight="700">1차 파동</text>
+        <text x="120" y="254" text-anchor="middle" font-size="10" fill="#065f46">매수 타점</text>
+        <text x="240" y="240" text-anchor="middle" font-size="11" fill="#78350f" font-weight="700">2차 파동</text>
+        <text x="240" y="254" text-anchor="middle" font-size="10" fill="#78350f">본절 스탑 상향</text>
+        <text x="360" y="240" text-anchor="middle" font-size="11" fill="#7f1d1d" font-weight="700">3차 파동</text>
+        <text x="360" y="254" text-anchor="middle" font-size="10" fill="#7f1d1d">전량 익절</text>
+        <polyline points="60,190 100,175 140,155 180,138 220,115 260,92 300,75 340,62 380,55 420,52" fill="none" stroke="#1a4480" stroke-width="3"/>
+        <polyline points="60,195 80,180 100,165 115,158 130,165 145,148 160,140 175,135 190,125 205,110 220,100 235,88 250,80 265,72 280,68 295,65 310,58 325,52 340,48 355,45 370,50 385,48 400,52 415,50" fill="none" stroke="#2563a8" stroke-width="1.5" stroke-dasharray="3,2" opacity="0.7"/>
+        <line x1="180" y1="25" x2="180" y2="225" stroke="#666" stroke-width="1" stroke-dasharray="4,3"/>
+        <line x1="300" y1="25" x2="300" y2="225" stroke="#666" stroke-width="1" stroke-dasharray="4,3"/>
+        <line x1="425" y1="190" x2="425" y2="138" stroke="#e67e22" stroke-width="1.5"/>
+        <text x="430" y="168" font-size="10" fill="#e67e22">ATR × 1</text>
+        <line x1="425" y1="190" x2="425" y2="92" stroke="#e67e22" stroke-width="1.5" stroke-dasharray="3,2"/>
+        <text x="430" y="145" font-size="10" fill="#e67e22">ATR × 2</text>
+        <line x1="425" y1="190" x2="425" y2="55" stroke="#e67e22" stroke-width="1.5" stroke-dasharray="3,2"/>
+        <text x="430" y="125" font-size="10" fill="#e67e22">ATR × 3</text>
+        <circle cx="60" cy="190" r="5" fill="#1a7a4a"/>
+        <text x="65" y="208" font-size="10" fill="#1a7a4a" font-weight="700">추세 시작</text>
+        <rect x="65" y="25" width="120" height="20" fill="#d1fae5" rx="4"/>
+        <text x="125" y="39" text-anchor="middle" font-size="10" fill="#065f46" font-weight="700">🟢 1차 파동 진행</text>
+        <rect x="185" y="25" width="110" height="20" fill="#fef3c7" rx="4"/>
+        <text x="240" y="39" text-anchor="middle" font-size="10" fill="#78350f" font-weight="700">🟡 2차 파동 진행</text>
+        <rect x="305" y="25" width="90" height="20" fill="#fee2e2" rx="4"/>
+        <text x="350" y="39" text-anchor="middle" font-size="10" fill="#7f1d1d" font-weight="700">🔴 3차 파동 도달</text>
+      </svg>
+      <figcaption>▲ ATR(평균 변동폭) 배수를 기준으로 1~3차 파동을 자동 분류하는 시스템 구조</figcaption>
+    </figure>
+  </div>
+
+  <h3 id="ch2-3">핵심 파라미터 완전 해설</h3>
+  <table class="param-table">
+    <thead><tr><th>파라미터</th><th>설정값</th><th>실전 의미</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>Q (프로세스 노이즈)</strong></td>
+        <td><code>1e-4</code></td>
+        <td>주가의 새로운 방향을 얼마나 빠르게 인정할 것인가. 값이 작을수록 필터가 보수적이 되어 세력의 단기 흔들기에 꺾이지 않습니다.</td>
+      </tr>
+      <tr>
+        <td><strong>R (측정 노이즈)</strong></td>
+        <td><code>1e-2</code></td>
+        <td>당일 캔들의 흔들림을 '가짜'로 의심하는 강도입니다. 이 값이 적절히 세팅되어 있어 세력의 흔들기에 개미처럼 당하지 않게 방어합니다.</td>
+      </tr>
+      <tr>
+        <td><strong>2차 칼만 (더블 필터)</strong></td>
+        <td><code>R × 3</code></td>
+        <td>1차 칼만 결과를 한 번 더 필터링합니다. 노이즈를 추가로 제거하는 '시크릿 이평' 핵심 기술입니다.</td>
+      </tr>
+      <tr>
+        <td><strong>ATR (평균 변동폭)</strong></td>
+        <td>최근 14일</td>
+        <td>종목 고유의 일일 변동 범위입니다. 이제는 이 값이 <strong>목표가·손절가 4단 방어망(CH.5)</strong>의 계산 근거로도 함께 쓰입니다.</td>
+      </tr>
+      <tr>
+        <td><strong>볼린저밴드 폭</strong></td>
+        <td>20일 ± 2σ</td>
+        <td>밴드폭이 좁게 수렴되면 '에너지응축' 상태로 판단합니다. 이후 방향 돌파 시 강한 추세가 발생할 가능성이 높습니다.</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ── CH3: 타점 배지 ── -->
+<section class="section" id="ch3">
+  <div class="chapter-label">CHAPTER 3</div>
+  <h2>실전 타점 배지 완전 해설</h2>
+  <p class="section-intro">시스템은 매 스캔마다 모든 종목을 <strong>장기 추세추종형(SEED)</strong>과 <strong>단기 기술적형(NORMAL)</strong>, 두 큰 갈래로 분류하고 세부 타점 배지를 부여합니다. 자신의 투자 성향과 시간 여유에 맞는 유형을 선택하는 것이 수익의 시작입니다.</p>
+
+  <div class="badge-card" id="ch3-1">
+    <div class="track-no">TYPE — SEED</div>
+    <h4>🌱 장기 추세추종 (모아가기 · 농사 매매)</h4>
+    <span class="badge-pill pill-seed">🌱 바닥 · 분할매수</span>
+    <span class="badge-pill pill-seed">🎖️(코어픽)</span>
+    <div class="cond-title">▶ 발동 조건 (동시 충족)</div>
+    <p>① 과거 대시세를 냈던 <mark>진짜 대장주 이력</mark>이 있는 종목 (250일 기준 저점 대비 50~200% 상승 이력)</p>
+    <p>② 고점(60일) 대비 <mark>-15% 이상 깊은 조정</mark>을 받은 상태</p>
+    <p>③ 거래량이 바싹 마른 <mark>거래량 씨가 마름</mark> 상태이며 최근 과열 이력이 없을 것</p>
+    <p>④ 현재가가 <mark>20일선 또는 60일선 부근</mark>에 위치하거나 쌍바닥(W패턴) 형성 중</p>
+
+    <div class="chart-box" style="margin:20px 0;">
+      <figure>
+        <svg viewBox="0 0 600 200" xmlns="http://www.w3.org/2000/svg" style="max-height:200px;">
+          <rect width="600" height="200" fill="#f8fffe" rx="6"/>
+          <text x="300" y="18" text-anchor="middle" font-size="11" fill="#065f46" font-weight="700">🌱 모아가기 타점 — 바닥권 쌍바닥 + 거래량 씨가 마른 구간</text>
+          <polyline points="30,80 80,82 130,85 180,88 230,90 280,92 330,94 380,95 430,95 530,96" fill="none" stroke="#e67e22" stroke-width="1.5" stroke-dasharray="5,3"/>
+          <text x="535" y="99" font-size="9" fill="#e67e22">60일선</text>
+          <polyline points="30,50 80,55 130,60 150,75 170,100 190,115 210,125 230,135 250,140 270,150 290,145 310,155 330,150 350,148 370,145 390,130 410,115 430,100 460,85 490,70 520,58" fill="none" stroke="#1a4480" stroke-width="2"/>
+          <circle cx="270" cy="150" r="5" fill="#c0392b" opacity="0.7"/>
+          <circle cx="340" cy="148" r="5" fill="#c0392b" opacity="0.7"/>
+          <text x="305" y="172" text-anchor="middle" font-size="10" fill="#c0392b" font-weight="700">W 패턴 (쌍바닥)</text>
+          <rect x="240" y="170" width="8" height="20" fill="#e0d0c0" rx="1"/>
+          <rect x="258" y="170" width="8" height="18" fill="#e0d0c0" rx="1"/>
+          <rect x="276" y="170" width="8" height="8" fill="#a0c8a0" rx="1"/>
+          <rect x="294" y="170" width="8" height="7" fill="#a0c8a0" rx="1"/>
+          <rect x="312" y="170" width="8" height="6" fill="#a0c8a0" rx="1"/>
+          <text x="294" y="198" text-anchor="middle" font-size="9" fill="#1a7a4a">거래량 씨가 마름 ↓</text>
+          <circle cx="340" cy="148" r="10" fill="none" stroke="#1a7a4a" stroke-width="2" stroke-dasharray="3,2"/>
+          <text x="360" y="140" font-size="10" fill="#1a7a4a" font-weight="700">← 1차 매수</text>
+          <text x="370" y="153" font-size="9" fill="#1a7a4a">지지선 확인 후 진입</text>
+        </svg>
+        <figcaption>▲ 대장주 하락 후 쌍바닥 지지 + 거래량 소멸 → 🌱 모아가기 배지 발동 구간</figcaption>
+      </figure>
+    </div>
+
+    <div class="action-box">
+      <strong>📌 운용 방법 + V3 실적점수 확인 필수</strong><br>
+      당장 내일 오를 확률은 낮지만 <strong>하방 리스크가 닫혀 있는 자리</strong>입니다. 현재가에서 1차 매수 후, 지지선 부근에서 2차 분할 매수하며 느긋하게 주식 수를 늘려가십시오. <strong>이 유형만은 유독 실적점수(V3)가 중요합니다</strong> — 실적이 뚜렷하게 꺾이고 있는 종목은 애초에 이 타점 후보에서 제외되도록 설계되어 있지만, 혹시 표시된 V3 점수가 낮다면 신중하게 접근하십시오.
+    </div>
+  </div>
+
+  <div class="badge-card" id="ch3-2">
+    <div class="track-no">TYPE — NORMAL</div>
+    <h4>🚀 단기 기술적형 (테마 · 돌파 · 전환)</h4>
+    <span class="badge-pill pill-short">🚀 테마 후발주 · 가속</span>
+    <span class="badge-pill pill-short">👑(진성대장)</span>
+    <span class="badge-pill pill-short">💪(하락장 역행)</span>
+    <span class="badge-pill pill-short">🔍 칼만 전환 · 관심</span>
+    <div class="cond-title">▶ 발동 조건</div>
+    <p>당일 또는 최근 며칠 사이 급부상한 주도 테마의 대장주에게 부여되거나, 칼만 필터 기준 하락 추세가 막 상승으로 전환된 초기 국면에 부여됩니다. 실적보다는 <strong>모멘텀·수급 강도</strong>가 핵심입니다.</p>
+    <div class="action-box">
+      <strong>📌 운용 방법 (호가창 대응 필수)</strong><br>
+      3분봉 20선 또는 당일 시가를 생명선으로 설정합니다. 단기 슈팅 구간만 노리고 빠르게 타격합니다. <span class="red">2등주(후발주)는 절대 금지.</span> 윗꼬리 발생이나 프로그램 매도 전환 시 즉각 자릅니다.
+    </div>
+  </div>
+
+  <div class="badge-card" id="ch3-3">
+    <div class="track-no">TYPE — 역발상 · 관망</div>
+    <h4>💎 외인 역발상 매집 & ⏸ 관망형</h4>
+    <span class="badge-pill pill-pull">💎 외인 역발상 매집</span>
+    <span class="badge-pill pill-watch">⏸ 관망 · 조건미달</span>
+    <span class="badge-pill" style="background:#fff5f5;color:#7f1d1d;border:1px solid #fca5a5;">⏸ 관망 · 손절폭 과도</span>
+    <div class="cond-title">▶ 발동 조건</div>
+    <p><strong>💎 외인 역발상 매집</strong>: 주가는 눌려있거나 조용한데, 외국인이 최근 5일간 조용히 사 모으는 정황이 포착된 경우. 아직 주가에 반영 안 된 선행 신호로 볼 수 있습니다.</p>
+    <p><strong>⏸ 관망형</strong>: 뚜렷한 신호가 없거나(조건미달), 4단 방어망을 거친 결과 손절폭이 정상 범위를 벗어나 애초에 매매 대상에서 배제된 경우(손절폭 과도)입니다. <strong>관망형은 목표가·손절가도 함께 비워둡니다</strong> — 근거 없는 숫자가 그럴듯하게 보이는 걸 막기 위한 장치입니다.</p>
+  </div>
+
+  <h3 id="ch3-4">배지 사전 — 타점 옆에 추가로 붙는 표시들</h3>
+  <div class="badge-dict">
+    <div class="badge-dict-item"><span class="emoji">🎖️</span><div class="txt"><strong>(코어픽)</strong><span>장기 보유 후보로 별도 추적 중인 종목. 이미 크게 오른 종목은 자동으로 이 배지에서 제외됩니다.</span></div></div>
+    <div class="badge-dict-item"><span class="emoji">💎</span><div class="txt"><strong>(외인집중/외인대량)</strong><span>최근 외국인 매수세가 유독 강하게 몰리는 종목.</span></div></div>
+    <div class="badge-dict-item"><span class="emoji">🔥</span><div class="txt"><strong>(절대대장)</strong><span>장세가 압축된 국면에서 유일하게 뽑힌 최상위 대장주.</span></div></div>
+    <div class="badge-dict-item"><span class="emoji">🔻</span><div class="txt"><strong>(실적 악화 주의) <span style="color:#9a3412;">NEW</span></strong><span>코어픽 종목인데 최근 실적(V3)이 꺾이기 시작함. 애초에 산 이유가 흔들리고 있다는 경고입니다.</span></div></div>
+    <div class="badge-dict-item"><span class="emoji">⚠️</span><div class="txt"><strong>(윗꼬리/이격)</strong><span>고점에서 물량이 던져진 흔적이 있거나 이동평균선과 이격이 과도한 상태.</span></div></div>
+  </div>
+</section>
+
+<!-- ── CH4: 수급 신호 ── -->
+<section class="section" id="ch4">
+  <div class="chapter-label">CHAPTER 4</div>
+  <h2>수급 신호 & 배지 완전 해독 매뉴얼</h2>
+  <p class="section-intro">배지는 타점만이 아닙니다. 프로그램 수급, 거래량, 캔들 모양까지 여러 렌즈를 동시에 읽어야 진짜 신호인지 함정인지 구별할 수 있습니다.</p>
+
+  <h3 id="ch4-1">프로그램 수급 신호 해독</h3>
+  <p>프로그램 수급(기관·외국인)은 개인이 절대 흉내 낼 수 없는 대형 자금입니다. 이 돈의 방향을 읽는 것이 핵심입니다.</p>
+
+  <table class="signal-table">
+    <thead><tr><th>수급 배지</th><th>의미</th><th>매매 전략</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><span class="sig-buy">🔴 대량유입 +XX억</span></td>
+        <td>거래대금의 10% 이상 프로그램 순매수. <strong>메이저 자금이 의도적으로 쓸어 담는 중</strong></td>
+        <td class="green">적극 매수 검토. 타점 배지와 일치 시 가장 강력한 복합 신호</td>
+      </tr>
+      <tr>
+        <td><span class="sig-buy">🔴 매수우위 +XX억</span></td>
+        <td>거래대금의 5~10% 수준 프로그램 순매수</td>
+        <td class="green">우호적 신호. 다른 조건과 복합 확인 후 매수</td>
+      </tr>
+      <tr>
+        <td><span class="sig-sell">🔵 대량출회 XX억</span></td>
+        <td>거래대금의 10% 이상 프로그램 순매도. <strong>메이저가 물량을 던지는 중</strong></td>
+        <td class="red">강력 매수 금지. 보유 중이라면 분할 매도 검토</td>
+      </tr>
+      <tr>
+        <td><span class="sig-neutral">⚪ 수급강도 평년</span></td>
+        <td>프로그램의 뚜렷한 방향성 없음</td>
+        <td>중립. 개인 수급과 테마 모멘텀으로 판단</td>
+      </tr>
+      <tr>
+        <td><span class="sig-buy">🌎💎 외인대량</span></td>
+        <td>5일 누적 외국인 순매수가 유독 큰 경우</td>
+        <td class="green">중장기 자금의 본격 매집 신호. SEED 타점과 결합 시 최강 신호</td>
+      </tr>
+      <tr>
+        <td><span class="sig-sell">🌎🔵 외인이탈</span></td>
+        <td>5일 누적 외국인 순매도</td>
+        <td class="red">신규 진입 자제. 특히 코어픽 종목이 이 신호를 보이면 재검토 필요</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 id="ch4-2">거래량 배지 해독</h3>
+  <table class="signal-table">
+    <thead><tr><th>거래량 배지</th><th>의미 & 전략</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><span class="sig-buy">🟢 에너지응축</span></td>
+        <td>10일 평균 대비 대폭 낮음. <strong>스프링이 극한으로 압축된 상태.</strong> 곧 강한 방향성 폭발 예고</td>
+      </tr>
+      <tr>
+        <td><span class="sig-buy">🟢 거래감소</span></td>
+        <td>건전한 조정 중. 눌림목 타점과 함께면 긍정적</td>
+      </tr>
+      <tr>
+        <td><span class="sig-neutral">🟡 평년수준</span></td>
+        <td>10일 평균과 비슷한 수준. 특별한 해석 없음</td>
+      </tr>
+      <tr>
+        <td><span class="sig-sell">🔴 거래과열</span></td>
+        <td>10일 평균 대비 크게 폭증. 단기 과열 주의, 추격 매수 금지</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3 id="ch4-3">캔들 배지 해독</h3>
+  <table class="signal-table">
+    <thead><tr><th>캔들 배지</th><th>의미 & 대응</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><span class="sig-buy">👑 몸통 마감</span></td>
+        <td>윗꼬리가 거의 없음. <strong>세력이 물량을 떠넘기지 않고 홀딩 중.</strong> 가장 이상적인 캔들 형태</td>
+      </tr>
+      <tr>
+        <td><span class="sig-sell">⚠️ 저항 출회 (윗꼬리)</span></td>
+        <td>윗꼬리가 길게 남음. <strong>고점에서 세력이 물량을 던지는 신호.</strong> 신규 매수 금지</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ── CH5: 목표가/손절가 방어망 (신규) ── -->
+<section class="section" id="ch5">
+  <div class="chapter-label">CHAPTER 5 · NEW</div>
+  <h2>목표가 · 손절가 4단 방어망</h2>
+  <p class="section-intro">목표가와 손절가는 감으로 나오는 숫자가 아닙니다. 이번 개정판에서 새로 도입된 4단계 검증을 거쳐야만 화면에 실제 숫자로 표시됩니다.</p>
+
+  <h3 id="ch5-1">왜 방어망이 필요했는가</h3>
+  <p>과거에는 60일 고가 같은 과거 저항선을 그대로 목표가로 썼습니다. 문제는 <strong>이미 전고점 코앞까지 올라온 종목</strong>에게도 똑같은 방식을 적용하면, 목표가가 현재가 바로 위에 잡혀 손익비가 무너지는 경우가 있었습니다. 이걸 자동으로 감지하고 교정하는 것이 4단 방어망입니다.</p>
+
+  <div class="defense-steps">
+    <div class="defense-step">
+      <div class="d-no">1</div>
+      <div>
+        <h5>데이터 이상치 검증</h5>
+        <p>60일 최고가는 수학적으로 52주 최고가를 넘을 수 없습니다. 만약 넘는다면 시세 데이터 자체의 오류로 보고 자동으로 눌러줍니다.</p>
+      </div>
+    </div>
+    <div class="defense-step">
+      <div class="d-no">2</div>
+      <div>
+        <h5>손익비 기반 목표가 재선택</h5>
+        <p>과거 저항선 기준 목표가로 손익비(상승여력÷하락위험)가 <strong>1.5배</strong>가 안 나오면(이미 전고점 코앞인 경우 등), 자동으로 ATR 기반 미래 투사 목표가로 전환합니다. 신고가 갱신 중인 종목이 과거에 발목 잡히지 않도록 하는 장치입니다.</p>
+      </div>
+    </div>
+    <div class="defense-step">
+      <div class="d-no">3</div>
+      <div>
+        <h5>손절폭 상하한</h5>
+        <p>계산 방식과 무관하게, 현재가 대비 손절폭이 항상 <strong>-3.5%~-16%</strong> 범위 안에 있도록 강제합니다. 너무 타이트하면 정상적인 변동에도 털리고, 너무 넉넉하면 손실이 과도해지기 때문입니다.</p>
+      </div>
+    </div>
+    <div class="defense-step">
+      <div class="d-no">4</div>
+      <div>
+        <h5>손절폭 과도 시 추천 자체 취소</h5>
+        <p>상하한을 적용하기 전 원래 손절폭이 이미 과도했다면, 숫자만 억지로 좁혀서 그럴듯하게 보이게 하지 않고 <strong>"⏸ 관망 · 손절폭 과도"로 강등</strong>하여 목표가·손절가 자체를 비워버립니다.</p>
+      </div>
+    </div>
+  </div>
+
+  <h3 id="ch5-2">읽는 법</h3>
+  <div class="tip-box">
+    <div class="t-title">✅ 실전 활용 팁</div>
+    <p style="margin:0; font-size:0.95rem;">스캐너의 목표가·손절가는 <strong>기계적 계산값</strong>입니다. 반면 리포트 탭에 실제로 선정되어 나온 종목은 Gemini가 개별 차트를 다시 보고 재산정한 값이라 근거가 더 깊습니다. 두 값이 다르게 나온다면 후자를 더 신뢰하십시오.</p>
+  </div>
+</section>
+
+<!-- ── CH6: V3 실적점수 (신규) ── -->
+<section class="section" id="ch6">
+  <div class="chapter-label">CHAPTER 6 · NEW</div>
+  <h2>V1 · V2 · V3 — 세 개의 독립된 축</h2>
+  <p class="section-intro">시스템이 하나의 점수로 뭉쳐버리면, 나중에 "이 시스템이 진짜 잘 맞는 게 차트 분석인지, 수급 분석인지, 실적 분석인지" 검증할 방법이 없어집니다. 그래서 세 축을 철저히 독립적으로 유지합니다.</p>
+
+  <h3 id="ch6-1">세 축이 각각 답하는 질문</h3>
+  <div class="score-viz">
+    <div class="score-bar-row">
+      <div class="score-bar-label">V1 (차트점수)</div>
+      <div class="score-bar-track"><div class="score-bar-fill" style="width:100%; background:linear-gradient(90deg,#2563a8,#60a5fa);"></div></div>
+      <div class="score-bar-val">기술적</div>
+    </div>
+    <div class="score-bar-row">
+      <div class="score-bar-label">V2 (수급점수)</div>
+      <div class="score-bar-track"><div class="score-bar-fill" style="width:100%; background:linear-gradient(90deg,#c0392b,#f87171);"></div></div>
+      <div class="score-bar-val">수급</div>
+    </div>
+    <div class="score-bar-row">
+      <div class="score-bar-label">V3 (실적점수)</div>
+      <div class="score-bar-track"><div class="score-bar-fill" style="width:100%; background:linear-gradient(90deg,#c8973a,#f0c060);"></div></div>
+      <div class="score-bar-val">실적</div>
+    </div>
+  </div>
+  <p><strong>V1</strong>은 "차트가 좋은가?", <strong>V2</strong>는 "돈이 실제로 들어오고 있는가?", 그리고 이번에 새로 생긴 <strong>V3</strong>는 "회사가 실제로 돈을 더 벌고 있는가?"를 각각 독립적으로 답합니다. V3는 분기 매출·영업이익 추이를 바탕으로 계산되며, <strong>연속 성장 분기 수</strong>가 많을수록, 단발성 반짝 성장이 아니라 구조적 성장으로 인정받아 높은 점수를 받습니다.</p>
+
+  <div class="tip-box">
+    <div class="t-title">✅ V3는 어디에 특히 중요한가</div>
+    <p style="margin:0; font-size:0.95rem;">V3는 <strong>SEED(장기 추세추종형)</strong> 종목에 특히 강하게 반영됩니다. 반면 순수 기술적 반등을 노리는 💎 역발상 매집형 종목은 V3가 낮거나 없어도 배제되지 않습니다 — 그 전략 자체가 실적과 무관한 기술적 반등을 노리는 것이기 때문입니다.</p>
+  </div>
+
+  <h3 id="ch6-2">🔻 실적 악화 경고 배지</h3>
+  <p>장기 보유 후보(코어픽)로 등록된 종목의 V3 점수가 이후 실적 발표를 거치며 낮아지면, 시스템은 자동으로 <mark>🔻(실적 악화 주의)</mark> 배지를 붙입니다. 이건 "사놓고 방치"가 아니라 <strong>애초에 이 종목을 산 이유(실적 성장)가 흔들리고 있다</strong>는 뜻이므로, 보유 중이라면 반드시 재검토가 필요한 신호입니다.</p>
+</section>
+
+<!-- ── CH7: 시장위험도(STAGE) ── -->
+<section class="section" id="ch7">
+  <div class="chapter-label">CHAPTER 7 · 개편</div>
+  <h2>시장 위험도(STAGE) 실시간 판독</h2>
+  <p class="section-intro">이전 버전은 "코스닥 지수가 20일 이동평균선 아래로 떨어지면" 하락장으로 판단했습니다. 지금은 <strong>실시간 코스피·코스닥 등락률을 직접 조회</strong>하는 방식으로 개편되어, 더 즉각적이고 정확하게 오늘 장세를 반영합니다.</p>
+
+  <h3 id="ch7-1">STAGE는 어떻게 결정되는가</h3>
+  <p>매 리포트 생성 시점마다, 코스피·코스닥 실시간 등락률을 직접 조회해서 판단합니다. 텍스트 기반 시황 요약에 "하락", "이탈" 같은 표현이 있거나, 실시간 지수가 <mark>-1% 이하</mark>면 경고 국면으로, <mark>-3% 이하</mark>면 패닉 국면으로 격상됩니다.</p>
+
+  <table class="param-table">
+    <thead><tr><th>STAGE</th><th>판단 기준</th><th>시스템 대응</th></tr></thead>
+    <tbody>
+      <tr><td><strong>STAGE 1</strong><br>정상 장세</td><td>실시간 등락률이 기준치 이내</td><td>추세 매매·돌파 매매 정상 가동. 개별 종목 사유로만 관망 권고</td></tr>
+      <tr><td><strong>STAGE 2</strong><br>주의 장세</td><td>등락률 -1% 이하 또는 하락 시그널 텍스트 감지</td><td>강한 개별 매수 신호(외인집중 등)가 없는 종목은 매수 보류 권고</td></tr>
+      <tr><td><strong>STAGE 3</strong><br>패닉 장세</td><td>등락률 -3% 이하 또는 패닉·폭락 시그널 감지</td><td>전 종목 매수 보류, 현금 100% 관망 강력 권고</td></tr>
+    </tbody>
+  </table>
+
+  <h3 id="ch7-2">STAGE 2·3에서 뜨는 "매수 보류" 읽는 법</h3>
+  <p>STAGE 2·3에서 매수 보류 권고가 뜨더라도, <strong>전체 장세가 나쁘다는 뜻이지 반드시 그 종목 자체가 나쁘다는 뜻은 아닙니다.</strong> 브리핑 문구를 잘 보면 "장세는 양호하나 이 종목만의 사유로" 같은 개별 설명이 붙는 경우와, 장세 자체가 나빠서인 경우가 구분되어 있습니다.</p>
+
+  <div class="tip-box">
+    <div class="t-title">✅ 점수 커트라인 안내 (변동 없음)</div>
+    <p style="margin:0; font-size:0.95rem;">일반 시장: <strong>25점 이상</strong>인 종목만 스캐너에 노출됩니다.<br>주의·패닉 장세: <strong>40점 이상</strong>으로 자동 허들 상향 → 평소보다 훨씬 엄격한 조건의 종목만 표시됩니다.</p>
+  </div>
+</section>
+
+<!-- ── CH8: 앱 활용법 (신규) ── -->
+<section class="section" id="ch8">
+  <div class="chapter-label">CHAPTER 8 · NEW</div>
+  <h2>앱 활용법 — 7개 탭 완전 정복</h2>
+  <p class="section-intro">시스템의 두뇌를 이해했다면, 이제 매일 마주하는 화면을 제대로 읽는 법을 익힐 차례입니다.</p>
+
+  <h3 id="ch8-1">탭별 안내</h3>
+  <div class="arch-grid">
+    <div class="arch-node"><div class="node-icon">📊</div><h5>스캐너</h5><p>지금 조건을 만족하는 상위 종목 카드. 10분마다 자동 갱신.</p></div>
+    <div class="arch-node"><div class="node-icon">⭐</div><h5>관심</h5><p>즐겨찾기 종목. 5단계 폴백으로 최대한 최신 정보를 찾아줍니다.</p></div>
+    <div class="arch-node"><div class="node-icon">📄</div><h5>리포트</h5><p>매일 15시, AI가 선정한 단기·중장기 픽의 심층 리포트.</p></div>
+    <div class="arch-node"><div class="node-icon">🔥</div><h5>테마</h5><p>실시간 주도 테마 순위. 대장주 독식 테마는 자동 제외.</p></div>
+    <div class="arch-node"><div class="node-icon">📰</div><h5>뉴스</h5><p>관련 종목·테마 최신 뉴스 모음.</p></div>
+    <div class="arch-node"><div class="node-icon">🗓</div><h5>캘린더 <span style="color:#c8973a;">NEW</span></h5><p>과거 테마 복기 + 미래 일정을 하나의 달력으로 통합.</p></div>
+    <div class="arch-node"><div class="node-icon">🔍</div><h5>검색</h5><p>네이버 실시간 검색 상위 종목.</p></div>
+  </div>
+
+  <h3 id="ch8-2">캘린더 읽는 법</h3>
+  <p>하나의 달력에서 <strong>과거 날짜는 그날의 주도 테마</strong>를, <strong>미래 날짜는 예정된 일정</strong>(실적 발표, 경제지표 등)을 보여줍니다. 데이터가 있는 날짜엔 은은한 배경과 점 표시가 뜨고, 탭하면 상세 내용이 아래에 펼쳐집니다. 과거 복기와 미래 대비를 하나의 화면에서 오갈 수 있도록 설계된 탭입니다.</p>
+</section>
+
+<!-- ── CH9: 실전 케이스 ── -->
+<section class="section" id="ch9">
+  <div class="chapter-label">CHAPTER 9</div>
+  <h2>실전 케이스 스터디 5선</h2>
+  <p class="section-intro">스캐너·리포트에 실제로 표시될 법한 배지 조합을 보고, 트레이더가 어떻게 사고하고 액션을 취해야 하는지 시뮬레이션합니다.</p>
+
+  <div class="case-study" id="ch9-1">
+    <div class="case-header"><span class="case-no">CASE 01</span><span class="case-title">추세의 시작을 잡는 법 — 스윙 진입</span></div>
+    <div class="case-badges"><span class="badge-pill pill-swing">🚀 테마 후발주 · 가속</span><span class="badge-pill pill-swing">🟢 시크릿 추세 전환 (1차 매수 타점)</span></div>
+    <div class="case-screen">
+      <span class="label">종목명     </span><span class="value-gold">XXX전자 (123456)</span><br>
+      <span class="label">현재가     </span><span class="value-buy">28,500원 (+7.2%)</span><br>
+      <span class="label">타점 배지   </span><span class="value-green">🚀 테마 후발주 · 가속 👑(진성대장)</span><br>
+      <span class="label">수급 신호   </span><span class="value-buy">🔴 대량유입 +42억 🌎💎(외인대량)</span><br>
+      <span class="label">거래량 배지  </span><span class="value-buy">🔴 거래과열 (전일비 380%)</span><br>
+      <span class="label">V1 / V2     </span><span class="value-buy">87점 / 78점</span>
+    </div>
+    <div class="thought-box"><strong>💡 트레이더의 사고 흐름</strong><br>"오랫동안 박스권에서 기어다니던 종목에 오늘 외국인 대량 매수가 강하게 들어왔네. 거래량도 380%로 터졌고, 칼만 이평도 방금 하락을 멈추고 우상향으로 전환됐어. 여기가 추세의 시작점이다."</div>
+  </div>
+
+  <div class="case-study" id="ch9-2">
+    <div class="case-header"><span class="case-no">CASE 02</span><span class="case-title">편안한 농사 매매 — 모아가기 타점</span></div>
+    <div class="case-badges"><span class="badge-pill pill-seed">🌱 바닥 · 분할매수 🎖️(코어픽)</span></div>
+    <div class="case-screen">
+      <span class="label">종목명     </span><span class="value-gold">XXX바이오 (234567)</span><br>
+      <span class="label">현재가     </span><span class="value-sell">51,200원 (-0.4%)</span><br>
+      <span class="label">타점 배지   </span><span class="value-green">🌱 바닥 · 분할매수 🎖️(코어픽)</span><br>
+      <span class="label">V3(실적점수) </span><span class="value-green">72점 · 3분기 연속 성장</span><br>
+      <span class="label">고점 대비   </span>📉 고점 대비 큰 폭 조정 (-22%)
+    </div>
+    <div class="thought-box"><strong>💡 트레이더의 사고 흐름</strong><br>"전에 크게 올랐던 바이오 대장주인데 요즘 관심이 완전히 꺼졌어. 그런데 실적점수가 72점에 3분기 연속 성장 중이야 — 기술적 조정이지 회사 자체는 계속 좋아지고 있다는 뜻이지. 여기서 1차 매수하고 느긋하게 기다리자."</div>
+  </div>
+
+  <div class="case-study" id="ch9-3">
+    <div class="case-header"><span class="case-no">CASE 03</span><span class="case-title">직장인의 오후 5분 — 종가베팅 타점</span></div>
+    <div class="case-badges"><span class="badge-pill pill-night">🎯 종베 · 관성파동</span></div>
+    <div class="case-screen">
+      <span class="label">종목명     </span><span class="value-gold">XXX반도체 (345678)</span><br>
+      <span class="label">현재가     </span><span class="value-buy">84,300원 (+3.1%)</span><br>
+      <span class="label">타점 배지   </span><span class="value-green">🎯 종베 · 관성파동</span><br>
+      <span class="label">수급 신호   </span><span class="value-buy">🔴 매수우위 +18억</span><br>
+      <span class="label">시간        </span>오후 3:08 (종가 임박)
+    </div>
+    <div class="thought-box"><strong>💡 트레이더의 사고 흐름</strong><br>"52주 신고가 바로 아래에서 꽉 찬 양봉으로 버티고 있어. 종가에 진입해서 내일 아침 시세 분출할 때 팔면 되겠다."</div>
+  </div>
+
+  <div class="case-study" id="ch9-4">
+    <div class="case-header"><span class="case-no">CASE 04</span><span class="case-title" style="color:var(--red);">절대 매수 금지 — 3차 파동 고점</span></div>
+    <div class="case-badges"><span class="badge-pill" style="background:#fff5f5;color:#7f1d1d;border:1px solid #fca5a5;">👀 3차 파동 고점 리스크</span></div>
+    <div class="case-screen">
+      <span class="label">종목명     </span><span class="value-gold">XXX테마 (456789)</span><br>
+      <span class="label">현재가     </span><span class="value-buy">15,800원 (+12.5%)</span><br>
+      <span class="label">캔들 배지   </span><span class="value-sell">⚠️ 저항 출회 (윗꼬리 발생)</span>
+    </div>
+    <div class="warning-box" style="margin-top:16px;">
+      <div class="w-title">🚫 절대 금지 — 이유</div>
+      <p style="margin:0; font-size:0.95rem;">이미 칼만 엔진 기준 3차 파동 한계치에 도달했고 윗꼬리까지 생겼습니다. 지금 들어가면 <span class="red">세력의 물량 떠넘기기에 완벽하게 당하는 것</span>입니다.</p>
+    </div>
+  </div>
+
+  <div class="case-study" id="ch9-5">
+    <div class="case-header"><span class="case-no">CASE 05</span><span class="case-title" style="color:#9a3412;">NEW — 보유 중 실적 악화 경고</span></div>
+    <div class="case-badges"><span class="badge-pill pill-badge-new">🌱 바닥 · 분할매수 🔻(실적 악화 주의)</span></div>
+    <div class="case-screen">
+      <span class="label">종목명     </span><span class="value-gold">XXX에너지 (567890)</span><br>
+      <span class="label">타점 배지   </span><span class="value-buy" style="color:#f87171;">🌱 바닥 · 분할매수 🔻(실적 악화 주의)</span><br>
+      <span class="label">V3(실적점수) </span><span class="value-buy" style="color:#f87171;">15점 · 최근 분기 적자 전환</span>
+    </div>
+    <div class="thought-box"><strong>💡 트레이더의 사고 흐름</strong><br>"몇 달 전 코어픽으로 담았던 종목인데, 방금 새 배지가 붙었네. 실적점수가 15점까지 떨어지고 최근 분기 적자로 전환됐대. 차트 모양은 비슷해 보여도, 애초에 이 종목을 산 이유(실적 성장)가 깨졌으니 원칙대로 재검토해야겠다."</div>
+  </div>
+</section>
+
+<!-- ── CH10: 황금 규칙 ── -->
+<section class="section" id="ch10">
+  <div class="chapter-label">CHAPTER 10</div>
+  <h2>HYEOKS 퀀트 황금 규칙 11계명</h2>
+  <p class="section-intro">시스템이 아무리 정교해도, 원칙 없이 쓰면 무용지물입니다. 이번 개정판에서 실적점수 관련 규칙 하나가 추가되었습니다.</p>
+
+  <div class="flow-steps" id="ch10-1">
+    <div class="flow-step"><div class="flow-no" style="background:var(--red);border-color:var(--red);color:#fff;">1</div><div class="flow-content"><h5>3차 파동에는 절대 신규 진입하지 않는다</h5><p>🔴 3차 파동 배지가 붙은 종목은 아무리 급등해도 쳐다보지 않습니다.</p></div></div>
+    <div class="flow-step"><div class="flow-no" style="background:var(--red);border-color:var(--red);color:#fff;">2</div><div class="flow-content"><h5>윗꼬리 발생 종목은 그날 매수 금지</h5><p>⚠️ 저항 출회 배지가 붙은 날은 아무리 좋은 수급이 들어와도 매수를 미룹니다.</p></div></div>
+    <div class="flow-step"><div class="flow-no">3</div><div class="flow-content"><h5>손절가를 먼저 정하고 진입한다</h5><p>4단 방어망을 거쳐 나온 손절가는 이미 정상 범위(-3.5%~-16%) 안입니다. 진입 전 이 가격이 이탈되면 기계적으로 손절한다는 다짐을 먼저 하십시오.</p></div></div>
+    <div class="flow-step"><div class="flow-no">4</div><div class="flow-content"><h5>종가베팅은 절대 하루를 넘기지 않는다</h5><p>🎯 종베 배지의 포지션은 다음 날 오전 청산을 원칙으로 합니다.</p></div></div>
+    <div class="flow-step"><div class="flow-no">5</div><div class="flow-content"><h5>주의·패닉 장세에서는 모아가기 트랙만 가동한다</h5><p>STAGE 2·3로 전환되면 단타와 스윙을 자제하고, 🌱 모아가기 배지 종목에만 소량 분할 매수합니다.</p></div></div>
+    <div class="flow-step"><div class="flow-no">6</div><div class="flow-content"><h5>2등주(후발주)는 쳐다보지 않는다</h5><p>단타 트랙에서는 테마의 1등 대장주만 매수합니다.</p></div></div>
+    <div class="flow-step"><div class="flow-no">7</div><div class="flow-content"><h5>AI 브리핑을 매일 복기한다</h5><p>브리핑을 읽는 것에서 끝나지 않고, 다음 날 실제 결과와 비교합니다.</p></div></div>
+    <div class="flow-step"><div class="flow-no">8</div><div class="flow-content"><h5>모아가기는 분할 매수가 핵심이다</h5><p>🌱 배지 종목을 한 번에 전량 매수하지 않습니다.</p></div></div>
+    <div class="flow-step"><div class="flow-no">9</div><div class="flow-content"><h5>관망도 전략이다</h5><p>스캐너에 좋은 종목이 없으면 현금을 보유합니다.</p></div></div>
+    <div class="flow-step"><div class="flow-no" style="background:#9a3412;border-color:#9a3412;color:#fff;">10</div><div class="flow-content"><h5>🔻 실적 악화 배지가 뜨면 보유 이유를 재점검한다 <span style="color:#9a3412; font-size:0.75em;">NEW</span></h5><p>코어픽 종목에 이 배지가 붙으면, 애초에 이 종목을 산 이유(실적 성장 스토리)가 흔들리고 있다는 뜻입니다. 차트가 그대로여도 원칙적으로 재검토해야 합니다.</p></div></div>
+    <div class="flow-step"><div class="flow-no" style="background:var(--gold);border-color:var(--gold);color:var(--navy);">11</div><div class="flow-content"><h5>시스템을 믿고, 감정을 배제한다</h5><p>이 시스템은 수학과 통계를 기반으로 합니다. 장중 호가창의 숫자가 두렵거나 흥분될 때, 항상 스캐너의 배지로 돌아오십시오.</p></div></div>
+  </div>
+
+  <div class="quote">
+    "HYEOKS 퀀트 시스템은 인간의 얄팍한 감정을 배제하고 철저한 수학적, 통계적 우위를 선점하기 위해 설계되었습니다. 차트·수급·실적, 세 개의 눈으로 시장을 보십시오."
+    <cite>— HYEOKS 수석 애널리스트 —</cite>
+  </div>
+
+  <div style="text-align:center; padding:40px 0 20px; color:var(--gray); font-size:0.88rem; line-height:2;">
+    <p>HYEOKS QUANT SYSTEM MASTER GUIDEBOOK v2 · 2026.07 개정<br>
+    본 가이드북의 모든 내용은 투자 참고 자료이며, 투자 결과에 대한 책임은 투자자 본인에게 있습니다.</p>
+  </div>
+</section>
+
+<section class="section" id="ch11">
+  <div class="chapter-label">CHAPTER 11 · NEW</div>
+  <h2>왜 이 시스템을 신뢰할 수 있는가 — 검증의 겹겹</h2>
+  <p class="section-intro">"AI가 종목을 찍어준다"는 말만 들으면 회의적인 게 오히려 정상입니다. 그런 주장 대부분은 근거가 빈약합니다.
+  하지만 HYEOKS는 그 결론 하나가 나오기까지, 아래와 같은 여러 겹의 검증을 거칩니다. 오늘의 픽 하나가 아니라
+  <strong>이 과정 자체</strong>를 보시면, 왜 이 시스템이 다른 것과 다른지 아실 수 있을 겁니다.</p>
+
+  <h3 id="ch11-1">추천 하나 뒤의 5단계 필터</h3>
+  <div class="flow-steps">
+    <div class="flow-step"><div class="flow-no">1</div><div class="flow-content"><h5>전종목 스캔</h5><p>매일 약 633개 종목을 10분 간격으로 전량 재스캔합니다. 몇 개만 골라보는 게 아니라, 시장 전체를 매번 다시 봅니다.</p></div></div>
+    <div class="flow-step"><div class="flow-no">2</div><div class="flow-content"><h5>3단계 정량 점수 (V1·V2·V3)</h5><p>차트(V1)·수급(V2)·실적(V3), 서로 무관한 세 축으로 각 종목을 정량 채점합니다. 하나의 축만 보고 판단하지 않습니다.</p></div></div>
+    <div class="flow-step"><div class="flow-no">3</div><div class="flow-content"><h5>역사적 DNA 검증</h5><p>점수가 높아도, 그 종목이 과거에 실제로 유사한 거래대금 국면을 보인 적이 있는지 250일치 데이터로 교차 검증합니다. 점수만 높고 실체가 없는 종목을 걸러내는 단계입니다.</p></div></div>
+    <div class="flow-step"><div class="flow-no">4</div><div class="flow-content"><h5>AI 추론 + 근거 기록</h5><p>여기까지 걸러진 상위 150개 중에서 Gemini 2.5 Pro가 후보를 추리고, 왜 그 종목을 골랐는지(또는 왜 아무것도 안 골랐는지) 근거를 매번 텍스트로 남깁니다. "그냥 찍은" 픽이 아니라 추적 가능한 판단입니다.</p></div></div>
+    <div class="flow-step"><div class="flow-no" style="background:var(--gold);border-color:var(--gold);color:var(--navy);">5</div><div class="flow-content"><h5>자체 재검증 후, 확신 없으면 스스로 포기</h5><p>최종 선택 직전, AI 스스로 "이 종목이 절대 금지 규칙에 걸리지 않는가"를 한 번 더 점검합니다. 애매하면 억지로 채우지 않고 <strong>"추천 없음"</strong>을 정직하게 반환하도록 설계돼 있습니다.</p></div></div>
+  </div>
+
+  <h3 id="ch11-2">이 시스템은 스스로를 의심하도록 설계됐다</h3>
+  <p>많은 투자 기법이 "이게 통한다"는 확신에서 출발합니다. 하지만 확신은 시간이 지나면 낡을 수 있고,
+  문제는 그 낡음을 아무도 알아채지 못하는 겁니다. HYEOKS는 정반대로 설계돼 있습니다 — <strong>"이게 진짜 통하고 있는가"를
+  매일 스스로에게 되묻는 장치</strong>가 여러 겹으로 깔려 있습니다.</p>
+  <ul style="line-height:2.1; padding-left:1.4em;">
+    <li><strong>다채널 비교</strong> — AI가 고른 종목, 기계적 규칙(차트·수급 점수)으로 고른 종목, 완전 무작위로 고른 종목, 그리고 지수(코스피/코스닥) 자체를 나란히 놓고 T+1일부터 T+120일까지 사후 수익률을 계속 추적합니다. "AI가 진짜 더 나은가"는 주장이 아니라 누적되는 숫자로 확인합니다.</li>
+    <li><strong>표본 부족은 정직하게 표시</strong> — 켈리 베팅비중은 표본이 30건 미만이면 숫자 대신 "데이터 부족"이라고 표시합니다. 확신 없는 걸 확신 있는 것처럼 보여주지 않습니다.</li>
+    <li><strong>회로차단기</strong> — 외부 API(Gemini, DART, 네이버)가 불안정해지면, 억지로 결과를 만들어내는 대신 안전하게 멈추고 다음 실행에서 자연스럽게 복구되도록 설계했습니다.</li>
+  </ul>
+  <div class="quote">
+    "화려한 확신보다, 확신이 없을 때 정직하게 인정하는 시스템을 만들고 싶었습니다. 오늘 하나의 픽이 아니라
+    이 과정 전체가 HYEOKS의 진짜 결과물입니다."
+    <cite>— HYEOKS 수석 애널리스트 —</cite>
+  </div>
+</section>
+
+<section class="section" id="ch12">
+  <div class="chapter-label">CHAPTER 12 · NEW</div>
+  <h2>2026년 하반기 업데이트 로그</h2>
+  <p class="section-intro">v2 발간 이후 추가된 기능들입니다. 대부분 아직 표본이 쌓이는 중인 신규 기능이니, 실전 검증이 끝나기 전까지는
+  참고 정보로만 활용하시길 권합니다.</p>
+  <table class="signal-table">
+    <tr><th>기능</th><th>설명</th><th>확인 위치</th></tr>
+    <tr><td><strong>RS등급</strong></td><td>전종목 대비 상대강도를 1~99 백분위로 환산. 90 이상이면 ⭐ 배지 자동 부착. 최근 3·6·9·12개월 성과에 가중치를 둬 계산합니다.</td><td>주가데이터_보조 · DB_스캐너</td></tr>
+    <tr><td><strong>🏆 추세템플릿 배지</strong></td><td>50·150·200일선 정배열, 200일선 우상향, 52주 신저가 대비 +30%, 신고가 대비 -25% 이내 — 7개 조건을 모두 만족하는 장기 우량 추세 종목에 부착. 관망 판정 여부와 무관하게 독립적으로 붙습니다.</td><td>주가데이터_보조</td></tr>
+    <tr><td><strong>하프켈리 베팅비중</strong></td><td>채널별 승률·손익비로 켈리 공식을 계산하되, 절반(하프켈리)만 참고값으로 제시. 표본 30건 미만이면 숫자 대신 "데이터 부족" 표시.</td><td>베팅비중_참고 시트</td></tr>
+    <tr><td><strong>채널비교_대시보드</strong></td><td>차트·수급·리포트(단기/중기)·랜덤·지수 채널의 T+1~T+120 초과수익·승률을 한 화면에서 비교. 초과수익 양수는 초록, 음수는 빨강으로 자동 강조.</td><td>채널비교_대시보드 시트</td></tr>
+    <tr><td><strong>Gemini 회로차단기</strong></td><td>연속 5회 또는 최근 20회 중 60% 이상 실패 시 "일시 지연"이 아닌 "불통"으로 판단해 즉시 안전 종료. 무의미한 재시도로 시간을 낭비하지 않습니다.</td><td>hyeoks_analyst.py 내부 로직</td></tr>
+    <tr><td><strong>AI 리포트 프롬프트 고도화</strong></td><td>후보 비교 → 자체 재검증 → 근거 기록 절차를 명시적으로 요구. "추천 없음"을 실패가 아닌 성공적 판단으로 재정의.</td><td>리포트 픽 선정 로직</td></tr>
+    <tr><td><strong>리포트 레이아웃 개편</strong></td><td>시황 브리핑을 3줄 요약 + 3개 섹션으로 압축해 1페이지 이내로. 종목 리포트는 뉴스·이슈 분석을 별도 섹션으로 분리해 4개 섹션 구성.</td><td>PDF 리포트 1~2페이지</td></tr>
+  </table>
+
+  <div style="text-align:center; padding:40px 0 20px; color:var(--gray); font-size:0.88rem; line-height:2;">
+    <p>HYEOKS QUANT SYSTEM MASTER GUIDEBOOK v2.1 · 2026.07 추가 개정<br>
+    본 가이드북의 모든 내용은 투자 참고 자료이며, 투자 결과에 대한 책임은 투자자 본인에게 있습니다.</p>
+  </div>
+</section>
+
+</main>
+
+<script>
+function toggleMenu() {
+  document.getElementById('toc').classList.toggle('open');
+  document.getElementById('toc-overlay').classList.toggle('open');
+}
+const sections = document.querySelectorAll('[id]');
+const links = document.querySelectorAll('#toc a');
+window.addEventListener('scroll', () => {
+  let current = '';
+  sections.forEach(s => { if (window.scrollY >= s.offsetTop - 100) current = s.id; });
+  links.forEach(l => {
+    l.classList.remove('active');
+    if (l.getAttribute('href') === '#' + current) l.classList.add('active');
+  });
+});
+links.forEach(l => {
+  l.addEventListener('click', () => {
+    document.getElementById('toc').classList.remove('open');
+    document.getElementById('toc-overlay').classList.remove('open');
+  });
+});
+</script>
+</body>
+</html>
+</template>
 </body>
 </html>
