@@ -383,14 +383,7 @@
   .config-btn.primary { background: var(--gold); color: #1A1408; }
   .config-btn.ghost { background: var(--surface-hi); color: var(--text-2); border: 1px solid var(--border); }
   /* 🆕 [매뉴얼 삽입] 지인·가족에게 앱만 전달하면 매뉴얼도 그 안에서 바로 볼 수 있도록 —
-     별도 파일을 매번 따로 보낼 필요 없이, 앱 자체에 통째로 내장. */
-  .manual-fab {
-    position: fixed; left: 16px; bottom: 76px; z-index: 36;
-    width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--border);
-    background: var(--surface); color: var(--gold); font-size: 19px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.3); display:flex; align-items:center; justify-content:center;
-    cursor: pointer;
-  }
+     별도 파일을 매번 따로 보낼 필요 없이, 앱 자체에 통째로 내장. 버튼은 상단 헤더의 아이콘 행에 위치(.icon-btn 재사용). */
   .manual-modal-overlay {
     display: none; position: fixed; inset: 0; z-index: 200;
     background: rgba(0,0,0,0.6);
@@ -420,6 +413,7 @@
     </div>
     <div style="display:flex; gap:8px;">
       <button class="icon-btn" id="themeToggleBtn" title="테마 전환">☀︎</button>
+      <button class="icon-btn" id="manualFab" title="시스템 매뉴얼">📖</button>
       <button class="icon-btn" id="refreshBtn" title="새로고침">⟳</button>
       <button class="icon-btn" id="configBtn" title="설정">⚙</button>
     </div>
@@ -505,7 +499,6 @@
 
 <button id="backToTopBtn" style="display:none; position:fixed; right:16px; bottom:76px; z-index:35; width:40px; height:40px; border-radius:50%; border:1px solid var(--border); background:var(--surface); color:var(--text-2); font-size:16px; box-shadow:0 4px 12px rgba(0,0,0,0.3);">↑</button>
 
-<button class="manual-fab" id="manualFab" title="시스템 매뉴얼">📖</button>
 <div class="manual-modal-overlay" id="manualModalOverlay">
   <div class="manual-modal-bar">
     <div class="title">📖 HYEOKS 시스템 매뉴얼</div>
