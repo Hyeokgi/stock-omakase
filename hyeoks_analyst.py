@@ -621,9 +621,17 @@ try:
             f"종목:{name}({code}) | 현재가:{curr_p}원({chg}) | 차트점수(V1):{v1_score}점 | 수급점수(V2):{v2_score}점{v3_info_txt}{rs_info_txt} | "
             f"타점:{tajeom_clean} | 추세:{trend_phase_txt} | 수급강도:{prog} | 유형:{seed_tag} | 테마:{theme_name}"
         )
+        # 🔧 [수정] 현재가가 빈 문자열이거나 이상한 값인 종목이 하나라도 섞이면 전체 리포트 생성이
+        #    죽어버리던 문제 — 안전장치 없이 바로 int() 변환하다 터졌음. 이제 그 한 종목만 조용히 건너뜀.
+        try:
+            curr_p_int = int(curr_p.replace(',', '').replace('원', ''))
+            if curr_p_int <= 0: continue
+        except (ValueError, AttributeError):
+            continue
+
         cands_list.append({
             'name': name, 'code': code, 'score': combo_score, 'v1_score': v1_score, 'v2_score': v2_score, 'v3_score': v3_score,
-            'rs_grade': rs_grade, 'info': info, 'curr_p': int(curr_p.replace(',','').replace('원','')), 'type': seed_tag, 'theme_name': theme_name
+            'rs_grade': rs_grade, 'info': info, 'curr_p': curr_p_int, 'type': seed_tag, 'theme_name': theme_name
         })
  
     high_score_cands = [c for c in cands_list if c['score'] >= 30]
