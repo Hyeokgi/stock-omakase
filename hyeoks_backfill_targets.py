@@ -131,6 +131,13 @@ def main():
             buf = download_pdf_bytes(drive, file_id)
             reader = PdfReader(buf)
             full_text = "\n".join((p.extract_text() or "") for p in reader.pages)
+            # 🔑 [필수] wkhtmltopdf로 만든 PDF는 폰트 임베딩 특성상 공백이 0x20이 아니라
+            #    \x01(SOH)로 추출된다. 그대로 두면 아래 정규식의 \s 가 매치되지 않아
+            #    '[DATA]\x01목표가:18200,\x01손절가:13300' 을 전부 놓친다(백필이 조용히 실패하던 원인).
+            #    → 개행/탭은 보존하고 나머지 제어문자만 공백으로 치환.
+            full_text = "".join(
+                ' ' if (ord(c) < 32 and c not in '\n\r\t') else c for c in full_text
+            )
         except Exception as e:
             print(f"⚠️ [{date_str}] PDF 다운로드/읽기 실패(건너뜀): {e}")
             continue
