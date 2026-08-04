@@ -1,0 +1,11 @@
+# 🔐 자격증명 — 절대 커밋 금지 (공개 레포이므로 유출 시 즉시 계정 탈취 위험)
+secret.json
+*credentials*.json
+*service-account*.json
+.env
+
+# 생성물
+__pycache__/
+*.pyc
+*.pdf
+temp_*.png
