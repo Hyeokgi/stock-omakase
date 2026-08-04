@@ -675,7 +675,11 @@ BT_HEADER = [
     "trade_id", "진입일", "채널", "종목명", "종목코드", "주도테마", "타점유형", "STAGE", "집중도",
     "V1", "V2", "V2게이트", "수급상태", "벤치명", "기준종가", "진입지수", "진입가(T+1시가)",
     "종목T+1", "종목T+3", "종목T+5", "종목T+10", "지수T+1", "지수T+3", "지수T+5", "지수T+10", "실제캡처거래일",
-    "종목T+20", "종목T+60", "종목T+120", "지수T+20", "지수T+60", "지수T+120"
+    "종목T+20", "종목T+60", "종목T+120", "지수T+20", "지수T+60", "지수T+120",
+    "목표가", "손절가", "익절터치", "손절터치"
+    # 🆕 [수정] 목표가·손절가를 진입 시점에 그대로 기록하고, 보유 기간 동안 실제로 장중 고가·저가가
+    #    그 값을 건드렸는지(터치했는지) 추적. "이 시스템대로 진짜 매매했다면" 관점의 실전 시뮬레이션을
+    #    위한 열 — 기존 T+N 시점 수익률(연구용 방향성 검증)과는 별개로 나란히 기록.
     # 🆕 [수정] T+10(약 2주)까지만 추적하던 걸 T+20(약 1개월)·T+60(약 3개월)·T+120(약 6개월)까지 확장.
     #    전략 자체가 6개월~1년짜리 구조적 성장을 겨냥하는데 2주 성과만으로는 검증이 안 됐던 문제 해결.
     #    기존 컬럼 위치는 그대로 두고 끝에만 추가(다른 코드가 기존 인덱스로 읽는 부분이 안 깨지도록).
@@ -695,7 +699,8 @@ def compute_channel_comparison_dashboard(doc):
     rows = bt_data[1:]
 
     horizons = [(1, 17, 21), (3, 18, 22), (5, 19, 23), (10, 20, 24), (20, 26, 29), (60, 27, 30), (120, 28, 31)]
-    channels = ["차트TOP2", "수급TOP2", "랜덤2", "리포트TOP2", "리포트TOP2_단기", "리포트TOP2_중기"]
+    channels = ["차트TOP2", "수급TOP2", "랜덤2", "리포트TOP2", "리포트TOP2_단기", "리포트TOP2_중기",
+                "지수벤치_KOSPI", "지수벤치_KOSDAQ"]  # 🆕 두 지수 이격을 나란히 비교할 수 있도록 추가
 
     from collections import defaultdict
     by_channel = defaultdict(lambda: defaultdict(list))
@@ -857,7 +862,7 @@ def sort_and_format_backtest_log(doc, bt_sheet):
     # 🔧 [수정] 예전엔 채널명 가나다순(랜덤→리포트→수급→지수→차트)이라 우선순위가 뒤죽박죽이었음.
     #    리포트(AI 선정) → 수급 → 차트 → 랜덤(대조군) → 지수(벤치마크) 순으로 고정 우선순위 지정.
     CHANNEL_ORDER = {"리포트TOP2_단기": 0, "리포트TOP2_중기": 1, "리포트TOP2": 2,
-                      "수급TOP2": 3, "차트TOP2": 4, "랜덤2": 5, "지수벤치": 6}
+                      "수급TOP2": 3, "차트TOP2": 4, "랜덤2": 5, "지수벤치_KOSPI": 6, "지수벤치_KOSDAQ": 7}
     rows.sort(key=lambda r: CHANNEL_ORDER.get(str(r[2]) if len(r) > 2 else "", 99))  # 2차: 채널 고정순(같은 날짜 안에서 묶임)
     rows.sort(key=lambda r: str(r[1]) if len(r) > 1 else "", reverse=True)      # 1차: 진입일 역순(최신이 위로)
     combined = [header] + rows
@@ -882,9 +887,20 @@ def sort_and_format_backtest_log(doc, bt_sheet):
         print(f"⚠️ [백테스트_로그 서식 적용 실패] {e}")
 
 
+def _col_letter(idx):
+    """0-based 컬럼 인덱스를 시트 열 문자로 변환(A,B,...,Z,AA,AB,...). 예전엔 26 이상에서 깨지는 버그가 있었음."""
+    s = ""
+    idx += 1
+    while idx > 0:
+        idx, rem = divmod(idx - 1, 26)
+        s = chr(65 + rem) + s
+    return s
+
+
 def apply_change_rate_formatting(doc, sheet, num_rows, col_index, extra_numeric_rules=None):
     """🆕 [등락률 색상 + 선택적 숫자 강조] 국내 증시 관행대로 음수=파랑 굵게, 양수=빨강 굵게로 표시.
        "%" 문자열 텍스트라 숫자 비교가 아니라 커스텀 수식(맨 앞 글자가 '-'인지)으로 판정.
+       col_index는 정수 하나 또는 여러 컬럼 리스트 모두 가능(백테스트_로그처럼 T+N 칸이 여러 개일 때 한 번에 처리).
        extra_numeric_rules로 다른 숫자 컬럼(예: RS등급)에 대한 임계값 강조도 같은 배치로 같이 적용 가능
        — 별도 함수로 두 번 지우고 추가하면 서로의 규칙을 지워버리는 충돌이 생기므로 한 번에 처리.
        기존 조건부 서식 규칙은 먼저 지우고 새로 등록해서 재실행마다 중복 누적되는 걸 방지."""
@@ -898,14 +914,16 @@ def apply_change_rate_formatting(doc, sheet, num_rows, col_index, extra_numeric_
                 break
         requests_list = [{"deleteConditionalFormatRule": {"sheetId": sheet_id, "index": 0}} for _ in range(existing_count)]
 
-        col_letter = chr(ord('A') + col_index)
-        rng = {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": num_rows, "startColumnIndex": col_index, "endColumnIndex": col_index + 1}
-        requests_list.append({"addConditionalFormatRule": {"rule": {"ranges": [rng], "booleanRule": {
-            "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f'=LEFT({col_letter}2,1)="-"'}]},
-            "format": {"textFormat": {"foregroundColor": {"red": 0.15, "green": 0.35, "blue": 0.95}, "bold": True}}}}, "index": 0}})
-        requests_list.append({"addConditionalFormatRule": {"rule": {"ranges": [rng], "booleanRule": {
-            "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f'=AND(LEFT({col_letter}2,1)<>"-",{col_letter}2<>"0.00%",{col_letter}2<>"")'}]},
-            "format": {"textFormat": {"foregroundColor": {"red": 0.85, "green": 0.1, "blue": 0.1}, "bold": True}}}}, "index": 0}})
+        col_indices = col_index if isinstance(col_index, (list, tuple)) else [col_index]
+        for ci in col_indices:
+            col_letter = _col_letter(ci)  # 🔧 [수정] 26번째 컬럼(AA) 이상에서 깨지던 chr(ord('A')+idx) 방식 교체
+            rng = {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": num_rows, "startColumnIndex": ci, "endColumnIndex": ci + 1}
+            requests_list.append({"addConditionalFormatRule": {"rule": {"ranges": [rng], "booleanRule": {
+                "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f'=LEFT({col_letter}2,1)="-"'}]},
+                "format": {"textFormat": {"foregroundColor": {"red": 0.15, "green": 0.35, "blue": 0.95}, "bold": True}}}}, "index": 0}})
+            requests_list.append({"addConditionalFormatRule": {"rule": {"ranges": [rng], "booleanRule": {
+                "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f'=AND(LEFT({col_letter}2,1)<>"-",{col_letter}2<>"0.00%",{col_letter}2<>"")'}]},
+                "format": {"textFormat": {"foregroundColor": {"red": 0.85, "green": 0.1, "blue": 0.1}, "bold": True}}}}, "index": 0}})
 
         for extra_col, threshold, rgb in (extra_numeric_rules or []):
             extra_rng = {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": num_rows, "startColumnIndex": extra_col, "endColumnIndex": extra_col + 1}
@@ -936,11 +954,11 @@ def apply_backtest_formatting(doc, bt_sheet, sorted_rows):
     # ② 채널별 배경색 규칙 추가 (C열=채널 값으로 행 전체를 물들임)
     channel_colors = {
         "차트TOP2": (0.85, 0.92, 1.0), "수급TOP2": (1.0, 0.93, 0.82),
-        "랜덤2": (0.93, 0.93, 0.93), "지수벤치": (0.85, 0.97, 0.87),
+        "랜덤2": (0.93, 0.93, 0.93), "지수벤치_KOSPI": (0.85, 0.97, 0.87), "지수벤치_KOSDAQ": (0.87, 0.95, 0.97),
         "리포트TOP2_단기": (1.0, 0.87, 0.87), "리포트TOP2_중기": (0.93, 0.87, 1.0),
         "리포트TOP2": (0.95, 0.87, 0.95),
     }
-    grid_range = {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": 1 + n_rows, "startColumnIndex": 0, "endColumnIndex": 32}
+    grid_range = {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": 1 + n_rows, "startColumnIndex": 0, "endColumnIndex": 36}
     for ch, (r, g, b) in channel_colors.items():
         requests_list.append({
             "addConditionalFormatRule": {
@@ -954,6 +972,20 @@ def apply_backtest_formatting(doc, bt_sheet, sorted_rows):
                 "index": 0
             }
         })
+
+    # 🆕 [등락률 색상] 종목/지수 T+N 수익률 칸(음수=파랑, 양수=빨강) — apply_backtest_formatting과 같은
+    #    requests_list/배치에 같이 실어서 처리. 별도 함수 호출로 나누면 그 함수가 시작할 때 기존 조건부
+    #    서식을 전부 지우는 방식이라, 방금 위에서 건 채널 배경색까지 같이 지워버리는 충돌이 생기기 때문.
+    t_n_cols = [17, 18, 19, 20, 21, 22, 23, 24, 26, 27, 28, 29, 30, 31]  # 종목/지수 T+1,3,5,10,20,60,120
+    for ci in t_n_cols:
+        col_letter = _col_letter(ci)
+        col_rng = {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": 1 + n_rows, "startColumnIndex": ci, "endColumnIndex": ci + 1}
+        requests_list.append({"addConditionalFormatRule": {"rule": {"ranges": [col_rng], "booleanRule": {
+            "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f'=LEFT({col_letter}2,1)="-"'}]},
+            "format": {"textFormat": {"foregroundColor": {"red": 0.15, "green": 0.35, "blue": 0.95}, "bold": True}}}}, "index": 0}})
+        requests_list.append({"addConditionalFormatRule": {"rule": {"ranges": [col_rng], "booleanRule": {
+            "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f'=AND(LEFT({col_letter}2,1)<>"-",{col_letter}2<>"0.00%",{col_letter}2<>"")'}]},
+            "format": {"textFormat": {"foregroundColor": {"red": 0.85, "green": 0.1, "blue": 0.1}, "bold": True}}}}, "index": 0}})
 
     # ③ 기존 테두리 초기화(재정렬로 행 위치가 바뀌므로, 새로 계산한 구분선만 남도록 먼저 지움)
     requests_list.append({
@@ -974,7 +1006,7 @@ def apply_backtest_formatting(doc, bt_sheet, sorted_rows):
             sheet_row_idx = idx + 1  # 헤더가 0행이므로, 데이터의 idx번째 행은 시트상 (idx+1)번째(0-based) 행
             requests_list.append({
                 "updateBorders": {
-                    "range": {"sheetId": sheet_id, "startRowIndex": sheet_row_idx, "endRowIndex": sheet_row_idx + 1, "startColumnIndex": 0, "endColumnIndex": 32},
+                    "range": {"sheetId": sheet_id, "startRowIndex": sheet_row_idx, "endRowIndex": sheet_row_idx + 1, "startColumnIndex": 0, "endColumnIndex": 36},
                     "top": {"style": "SOLID_THICK", "color": {"red": 0.12, "green": 0.12, "blue": 0.12}}
                 }
             })
@@ -2412,7 +2444,7 @@ def update_technical_data(df_theme, all_theme_map):
                         _ie = next((k for k, b in enumerate(idx_series) if b['date'] == 진입일), None)
                         idx_base = idx_series[_ie + 1]['open'] if (_ie is not None and _ie + 1 < len(idx_series)) else 0.0
 
-                        bars = index_bars.get(벤치, index_bars["KOSPI"]) if 채널 == "지수벤치" else get_daily_bars(code, 150)  # 🔧 T+120 추적 위해 80→150일로 확장
+                        bars = index_bars.get(벤치, index_bars["KOSPI"]) if 채널.startswith("지수벤치") else get_daily_bars(code, 150)  # 🔧 KOSPI/KOSDAQ 분리 후 startswith로 매칭  # 🔧 T+120 추적 위해 80→150일로 확장
                         if not bars: continue
 
                         entry_idx = next((k for k, b in enumerate(bars) if b['date'] == 진입일), None)
@@ -2423,7 +2455,7 @@ def update_technical_data(df_theme, all_theme_map):
                         # 진입가 Q(=T+1 시가) 1회 캡처
                         if not str(row[16]).strip() and entry_idx + 1 < len(bars):
                             q_open = bars[entry_idx + 1]['open']
-                            row[16] = int(q_open) if 채널 != "지수벤치" else round(q_open, 2)
+                            row[16] = int(q_open) if not 채널.startswith("지수벤치") else round(q_open, 2)
                             changed_rows.add(i)
                         try: base = float(str(row[16]).replace(',', '')) if str(row[16]).strip() else 0.0
                         except Exception: base = 0.0
@@ -2444,12 +2476,36 @@ def update_technical_data(df_theme, all_theme_map):
                         if captured:
                             prev_z = str(row[25]).strip()
                             row[25] = (prev_z + "," if prev_z else "") + ",".join(captured)
+
+                        # 🆕 [목표가·손절가 터치 판정] 이미 받아온 bars의 고가·저가로, 보유 기간 동안
+                        #    실제로 목표가·손절가를 건드린 적이 있는지 확인 — 추가 API 호출 없이 처리.
+                        #    같은 날 둘 다 닿았을 수도 있는데(장중 순서는 알 수 없음), 보수적으로 손절을 먼저 체크.
+                        if len(row) > 35 and 채널 != "" and not str(채널).startswith("지수벤치"):
+                            try:
+                                target_p = float(str(row[32]).replace(',', '')) if str(row[32]).strip() else None
+                            except Exception:
+                                target_p = None
+                            try:
+                                stop_p = float(str(row[33]).replace(',', '')) if str(row[33]).strip() else None
+                            except Exception:
+                                stop_p = None
+                            stop_touched = str(row[35]).strip()
+                            target_touched = str(row[34]).strip()
+                            if (target_p or stop_p) and not (target_touched and stop_touched):
+                                for d in range(1, elapsed_td + 1):
+                                    if entry_idx + d >= len(bars): break
+                                    bar_d = bars[entry_idx + d]
+                                    if stop_p and not stop_touched and bar_d['low'] <= stop_p:
+                                        row[35] = f"T+{d}"; stop_touched = f"T+{d}"; changed_rows.add(i)
+                                    if target_p and not target_touched and bar_d['high'] >= target_p:
+                                        row[34] = f"T+{d}"; target_touched = f"T+{d}"; changed_rows.add(i)
+                                    if target_touched and stop_touched: break
                     except Exception as e:
                         print(f"⚠️ [백테스트 V6 Step2] {row[3] if len(row) > 3 else '?'}({row[4] if len(row) > 4 else '?'}) 추적 중 오류로 스킵(다음 종목은 계속 진행): {e}")
                         continue
 
                 if changed_rows:
-                    updates = [{'range': f'Q{i + 1}:AF{i + 1}', 'values': [bt_data[i][16:32]]} for i in sorted(changed_rows)]
+                    updates = [{'range': f'Q{i + 1}:AJ{i + 1}', 'values': [bt_data[i][16:36]]} for i in sorted(changed_rows)]  # 🔧 목표가·손절가·터치 열(32~35) 추가로 범위 확장(AF→AJ)
                     bt_sheet.batch_update(updates, value_input_option="USER_ENTERED")
                     print(f"✅ [백테스트 V6 Step2] {len(changed_rows)}행 추적 셀 업데이트 (호라이즌별 캡처·동결 · 전체 rewrite 없음)")
                 else:
@@ -2499,10 +2555,15 @@ def update_technical_data(df_theme, all_theme_map):
                         tid = f"{today_str}_{channel}_{s_code}"
                         if tid in existing_ids: continue
                         bench = get_market_name(s_code)
+                        # 🆕 목표가·손절가(AI가 이미 계산해둔 값)를 진입 시점 그대로 캡처 — "관망"류는 빈 값
+                        _tgt = str(r[23]).replace(',', '').strip() if len(r) > 23 else ""
+                        _stp = str(r[24]).replace(',', '').strip() if len(r) > 24 else ""
+                        target_val = int(_tgt) if _tgt.isdigit() and int(_tgt) > 0 else ""
+                        stop_val = int(_stp) if _stp.isdigit() and int(_stp) > 0 else ""
                         new_rows.append([
                             tid, today_str, channel, r[0], f"'{s_code}", r[19], r[8], entry_stage, concentration_str,
                             r[29], r[31], r[34], r[22], bench, r[2], idx_close_cache.get(bench, 0.0)
-                        ] + [""] * 16)
+                        ] + [""] * 16 + [target_val, stop_val, "", ""])
                         existing_ids.add(tid)
                         channel_today_count[channel] = channel_today_count.get(channel, 0) + 1
 
@@ -2510,13 +2571,21 @@ def update_technical_data(df_theme, all_theme_map):
                 add_channel("수급TOP2", supply_top2)
                 add_channel("랜덤2", random2)
 
-                # 지수벤치(KOSPI 1행/일) — 순수 지수보유 베이스라인
+                # 지수벤치(KOSPI·KOSDAQ 각 1행/일) — 순수 지수보유 베이스라인. 둘을 별개 채널로 분리해서
+                # 코스피·코스닥 이격이 클 때 나란히 비교할 수 있게 함(기존엔 KOSPI 하나만 있었음).
                 tid_idx = f"{today_str}_지수벤치_KOSPI"
                 if tid_idx not in existing_ids:
                     ixc = idx_close_cache.get("KOSPI", 0.0)
-                    new_rows.append([tid_idx, today_str, "지수벤치", "KOSPI", "'KOSPI", "", "지수보유", entry_stage, concentration_str,
-                                     "", "", "", "", "KOSPI", ixc, ixc] + [""] * 16)
+                    new_rows.append([tid_idx, today_str, "지수벤치_KOSPI", "KOSPI", "'KOSPI", "", "지수보유", entry_stage, concentration_str,
+                                     "", "", "", "", "KOSPI", ixc, ixc] + [""] * 16 + ["", "", "", ""])
                     existing_ids.add(tid_idx)
+
+                tid_idx_kq = f"{today_str}_지수벤치_KOSDAQ"
+                if tid_idx_kq not in existing_ids:
+                    ixc_kq = idx_close_cache.get("KOSDAQ", 0.0)
+                    new_rows.append([tid_idx_kq, today_str, "지수벤치_KOSDAQ", "KOSDAQ", "'KOSDAQ", "", "지수보유", entry_stage, concentration_str,
+                                     "", "", "", "", "KOSDAQ", ixc_kq, ixc_kq] + [""] * 16 + ["", "", "", ""])
+                    existing_ids.add(tid_idx_kq)
 
             if new_rows:
                 bt_sheet.append_rows(new_rows, value_input_option="USER_ENTERED")
