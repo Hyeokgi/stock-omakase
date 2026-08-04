@@ -1139,19 +1139,22 @@ try:
                 concentration_str = ""
             # 🔧 [수정] 단기(best_short)·중기(best_mid)는 완전히 다른 투자 논리라 채널명 자체를 분리.
             #    기존엔 둘 다 "리포트TOP2"로 합쳐 기록돼서, 평가 시 서로 다른 성과가 섞여 뭉개지는 문제가 있었음.
-            report_picks = [(best_short, "리포트TOP2_단기"), (best_mid, "리포트TOP2_중기")]
+            report_picks = [(best_short, "리포트TOP2_단기", pick_short), (best_mid, "리포트TOP2_중기", pick_mid)]
             new_rows = []
-            for cand, channel_name in report_picks:
+            for cand, channel_name, pick_info in report_picks:
                 if not cand: continue
                 s_code = str(cand['code']).replace("'", "").strip().zfill(6)
                 if s_code == "000000": continue
                 tid = f"{today_str}_{channel_name}_{s_code}"
                 if tid in existing_ids: continue
                 bench = _market(s_code)
+                # 🆕 목표가·손절가 — 딥리포트가 이미 계산해둔 pick_short/pick_mid의 target/stop을 그대로 사용
+                _rt = pick_info.get('target', 0) if pick_info else 0
+                _rs = pick_info.get('stop', 0) if pick_info else 0
                 new_rows.append([
                     tid, today_str, channel_name, cand['name'], f"'{s_code}", cand.get('theme_name', ''), "", market_stage, concentration_str,
                     cand.get('v1_score', ''), cand.get('v2_score', ''), "", "", bench, cand.get('curr_p', ''), idx_cache.get(bench, 0.0)
-                ] + [""] * 16)  # 🔧 [수정] 26열(구)이 아니라 지금 BT_HEADER는 32열(T+20/60/120 추가됨) — 패딩도 맞춤
+                ] + [""] * 16 + [_rt if _rt else "", _rs if _rs else "", "", ""])  # 🔧 [수정] 32열→36열(목표가·손절가·터치 2종) 패딩 확장
                 existing_ids.add(tid)
             if new_rows:
                 # 🛡️ [수정] omakase.py가 10분마다 같은 시트를 건드리는데, hyeoks_analyst.py(15시)와 락 그룹이
