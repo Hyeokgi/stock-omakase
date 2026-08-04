@@ -957,13 +957,20 @@ def apply_backtest_formatting(doc, bt_sheet, sorted_rows):
         "랜덤2": (0.93, 0.93, 0.93), "지수벤치_KOSPI": (0.85, 0.97, 0.87), "지수벤치_KOSDAQ": (0.87, 0.95, 0.97),
         "리포트TOP2_단기": (1.0, 0.87, 0.87), "리포트TOP2_중기": (0.93, 0.87, 1.0),
         "리포트TOP2": (0.95, 0.87, 0.95),
+        # 🔧 [누락 보완] 구 채널명 '지수벤치'(_KOSPI/_KOSDAQ 접미사 없는 과거 행)가 빠져 있어
+        #    해당 행들만 색이 없는 채로 남아 있었음.
+        "지수벤치": (0.85, 0.97, 0.87),
     }
     grid_range = {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": 1 + n_rows, "startColumnIndex": 0, "endColumnIndex": 36}
+    # 🔧 [가독성] 채널 배경색은 메타 영역(A~Q)에만 칠한다. 예전엔 36열 전체를 물들여서
+    #    T+N 수익률 칸의 빨강/파랑 글자가 채널 배경색 위에 겹쳐 지저분했음(수익률은 흰 바탕이 잘 보임).
+    channel_bg_range = {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": 1 + n_rows,
+                        "startColumnIndex": 0, "endColumnIndex": 17}
     for ch, (r, g, b) in channel_colors.items():
         requests_list.append({
             "addConditionalFormatRule": {
                 "rule": {
-                    "ranges": [grid_range],
+                    "ranges": [channel_bg_range],
                     "booleanRule": {
                         "condition": {"type": "CUSTOM_FORMULA", "values": [{"userEnteredValue": f'=$C2="{ch}"'}]},
                         "format": {"backgroundColor": {"red": r, "green": g, "blue": b}}
