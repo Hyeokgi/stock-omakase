@@ -78,18 +78,36 @@ def main():
     # ② 백테스트_로그에서 목표가·손절가가 비어있는 리포트TOP2_단기/중기 행을 찾음
     bt_sheet = doc.worksheet("백테스트_로그")
     bt_data = bt_sheet.get_all_values()
-    if not bt_data or len(bt_data[0]) < 34 or bt_data[0][32] != "목표가":
-        print("❌ 백테스트_로그가 아직 신 스키마(목표가·손절가 열)가 아닙니다. omakase.py를 먼저 한 번 실행해주세요.")
+    if not bt_data or str(bt_data[0][0]).strip() != "trade_id":
+        print("❌ 백테스트_로그 시트 자체가 없거나 형식이 다릅니다. omakase.py를 먼저 한 번 실행해주세요.")
         return
+
+    # 🔧 [수정] 예전엔 헤더가 이미 36열(목표가·손절가·터치 포함)로 확장돼 있어야만 진행했는데,
+    #    이 확장은 omakase.py의 Step1(15:00~15:30 KST)에만 일어나서, 그 시간이 아직 안 지났으면
+    #    이 스크립트가 아무것도 못 하고 조용히 끝나버리는 순서 의존성 문제가 있었음.
+    #    → omakase.py 실행을 기다리지 않고 이 스크립트가 직접 헤더를 확장하도록 자체 완결형으로 변경.
+    BT_HEADER_TAIL = ["목표가", "손절가", "익절터치", "손절터치"]
+    if len(bt_data[0]) < 32 + len(BT_HEADER_TAIL) or bt_data[0][32:32 + len(BT_HEADER_TAIL)] != BT_HEADER_TAIL:
+        if len(bt_data[0]) < 32:
+            print(f"❌ 백테스트_로그 헤더가 예상보다 짧습니다({len(bt_data[0])}열). omakase.py가 정상적으로 배포됐는지 확인해주세요.")
+            return
+        new_header = list(bt_data[0][:32]) + BT_HEADER_TAIL
+        bt_sheet.update(range_name="A1", values=[new_header], value_input_option="USER_ENTERED")
+        bt_data[0] = new_header
+        print(f"🔧 [헤더 자체 확장] {len(bt_data[0]) - len(BT_HEADER_TAIL)}열 → {len(bt_data[0])}열로 이 스크립트가 직접 갱신했습니다 (omakase.py 실행을 기다리지 않음).")
 
     targets_needed = []
     for i, row in enumerate(bt_data[1:], start=2):  # 시트 1-based 행번호(헤더가 1행이므로 데이터는 2행부터)
-        if len(row) < 34:
+        if len(row) < 4:  # 최소한 채널·종목명 칸까지는 있어야 함(구글시트가 끝 빈 칸을 잘라내므로 32~36 사이는 행마다 다를 수 있음)
             continue
         채널 = str(row[2]).strip()
         if 채널 not in ("리포트TOP2_단기", "리포트TOP2_중기", "리포트TOP2"):
             continue
-        if str(row[32]).strip() or str(row[33]).strip():  # 이미 채워진 행은 건너뜀
+        # 🔧 [수정] 기존 행은 구글시트가 끝 빈 칸을 잘라내서 32칸까지만 있는 경우가 대부분이라,
+        #    "34칸 이상이어야 함" 같은 길이 조건으로 거르면 대상 행이 전부 걸러져버림 → 안전하게 인덱스 접근으로 교체.
+        target_cell = row[32].strip() if len(row) > 32 else ""
+        stop_cell = row[33].strip() if len(row) > 33 else ""
+        if target_cell or stop_cell:  # 이미 채워진 행은 건너뜀
             continue
         진입일, 종목명 = str(row[1]).strip(), str(row[3]).strip()
         if 진입일 not in date_to_fileid:
