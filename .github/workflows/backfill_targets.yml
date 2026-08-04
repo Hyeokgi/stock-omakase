@@ -1,0 +1,38 @@
+name: 🎯 HYEOKS 과거 목표가·손절가 백필 (1회성 유틸리티)
+
+on:
+  workflow_dispatch:   # 🔧 스케줄 없이 수동 실행 전용 — Actions 탭에서 'Run workflow' 버튼으로만 돌립니다.
+                        #    이미 채워진 행은 건너뛰도록 스크립트가 짜여있어서, 여러 번 눌러도 안전합니다.
+
+concurrency:
+  group: hyeoks-sheet-lock  # 💡 다른 시트 쓰기 작업과 동일한 락 그룹 — 백테스트_로그 동시 충돌 방지
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 20  # 💡 PDF 여러 개를 순차로 다운로드·파싱하니 다른 워크플로보다 여유 있게 설정
+    steps:
+    - name: 📥 코드 가져오기
+      uses: actions/checkout@v4
+
+    - name: 🐍 파이썬 세팅
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: 📦 필수 라이브러리 설치
+      run: |
+        python -m pip install --upgrade pip
+        pip install gspread oauth2client google-api-python-client pypdf
+
+    - name: 🚀 구글 시트 보안 인증 파일(secret.json) 생성
+      env:
+        SECRET_JSON: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+      run: |
+        echo "$SECRET_JSON" > secret.json
+
+    - name: 🎯 과거 리포트 PDF에서 목표가·손절가 역추적
+      run: |
+        python hyeoks_backfill_targets.py
