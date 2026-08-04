@@ -851,6 +851,25 @@ def compute_channel_kelly(doc):
         print(f"⚠️ [베팅비중_참고 기록 실패] {e}")
 
 
+def _parse_price_cell(v):
+    """목표가/손절가 칸을 백테스트_로그에 넣을 정수로 변환.
+    같은 값이라도 경로에 따라 형식이 제각각이라 한 곳에서 흡수한다.
+      · result_row 계산값          → 61000 (int)
+      · DB_스캐너 동기화된 AI 값     → '61,000원' (문자열)
+      · 비매수/미산출 상태          → '관망', 'AI 데이터 계산중', '' → 빈 값 유지(설계 의도)
+    """
+    s = str(v).strip()
+    if not s:
+        return ""
+    if any(k in s for k in ("관망", "계산", "대기", "매매금지", "제외")):
+        return ""           # 진짜 비매수 신호는 숫자를 넣지 않는다
+    digits = re.sub(r'[^0-9]', '', s)
+    if not digits:
+        return ""
+    n = int(digits)
+    return n if n > 0 else ""
+
+
 def sort_and_format_backtest_log(doc, bt_sheet):
     """🆕 [정렬+서식] 백테스트_로그를 진입일 최신순으로 정렬하고, 채널별 배경색(조건부 서식)과
        날짜가 바뀌는 지점에 실제 구분선(테두리)을 적용해서 한눈에 보기 쉽게 만듦.
@@ -2563,10 +2582,13 @@ def update_technical_data(df_theme, all_theme_map):
                         if tid in existing_ids: continue
                         bench = get_market_name(s_code)
                         # 🆕 목표가·손절가(AI가 이미 계산해둔 값)를 진입 시점 그대로 캡처 — "관망"류는 빈 값
-                        _tgt = str(r[23]).replace(',', '').strip() if len(r) > 23 else ""
-                        _stp = str(r[24]).replace(',', '').strip() if len(r) > 24 else ""
-                        target_val = int(_tgt) if _tgt.isdigit() and int(_tgt) > 0 else ""
-                        stop_val = int(_stp) if _stp.isdigit() and int(_stp) > 0 else ""
+                        # 🔧 [버그픽스] 예전엔 콤마만 지우고 isdigit()으로 검사해서 '61,000원'처럼
+                        #    '원'이 붙은 형식을 전부 놓쳤다. DB_스캐너에 있는 종목은 위쪽 existing_data
+                        #    동기화(r[23] = existing_data[...]["target"])로 '61,000원' 형식이 되기 때문에,
+                        #    결과적으로 고득점 종목(차트TOP2·수급TOP2)만 목표가가 비고 스캐너 밖 종목
+                        #    (랜덤2)은 채워지는 정반대 현상이 발생했다. → 숫자만 추출하도록 교정.
+                        target_val = _parse_price_cell(r[23] if len(r) > 23 else "")
+                        stop_val = _parse_price_cell(r[24] if len(r) > 24 else "")
                         new_rows.append([
                             tid, today_str, channel, r[0], f"'{s_code}", r[19], r[8], entry_stage, concentration_str,
                             r[29], r[31], r[34], r[22], bench, r[2], idx_close_cache.get(bench, 0.0)
