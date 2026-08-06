@@ -139,6 +139,10 @@ def main():
         iser = idx_bars[bench]
         iei = next((k for k, b in enumerate(iser) if b['date'] == d), None)
         ibase = iser[iei + 1]['open'] if (iei is not None and iei + 1 < len(iser)) else 0.0
+        # 지수벤치 행은 종목=지수 동일 시계열 → 같은 base를 써야 알파가 정확히 0이 된다.
+        # (종목 base는 시트 표시 반올림으로 소수가 유실될 수 있어 그대로 두면 ±0.01% 오차 발생)
+        if ch.startswith("지수벤치"):
+            ibase = base
 
         cells, audit = {}, []
         for h, (sc, ic) in HORIZONS.items():

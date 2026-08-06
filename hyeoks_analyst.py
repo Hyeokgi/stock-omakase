@@ -103,7 +103,8 @@ def parse_ai_json(text):
                 "target_price": int(t_match.group(1)) if t_match else 0,
                 "stop_loss": int(s_match.group(1)) if s_match else 0
             }
-        except:
+        except Exception as e:
+            print(f"⚠️ [parse_ai_json 폴백 파싱도 실패] {e}")
             return {"briefing": "응답 오류", "target_price": 0, "stop_loss": 0}
  
 def get_target_stock_news(code):
@@ -113,7 +114,9 @@ def get_target_stock_news(code):
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
         news_list = [f"- {a.text.strip()}" for a in soup.select('.title a')[:3]]
         return clean_emojis("\n".join(news_list)) if news_list else "개별 뉴스 없음"
-    except: return "뉴스 수집 실패"
+    except Exception as e:
+        print(f"⚠️ [개별 뉴스 수집 실패 {code}] {e}")
+        return "뉴스 수집 실패"
  
 def get_vip_deep_dive_data(code, kis_token):
     if not (kis_token and KIS_APP_KEY and KIS_APP_SECRET): return "PER: N/A / PBR: N/A"
@@ -123,7 +126,9 @@ def get_vip_deep_dive_data(code, kis_token):
                           headers=headers, params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}, verify=False, timeout=3).json()
         out = res.get("output", {})
         return f"PER: {out.get('per', 'N/A')} / PBR: {out.get('pbr', 'N/A')}"
-    except: return "데이터 수집 실패"
+    except Exception as e:
+        print(f"⚠️ [KIS 재무지표 조회 실패 {code}] {e}")
+        return "데이터 수집 실패"
  
 def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
     try:
@@ -138,7 +143,7 @@ def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
             val = str(val).strip()
             for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y. %m. %d"):
                 try: return datetime.datetime.strptime(val, fmt)
-                except: continue
+                except Exception: continue
             return datetime.datetime(1970, 1, 1)
             
         rows.sort(key=lambda x: parse_date(x[sort_col_idx]), reverse=True)
@@ -315,7 +320,8 @@ try:
         for row in doc.worksheet("⚙️설정").get_all_values():
             if len(row) >= 2 and row[0] == "KIS_TOKEN": KIS_TOKEN = row[1]
             if len(row) >= 2 and row[0] == "마지막_리포트_발행일": last_published_date = row[1].strip()
-    except: pass
+    except Exception as e:
+        print(f"⚠️ [⚙️설정 로드 실패 — KIS 토큰/마지막 발행일 확인 불가] {e}")
     FORCE_RESEND = os.environ.get("FORCE_RESEND", "false").strip().lower() == "true"
  
     market_summary_data = doc.worksheet("시장요약").get_all_values()
@@ -552,7 +558,7 @@ try:
                     try:
                         r_val = int(str(row[val_idx]).replace(',', '').strip())
                         raw_theme_daily_map[(r_date, r_theme)] = raw_theme_daily_map.get((r_date, r_theme), 0) + r_val
-                    except: pass
+                    except Exception: pass
     except Exception as e:
         print(f"⚠️ 역사적 주도 테마 대금 연산 보조맵 생성 누락: {e}")
  
@@ -581,13 +587,13 @@ try:
         seed_tag = str(r[25]).strip() if len(r) > 25 else "NORMAL"
  
         try: v1_score = int(r[29]) if len(r) > 29 else 0
-        except: v1_score = 0
+        except Exception: v1_score = 0
         try: v2_score = int(r[31]) if len(r) > 31 else 0
-        except: v2_score = 0
+        except Exception: v2_score = 0
         # 🆕 [RS등급] 전종목 상대강도 백분위(1~99) — 표본 부족한 날은 빈 칸이라 그런 경우엔 프롬프트에서 아예 생략
         rs_grade_raw = str(r[33]).strip() if len(r) > 33 else ""
         try: rs_grade = int(rs_grade_raw) if rs_grade_raw else None
-        except: rs_grade = None
+        except Exception: rs_grade = None
         combo_score = max(v1_score, v2_score)
         
         if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|3년적자|스코어 미달|과거 주도주 이력 미달', tajeom_raw): continue
@@ -1008,7 +1014,9 @@ try:
             name, code = r[0], r[1].replace("'", "").strip().zfill(6)
             buy_p, amt, t_p, s_p = int(float(r[2].replace(',',''))), int(float(r[3].replace(',',''))), int(float(r[7].replace(',',''))), int(float(r[8].replace(',','')))
             try: curr_p = int(requests.get(f"https://m.stock.naver.com/api/stock/{code}/basic", verify=False, timeout=3).json()['closePrice'].replace(',',''))
-            except: curr_p = buy_p
+            except Exception as e:
+                print(f"⚠️ [보유종목 현재가 조회 실패 {code} — 매입가로 대체] {e}")
+                curr_p = buy_p
             
             rtn = (curr_p - buy_p) / buy_p
             reason = ""

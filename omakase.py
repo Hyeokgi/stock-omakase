@@ -1878,7 +1878,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             # 위치요건(고가 근처 0.70~1.00) 제거: 수급(매집)은 바닥에서도 일어나 스캐너의 종베·바닥 픽과 상충 → 수급TOP2 영구 사망.
             #   유동성(150억)+거래량폭발(전일비 150%)의 '실거래 품질'만으로 게이트 → 수급 강한 종목이 차트 위치 불문 통과.
             is_v2_gate_passed = is_absolute_liquidity and is_volume_shuting
-        except: is_v2_gate_passed = False
+        except Exception: is_v2_gate_passed = False   # 게이트 판정 실패 시 fail-closed(미통과)
 
         if is_v2_gate_passed:
             if has_s_tier: v2_quant_score = 85 + (v2_base * 0.15)
@@ -2486,6 +2486,13 @@ def update_technical_data(df_theme, all_theme_map):
                         try: base = float(str(row[16]).replace(',', '')) if str(row[16]).strip() else 0.0
                         except Exception: base = 0.0
                         if base <= 0: continue
+
+                        # 🔧 [정밀도] 지수벤치 행은 종목=지수가 같은 시계열이므로 알파가 정확히 0이어야 한다.
+                        #    그런데 종목 base는 시트에서 읽어온 값(표시 반올림으로 소수 유실 가능)이고 지수
+                        #    base는 원값이라 미세하게 어긋나 알파가 ±0.01%로 찍혔다. 같은 base를 쓰게 해서
+                        #    구조적으로 0이 되도록 고정한다.
+                        if 채널.startswith("지수벤치"):
+                            idx_base = base
 
                         idx_map = index_close_map.get(벤치, {})
                         captured = []
