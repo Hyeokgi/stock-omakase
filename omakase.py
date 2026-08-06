@@ -877,31 +877,39 @@ def sort_and_format_backtest_log(doc, bt_sheet):
     all_data = bt_sheet.get_all_values()
     if len(all_data) < 3:
         return
-    header, rows = all_data[0], all_data[1:]
-    # 🔧 [수정] 예전엔 채널명 가나다순(랜덤→리포트→수급→지수→차트)이라 우선순위가 뒤죽박죽이었음.
-    #    리포트(AI 선정) → 수급 → 차트 → 랜덤(대조군) → 지수(벤치마크) 순으로 고정 우선순위 지정.
-    CHANNEL_ORDER = {"리포트TOP2_단기": 0, "리포트TOP2_중기": 1, "리포트TOP2": 2,
-                      "수급TOP2": 3, "차트TOP2": 4, "랜덤2": 5, "지수벤치_KOSPI": 6, "지수벤치_KOSDAQ": 7}
-    rows.sort(key=lambda r: CHANNEL_ORDER.get(str(r[2]) if len(r) > 2 else "", 99))  # 2차: 채널 고정순(같은 날짜 안에서 묶임)
-    rows.sort(key=lambda r: str(r[1]) if len(r) > 1 else "", reverse=True)      # 1차: 진입일 역순(최신이 위로)
-    combined = [header] + rows
+    n_rows = len(all_data)
 
-    write_ok = False
+    # 🔒 [레이스 차단] 예전엔 read→sort→update("A1") 전체 재작성이었다. 그러면 그 사이에
+    #    analyst(다른 동시성 그룹)나 저녁 추적 스크립트가 쓴 셀을 통째로 덮어써 날린다.
+    #    서버측 sortRange는 원자적이라 남의 변경분을 지우지 않는다.
+    #    정렬키: 진입일 DESC → 채널 ASC. 채널을 가나다순으로 두는 이유는 analyst 쪽 정렬과
+    #    규칙을 일치시켜, 어느 쪽이 마지막으로 돌든 같은 순서가 나오게 하기 위함이다.
+    #    (예전 CHANNEL_ORDER 커스텀 우선순위는 두 writer가 서로 다른 순서를 강제해
+    #     실행할 때마다 행 순서가 뒤집히는 부작용이 있었다.)
+    sort_ok = False
     for attempt in range(3):
         try:
-            bt_sheet.update(range_name="A1", values=combined, value_input_option="USER_ENTERED")
-            write_ok = True
+            doc.batch_update({"requests": [{"sortRange": {
+                "range": {"sheetId": bt_sheet.id, "startRowIndex": 1, "endRowIndex": n_rows,
+                          "startColumnIndex": 0, "endColumnIndex": 36},
+                "sortSpecs": [
+                    {"dimensionIndex": 1, "sortOrder": "DESCENDING"},   # B 진입일(최신 위)
+                    {"dimensionIndex": 2, "sortOrder": "ASCENDING"},    # C 채널(날짜 내 그룹 고정)
+                ]}}]})
+            sort_ok = True
             break
         except Exception as e:
-            print(f"⚠️ [백테스트_로그 정렬 쓰기 재시도 {attempt + 1}/3] {e}")
+            print(f"⚠️ [백테스트_로그 정렬 재시도 {attempt + 1}/3] {e}")
             time.sleep(3)
-    if not write_ok:
+    if not sort_ok:
         print("❌ [백테스트_로그 정렬] 재시도 후에도 실패 — 다음 회차에서 다시 시도")
         return
-    print(f"✅ [백테스트_로그 정렬] {len(rows)}행 최신순 정렬 완료")
+    print(f"✅ [백테스트_로그 정렬] {n_rows - 1}행 최신순 정렬 완료 (원자적 sortRange)")
 
+    # 테두리(날짜 구분선)는 정렬된 '현재 행 위치'가 필요하므로 정렬 후 다시 읽는다.
     try:
-        apply_backtest_formatting(doc, bt_sheet, rows)
+        sorted_rows = bt_sheet.get_all_values()[1:]
+        apply_backtest_formatting(doc, bt_sheet, sorted_rows)
     except Exception as e:
         print(f"⚠️ [백테스트_로그 서식 적용 실패] {e}")
 
