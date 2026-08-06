@@ -1186,18 +1186,22 @@ try:
                     #    고립돼 있었다(다음 날 omakase 진입 적재 전까지 계속). → 여기서도 즉시 재정렬.
                     #    (채널 배경색·수익률 색은 수식 기반 조건부서식이라 행이 움직여도 자동으로 따라옴.
                     #     날짜 구분선만 omakase 다음 회차에서 다시 계산됨.)
+                    # 🔒 [레이스 차단] 전체 재작성(read→sort→update A1) 대신 서버측 sortRange 사용.
+                    #    analyst(hyeoks-report-lock)와 omakase(hyeoks-sheet-lock)는 동시성 그룹이 달라
+                    #    동시에 돌 수 있는데, 양쪽 다 전체 재작성을 하면 늦게 쓰는 쪽이 상대 변경분을
+                    #    통째로 날린다. sortRange는 원자적이라 그런 소실이 없다.
+                    #    (채널 커스텀 우선순위는 omakase 다음 회차가 적용 — 데이터 안전이 우선)
                     try:
-                        _all = bt_sheet.get_all_values()
-                        if len(_all) >= 3:
-                            _hdr, _rows = _all[0], _all[1:]
-                            _ORDER = {"리포트TOP2_단기": 0, "리포트TOP2_중기": 1, "리포트TOP2": 2,
-                                      "수급TOP2": 3, "차트TOP2": 4, "랜덤2": 5,
-                                      "지수벤치_KOSPI": 6, "지수벤치_KOSDAQ": 7, "지수벤치": 8}
-                            _rows.sort(key=lambda r: _ORDER.get(str(r[2]) if len(r) > 2 else "", 99))
-                            _rows.sort(key=lambda r: str(r[1]) if len(r) > 1 else "", reverse=True)
-                            bt_sheet.update(range_name="A1", values=[_hdr] + _rows,
-                                            value_input_option="USER_ENTERED")
-                            print(f"🔃 [백테스트_로그] 진입일 최신순 재정렬 완료 ({len(_rows)}행)")
+                        _n = len(bt_sheet.get_all_values())
+                        if _n >= 3:
+                            doc.batch_update({"requests": [{"sortRange": {
+                                "range": {"sheetId": bt_sheet.id, "startRowIndex": 1, "endRowIndex": _n,
+                                          "startColumnIndex": 0, "endColumnIndex": 36},
+                                "sortSpecs": [
+                                    {"dimensionIndex": 1, "sortOrder": "DESCENDING"},   # B 진입일(최신 위)
+                                    {"dimensionIndex": 2, "sortOrder": "ASCENDING"},    # C 채널(날짜 내 그룹)
+                                ]}}]})
+                            print(f"🔃 [백테스트_로그] 진입일 최신순 재정렬 완료 ({_n - 1}행, 원자적 sortRange)")
                     except Exception as _se:
                         print(f"⚠️ [백테스트_로그 정렬 실패 — 다음 omakase 회차에서 복구됨] {_se}")
                 else:
