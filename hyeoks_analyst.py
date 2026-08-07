@@ -1354,8 +1354,34 @@ try:
                                     {"dimensionIndex": 2, "sortOrder": "ASCENDING"},    # C 채널(날짜 내 그룹)
                                 ]}}]})
                             print(f"🔃 [백테스트_로그] 진입일 최신순 재정렬 완료 ({_n - 1}행, 원자적 sortRange)")
+
+                            # 🔧 [구분선 갱신] 날짜 구분선(테두리)은 '행 위치' 기반이라 정렬로 행이 밀리면
+                            #    그대로 어긋난다. 예전엔 omakase가 다음 진입행을 넣을 때(= 다음 거래일 15시)
+                            #    에야 다시 그려져서, 리포트 종목이 들어온 뒤 하루 내내 선이 밀려 보였다.
+                            #    → 정렬한 쪽이 곧바로 다시 그린다. (omakase의 로직과 동일 규칙)
+                            _rows2 = bt_sheet.get_all_values()[1:]
+                            _brd = [{"updateBorders": {
+                                "range": {"sheetId": bt_sheet.id, "startRowIndex": 1,
+                                          "endRowIndex": 1 + len(_rows2), "startColumnIndex": 0, "endColumnIndex": 36},
+                                "top": {"style": "NONE"}, "bottom": {"style": "NONE"},
+                                "left": {"style": "NONE"}, "right": {"style": "NONE"},
+                                "innerHorizontal": {"style": "NONE"}, "innerVertical": {"style": "NONE"}}}]
+                            _prev, _cnt = None, 0
+                            for _i, _r in enumerate(_rows2):
+                                _cur = str(_r[1]) if len(_r) > 1 else ""
+                                if _prev is not None and _cur != _prev:
+                                    _sr = _i + 1
+                                    _brd.append({"updateBorders": {
+                                        "range": {"sheetId": bt_sheet.id, "startRowIndex": _sr,
+                                                  "endRowIndex": _sr + 1, "startColumnIndex": 0, "endColumnIndex": 36},
+                                        "top": {"style": "SOLID_THICK",
+                                                "color": {"red": 0.12, "green": 0.12, "blue": 0.12}}}})
+                                    _cnt += 1
+                                _prev = _cur
+                            doc.batch_update({"requests": _brd})
+                            print(f"📏 [백테스트_로그] 날짜 구분선 {_cnt}개 재적용")
                     except Exception as _se:
-                        print(f"⚠️ [백테스트_로그 정렬 실패 — 다음 omakase 회차에서 복구됨] {_se}")
+                        print(f"⚠️ [백테스트_로그 정렬/구분선 실패 — 다음 omakase 회차에서 복구됨] {_se}")
                 else:
                     print(f"❌ [백테스트 V6 Step1] 3회 재시도 후에도 확인 실패 — 누락: {[r[0] for r in pending]}")
             else:
