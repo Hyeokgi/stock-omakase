@@ -8,6 +8,11 @@ on:
         required: false
         default: false
         type: boolean
+      force_briefing:
+        description: '이슈브리핑(주요일정 AI 분석)을 지금 즉시 생성할지 (평소엔 매일 7시 회차에 자동 생성)'
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: hyeoks-report-lock # 💡 [분리] omakase는 10분마다 재기동 → 같은 lock을 쓰면 대기열 1개 제한에 밀려 리포트가 취소됨. 백테스트 기록이 셀 타겟 업데이트 방식으로 바뀌어 더 이상 lock 통합이 필요 없음.
@@ -54,5 +59,6 @@ jobs:
           KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
           # 🛡️ [예외 재실행] 기본값 false — 사람이 Actions 탭에서 수동 실행할 때만 체크박스로 켤 수 있음
           FORCE_RESEND: ${{ inputs.force_resend }}
+          FORCE_BRIEFING: ${{ inputs.force_briefing }}
       run: |
         python hyeoks_analyst.py

@@ -378,10 +378,13 @@ try:
     def generate_schedule_briefings(doc):
         try:
             now = datetime.datetime.now(KST)
-            # 🛡️ 비용/시간 관리: 매주 월요일에만 실행 (0=월). 같은 날 여러 번 돌아도 아래 중복키로
-            #    이미 분석된 일정은 건너뛰므로, 한 회차가 실패해도 그날 다음 회차가 이어서 채운다.
-            if now.weekday() != 0:
-                print("ℹ️ [이슈브리핑] 오늘은 실행일이 아님 (월요일 전용)")
+            # 🔧 [주기 변경] 예전엔 '매주 월요일 1회'였는데, 회당 8건 상한과 겹쳐 밀린 일정을 따라잡는 데
+            #    몇 주가 걸렸다(앞으로 2주치 27건이면 3주 소요). 아래 중복키 때문에 이미 분석된 일정은
+            #    절대 재생성되지 않으므로, 매일 아침 회차에 돌려도 다 채워진 뒤에는 API 호출이 0이 된다.
+            #    → 하루 1회(7시 회차)로 바꿔 밀린 분량을 며칠 안에 소화. 즉시 채우고 싶으면 FORCE_BRIEFING=true.
+            force_brief = os.environ.get("FORCE_BRIEFING", "false").strip().lower() == "true"
+            if not force_brief and current_hour != 7:
+                print(f"ℹ️ [이슈브리핑] 이번 회차({current_hour}시)는 생성 대상 아님 (매일 7시 회차 또는 FORCE_BRIEFING=true)")
                 return
 
             sched_rows = doc.worksheet("주요일정").get_all_values()[1:]
