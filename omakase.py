@@ -2574,7 +2574,36 @@ def update_technical_data(df_theme, all_theme_map):
 
                 chart_top2 = sorted(candidate_pool, key=lambda x: x[29], reverse=True)[:2]
                 gate_passed = [r for r in candidate_pool if r[34] == "GATE_PASS"]
-                supply_top2 = sorted(gate_passed, key=lambda x: x[31], reverse=True)[:2]
+
+                # ── [준비 완료 / 기본 미적용] 수급TOP2 V2 상단 컷오프 ──────────────────────
+                # 왜 만들어 뒀나 (2026-08-07 백테스트_로그 189행 실증):
+                #   · V2 점수대별 T+5 알파가 역U자였다. 40~59 +4.82%(승률75%), 60~79 +7.93%(82%),
+                #     그런데 80~100 은 -5.89%(승률 22%)로 최악.
+                #   · 수급TOP2는 'V2 상위 2개'를 뽑으므로 하필 이 최악 구간을 집게 된다.
+                #     실제로 수급TOP2 중 V2 80+ 5건 평균 -7.60% vs V2 40~79 12건 +3.83%.
+                #   · 해석: 극단적 수급 과열은 지속이 아니라 소진 신호(고점 추격)에 가깝다.
+                #     이것이 수급TOP2가 대조군(랜덤2)보다도 부진했던 직접적 원인으로 보인다.
+                #
+                # 왜 지금 켜지 않나:
+                #   · 문제 구간 표본이 아직 N=9로 얇아 -5.89%를 확정으로 보기 이르다.
+                #   · 로직을 바꾸면 그 시점부터 표본 성격이 달라져, 변경 전/후를 비교할 기준선이 사라진다.
+                #     2~3주 더 축적한 뒤 이 항목 하나만 켜고 변경일을 기록해 전/후를 분리 비교할 것.
+                #
+                # 켜는 법: 워크플로/실행 환경에 SUPPLY_V2_BAND=on 을 주면 즉시 활성화(코드 수정 불필요).
+                #   밴드를 조정하려면 SUPPLY_V2_BAND_RANGE=45-79 형식으로 함께 지정.
+                _band_on = os.environ.get("SUPPLY_V2_BAND", "off").strip().lower() in ("on", "true", "1")
+                try:
+                    _lo, _hi = (int(x) for x in os.environ.get("SUPPLY_V2_BAND_RANGE", "45-79").split("-"))
+                except Exception:
+                    _lo, _hi = 45, 79
+
+                if _band_on:
+                    _banded = [r for r in gate_passed if _lo <= parse_score_num(r[31]) <= _hi]
+                    supply_top2 = sorted(_banded, key=lambda x: x[31], reverse=True)[:2]
+                    print(f"🎛️ [수급TOP2] V2 밴드 필터 ON ({_lo}~{_hi}) — 후보 {len(gate_passed)}→{len(_banded)}개, 선정 {len(supply_top2)}개")
+                else:
+                    # 현행(기본): V2 상위 2개. 위 실증 근거대로라면 과열 구간을 집을 수 있음.
+                    supply_top2 = sorted(gate_passed, key=lambda x: x[31], reverse=True)[:2]
 
                 # 대조군 랜덤2: '배지필터 이전' 전체 results에서 결정론적 추출 (seed=날짜 → 재현가능, builtin hash() 비사용)
                 valid_results = [r for r in results if len(r) >= 35 and parse_price_num(r[2]) > 0]
