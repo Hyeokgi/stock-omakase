@@ -719,7 +719,10 @@ def compute_channel_comparison_dashboard(doc):
 
     header = ["채널"]
     for h, _, _ in horizons:
-        header += [f"T+{h} 표본", f"T+{h} 평균수익률(%)", f"T+{h} 초과수익(%)", f"T+{h} 승률(%)"]
+        # 🔧 [표기 교정] '평균수익률'과 '초과수익'이 이름만으로는 구분이 안 돼 사람이 계속 헷갈렸다.
+        #    (지수가 크게 빠진 구간에서는 실수익이 마이너스인데 초과α만 크게 양수로 나온다)
+        #    → 실제로 번 돈인지, 지수 대비 상대성과인지를 이름에서 바로 드러나게 한다.
+        header += [f"T+{h} 표본", f"T+{h} 실수익(%)", f"T+{h} 초과α(%p·vs지수)", f"T+{h} 승률(%)"]
     out_rows = [header]
 
     for ch in channels:
@@ -745,7 +748,12 @@ def compute_channel_comparison_dashboard(doc):
             dash_sheet = doc.add_worksheet(title="채널비교_대시보드", rows="20", cols="30")
         dash_sheet.clear()
         dash_sheet.update(range_name="A1", values=out_rows, value_input_option="RAW")
-        dash_sheet.update(range_name=f"A{len(out_rows) + 2}", values=[[f"갱신: {now_str}"]], value_input_option="RAW")
+        dash_sheet.update(range_name=f"A{len(out_rows) + 2}", values=[
+            [f"갱신: {now_str}"],
+            ["※ 실수익 = 실제 손익. 초과α = 지수 대비 상대성과(%p)."],
+            ["※ 지수가 크게 빠진 구간에서는 실수익이 마이너스여도 초과α는 크게 양수로 나온다."
+             " 즉 초과α가 양수라고 돈을 번 것이 아니다 — 판단은 '실수익'을 먼저 보고 할 것."],
+        ], value_input_option="RAW")
 
         # 기존 조건부 서식 삭제 후, 초과수익 칸에만 양/음수 색상 규칙 새로 등록(중복 누적 방지)
         sheet_id = dash_sheet.id
@@ -759,14 +767,18 @@ def compute_channel_comparison_dashboard(doc):
 
         n_channels = len(channels)
         for idx, (h, _, _) in enumerate(horizons):
-            col_idx = 1 + idx * 4 + 2  # "T+h 초과수익(%)" 칸의 0-based 열 인덱스
-            col_range = {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": 1 + n_channels, "startColumnIndex": col_idx, "endColumnIndex": col_idx + 1}
-            requests_list.append({"addConditionalFormatRule": {"rule": {"ranges": [col_range], "booleanRule": {
-                "condition": {"type": "NUMBER_GREATER", "values": [{"userEnteredValue": "0"}]},
-                "format": {"backgroundColor": {"red": 0.85, "green": 0.95, "blue": 0.85}}}}, "index": 0}})
-            requests_list.append({"addConditionalFormatRule": {"rule": {"ranges": [col_range], "booleanRule": {
-                "condition": {"type": "NUMBER_LESS", "values": [{"userEnteredValue": "0"}]},
-                "format": {"backgroundColor": {"red": 1.0, "green": 0.88, "blue": 0.88}}}}, "index": 0}})
+            # 🔧 [표기 교정] 예전엔 '초과α' 칸에만 색을 칠했다. 그래서 지수가 폭락한 구간에서
+            #    실수익이 마이너스인데도 초과α만 초록으로 보여 "다 잘하고 있다"는 착시를 만들었다.
+            #    → 실수익 칸에도 같은 색 규칙을 걸어, 돈을 잃은 칸은 반드시 빨갛게 보이도록 한다.
+            for col_idx in (1 + idx * 4 + 1,      # "T+h 실수익(%)"
+                            1 + idx * 4 + 2):     # "T+h 초과α(%p·vs지수)"
+                col_range = {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": 1 + n_channels, "startColumnIndex": col_idx, "endColumnIndex": col_idx + 1}
+                requests_list.append({"addConditionalFormatRule": {"rule": {"ranges": [col_range], "booleanRule": {
+                    "condition": {"type": "NUMBER_GREATER", "values": [{"userEnteredValue": "0"}]},
+                    "format": {"backgroundColor": {"red": 0.85, "green": 0.95, "blue": 0.85}}}}, "index": 0}})
+                requests_list.append({"addConditionalFormatRule": {"rule": {"ranges": [col_range], "booleanRule": {
+                    "condition": {"type": "NUMBER_LESS", "values": [{"userEnteredValue": "0"}]},
+                    "format": {"backgroundColor": {"red": 1.0, "green": 0.88, "blue": 0.88}}}}, "index": 0}})
         doc.batch_update({"requests": requests_list})
         print(f"✅ [채널비교_대시보드] {n_channels}개 채널 × {len(horizons)}개 호라이즌 갱신 완료")
     except Exception as e:
