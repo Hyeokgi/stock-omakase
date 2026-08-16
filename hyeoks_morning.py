@@ -173,13 +173,98 @@ def get_yesterday_korean_context():
 
     return "\n\n".join(picks_info)
 
-def generate_morning_briefing(market_data, news_data, kor_context, liquidity_data):
+def get_report_picks_context():
+    """🆕 [모닝브리핑 개편] 어제 PDF 리포트로 나간 종목(리포트TOP2_단기/중기)의 후속 상황을 모은다.
+
+    예전 모닝브리핑은 '주가데이터_보조 점수 상위 10개'를 매일 새로 훑어 그중 1~3개를 AI가 다시
+    골랐다. 그래서 어제 리포트로 내보낸 종목이 오늘 아침엔 언급조차 안 되는 일이 잦았다
+    (스캐너 상위와 리포트 픽이 일치하지 않기 때문). 리포트를 받아본 사람 입장에선 후속이 끊긴다.
+    → 백테스트_로그에서 '가장 최근 진입일의 리포트 채널' 행을 그대로 가져와, 목표가·손절가까지
+      함께 넘겨 오늘 아침 대응을 이어서 쓸 수 있게 한다.
+    """
+    print("📄 어제 리포트 발행 종목 후속 데이터 수집 중...")
+    try:
+        gcp_creds_str = os.environ.get("GCP_CREDENTIALS")
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        if gcp_creds_str and len(gcp_creds_str.strip()) > 10:
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(gcp_creds_str), scope)
+        else:
+            creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
+        doc = gspread.authorize(creds).open_by_url(SHEET_URL)
+        kis_token = ""
+        try:
+            for row in doc.worksheet("⚙️설정").get_all_values():
+                if len(row) >= 2 and row[0] == "KIS_TOKEN":
+                    kis_token = row[1]; break
+        except Exception:
+            pass
+        bt = doc.worksheet("백테스트_로그").get_all_values()
+    except Exception as e:
+        print(f"⚠️ [모닝] 리포트 종목 컨텍스트 수집 실패(생략하고 진행): {e}")
+        return ""
+    rep = [r for r in bt[1:] if len(r) > 33 and str(r[2]).strip().startswith("리포트TOP2_")]
+    if not rep:
+        return ""
+    latest = max(str(r[1]).strip() for r in rep)          # 가장 최근 진입일(= 어제 리포트)
+    picks = [r for r in rep if str(r[1]).strip() == latest]
+    if not picks:
+        return ""
+
+    # 시간외/NXT는 주가데이터_보조에 종목코드 기준으로 들어 있으므로 코드로 매칭해 붙인다.
+    after = {}
+    try:
+        for r in doc.worksheet("주가데이터_보조").get_all_values()[1:]:
+            if len(r) > 28 and str(r[1]).strip():
+                c = str(r[1]).replace("'", "").strip().zfill(6)
+                after[c] = {"krx": str(r[26]).strip(), "nxt": str(r[27]).strip(),
+                            "tajeom": str(r[8]).strip(), "program": str(r[20]).strip()}
+    except Exception as e:
+        print(f"⚠️ [모닝] 시간외 데이터 매핑 실패(생략하고 진행): {e}")
+
+    out = [f"[리포트 발행일: {latest}]"]
+    for r in picks:
+        code = str(r[4]).replace("'", "").strip().zfill(6)
+        kind = "단기" if str(r[2]).strip().endswith("단기") else "중기"
+        a = after.get(code, {})
+        vip = get_vip_deep_dive_data(code, kis_token) if code else "VIP 데이터 확인불가"
+        out.append(
+            f"▪️ [{kind}] {str(r[3]).strip()} ({code}) | 테마: {str(r[5]).strip()}\n"
+            f"  [리포트 제시가] 목표가 {str(r[32]).strip() or '-'} / 손절가 {str(r[33]).strip() or '-'} (기준종가 {str(r[14]).strip()})\n"
+            f"  [야간/시간외] KRX: {a.get('krx') or '-'} / NXT: {a.get('nxt') or '-'}\n"
+            f"  [마스터타점] {a.get('tajeom') or '-'}\n"
+            f"  [프로그램] {a.get('program') or '-'}\n"
+            f"  [펀더멘털] {vip}"
+        )
+    return "\n\n".join(out)
+
+
+def generate_morning_briefing(market_data, news_data, kor_context, liquidity_data, report_context=""):
     print("🤖 AI 매크로 분석 및 능동형 리포트 작성 중...")
     client = genai.Client(api_key=GEMINI_API_KEY)
     
-    is_empty_market = "기준 부합 종목 부재" in kor_context
-    
-    if is_empty_market:
+    # 🆕 [모닝브리핑 개편] 어제 리포트로 나간 종목이 있으면 그 후속 분석을 본론으로 삼는다.
+    #    (없을 때만 예전 방식 — 스캐너 후보 풀에서 AI가 새로 고르는 흐름 — 으로 폴백)
+    if report_context.strip():
+        stock_prompt_instruction = """
+   [파트 2: 어제 리포트 종목 후속 점검 (파란색 뱃지)]
+   🚨 핵심 지시: 아래 '[어제 리포트로 발행한 종목]'은 이미 리포트를 받아본 종목입니다. 새 종목을 발굴하지
+   말고, 이 종목들이 지금 어떤 상태인지 이어서 점검하십시오. 제공된 [리포트 제시가]의 목표가·손절가와
+   [야간/시간외] KRX·NXT 가격을 반드시 대조해, 오늘 시가 갭을 예측하고 그에 맞는 대응을 제시하십시오.
+   각 종목마다 아래 형식을 지키십시오.
+
+   🟦 [종목명] (단기 또는 중기)
+   🔹 밤사이 변화
+   ▫️ [🌙야간/시간외: KRX·NXT 요약] [🤖프로그램] [🎯타점]
+   ▫️ (리포트 발행 이후 무엇이 달라졌는지. 달라진 게 없으면 '특이 변화 없음'이라고 그대로 쓰십시오.)
+   🔹 목표가·손절가 대비 현재 위치
+   ▫️ (야간 가격이 목표가/손절가 중 어느 쪽에 얼마나 가까운지 수치로. 이미 이탈했다면 명확히 지적하십시오.)
+   🔹 오늘의 대응
+   ▫️ 보유 중이라면: (홀딩/분할익절/손절 중 무엇을, 어느 가격에)
+   ▫️ 미진입이라면: (시초가 갭을 감안한 진입 가부와 타점. 진입 부적합이면 '오늘은 진입 보류'라고 쓰십시오.)
+
+   🚨 낙관 편향 금지: 손절가에 근접했거나 논리가 깨졌으면 반드시 그렇게 쓰십시오. 억지로 홀딩을 권하지 마십시오.
+"""
+    elif "기준 부합 종목 부재" in kor_context:
         stock_prompt_instruction = """
    [파트 2: 종목별 심층 분석 (파란색 뱃지)]
    🚨 [관망 권고 및 리스크 관리]
@@ -210,18 +295,24 @@ def generate_morning_briefing(market_data, news_data, kor_context, liquidity_dat
 [밤사이 글로벌/국내 주요 뉴스]
 {news_data}
 
-[어제 포착된 퀀트 필터 통과 후보 풀 (최대 10종목)]
+[어제 리포트로 발행한 종목]
+{report_context if report_context.strip() else "(없음)"}
+
+[참고용 — 어제 포착된 퀀트 필터 통과 후보 풀]
 {kor_context}
 
 [HYEOKS 리서치 작성 지침]
 1. 별표 기호(**) 전면 금지.
-2. 아래 계층 구조(Hierarchy) 및 전용 아이콘 엄수:
-   
-   [파트 1: 종합 시황 및 매크로 (녹색 뱃지)]
+2. 🚨 파트 1은 '간략하게'. 유동성·뉴스는 각각 2~3문장으로 압축하고, 오늘 매매에 실제로 영향을 주는
+   내용만 남기십시오. 원론적 설명("분산투자가 중요합니다" 등)이나 같은 말 반복은 금지입니다.
+   이 브리핑의 본론은 파트 2(종목)이며, 분량도 파트 2가 더 많아야 합니다.
+3. 아래 계층 구조(Hierarchy) 및 전용 아이콘 엄수:
+
+   [파트 1: 글로벌 시황 요약 (녹색 뱃지) — 간략히]
    🟩 [HYEOKS 매크로 & 뉴스 종합 시황]
-   🟢 유동성 환경 분석
+   🟢 유동성·해외 증시 (2~3문장)
    ▫️ (내용)
-   🟢 핵심 뉴스 & 시장 내러티브 진단
+   🟢 밤사이 핵심 뉴스 (2~3문장, 오늘 시장에 영향 주는 것만)
    ▫️ (내용)
    {stock_prompt_instruction}
 """
@@ -354,12 +445,13 @@ if __name__ == "__main__":
     liquidity_data = get_global_liquidity_data()
     market_data, news_data = get_us_market_summary()
     kor_context = get_yesterday_korean_context()
+    report_context = get_report_picks_context()
     
     # 💡 [안정성 보완] 데이터 수집 실패 시 구조적 예외 처리가 튕기지 않도록 단일화 처리
     if "실패" in market_data or "에러" in kor_context or "에러" in liquidity_data:
         final_briefing = f"🚨 [HYEOKS 시스템 경고] 모닝 데이터 수집 에러\n\n[에러 내용]\n- 유동성(FRED): {liquidity_data}\n- 뉴스 수집: {market_data}\n- 한국장: {kor_context}\n\n※ 문제를 수정해주세요."
     else:
-        briefing_text = generate_morning_briefing(market_data, news_data, kor_context, liquidity_data)
+        briefing_text = generate_morning_briefing(market_data, news_data, kor_context, liquidity_data, report_context)
         today_str = now_obj.strftime('%Y년 %m월 %d일')
         final_briefing = f"🌅 [HYEOKS 모닝 브리핑] - {today_str}\n\n{briefing_text}"
     
