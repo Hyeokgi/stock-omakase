@@ -200,34 +200,43 @@ def generate_deep_report(st_type, best_cand, is_warning_market=False, KIS_TOKEN=
     else:
         strategy_instruction = "✨ 현재 국내 증시는 공격적 운영이 가능한 지지 장세입니다. 주도주 돌파 및 적극적인 수익 극대화 관점으로 서술하십시오."
 
-    eng_strategy = "AGGRESSIVE TREND MOMENTUM STRATEGY" if st_type == "short" else "DEFENSIVE PLATFORM ACCUMULATION SWING"
-    sub_title_prefix = "매물대 진공 구간 돌파 및 단기 슈팅 공략" if st_type == "short" else "에너지 응축 후 플랫폼 탈출 스윙 전략"
+    eng_strategy = {"short": "AGGRESSIVE TREND MOMENTUM STRATEGY", "mid": "TECHNICAL OVERSOLD SWING REVERSAL",
+                     "long": "DEFENSIVE PLATFORM ACCUMULATION LONG-TERM"}.get(st_type, "AGGRESSIVE TREND MOMENTUM STRATEGY")
+    sub_title_prefix = {"short": "매물대 진공 구간 돌파 및 단기 슈팅 공략", "mid": "과매도 반등 확인 후 며칠~몇 주 스윙 전략",
+                         "long": "실적 뒷받침 에너지 응축 후 몇 개월 구조적 성장 전략"}.get(st_type, "매물대 진공 구간 돌파 및 단기 슈팅 공략")
 
-    # 🆕 [V3 반영] 장기 추세추종형(바닥·분할매수/코어픽) 중기 픽에 실적점수(V3)가 있으면,
-    #    이 종목 스토리의 핵심 근거로 실적 추이를 적극 서술하도록 명시적으로 지시.
-    #    (과매도·역배팅형은 기술적 반등이 핵심이라 실적 서술을 강제하지 않음)
-    is_structural_pick = st_type == "mid" and best_cand.get('v3_score') is not None and \
-        (("바닥 · 분할매수" in best_cand.get('info', '')) or ("코어픽" in best_cand.get('info', '')))
-    # 🆕 [단기/중기 목표·손절 폭 분리] 실측 결과 두 채널의 목표폭이 사실상 같았다(단기 +14.7% / 중기 +14.5%,
-    #    차이 0.2%p). 보유기간이 다른데 가격 밴드가 같으면 '단기'라는 구분 자체가 무의미해진다.
-    #    · 단기는 며칠 내 도달 가능한 좁은 밴드여야 회전이 돌고, 손절도 타이트해야 손실이 짧게 끊긴다.
-    #    · 중기는 분할매수를 전제로 손절을 넉넉히 둬야 흔들림에 털리지 않고, 목표도 그만큼 멀어야 한다.
-    #    프롬프트에 폭을 수치로 못 박아 AI가 둘을 실제로 다르게 잡도록 강제한다.
-    price_band_instruction = (
-        "\n4. 🚨 [목표가·손절가 폭 — 단기 전용 규칙]: 이 픽은 며칠 내 승부를 보는 단기 슈팅입니다.\n"
-        "   · 목표가는 확정 현재가 대비 +7~12% 범위에서 정하십시오. 며칠 안에 닿지 못할 먼 목표는 금지입니다.\n"
-        "   · 손절가는 -6~8% 범위로 잡으십시오. 그보다 더 조이면 국내 증시 일중 변동성에 그냥 잘려 나갑니다.\n"
-        "   · 손익비는 최소 1.2 이상이 되게 맞추십시오."
-        if st_type == 'short' else
-        "\n4. 🚨 [목표가·손절가 폭 — 중기 전용 규칙]: 이 픽은 분할매수로 몇 주간 끌고 가는 스윙입니다.\n"
-        "   · 목표가는 확정 현재가 대비 +15~30% 범위에서 정하십시오. 단기 시세가 아니라 추세 목표여야 합니다.\n"
-        "   · 손절가는 -8~15% 범위로 넉넉히 잡으십시오. 차트상 의미 있는 하단(기준봉 시가·60일선·쌍바닥 저점)에 두어\n"
-        "     일상적인 흔들림에 털리지 않게 하십시오.\n"
-        "   · 손익비는 최소 1.8 이상이 되게 맞추십시오."
-    )
+    # 🆕 [3단계 재편] V3 실적 서술은 이제 장기(long) 픽 전용 — 장기 선정 기준 자체가 이미 '바닥·분할매수/코어픽'만
+    #    후보로 삼도록 재편됐으므로, 여기 들어오는 장기 픽은 사실상 전부 구조적 성장 스토리를 갖고 있음.
+    is_structural_pick = st_type == "long" and best_cand.get('v3_score') is not None
+    # 🆕 [단기/중기/장기 목표·손절 폭 3단 분리] 보유기간이 다른데 가격 밴드가 같으면 구분 자체가 무의미해진다.
+    #    · 단기: 며칠 내 도달 가능한 좁은 밴드, 타이트한 손절로 짧게 끊는다.
+    #    · 중기(스윙): 과매도 반등 확인 후 진입하는 단일 포지션 스윙 — 단기보다 넉넉하되 장기보다는 좁게.
+    #    · 장기: 분할매수를 전제로 손절을 가장 넉넉히 두고, 목표도 가장 멀리 잡는다. 손익비 하한도 가장 높게(2.2)
+    #      요구해서, 표본이 쌓일수록 승률이 다소 낮아져도 기댓값이 버틸 수 있게 한다.
+    price_band_instruction = {
+        "short": (
+            "\n5. 🚨 [목표가·손절가 폭 — 단기 전용 규칙]: 이 픽은 며칠 내 승부를 보는 단기 슈팅입니다.\n"
+            "   · 목표가는 확정 현재가 대비 +7~12% 범위에서 정하십시오. 며칠 안에 닿지 못할 먼 목표는 금지입니다.\n"
+            "   · 손절가는 -6~8% 범위로 잡으십시오. 그보다 더 조이면 국내 증시 일중 변동성에 그냥 잘려 나갑니다.\n"
+            "   · 손익비는 최소 1.2 이상이 되게 맞추십시오."
+        ),
+        "mid": (
+            "\n5. 🚨 [목표가·손절가 폭 — 중기 스윙 전용 규칙]: 이 픽은 과매도 반등을 노리는 단일 진입 스윙(며칠~몇 주)입니다.\n"
+            "   · 목표가는 확정 현재가 대비 +12~20% 범위에서 정하십시오.\n"
+            "   · 손절가는 -7~11% 범위로 잡으십시오. 반등 실패 시 빠르게 인정하고 끊어낼 수 있는 폭이어야 합니다.\n"
+            "   · 손익비는 최소 1.8 이상이 되게 맞추십시오."
+        ),
+        "long": (
+            "\n5. 🚨 [목표가·손절가 폭 — 장기 추세추종 전용 규칙]: 이 픽은 분할매수로 몇 개월간 끌고 가는 구조적 성장 포지션입니다.\n"
+            "   · 목표가는 확정 현재가 대비 +20~40% 범위에서 정하십시오. 단기 시세가 아니라 실적 뒷받침 추세 목표여야 합니다.\n"
+            "   · 손절가는 -10~18% 범위로 가장 넉넉히 잡으십시오. 차트상 의미 있는 하단(기준봉 시가·60일선·쌍바닥 저점)에 두어\n"
+            "     일상적인 흔들림에 털리지 않게 하십시오.\n"
+            "   · 손익비는 최소 2.2 이상이 되게 맞추십시오 — 장기 포지션은 표본이 적어도 기댓값이 버텨야 하므로 가장 엄격한 기준입니다."
+        ),
+    }.get(st_type, "")
 
     earnings_instruction = (
-        "\n4. 🆕 [실적 추세 적극 반영]: 이 종목은 장기 추세추종형 픽이며 실적점수(V3)가 확인됩니다. "
+        "\n6. 🆕 [실적 추세 적극 반영]: 이 종목은 장기 추세추종형 픽이며 실적점수(V3)가 확인됩니다. "
         "매출액·영업이익이 최근 분기 들어 어떻게 개선되고 있는지를 이 종목 투자 스토리의 핵심 근거로 삼아 "
         "서술에 적극 반영하십시오 — 단순 차트 언급에 그치지 말고, '실적이 뒷받침되는 구조적 성장'이라는 점을 명확히 짚어주십시오."
         if is_structural_pick else ""
@@ -246,7 +255,7 @@ def generate_deep_report(st_type, best_cand, is_warning_market=False, KIS_TOKEN=
 [HYEOKS 딥리딩 절대 지침 - 명심하십시오]
 1. 분량 및 깊이: 귀하의 최고 수준의 통찰력을 발휘하여 논리적으로 서술하되, 전체 분량이 A4 최대 2페이지를 넘지 않도록 하십시오.
 2. 🚨 [할루시네이션(거짓 정보) 엄격 금지]: 차트를 판독하여 지지/저항선을 제시할 때, 반드시 위 [입력 데이터]에 제공된 ★확정 현재가({best_cand['curr_p']}원)를 기준으로 상/하단 가격을 논리적으로 계산하십시오.
-3. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'O' if st_type=='mid' else 'X'} 형식으로 숫자로만 출력하십시오.
+3. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'O' if st_type=='long' else 'X'} 형식으로 숫자로만 출력하십시오.
 {price_band_instruction}{earnings_instruction}
 
 [출력 양식 (마크다운 및 HTML 복합 레이아웃 절대 고수)]
@@ -276,7 +285,7 @@ def generate_deep_report(st_type, best_cand, is_warning_market=False, KIS_TOKEN=
 ## 4. 실전 타점 시나리오 및 리스크 관리 전략
 (시간외 데이터를 반영한 익일 시가 갭 대응 시나리오, 1차/2차 진입 가격대, 목표가/손절가를 매우 상세하게 작성할 것)
 
-[DATA] 목표가:00000, 손절가:00000, 분할매수:{'O' if st_type=='mid' else 'X'} """
+[DATA] 목표가:00000, 손절가:00000, 분할매수:{'O' if st_type=='long' else 'X'} """
 
     img_path = f"temp_{best_cand['code']}.png"
     try:
@@ -915,31 +924,35 @@ try:
     {dominant_sector_block}
     [🚨 국면별 종목 선정 제약 지침]
     - 만약 현재 시장이 STAGE 2(주의 장세)라면 단기 슈팅 종목을 극도로 보수적으로 판단하고, 애매하면 단기 픽 자리에 "000000"을 출력하십시오.
-    - 만약 현재 시장이 STAGE 3(패닉 장세)라면, 자산을 사수하기 위해 단기(short_term_code) 및 중기(swing_code)를 불문하고 억지로 추천을 내지 말고 둘 다 무조건 "000000"을 반환해야 합니다.
+    - 만약 현재 시장이 STAGE 3(패닉 장세)라면, 자산을 사수하기 위해 단기(short_term_code)·중기(swing_code)·장기(long_term_code)를 불문하고 억지로 추천을 내지 말고 셋 다 무조건 "000000"을 반환해야 합니다.
  
     [종목 선정 기준]
     1. 단기 슈팅 공략주 (short_term_code): 유형:NORMAL 종목 중 파괴력 있는 종목 1개 선별. (없으면 "000000")
-    2. 중장기 모아가기주 (swing_code): 유형:SEED 종목 중 과열 배지가 없는 바닥 확인형 1개 선별.
-       단, SEED 안에는 성격이 다른 두 유형이 섞여 있으니 구분해서 판단하십시오:
-       - 타점이 '바닥 · 분할매수' 또는 '코어픽' 배지인 종목(장기 추세추종형): 실적점수(V3)를 적극 반영하십시오.
-         실적점수가 높을수록(매출·영업이익이 여러 분기 꾸준히 개선 중일수록) 우선순위를 높게 두고,
-         실적점수가 낮게 명시된 종목은 기술적으로 좋아 보여도 피하십시오.
-       - 타점이 '과매도 · 역배팅'인 종목(단기 반등/역배팅형): 이건 기술적 반등을 노리는 전략이라
-         실적점수가 낮거나 표시가 없어도 배제하지 마십시오 — 실적과 무관하게 기존 기준(반등 확인 여부 등)대로 판단하십시오.
-       실적점수 표시 자체가 없는 종목은 아직 데이터가 없는 것이니 기존 기준대로 판단하십시오.
-       (없으면 "000000")
-    3. 🚨 [추세 절대 거부권 - 최우선 규칙]: '추세:하락/고점주의'이거나 타점에 '📉 / 3파 익절 / 하락 전환 / 반등 미확인'이 포함된 종목은 점수가 아무리 높아도 절대 선정하지 마십시오. 추세 반전이 확인되지 않은 '떨어지는 칼'은 반드시 "000000"으로 회피하십시오.
-    4. 🆕 [RS등급 활용 — 참고용 우선순위, 절대 기준 아님]: RS등급(상대강도, 1~99 백분위)은 전종목 대비 상대적 강도를 나타냅니다.
+       🆕 [테마 신선도 활용 — 참고용 우선순위, 절대 기준 아님]: 종목의 "테마" 표시가 🆕[당일](오늘 실제로 새로 자금이
+       몰리기 시작한 테마)인지 🕰️[과거](예전에 한 번 테마였던 걸 재활용)인지를 참고하십시오. 다른 조건(V1·V2·타점)이
+       비슷한 후보가 여럿이라면 🆕[당일] 종목을 우선하십시오. 단, 🕰️[과거] 종목이라도 다른 조건이 뚜렷하게 더 좋다면
+       그 이유만으로 배제하지 마십시오 — 절대적 필터가 아니라 동점자 처리용 우선순위 참고 지표입니다.
+    2. 🆕 [중기 스윙 공략주 (swing_code)]: 유형:SEED 중 타점이 '과매도 · 역배팅'인 종목에서만 선별하십시오. (없으면 "000000")
+       이건 실적·산업리포트가 아니라 순수 기술적 반등을 노리는 며칠~몇 주짜리 스윙 포지션입니다.
+       실적점수(V3)가 낮거나 표시가 없어도 배제하지 마십시오 — 기존 기준(과매도 반등 확인 여부 등)대로만 판단하십시오.
+       '바닥 · 분할매수'나 '코어픽' 배지 종목은 이 자리에 선택하지 마십시오 — 그 종목들은 아래 3번(장기) 전용입니다.
+    3. 🆕 [장기 추세추종주 (long_term_code)]: 유형:SEED 중 타점이 '바닥 · 분할매수' 또는 '코어픽' 배지인 종목에서만
+       선별하십시오. (없으면 "000000") 이건 실적·산업리포트가 뒷받침되는 몇 개월짜리 구조적 성장 포지션입니다.
+       실적점수(V3)를 적극 반영하십시오 — 매출·영업이익이 여러 분기 꾸준히 개선 중일수록 우선순위를 높게 두고,
+       실적점수가 낮게 명시된 종목은 기술적으로 좋아 보여도 피하십시오. 실적점수 표시 자체가 없는 종목은
+       아직 데이터가 없는 것이니 다른 기준(코어픽 여부·차트 위치 등)으로 판단하십시오.
+    4. 🚨 [추세 절대 거부권 - 최우선 규칙]: '추세:하락/고점주의'이거나 타점에 '📉 / 3파 익절 / 하락 전환 / 반등 미확인'이 포함된 종목은 점수가 아무리 높아도 절대 선정하지 마십시오. 추세 반전이 확인되지 않은 '떨어지는 칼'은 반드시 "000000"으로 회피하십시오.
+    5. 🆕 [RS등급 활용 — 참고용 우선순위, 절대 기준 아님]: RS등급(상대강도, 1~99 백분위)은 전종목 대비 상대적 강도를 나타냅니다.
        다른 조건(타점·추세·V1·V2)이 비슷한 후보가 여럿이라면 RS등급이 높은 쪽을 우선하십시오.
        단, RS등급이 낮거나 표시가 없다는 이유만으로 다른 조건이 확실히 좋은 종목을 배제하지는 마십시오 — 어디까지나 동점자 처리용 참고 지표입니다.
  
     [🆕 판단 절차 — 반드시 이 순서를 지키십시오]
-    ① 먼저 단기·중기 각각 후보를 2~3개씩 내부적으로 추려내고, 위 1~4번 기준으로 각 후보의 장단점을 스스로 비교하십시오.
-    ② 그중 최종 1개씩을 선택하되, 선택 직전에 "이 종목이 3번 추세 거부권에 걸리지는 않는가?", "선정 기준에서 요구하는 조건을 실제로 만족하는가?"를 항목별로 다시 한번 점검하십시오.
+    ① 먼저 단기·중기·장기 각각 후보를 2~3개씩 내부적으로 추려내고, 위 1~5번 기준으로 각 후보의 장단점을 스스로 비교하십시오.
+    ② 그중 최종 1개씩(총 3개)을 선택하되, 선택 직전에 "이 종목이 4번 추세 거부권에 걸리지는 않는가?", "선정 기준에서 요구하는 조건을 실제로 만족하는가?"를 항목별로 다시 한번 점검하십시오.
     ③ 점검 결과 어느 하나라도 애매하면 그 후보는 버리고 차순위 후보로 넘어가거나, 마땅한 후보가 없다면 "000000"을 반환하십시오.
     ④ 🚨 중요: "000000"을 반환하는 것은 실패가 아니라 성공적인 판단입니다. 확신이 서지 않는 종목을 억지로 채워 넣는 것보다,
        조건을 확실히 만족하는 종목이 없다는 걸 정직하게 인정하는 쪽이 훨씬 낫습니다. 애매하면 채우지 말고 비우십시오.
-    ⑤ 최종 응답에는 reasoning_short/reasoning_mid에 "왜 이 종목을 골랐는지"를 위 1~4번 기준 중 어떤 근거를 썼는지 구체적으로 1~2문장으로 남기십시오
+    ⑤ 최종 응답에는 reasoning_short/reasoning_mid/reasoning_long에 "왜 이 종목을 골랐는지"를 위 1~5번 기준 중 어떤 근거를 썼는지 구체적으로 1~2문장으로 남기십시오
        (예: "V1 74점·RS등급 88로 상위권이며 타점이 코어픽이고 추세가 상승유지라 선정" 처럼 근거를 구체적으로 명시).
        "000000"을 반환하는 경우에도 왜 마땅한 후보가 없었는지 1문장으로 남기십시오.
     ⑥ 종목코드는 반드시 아래 리스트에 있는 6자리 코드를 정확히 그대로(오타 없이) 복사해서 사용하십시오. 리스트에 없는 코드를 만들어내지 마십시오.
@@ -952,13 +965,17 @@ try:
         "short_term_code": "종목코드6자리 또는 000000",
         "reasoning_short": "단기 픽 선정/보류 근거 1~2문장",
         "swing_code": "종목코드6자리 또는 000000",
-        "reasoning_mid": "중기 픽 선정/보류 근거 1~2문장"
+        "reasoning_mid": "중기 스윙 픽 선정/보류 근거 1~2문장",
+        "long_term_code": "종목코드6자리 또는 000000",
+        "reasoning_long": "장기 추세추종 픽 선정/보류 근거 1~2문장"
     }}
     """
     
     if market_stage == 3:
         print("🚨 [CRITICAL ALERT] STAGE 3 대피 패닉 장세가 발동되었습니다. 억지 종목 매수를 차단하기 위해 AI 픽을 전면 전면 취소(Zero Pick)합니다.")
-        picks_json = {"short_term_code": "000000", "swing_code": "000000", "reasoning_short": "STAGE 3 패닉 장세로 인한 자동 제로픽", "reasoning_mid": "STAGE 3 패닉 장세로 인한 자동 제로픽"}
+        picks_json = {"short_term_code": "000000", "swing_code": "000000", "long_term_code": "000000",
+                      "reasoning_short": "STAGE 3 패닉 장세로 인한 자동 제로픽", "reasoning_mid": "STAGE 3 패닉 장세로 인한 자동 제로픽",
+                      "reasoning_long": "STAGE 3 패닉 장세로 인한 자동 제로픽"}
     else:
         result_text = safe_generate_content(pick_prompt).text
         cleaned_text = result_text.replace('```json', '').replace('```', '').strip()
@@ -966,15 +983,18 @@ try:
     
     code_short = picks_json.get('short_term_code', '')
     code_mid = picks_json.get('swing_code', '')
+    code_long = picks_json.get('long_term_code', '')
     # 🆕 [근거 로그] Gemini가 왜 이 종목을(또는 왜 000000을) 골랐는지 콘솔에 남겨서, 나중에 픽 품질을
     #    복기할 때 "이유를 알 수 없는 블랙박스" 상태가 아니라 근거를 추적할 수 있게 함.
     print(f"🧠 [단기 픽 근거] {picks_json.get('reasoning_short', '(근거 없음)')}")
-    print(f"🧠 [중기 픽 근거] {picks_json.get('reasoning_mid', '(근거 없음)')}")
+    print(f"🧠 [중기 스윙 픽 근거] {picks_json.get('reasoning_mid', '(근거 없음)')}")
+    print(f"🧠 [장기 추세추종 픽 근거] {picks_json.get('reasoning_long', '(근거 없음)')}")
     
     best_short = next((c for c in pool_150 if c['code'] == code_short), None) if code_short != "000000" else None
     best_mid = next((c for c in pool_150 if c['code'] == code_mid), None) if code_mid != "000000" else None
+    best_long = next((c for c in pool_150 if c['code'] == code_long), None) if code_long != "000000" else None
  
-    print(f"🔥 최종 발굴 결과 -> 단기 리포트 대상: {best_short['name'] if best_short else '없음(000000)'} / 중기 스윙 대상: {best_mid['name'] if best_mid else '없음(000000)'}\n")
+    print(f"🔥 최종 발굴 결과 -> 단기: {best_short['name'] if best_short else '없음(000000)'} / 중기 스윙: {best_mid['name'] if best_mid else '없음(000000)'} / 장기 추세추종: {best_long['name'] if best_long else '없음(000000)'}\n")
  
     # ==========================================
     # 5. 시황 및 딥리딩 PDF 리포트 본문 생성
@@ -1048,6 +1068,8 @@ try:
     report_short, pick_short = generate_deep_report("short", best_short, is_warning_market, KIS_TOKEN, client)
     if best_short: time.sleep(15)
     report_mid, pick_mid = generate_deep_report("mid", best_mid, is_warning_market, KIS_TOKEN, client)
+    if best_mid: time.sleep(15)
+    report_long, pick_long = generate_deep_report("long", best_long, is_warning_market, KIS_TOKEN, client)
  
     # ==========================================
     # 👑 [양방향 연동 완벽 개편 구역]: 주가데이터_보조 J열 고착 해결 레이어
@@ -1077,6 +1099,7 @@ try:
  
     short_summary = extract_summary(report_short) if best_short else ""
     mid_summary = extract_summary(report_mid) if best_mid else ""
+    long_summary = extract_summary(report_long) if best_long else ""
  
     for i, r_legacy in enumerate(latest_db_data[1:], start=2):
         if len(r_legacy) > 9:
@@ -1120,6 +1143,22 @@ try:
                         if pick_mid:
                             helper_sheet.update_cell(h_idx, 24, f"{pick_mid['target']:,}원")
                             helper_sheet.update_cell(h_idx, 25, f"{pick_mid['stop']:,}원")
+                        break
+                time.sleep(3.5); continue
+
+            if best_long and code == best_long['code']:
+                db_sheet.update_cell(real_row_idx, 10, long_summary)
+                if pick_long:
+                    db_sheet.update_cell(real_row_idx, 15, f"{pick_long['target']:,}원")
+                    db_sheet.update_cell(real_row_idx, 16, f"{pick_long['stop']:,}원")
+                
+                helper_snapshot = helper_sheet.get_all_values()
+                for h_idx, h_row in enumerate(helper_snapshot, start=1):
+                    if len(h_row) > 1 and str(h_row[1]).replace("'", "").strip().zfill(6) == code:
+                        helper_sheet.update_cell(h_idx, 10, long_summary)
+                        if pick_long:
+                            helper_sheet.update_cell(h_idx, 24, f"{pick_long['target']:,}원")
+                            helper_sheet.update_cell(h_idx, 25, f"{pick_long['stop']:,}원")
                         break
                 time.sleep(3.5); continue
             
@@ -1209,7 +1248,7 @@ try:
             if not closed_sheet.get_all_values(): closed_sheet.update(range_name="A1", values=[["종목명", "매입단가", "매도단가", "수익률", "매도일자", "결과"]])
             for cr in closed_rows: closed_sheet.append_row(cr)
  
-    update_portfolio([pick_short, pick_mid])
+    update_portfolio([pick_short, pick_mid, pick_long])
  
     # ==========================================
     # 8. HTML 조립 및 PDF 생성 -> 구글 드라이브 -> 텔레그램
@@ -1231,6 +1270,10 @@ try:
     if best_mid:
         html += f"<div class='page-break'></div>{markdown.markdown(report_mid)}"
         html += f"<div class='chart-container'><h3>차트 판독</h3><img src='https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{best_mid['code']}.png'></div>"
+
+    if best_long:
+        html += f"<div class='page-break'></div>{markdown.markdown(report_long)}"
+        html += f"<div class='chart-container'><h3>차트 판독</h3><img src='https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{best_long['code']}.png'></div>"
  
     html += "</body></html>"
  
@@ -1313,7 +1356,7 @@ try:
                 concentration_str = ""
             # 🔧 [수정] 단기(best_short)·중기(best_mid)는 완전히 다른 투자 논리라 채널명 자체를 분리.
             #    기존엔 둘 다 "리포트TOP2"로 합쳐 기록돼서, 평가 시 서로 다른 성과가 섞여 뭉개지는 문제가 있었음.
-            report_picks = [(best_short, "리포트TOP2_단기", pick_short), (best_mid, "리포트TOP2_중기", pick_mid)]
+            report_picks = [(best_short, "리포트TOP2_단기", pick_short), (best_mid, "리포트TOP2_중기", pick_mid), (best_long, "리포트TOP2_장기", pick_long)]
             new_rows = []
             for cand, channel_name, pick_info in report_picks:
                 if not cand: continue
