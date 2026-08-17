@@ -12,6 +12,20 @@ import json
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# 🆕 [트레일링 스탑 알림용] hyeoks_analyst.py와 동일한 텔레그램 봇/채널을 재사용 —
+#    PDF 리포트가 아니라 목표가 도달·트레일링 손절 같은 실시간 짧은 알림 전용으로 sendMessage만 씀.
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = "-1003778485916"
+
+def send_telegram_alert(text):
+    if not TELEGRAM_BOT_TOKEN:
+        return
+    try:
+        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                      data={'chat_id': TELEGRAM_CHAT_ID, 'text': text, 'parse_mode': 'HTML'}, timeout=5)
+    except Exception as e:
+        print(f"⚠️ [텔레그램 알림 전송 실패] {e}")
+
 # ==========================================
 # ⚙️ 글로벌 설정 및 세션/Set 최적화 레이어
 # ==========================================
@@ -667,6 +681,88 @@ def get_current_price_for_backtest(code):
         print(f"⚠️ [Backtest Current Price Error for {code}] {e}")
         return 0
 
+def check_target_alerts_and_trailing_stop(doc, bt_sheet):
+    """🆕 [트레일링 스탑 + 목표가 도달 알림] 리포트TOP2_중기/장기 채널의 열린 포지션(아직 손절 터치가
+       안 된 것)을 확인해서, 목표가에 처음 닿으면 텔레그램으로 알리고 트레일링손절가를 진입가(본전)
+       위로 올려 이익을 보호한다. 이후 주가가 더 오르면 트레일링손절가를 현재가의 92%선까지 같이
+       끌어올리고, 반대로 트레일링손절가에 닿으면 "청산 권장" 알림을 한 번만 보낸다.
+       ⚠️ 목표가·손절가(연구용 고정값, 채널 비교의 기준)는 여기서 절대 건드리지 않는다 —
+       트레일링손절가·목표가알림발송 2개 칸만 별도로 갱신한다."""
+    try:
+        rows = bt_sheet.get_all_values()
+        if len(rows) < 2:
+            return
+        header = rows[0]
+        if len(header) < 38 or header[36] != "트레일링손절가":
+            print("⚠️ [트레일링 스탑] 백테스트_로그가 아직 38열 스키마가 아니라 이번 회차는 건너뜁니다.")
+            return
+
+        TARGET_CHANNELS = ("리포트TOP2_중기", "리포트TOP2_장기")
+        updates = []
+
+        for i, row in enumerate(rows[1:], start=2):
+            if len(row) < 34:
+                continue
+            channel = str(row[2]).strip()
+            if channel not in TARGET_CHANNELS:
+                continue
+            name, code = str(row[3]).strip(), str(row[4]).replace("'", "").strip().zfill(6)
+            target_raw, stop_raw = str(row[32]).strip(), str(row[33]).strip()
+            if not target_raw or not stop_raw:
+                continue
+            stop_touched = str(row[35]).strip() if len(row) > 35 else ""
+            if stop_touched:  # 이미 원 손절가로 종료 처리된 포지션은 트레일링 대상에서 제외
+                continue
+            try:
+                target_p = float(target_raw.replace(',', ''))
+                stop_p = float(stop_raw.replace(',', ''))
+                entry_p = float(str(row[14]).replace(',', ''))
+            except Exception:
+                continue
+
+            curr_p = get_current_price_for_backtest(code)
+            if curr_p <= 0:
+                continue
+
+            trailing_raw = str(row[36]).strip() if len(row) > 36 else ""
+            alert_sent = str(row[37]).strip() if len(row) > 37 else ""
+            trailing_stop = float(trailing_raw.replace(',', '')) if trailing_raw else stop_p
+
+            new_trailing, new_alert, row_changed = trailing_stop, alert_sent, False
+
+            if not alert_sent and curr_p >= target_p:
+                new_alert = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M')
+                new_trailing = max(trailing_stop, entry_p)
+                send_telegram_alert(
+                    f"🎯 [목표가 도달] {channel}\n{name}({code})\n"
+                    f"현재가 {curr_p:,.0f}원 ≥ 목표가 {target_p:,.0f}원\n"
+                    f"트레일링손절가를 {new_trailing:,.0f}원(본전)으로 상향합니다."
+                )
+                row_changed = True
+            elif alert_sent and "청산권고발송" not in alert_sent:
+                if curr_p > trailing_stop:
+                    candidate_trailing = curr_p * 0.92
+                    if candidate_trailing > trailing_stop:
+                        new_trailing = candidate_trailing
+                        row_changed = True
+                elif curr_p <= trailing_stop:
+                    send_telegram_alert(
+                        f"🛑 [트레일링 손절 도달] {channel}\n{name}({code})\n"
+                        f"현재가 {curr_p:,.0f}원 ≤ 트레일링손절가 {trailing_stop:,.0f}원\n청산을 권장합니다."
+                    )
+                    new_alert = alert_sent + "|청산권고발송"
+                    row_changed = True
+
+            if row_changed:
+                updates.append({'range': f'AK{i}:AL{i}', 'values': [[round(new_trailing), new_alert]]})
+
+        if updates:
+            for j in range(0, len(updates), 50):
+                bt_sheet.batch_update(updates[j:j + 50], value_input_option="USER_ENTERED")
+            print(f"📈 [트레일링 스탑] {len(updates)}건 갱신")
+    except Exception as e:
+        print(f"⚠️ [트레일링 스탑 체크 실패] {e}")
+
 def update_recommendation_tracking(doc, top_20_results):
     pass
 
@@ -676,10 +772,10 @@ BT_HEADER = [
     "V1", "V2", "V2게이트", "수급상태", "벤치명", "기준종가", "진입지수", "진입가(T+1시가)",
     "종목T+1", "종목T+3", "종목T+5", "종목T+10", "지수T+1", "지수T+3", "지수T+5", "지수T+10", "실제캡처거래일",
     "종목T+20", "종목T+60", "종목T+120", "지수T+20", "지수T+60", "지수T+120",
-    "목표가", "손절가", "익절터치", "손절터치"
-    # 🆕 [수정] 목표가·손절가를 진입 시점에 그대로 기록하고, 보유 기간 동안 실제로 장중 고가·저가가
-    #    그 값을 건드렸는지(터치했는지) 추적. "이 시스템대로 진짜 매매했다면" 관점의 실전 시뮬레이션을
-    #    위한 열 — 기존 T+N 시점 수익률(연구용 방향성 검증)과는 별개로 나란히 기록.
+    "목표가", "손절가", "익절터치", "손절터치", "트레일링손절가", "목표가알림발송"
+    # 🆕 [트레일링 스탑 + 목표가 도달 알림] 목표가·손절가는 진입 시점에 고정된 "연구용" 값(기존 그대로 보존).
+    #    여기 2개는 별개로, 실전 대응을 위해 실시간으로 갱신되는 값 — 목표가에 닿으면 텔레그램 알림을 보내고
+    #    트레일링손절가를 올려서 이익을 잠가두되, 채널 비교 연구의 기준값(목표가·손절가)은 절대 건드리지 않는다.
     # 🆕 [수정] T+10(약 2주)까지만 추적하던 걸 T+20(약 1개월)·T+60(약 3개월)·T+120(약 6개월)까지 확장.
     #    전략 자체가 6개월~1년짜리 구조적 성장을 겨냥하는데 2주 성과만으로는 검증이 안 됐던 문제 해결.
     #    기존 컬럼 위치는 그대로 두고 끝에만 추가(다른 코드가 기존 인덱스로 읽는 부분이 안 깨지도록).
@@ -699,7 +795,7 @@ def compute_channel_comparison_dashboard(doc):
     rows = bt_data[1:]
 
     horizons = [(1, 17, 21), (3, 18, 22), (5, 19, 23), (10, 20, 24), (20, 26, 29), (60, 27, 30), (120, 28, 31)]
-    channels = ["차트TOP2", "수급TOP2", "랜덤2", "리포트TOP2", "리포트TOP2_단기", "리포트TOP2_중기",
+    channels = ["차트TOP2", "수급TOP2", "랜덤2", "리포트TOP2", "리포트TOP2_단기", "리포트TOP2_중기", "리포트TOP2_장기",
                 "지수벤치_KOSPI", "지수벤치_KOSDAQ"]  # 🆕 두 지수 이격을 나란히 비교할 수 있도록 추가
 
     from collections import defaultdict
@@ -793,10 +889,10 @@ def compute_channel_kelly(doc):
     MIN_SAMPLE = 30
     MAX_HALF_KELLY_CAP = 0.25  # 하프켈리라도 25%를 넘지 않도록 안전 상한
 
-    # 채널별로 어느 호라이즌을 기준으로 볼지 — 단기 성격 채널은 T+5, 중기(SEED) 성격 채널은 T+20
+    # 채널별로 어느 호라이즌을 기준으로 볼지 — 단기 성격 채널은 T+5, 중기(스윙)는 T+10, 장기(구조적 성장)는 T+60
     CHANNEL_HORIZON = {
         "차트TOP2": 5, "수급TOP2": 5, "랜덤2": 5,
-        "리포트TOP2": 5, "리포트TOP2_단기": 5, "리포트TOP2_중기": 20,
+        "리포트TOP2": 5, "리포트TOP2_단기": 5, "리포트TOP2_중기": 10, "리포트TOP2_장기": 60,
     }
     horizon_col = {1: 17, 3: 18, 5: 19, 10: 20, 20: 26, 60: 27, 120: 28}  # 종목 수익률 컬럼(0-based)
 
@@ -903,7 +999,7 @@ def sort_and_format_backtest_log(doc, bt_sheet):
         try:
             doc.batch_update({"requests": [{"sortRange": {
                 "range": {"sheetId": bt_sheet.id, "startRowIndex": 1, "endRowIndex": n_rows,
-                          "startColumnIndex": 0, "endColumnIndex": 36},
+                          "startColumnIndex": 0, "endColumnIndex": 38},
                 "sortSpecs": [
                     {"dimensionIndex": 1, "sortOrder": "DESCENDING"},   # B 진입일(최신 위)
                     {"dimensionIndex": 2, "sortOrder": "ASCENDING"},    # C 채널(날짜 내 그룹 고정)
@@ -994,13 +1090,13 @@ def apply_backtest_formatting(doc, bt_sheet, sorted_rows):
     channel_colors = {
         "차트TOP2": (0.85, 0.92, 1.0), "수급TOP2": (1.0, 0.93, 0.82),
         "랜덤2": (0.93, 0.93, 0.93), "지수벤치_KOSPI": (0.85, 0.97, 0.87), "지수벤치_KOSDAQ": (0.87, 0.95, 0.97),
-        "리포트TOP2_단기": (1.0, 0.87, 0.87), "리포트TOP2_중기": (0.93, 0.87, 1.0),
+        "리포트TOP2_단기": (1.0, 0.87, 0.87), "리포트TOP2_중기": (0.93, 0.87, 1.0), "리포트TOP2_장기": (1.0, 0.95, 0.78),
         "리포트TOP2": (0.95, 0.87, 0.95),
         # 🔧 [누락 보완] 구 채널명 '지수벤치'(_KOSPI/_KOSDAQ 접미사 없는 과거 행)가 빠져 있어
         #    해당 행들만 색이 없는 채로 남아 있었음.
         "지수벤치": (0.85, 0.97, 0.87),
     }
-    grid_range = {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": 1 + n_rows, "startColumnIndex": 0, "endColumnIndex": 36}
+    grid_range = {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": 1 + n_rows, "startColumnIndex": 0, "endColumnIndex": 38}
     # 🔧 [가독성] 채널 배경색은 메타 영역(A~Q)에만 칠한다. 예전엔 36열 전체를 물들여서
     #    T+N 수익률 칸의 빨강/파랑 글자가 채널 배경색 위에 겹쳐 지저분했음(수익률은 흰 바탕이 잘 보임).
     channel_bg_range = {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": 1 + n_rows,
@@ -1052,7 +1148,7 @@ def apply_backtest_formatting(doc, bt_sheet, sorted_rows):
             sheet_row_idx = idx + 1  # 헤더가 0행이므로, 데이터의 idx번째 행은 시트상 (idx+1)번째(0-based) 행
             requests_list.append({
                 "updateBorders": {
-                    "range": {"sheetId": sheet_id, "startRowIndex": sheet_row_idx, "endRowIndex": sheet_row_idx + 1, "startColumnIndex": 0, "endColumnIndex": 36},
+                    "range": {"sheetId": sheet_id, "startRowIndex": sheet_row_idx, "endRowIndex": sheet_row_idx + 1, "startColumnIndex": 0, "endColumnIndex": 38},
                     "top": {"style": "SOLID_THICK", "color": {"red": 0.12, "green": 0.12, "blue": 0.12}}
                 }
             })
@@ -2415,6 +2511,13 @@ def update_technical_data(df_theme, all_theme_map):
             except Exception:
                 bt_sheet = doc.add_worksheet(title="백테스트_로그", rows="5000", cols="26")
                 bt_data = []
+
+            # 🆕 [트레일링 스탑 + 목표가 알림] Step1(진입 적재, 15시 한정)과 무관하게 매 스캔 사이클(10분)마다 실행 —
+            #    장중 내내 목표가 도달을 놓치지 않고 바로 텔레그램으로 알려야 하므로 EOD 시간대에 가두지 않음.
+            try:
+                check_target_alerts_and_trailing_stop(doc, bt_sheet)
+            except Exception as e:
+                print(f"⚠️ [트레일링 스탑 호출 실패] {e}")
 
             today_str = today_date.strftime('%Y-%m-%d')
             now_time_bt = datetime.datetime.now(KST)
