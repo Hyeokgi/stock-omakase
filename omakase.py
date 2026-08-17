@@ -716,7 +716,15 @@ def check_target_alerts_and_trailing_stop(doc, bt_sheet):
             try:
                 target_p = float(target_raw.replace(',', ''))
                 stop_p = float(stop_raw.replace(',', ''))
-                entry_p = float(str(row[14]).replace(',', ''))
+                # 🔧 [본전 기준 교정] 예전엔 row[14](기준종가=신호일 종가)를 '본전'으로 썼는데,
+                #    이 시스템의 실제 진입가는 row[16](진입가=T+1 시가)이다. 갭이 있으면 둘이 어긋나
+                #    아직 손실인데 '본전 확보'로 트레일링을 올리는(또는 그 반대) 일이 생긴다.
+                #    실측상 중기/장기 14건 중 5건이 1% 이상 벌어져 있었다(최대 -2.95%).
+                #    진입가는 다음 날 아침 추적에서 확정되므로, 미확정 구간에서만 기준종가로 폴백한다.
+                entry_raw = str(row[16]).strip() if len(row) > 16 else ""
+                entry_p = float(entry_raw.replace(',', '')) if entry_raw else float(str(row[14]).replace(',', ''))
+                if entry_p <= 0:
+                    entry_p = float(str(row[14]).replace(',', ''))
             except Exception:
                 continue
 
@@ -1393,7 +1401,26 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         ilmok_120_mid = (highest_120d + lowest_120d) / 2
         is_ilmok_sangsang = current_price > ilmok_120_mid
 
-        envelope_lower_20 = ma20 * 0.80
+        # ── [준비 완료 / 기본 미적용] 과매도(역배팅) 이격률 임계값 완화 ──────────────────
+        # 왜 만들어 뒀나 (2026-08-16 실측 + BNF(小手川隆) 기법 조사):
+        #   · 현행 -20% 고정은 문턱이 너무 높다. 스캔된 651종목 중 조건 충족이 2종목(0.3%)뿐이라
+        #     과매도 채널이 사실상 죽어 있고, 표본이 안 쌓여 검증 자체가 불가능하다.
+        #   · BNF의 원 기법은 고정값이 아니라 국면·업종별 가변이었다(강세장 -20% / 약세장 -35%,
+        #     업종별 5~15%). 목표가를 ma20(=이격률 0% 회귀)으로 잡은 현행 로직은 이미 BNF와 같다.
+        #   · 즉 바꿔야 할 것은 청산이 아니라 '진입 문턱'이다.
+        # 왜 지금 켜지 않나: 켜면 과매도 진입 건수가 늘어 그 시점부터 표본 성격이 달라진다.
+        #   3주 뒤 재점검(2026-09-07 예약) 때 다른 항목들과 함께 판단할 것.
+        # 켜는 법: ENVELOPE_BAND=on  (문턱 조정은 ENVELOPE_PCT_NORMAL / ENVELOPE_PCT_WARNING, 단위 %)
+        #   기본 완화값은 평시 -12%(BNF 전기주 기준대), 경계장 -20%(현행 유지)로 국면 연동한다.
+        if os.environ.get("ENVELOPE_BAND", "off").strip().lower() in ("on", "true", "1"):
+            try: _env_normal = float(os.environ.get("ENVELOPE_PCT_NORMAL", "12"))
+            except Exception: _env_normal = 12.0
+            try: _env_warn = float(os.environ.get("ENVELOPE_PCT_WARNING", "20"))
+            except Exception: _env_warn = 20.0
+            _env_pct = _env_warn if is_warning_market else _env_normal
+            envelope_lower_20 = ma20 * (1 - _env_pct / 100.0)
+        else:
+            envelope_lower_20 = ma20 * 0.80   # 현행: -20% 고정
         min_nulim_tv = 10_000_000_000 if is_warning_market else 5_000_000_000
         min_breakout_tv = 10_000_000_000  
         min_danta_rate = 0.03            
