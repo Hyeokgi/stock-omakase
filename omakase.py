@@ -2701,6 +2701,21 @@ def update_technical_data(df_theme, all_theme_map):
 
             # ── 진입 적재 (15:00~15:30 EOD 윈도, append-only) ──
             is_eod_log_window = (now_time_bt.hour == 15 and 0 <= now_time_bt.minute < 30)
+
+            # 🛡️ [휴장일 가드] GAS는 '평일'이면 무조건 워크플로를 쏘기 때문에, 임시공휴일처럼 장이 안 열린
+            #    날에도 스캔이 돌아 진입 행이 쌓인다. 그런데 그날은 어느 종목의 일봉에도 존재하지 않는
+            #    날짜라, Step2·저녁 캐치업이 쓰는 '진입일 == 일봉 날짜' 정확일치 매칭이 영원히 실패한다
+            #    (= 진입가부터 T+120까지 평생 빈칸인 유령 행). 2026-08-17 임시공휴일에 실제로 10행이
+            #    그렇게 쌓였고, 그 값들도 직전 거래일(8/14) 종가를 재탕한 중복 표본이었다.
+            #    → 지수 일봉에 오늘 날짜가 있는지로 개장 여부를 판정한다. 정상 거래일이면 15시 시점에
+            #      이미 당일 봉이 존재하고(장중 잠정치), 휴장일이면 마지막 봉이 전 거래일에 머문다.
+            #    조회 실패 시엔 적재를 건너뛰는 쪽(fail-closed)으로 닫힌다 — EOD 창에 실행 기회가
+            #    3번 있으므로 일시적 네트워크 오류는 다음 회차에 자연히 복구된다.
+            if is_eod_log_window:
+                _open_days = {b['date'] for b in get_daily_bars("KOSPI", 5)}
+                if today_str not in _open_days:
+                    is_eod_log_window = False
+                    print(f"🚫 [휴장일 감지] {today_str}는 거래일이 아님(지수 일봉 없음) — 백테스트 진입 적재를 건너뜁니다.")
             new_rows = []
             if is_eod_log_window:
                 entry_stage = 3 if kospi_rate <= -3.0 else (2 if is_warning_market else 1)
