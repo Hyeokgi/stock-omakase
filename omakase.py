@@ -214,6 +214,90 @@ def get_kospi_fluctuation_rate():
         print(f"⚠️ [get_kospi_fluctuation_rate Error] {e}")
         return 0.0
 
+# ==========================================================================
+# 🆕 [네이버 PC 개편 폴백] 신규 사이트가 실제로 쓰는 JSON API 어댑터
+# --------------------------------------------------------------------------
+# 원칙: 기존 HTML 경로를 '주', JSON을 '보조'로 둔다. HTML이 살아있는 동안은 결과가
+#       완전히 동일하므로 9/7 재점검의 기준선이 흔들리지 않고, finance.naver.com이
+#       개편으로 죽으면 자동으로 JSON이 받아 시스템이 멈추지 않는다.
+# 주의: /api/domestic/market/... 계열은 '없는 값'에도 200 + [] 를 준다(캐치올).
+#       따라서 상태코드가 아니라 '건수'로 성공을 판정해야 한다.
+# ==========================================================================
+NAVER_JSON_BASE = "https://stock.naver.com/api/domestic"
+_JSON_HEADERS = {'Accept': 'application/json, text/plain, */*', 'Referer': 'https://stock.naver.com/'}
+
+
+def _json_get(path, timeout=15):
+    try:
+        r = GLOBAL_SESSION.get(NAVER_JSON_BASE + path, headers=_JSON_HEADERS, verify=False, timeout=timeout)
+        if r.status_code != 200:
+            return None
+        return r.json()
+    except Exception as e:
+        print(f"⚠️ [JSON 폴백 실패] {path} :: {e}")
+        return None
+
+
+def fetch_theme_list_json(limit=20):
+    """테마 순위 — [{'no','name'}]. 실패/빈배열이면 빈 리스트."""
+    d = _json_get("/market/theme/list")
+    if not isinstance(d, list) or not d:
+        return []
+    return [{'no': str(x.get('no')), 'name': str(x.get('name', '')).strip()} for x in d[:limit] if x.get('no')]
+
+
+def fetch_theme_stocks_json(theme_no):
+    """테마 구성종목 — HTML 파싱 결과와 같은 단위로 맞춘다.
+    rate = 등락률(%), value = 거래대금(백만원) — HTML의 td[8]과 같은 단위."""
+    d = _json_get(f"/market/theme/{theme_no}/stocklist?marketType=ALL&orderType=priceTop&startIdx=0&pageSize=100")
+    if not isinstance(d, list) or not d:
+        return []
+    out = []
+    for x in d:
+        code = str(x.get('itemcode', '')).strip()
+        if not code.isdigit():
+            continue
+        try:
+            rate = float(str(x.get('prevChangeRate') or 0))
+            amt = float(str(x.get('tradeAmount') or 0)) / 1_000_000.0   # 원 → 백만원
+        except Exception:
+            continue
+        out.append({'name': str(x.get('itemname', '')).strip(), 'code': f"'{code}",
+                    'rate': rate, 'value': int(amt)})
+    return out
+
+
+def fetch_main_news_json(size=20):
+    """주요뉴스 — [[시각, 언론사, 제목, 요약, 링크]] (기존 DataFrame 컬럼 순서와 동일)."""
+    d = _json_get(f"/news/list?category=MAINNEWS&page=1&pageSize={size}")
+    arts = (d or {}).get('articles') if isinstance(d, dict) else None
+    if not arts:
+        return []
+    now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
+    rows = []
+    for a in arts:
+        oid, aid = str(a.get('officeId', '')), str(a.get('articleId', ''))
+        link = f"https://n.news.naver.com/mnews/article/{oid}/{aid}" if oid and aid else ""
+        rows.append([now_str, str(a.get('officeHname', '')).strip(), str(a.get('title', '')).strip(),
+                     str(a.get('subcontent', '')).strip()[:200], link])
+    return rows
+
+
+def fetch_search_ranking_json(size=10):
+    """검색상위 — [[순위, 종목명, 현재가, 등락률, 종목코드]] (기존 컬럼 순서와 동일)."""
+    d = _json_get(f"/market/stock/default?tradeType=KRX&marketType=ALL&orderType=searchTop&startIdx=0&pageSize={size}")
+    if not isinstance(d, list) or not d:
+        return []
+    rows = []
+    for i, x in enumerate(d, 1):
+        code = str(x.get('itemcode', '')).strip()
+        if not code.isdigit():
+            continue
+        rows.append([len(rows) + 1, str(x.get('itemname', '')).strip(),
+                     str(x.get('nowPrice', '')), f"{x.get('prevChangeRate', '')}%", f"{code:0>6}"])
+    return rows
+
+
 def search_code_from_naver(stock_name):
     # 🔧 [별칭 폴백] 별칭(정식 법인명) → 실패 시 원래 이름 순으로 시도한다.
     #    stock_alias_map 은 구 /api/search/all(정식명 매칭)용이었는데, 신규 자동완성 API는
@@ -308,9 +392,20 @@ def get_real_money_themes():
             # 🔎 [진단 로그]: 예전엔 여기서 아무 흔적 없이 조용히 빈 값 반환 → 테마복기 정지 원인 추적 불가했음.
             print(f"❌ [get_real_money_themes] 테마 테이블을 찾지 못함 — status={res.status_code}, 응답길이={len(res.text)}자, "
                   f"제목태그={soup.title.text.strip() if soup.title else '없음'}")
-            return pd.DataFrame(), is_market_closed, {}
 
-        raw_themes = [{'name': a.text.strip(), 'url': "https://finance.naver.com" + a['href']} for tds in [tr.find_all('td') for tr in table.find_all('tr')] if len(tds) > 1 for a in [tds[0].find('a')] if a]
+        if table:
+            raw_themes = [{'name': a.text.strip(), 'url': "https://finance.naver.com" + a['href'], 'no': None}
+                          for tds in [tr.find_all('td') for tr in table.find_all('tr')] if len(tds) > 1
+                          for a in [tds[0].find('a')] if a]
+        else:
+            # 🆕 [개편 폴백] 구 HTML이 죽으면 신규 JSON으로 테마 순위를 받는다.
+            raw_themes = [{'name': t['name'], 'url': None, 'no': t['no']} for t in fetch_theme_list_json(30)]
+            if raw_themes:
+                print(f"🔁 [테마 폴백] 구 HTML 실패 → 신규 JSON API로 테마 {len(raw_themes)}개 확보")
+            else:
+                print("❌ [테마] HTML·JSON 모두 실패 — 이번 회차 테마 수집을 건너뜁니다.")
+                return pd.DataFrame(), is_market_closed, {}
+
         themes = [t for t in raw_themes if t['name'] not in THEME_BLACKLIST][:20]
         
         theme_data_list = []
@@ -318,13 +413,29 @@ def get_real_money_themes():
         
         for theme in themes:
             try:
-                soup = BeautifulSoup(GLOBAL_SESSION.get(theme['url'], verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
                 stocks = []
-                type_5_table = soup.find('table', {'class': 'type_5'})
-                if not type_5_table: continue
-                
+                type_5_table = None
+                if theme.get('url'):
+                    soup = BeautifulSoup(GLOBAL_SESSION.get(theme['url'], verify=False, timeout=3).content, 'html.parser', from_encoding='cp949')
+                    type_5_table = soup.find('table', {'class': 'type_5'})
+
+                if not type_5_table:
+                    # 🆕 [개편 폴백] 상세 HTML이 없거나 깨졌으면 JSON 구성종목으로 대체.
+                    #    단위는 어댑터에서 HTML(td[8], 백만원)과 동일하게 맞춰 두었다.
+                    if theme.get('no'):
+                        for sj in fetch_theme_stocks_json(theme['no']):
+                            if sj['rate'] >= TARGET_PERCENT and sj['value'] >= 5000:
+                                stocks.append(sj)
+                    if not stocks:
+                        continue
+                    stocks_val = sorted(stocks, key=lambda x: x['value'], reverse=True)[:5]
+                    if len(stocks_val) >= 2:
+                        theme_data_list.append({'theme_name': theme['name'],
+                                                'stocks': sorted(stocks_val, key=lambda x: x['rate'], reverse=True)})
+                    continue
+
                 name_idx, rate_idx, val_idx = 0, 4, 8
-                
+
                 for tr in type_5_table.find_all('tr'):
                     tds = tr.find_all('td')
                     if len(tds) > val_idx:
@@ -414,6 +525,10 @@ def get_naver_search_ranking():
                 if get_market_cap(s_code) >= 1000:
                     data.append([len(data) + 1, name, tds[3].text.strip(), tds[5].text.strip(), f"{s_code:0>6}"])
             if len(data) >= 10: break
+        if not data:
+            # 🆕 [개편 폴백] 구 검색상위 페이지가 죽으면 신규 랭킹 API(searchTop)로 대체
+            data = fetch_search_ranking_json(10)
+            if data: print(f"🔁 [검색상위 폴백] 신규 JSON API로 {len(data)}건 확보")
         return pd.DataFrame(data, columns=['순위', '종목명', '현재가', '등락률(%)', '종목코드'])
     except Exception as e:
         print(f"⚠️ [get_naver_search_ranking Error] {e}")
@@ -440,6 +555,10 @@ def get_naver_main_news():
                 now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
                 news_list.append([now_str, press, a_tag.text.strip(), summary, link])
                 if len(news_list) >= 20: break
+        if not news_list:
+            # 🆕 [개편 폴백] 구 HTML이 비면 신규 JSON 뉴스 API로 대체
+            news_list = fetch_main_news_json(20)
+            if news_list: print(f"🔁 [주요뉴스 폴백] 신규 JSON API로 {len(news_list)}건 확보")
         return pd.DataFrame(news_list, columns=['업데이트 시간', '언론사', '기사 제목', '요약 내용', '기사 링크'])
     except Exception as e:
         print(f"⚠️ [get_naver_main_news Error] {e}")

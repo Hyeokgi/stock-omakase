@@ -202,6 +202,43 @@ def chk_sise_bulk():
     return n >= 50, f"{n}종목"
 
 
+def chk_risk_json():
+    """위험종목 JSON 대체재 — 전종목 스캔 1회로 관리/거래정지/투자경보를 모두 읽는다"""
+    d = _get("https://stock.naver.com/api/domestic/market/stock/default"
+             "?tradeType=KRX&marketType=ALL&orderType=priceTop&startIdx=0&pageSize=3000").json()
+    if not isinstance(d, list) or len(d) < 1500:
+        return False, f"스캔 {len(d) if isinstance(d, list) else '?'}건(임계 1500)"
+    risk = [x for x in d if (str(x.get('manageStatusGb') or '0') != '0'
+                             or x.get('tradeStopYn') == 'Y'
+                             or str(x.get('marketAlertType') or '00') != '00')]
+    return len(risk) >= 100, f"전체{len(d)}/위험{len(risk)}"
+
+
+def chk_theme_stocks_json():
+    """테마 구성종목 JSON 대체재 (HTML td[8]과 단위 동일: 백만원)"""
+    tl = _get("https://stock.naver.com/api/domestic/market/theme/list").json()
+    if not isinstance(tl, list) or not tl:
+        return False, "테마목록 비어있음"
+    no = tl[0].get('no')
+    d = _get(f"https://stock.naver.com/api/domestic/market/theme/{no}/stocklist"
+             f"?marketType=ALL&orderType=priceTop&startIdx=0&pageSize=100").json()
+    return isinstance(d, list) and len(d) >= 2, f"테마{no} 구성 {len(d) if isinstance(d, list) else 0}종목"
+
+
+def chk_news_json():
+    """주요뉴스 JSON 대체재"""
+    d = _get("https://stock.naver.com/api/domestic/news/list?category=MAINNEWS&page=1&pageSize=15").json()
+    arts = (d or {}).get('articles') if isinstance(d, dict) else None
+    return bool(arts) and len(arts) >= 5, f"{len(arts) if arts else 0}건"
+
+
+def chk_ranking_json():
+    """검색상위 JSON 대체재 (orderType=searchTop)"""
+    d = _get("https://stock.naver.com/api/domestic/market/stock/default"
+             "?tradeType=KRX&marketType=ALL&orderType=searchTop&startIdx=0&pageSize=10").json()
+    return isinstance(d, list) and len(d) >= 5, f"{len(d) if isinstance(d, list) else 0}종목"
+
+
 CHECKS = [
     # (키, 심각도, 설명, 함수, 담당 기능)
     ("frgn_html",     FATAL, "외국인·기관 수급 HTML",   chk_frgn,          "V2 수급점수 / 수급TOP2"),
@@ -215,8 +252,13 @@ CHECKS = [
     ("index_price",   MAJOR, "지수 일별시세 API",       chk_index_price,   "하락장 판정"),
     ("market_sum",    MAJOR, "시가총액 HTML",           chk_market_sum,    "시총 필터"),
     ("search_code",   MAJOR, "종목명→코드 검색",        chk_search_code,   "종목 코드 해석"),
-    ("theme_json",    MINOR, "테마 순위 JSON(대체재)",  chk_theme_json,    "개편 후 이관 대상"),
-    ("frgn_json",     MINOR, "수급 JSON(대체재)",       chk_frgn_json,     "개편 후 이관 대상"),
+    # ── 대체재(폴백) 계열 — 개편으로 HTML이 죽으면 이쪽이 받아야 하므로 '중요' 등급 ──
+    ("risk_json",     MAJOR, "위험종목 JSON(폴백)",     chk_risk_json,     "static_collector 이중소스"),
+    ("theme_json",    MAJOR, "테마 순위 JSON(폴백)",    chk_theme_json,    "omakase 테마 폴백"),
+    ("themestk_json", MAJOR, "테마 구성종목 JSON(폴백)", chk_theme_stocks_json, "omakase 테마상세 폴백"),
+    ("frgn_json",     MINOR, "수급 JSON(대체재)",       chk_frgn_json,     "미이관 — 9/7 이후"),
+    ("news_json",     MINOR, "주요뉴스 JSON(폴백)",     chk_news_json,     "omakase 뉴스 폴백"),
+    ("rank_json",     MINOR, "검색상위 JSON(폴백)",     chk_ranking_json,  "omakase 검색상위 폴백"),
     ("mainnews",      MINOR, "주요뉴스",                chk_mainnews,      "앱 뉴스 탭"),
     ("newslist",      MINOR, "시황 뉴스목록",           chk_newslist,      "뉴스 키워드"),
     ("itemnews",      MINOR, "종목별 뉴스",             chk_itemnews,      "AI 리포트 근거"),

@@ -1,5 +1,5 @@
 {
- "savedAt": "2026-08-26T13:20:23.592408+09:00",
+ "savedAt": "2026-08-26T15:51:21.997702+09:00",
  "results": {
   "frgn_html": {
    "ok": true,
@@ -31,7 +31,7 @@
   },
   "stock_basic": {
    "ok": true,
-   "detail": "종가 264,500",
+   "detail": "종가 261,500",
    "error": "",
    "severity": "치명적",
    "desc": "종목 현재가 API"
@@ -52,7 +52,7 @@
   },
   "index_basic": {
    "ok": true,
-   "detail": "KOSPI 6,878.67",
+   "detail": "KOSPI 6,808.21",
    "error": "",
    "severity": "중요",
    "desc": "지수 현재가 API"
@@ -66,7 +66,7 @@
   },
   "market_sum": {
    "ok": true,
-   "detail": "1,546조\n\t\t\t\t\t\t\t\t\t\t\n\t\t",
+   "detail": "1,528조\n\t\t\t\t\t\t\t\t\t\t\n\t\t",
    "error": "",
    "severity": "중요",
    "desc": "시가총액 HTML"
@@ -78,12 +78,26 @@
    "severity": "중요",
    "desc": "종목명→코드 검색"
   },
+  "risk_json": {
+   "ok": true,
+   "detail": "전체2877/위험273",
+   "error": "",
+   "severity": "중요",
+   "desc": "위험종목 JSON(폴백)"
+  },
   "theme_json": {
    "ok": true,
    "detail": "테마 20개",
    "error": "",
-   "severity": "보통",
-   "desc": "테마 순위 JSON(대체재)"
+   "severity": "중요",
+   "desc": "테마 순위 JSON(폴백)"
+  },
+  "themestk_json": {
+   "ok": true,
+   "detail": "테마181 구성 6종목",
+   "error": "",
+   "severity": "중요",
+   "desc": "테마 구성종목 JSON(폴백)"
   },
   "frgn_json": {
    "ok": true,
@@ -91,6 +105,20 @@
    "error": "",
    "severity": "보통",
    "desc": "수급 JSON(대체재)"
+  },
+  "news_json": {
+   "ok": true,
+   "detail": "15건",
+   "error": "",
+   "severity": "보통",
+   "desc": "주요뉴스 JSON(폴백)"
+  },
+  "rank_json": {
+   "ok": true,
+   "detail": "10종목",
+   "error": "",
+   "severity": "보통",
+   "desc": "검색상위 JSON(폴백)"
   },
   "mainnews": {
    "ok": true,
@@ -108,7 +136,7 @@
   },
   "itemnews": {
    "ok": true,
-   "detail": "17건",
+   "detail": "11건",
    "error": "",
    "severity": "보통",
    "desc": "종목별 뉴스"
