@@ -274,27 +274,44 @@ def fetch_investor_trend_json(code, days=5):
     2026-08-26 실측 검증 — 5종목(005930/000660/005380/035420/034020) × 5일에 대해
     날짜·종가·기관·외국인 네 값이 HTML과 자릿수까지 100% 일치했다. 따라서 앞의 5개만
     잘라 쓰면 V2 수급점수가 비트 단위로 같아, 9/7 기준선이 오염되지 않는다.
-    (주의: 시장 전체 랭킹인 /market/trend/trendForeignOrg 는 종목 지정이 불가능해
-     이 용도로 쓸 수 없다 — itemCode 파라미터가 무시된다.)
+    소스는 2단 폴백이다(둘 다 HTML과 동일 검증). 주의할 점 두 가지 —
+      · tradeType 은 반드시 KRX. NXT 는 대체거래소 체결분만이라 값이 완전히 다르다.
+      · 시장 전체 랭킹인 /market/trend/trendForeignOrg 는 이 용도로 쓸 수 없다.
+        종목 지정이 불가능하다(itemCode 파라미터가 무시됨).
     """
-    try:
-        r = GLOBAL_SESSION.get(f"https://m.stock.naver.com/api/stock/{code}/trend",
-                               headers=_JSON_HEADERS, verify=False, timeout=5)
-        if r.status_code != 200:
-            return []
-        out = []
-        for x in r.json()[:days]:
-            bd = str(x.get('bizdate', ''))
-            if len(bd) != 8:
+    # 소스 우선순위 — 둘 다 HTML과 값이 동일함이 검증됐다.
+    #  ① 신규 PC 사이트가 실제로 쓰는 경로. 앞으로도 유지될 가능성이 가장 높다.
+    #     ⚠️ tradeType 은 반드시 KRX. NXT 는 대체거래소 체결분만이라 값이 전혀 다르다
+    #        (008930 기준 KRX 외국인 -22,404 vs NXT +1,290 — 부호까지 뒤집힌다).
+    #  ② 구 모바일 API. 같은 값을 주지만 이 계열은 이미 /api/search/all 이 사망한 전례가 있어 2순위.
+    sources = (
+        f"https://stock.naver.com/api/domestic/detail/{code}/trend?tradeType=KRX&startIdx=0&pageSize={max(days, 20)}",
+        f"https://m.stock.naver.com/api/stock/{code}/trend",
+    )
+
+    def _n(v):
+        return int(str(v).replace(',', '').replace('+', '').strip() or 0)
+
+    for url in sources:
+        try:
+            r = GLOBAL_SESSION.get(url, headers=_JSON_HEADERS, verify=False, timeout=5)
+            if r.status_code != 200:
                 continue
-            def _n(v):
-                return int(str(v).replace(',', '').replace('+', '').strip() or 0)
-            out.append((f"{bd[:4]}.{bd[4:6]}.{bd[6:8]}", _n(x.get('closePrice')),
-                        _n(x.get('organPureBuyQuant')), _n(x.get('foreignerPureBuyQuant'))))
-        return out
-    except Exception as e:
-        print(f"⚠️ [수급 JSON 폴백 실패] {code} :: {e}")
-        return []
+            data = r.json()
+            if not isinstance(data, list) or not data:
+                continue
+            out = []
+            for x in data[:days]:
+                bd = str(x.get('bizdate', ''))
+                if len(bd) != 8:
+                    continue
+                out.append((f"{bd[:4]}.{bd[4:6]}.{bd[6:8]}", _n(x.get('closePrice')),
+                            _n(x.get('organPureBuyQuant')), _n(x.get('foreignerPureBuyQuant'))))
+            if out:
+                return out
+        except Exception as e:
+            print(f"⚠️ [수급 JSON 폴백 실패] {code} :: {url.split('/')[2]} :: {e}")
+    return []
 
 
 def fetch_main_news_json(size=20):

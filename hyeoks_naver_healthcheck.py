@@ -55,6 +55,16 @@ def chk_frgn():
     return len(rows) >= 5, f"일자행 {len(rows)}개"
 
 
+def chk_frgn_detail_json():
+    """수급 JSON 1순위 — 신규 PC 사이트가 실제로 쓰는 경로.
+    ⚠️ tradeType 은 반드시 KRX. NXT 는 대체거래소 체결분만이라 값이 전혀 다르다."""
+    d = _get("https://stock.naver.com/api/domestic/detail/005930/trend"
+             "?tradeType=KRX&startIdx=0&pageSize=20").json()
+    need = {'foreignerPureBuyQuant', 'organPureBuyQuant', 'closePrice', 'bizdate'}
+    ok = isinstance(d, list) and len(d) >= 5 and need.issubset(set(d[0].keys()))
+    return ok, f"{len(d) if isinstance(d, list) else 0}일치"
+
+
 def chk_frgn_json():
     """외국인·기관 수급 JSON 폴백 — HTML과 값이 완전히 동일함이 실측 검증됨"""
     d = _get("https://m.stock.naver.com/api/stock/005930/trend").json()
@@ -256,7 +266,8 @@ CHECKS = [
     ("risk_json",     MAJOR, "위험종목 JSON(폴백)",     chk_risk_json,     "static_collector 이중소스"),
     ("theme_json",    MAJOR, "테마 순위 JSON(폴백)",    chk_theme_json,    "omakase 테마 폴백"),
     ("themestk_json", MAJOR, "테마 구성종목 JSON(폴백)", chk_theme_stocks_json, "omakase 테마상세 폴백"),
-    ("frgn_json",     FATAL, "수급 JSON(폴백)",         chk_frgn_json,     "omakase 수급 폴백"),
+    ("frgn_detail",   FATAL, "수급 JSON 1순위(detail)", chk_frgn_detail_json, "omakase 수급 폴백①"),
+    ("frgn_json",     FATAL, "수급 JSON 2순위(m.stock)", chk_frgn_json,    "omakase 수급 폴백②"),
     ("news_json",     MINOR, "주요뉴스 JSON(폴백)",     chk_news_json,     "omakase 뉴스 폴백"),
     ("rank_json",     MINOR, "검색상위 JSON(폴백)",     chk_ranking_json,  "omakase 검색상위 폴백"),
     ("mainnews",      MINOR, "주요뉴스",                chk_mainnews,      "앱 뉴스 탭"),
