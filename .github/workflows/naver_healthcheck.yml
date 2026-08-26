@@ -1,0 +1,113 @@
+name: 🩺 HYEOKS 네이버 의존 진단
+
+# 목적: 네이버 크롤링/API 의존 지점 30개가 살아있는지 매주 자동 점검한다.
+#       단순 HTTP 200이 아니라 "우리가 파싱해 쓰는 값이 실제로 나오는가"까지 확인하고,
+#       저장된 기준선(naver_healthcheck_baseline.json)과 비교해 '새로 깨진 것'만 골라낸다.
+# 알림: 문제가 있을 때만 텔레그램으로 보낸다(정상이면 조용 — 주간 알림 피로 방지).
+#       실행 여부 자체는 Actions 탭 이력으로 확인할 것.
+# 주의: 이 워크플로는 구글시트를 건드리지 않는다(읽기도 안 함). 순수 네트워크 점검이라
+#       시트 락 그룹과 분리했다.
+
+on:
+  schedule:
+    - cron: '0 1 * * 1'   # 매주 월요일 10:00 KST (01:00 UTC) — 장중이라 엔드포인트가 '실사용' 상태
+  workflow_dispatch:      # 개편일 등 필요할 때 수동 실행 (Actions 탭 → Run workflow)
+
+concurrency:
+  group: hyeoks-healthcheck-lock   # 시트를 안 쓰므로 다른 워크플로와 락을 공유할 이유가 없다
+  cancel-in-progress: false
+
+jobs:
+  healthcheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10   # 30개 점검이 보통 5초면 끝난다. 이보다 오래 걸리면 뭔가 잘못된 것
+
+    steps:
+    - name: 📥 코드 가져오기
+      uses: actions/checkout@v4
+
+    - name: 🐍 파이썬 세팅
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: 📦 라이브러리 설치
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests beautifulsoup4
+
+    - name: 🩺 진단 실행 (기준선 대비 회귀 탐지)
+      id: check
+      run: |
+        set +e
+        python hyeoks_naver_healthcheck.py --compare 2>&1 | tee result.txt
+        echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        exit 0
+
+    - name: 📋 결과 보관
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: healthcheck-result
+        path: result.txt
+        retention-days: 90
+
+    - name: 📢 이상 시 텔레그램 알림 + 잡 실패 처리
+      if: always()
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        EXIT_CODE: ${{ steps.check.outputs.exit_code }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        python - <<'PY'
+        import os, sys, io, requests
+
+        try:
+            out = io.open("result.txt", encoding="utf-8", errors="replace").read()
+        except Exception:
+            out = "(진단 출력을 읽지 못했습니다 — 스크립트가 시작조차 못 했을 수 있음)"
+
+        exit_code = (os.environ.get("EXIT_CODE") or "").strip()
+        # 진단기는 '치명적' 파손일 때만 1을 낸다. 중요/보통 파손과 기준선 대비 회귀는
+        # 종료코드로 안 드러나므로 출력에서 직접 찾는다.
+        broken   = [l for l in out.splitlines() if l.lstrip().startswith("❌")]
+        regress  = [l for l in out.splitlines() if "🔻 회귀" in l]
+        recover  = [l for l in out.splitlines() if "🔺 복구" in l]
+        fatal    = (exit_code == "1")
+
+        if not (broken or regress or fatal):
+            print(f"✅ 이상 없음 (exit={exit_code or '?'}) — 알림을 보내지 않습니다.")
+            sys.exit(0)
+
+        head = "🚨 [네이버 의존 진단] 치명적 파손" if fatal else "⚠️ [네이버 의존 진단] 이상 감지"
+        lines = [head, ""]
+        if regress:
+            lines.append("── 기준선 대비 새로 깨진 항목 ──")
+            lines += [l.strip() for l in regress[:12]]
+            lines.append("")
+        if broken:
+            lines.append("── 실패한 점검 ──")
+            lines += [l.strip()[:110] for l in broken[:12]]
+            lines.append("")
+        if recover:
+            lines.append(f"(복구된 항목 {len(recover)}건)")
+            lines.append("")
+        lines.append("대응: docs/네이버개편_대응.md §8 개편 당일 체크리스트")
+        lines.append(os.environ.get("RUN_URL", ""))
+        msg = "\n".join(lines)[:3900]
+
+        token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
+        if token and chat:
+            try:
+                r = requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
+                                  data={'chat_id': chat, 'text': msg}, timeout=15)
+                print("텔레그램 발송:", r.status_code)
+            except Exception as e:
+                print(f"⚠️ 텔레그램 발송 실패: {e}")
+        else:
+            print("ℹ️ 텔레그램 시크릿 미설정 — 로그로만 남깁니다.")
+
+        print(msg)
+        sys.exit(1)   # Actions 탭에도 빨간 X 로 남긴다
+        PY
