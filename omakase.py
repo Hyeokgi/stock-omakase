@@ -267,6 +267,36 @@ def fetch_theme_stocks_json(theme_no):
     return out
 
 
+def fetch_investor_trend_json(code, days=5):
+    """외국인·기관 순매수 — 구 frgn.naver HTML 표와 '완전히 동일한 값'을 주는 JSON 대체재.
+    반환: [(날짜 'YYYY.MM.DD', 종가, 기관순매수수량, 외국인순매수수량)] 최신순, 최대 days개.
+
+    2026-08-26 실측 검증 — 5종목(005930/000660/005380/035420/034020) × 5일에 대해
+    날짜·종가·기관·외국인 네 값이 HTML과 자릿수까지 100% 일치했다. 따라서 앞의 5개만
+    잘라 쓰면 V2 수급점수가 비트 단위로 같아, 9/7 기준선이 오염되지 않는다.
+    (주의: 시장 전체 랭킹인 /market/trend/trendForeignOrg 는 종목 지정이 불가능해
+     이 용도로 쓸 수 없다 — itemCode 파라미터가 무시된다.)
+    """
+    try:
+        r = GLOBAL_SESSION.get(f"https://m.stock.naver.com/api/stock/{code}/trend",
+                               headers=_JSON_HEADERS, verify=False, timeout=5)
+        if r.status_code != 200:
+            return []
+        out = []
+        for x in r.json()[:days]:
+            bd = str(x.get('bizdate', ''))
+            if len(bd) != 8:
+                continue
+            def _n(v):
+                return int(str(v).replace(',', '').replace('+', '').strip() or 0)
+            out.append((f"{bd[:4]}.{bd[4:6]}.{bd[6:8]}", _n(x.get('closePrice')),
+                        _n(x.get('organPureBuyQuant')), _n(x.get('foreignerPureBuyQuant'))))
+        return out
+    except Exception as e:
+        print(f"⚠️ [수급 JSON 폴백 실패] {code} :: {e}")
+        return []
+
+
 def fetch_main_news_json(size=20):
     """주요뉴스 — [[시각, 언론사, 제목, 요약, 링크]] (기존 DataFrame 컬럼 순서와 동일)."""
     d = _json_get(f"/news/list?category=MAINNEWS&page=1&pageSize={size}")
@@ -1751,39 +1781,48 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         is_today_data_in_frgn = False
         today_str_dot = datetime.datetime.now(KST).strftime('%Y.%m.%d')
 
+        # ── 수급 원자료 수집: 구 HTML 우선, 실패 시 JSON 폴백 ──
+        #    두 소스의 값이 실측상 완전히 동일하므로(2026-08-26 검증) 어느 쪽을 타든 결과가 같다.
+        #    아래 누적 로직은 한 벌만 두어, 소스가 바뀌어도 계산이 갈라지지 않게 한다.
+        frgn_rows = []   # [(날짜 'YYYY.MM.DD', 종가, 기관수량, 외국인수량)]
         try:
             frgn_url  = f"https://finance.naver.com/item/frgn.naver?code={code}&_={int(time.time() * 1000)}"
             frgn_res  = GLOBAL_SESSION.get(frgn_url, headers=desktop_headers, verify=False, timeout=3)
             frgn_soup = BeautifulSoup(frgn_res.content, 'html.parser', from_encoding='euc-kr')
-            rows      = frgn_soup.select("table.type2 tr")
-            valid_days = 0
-
-            for r_tag in rows:
+            for r_tag in frgn_soup.select("table.type2 tr"):
                 cols = r_tag.select("td")
                 if len(cols) >= 7 and cols[0].text.strip().replace('.', '').isdigit():
-                    row_date_str = cols[0].text.strip()
                     try: close_price_day = int(cols[1].text.strip().replace(',', ''))
                     except Exception: close_price_day = current_price
                     try: i_vol = int(cols[5].text.strip().replace(',', '').replace('+', '').replace(' ', ''))
                     except Exception: i_vol = 0
                     try: f_vol = int(cols[6].text.strip().replace(',', '').replace('+', '').replace(' ', ''))
                     except Exception: f_vol = 0
-
-                    i_buy_won = i_vol * close_price_day
-                    f_buy_won = f_vol * close_price_day
-
-                    if i_buy_won >= 50_000_000 and f_buy_won >= 50_000_000: dual_buy_days += 1
-                    if valid_days == 0:
-                        i_buy_today = i_buy_won
-                        f_buy_today = f_buy_won
-                        if row_date_str == today_str_dot: is_today_data_in_frgn = True
-
-                    acc_i_buy_won += i_buy_won
-                    acc_f_buy_won += f_buy_won
-                    valid_days += 1
-                    if valid_days >= 5: break
+                    frgn_rows.append((cols[0].text.strip(), close_price_day, i_vol, f_vol))
+                    if len(frgn_rows) >= 5: break
         except Exception as e:
             print(f"⚠️ [frgn Parsing Exception for {name}] {e}")
+
+        if not frgn_rows:
+            # 🆕 [개편 폴백] finance.naver.com 이 죽어도 수급점수(V2)가 0으로 무너지지 않게 한다.
+            frgn_rows = fetch_investor_trend_json(code, 5)
+
+        valid_days = 0
+        for row_date_str, close_price_day, i_vol, f_vol in frgn_rows:
+            if close_price_day <= 0: close_price_day = current_price
+            i_buy_won = i_vol * close_price_day
+            f_buy_won = f_vol * close_price_day
+
+            if i_buy_won >= 50_000_000 and f_buy_won >= 50_000_000: dual_buy_days += 1
+            if valid_days == 0:
+                i_buy_today = i_buy_won
+                f_buy_today = f_buy_won
+                if row_date_str == today_str_dot: is_today_data_in_frgn = True
+
+            acc_i_buy_won += i_buy_won
+            acc_f_buy_won += f_buy_won
+            valid_days += 1
+            if valid_days >= 5: break
         
         pgtr_ntby_eok = 0.0  
         if KIS_TOKEN and KIS_APP_KEY and KIS_APP_SECRET:

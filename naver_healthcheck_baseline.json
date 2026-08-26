@@ -1,5 +1,5 @@
 {
- "savedAt": "2026-08-26T15:51:21.997702+09:00",
+ "savedAt": "2026-08-26T16:28:46.454308+09:00",
  "results": {
   "frgn_html": {
    "ok": true,
@@ -35,6 +35,13 @@
    "error": "",
    "severity": "치명적",
    "desc": "종목 현재가 API"
+  },
+  "frgn_json": {
+   "ok": true,
+   "detail": "10일치",
+   "error": "",
+   "severity": "치명적",
+   "desc": "수급 JSON(폴백)"
   },
   "theme_html": {
    "ok": true,
@@ -99,13 +106,6 @@
    "severity": "중요",
    "desc": "테마 구성종목 JSON(폴백)"
   },
-  "frgn_json": {
-   "ok": true,
-   "detail": "10일치",
-   "error": "",
-   "severity": "보통",
-   "desc": "수급 JSON(대체재)"
-  },
   "news_json": {
    "ok": true,
    "detail": "15건",
@@ -136,7 +136,7 @@
   },
   "itemnews": {
    "ok": true,
-   "detail": "11건",
+   "detail": "10건",
    "error": "",
    "severity": "보통",
    "desc": "종목별 뉴스"
