@@ -215,15 +215,32 @@ def get_kospi_fluctuation_rate():
         return 0.0
 
 def search_code_from_naver(stock_name):
-    lookup_name = stock_alias_map.get(stock_name, stock_name)
+    # 🔧 [별칭 폴백] 별칭(정식 법인명) → 실패 시 원래 이름 순으로 시도한다.
+    #    stock_alias_map 은 구 /api/search/all(정식명 매칭)용이었는데, 신규 자동완성 API는
+    #    '상장 표기명'만 매칭한다. 실측 결과 6개 별칭 중 4개가 오히려 0건을 만들었다
+    #    (삼성화재해상보험·엔씨소프트·한국전력공사·HDC현대산업개발 → 0건, 원래 이름은 전부 정상).
+    #    별칭을 지우는 대신 폴백을 두어, 별칭이 유효한 경우와 아닌 경우 모두 살린다.
+    candidates = []
+    for nm in (stock_alias_map.get(stock_name), stock_name):
+        if nm and nm not in candidates:
+            candidates.append(nm)
     try:
-        time.sleep(random.uniform(0.05, 0.15)) 
-        url = f"https://m.stock.naver.com/api/search/all?keyword={lookup_name}"
-        res = GLOBAL_SESSION.get(url, timeout=3, verify=False)
-        if res.status_code == 200:
-            data = res.json()
-            if data.get('result') and data['result'].get('stocks'):
-                return data['result']['stocks'][0]['itemCode']
+        time.sleep(random.uniform(0.05, 0.15))
+        # 🔧 [엔드포인트 교체] 기존 m.stock.naver.com/api/search/all 은 PC 개편과 함께 404로 사망했다
+        #    (2026-08-26 실측). 같은 JSON 형태를 주는 자동완성 API 두 곳으로 대체한다.
+        #    응답 스키마는 둘 다 {"items":[{"code","name","typeCode",...}]} 로 동일하다.
+        for lookup_name in candidates:
+            for url in (f"https://ac.stock.naver.com/ac?q={lookup_name}&target=stock",
+                        f"https://m.stock.naver.com/front-api/search/autoComplete?query={lookup_name}&target=stock"):
+                res = GLOBAL_SESSION.get(url, timeout=3, verify=False)
+                if res.status_code != 200:
+                    continue
+                data = res.json()
+                items = data.get('items') or (data.get('result') or {}).get('items') or []
+                for it in items:
+                    code = str(it.get('code', '')).strip()
+                    if code.isdigit() and len(code) == 6:
+                        return code
     except Exception:
         pass
     return None
@@ -585,6 +602,14 @@ def safe_int(v, default=0):
         if v in [None, "", "null"]: return default
         return int(str(v).replace(",", "").strip())
     except Exception: return default
+
+def _sheet_bool(v):
+    """구글시트의 불리언 표기 흔들림을 흡수한다.
+    value_input_option='USER_ENTERED'로 "True"를 쓰면 시트가 불리언으로 해석해 'TRUE'로 되돌아온다.
+    예전 코드는 row[3] == 'True' 로 비교해서 'TRUE'를 전부 False로 읽었고, 그 결과
+    위험종목 게이트가 통째로 열려 있었다(2026-08-26 발견). 대소문자·공백 무관하게 판정한다."""
+    return str(v).strip().upper() in ("TRUE", "T", "1", "Y", "YES")
+
 
 def parse_score_num(value):
     try:
@@ -2113,6 +2138,7 @@ def update_technical_data(df_theme, all_theme_map):
         static_db = {}
         # 🛡️ [생명주기 이전] 7시 batch_clear 폐지 — DB_정적데이터는 hyeoks_static_collector.py가 단독 소유(clear→write).
         # omakase는 순수 reader로서 '항상 읽기만' 한다. (수집기 실패 시 전일 스냅샷이 보존되어 위험게이트가 꺼지지 않음)
+        junk_loaded = 0
         try:
             for row in static_sheet.get_all_values()[1:]:
                 if len(row) >= 6:
@@ -2120,11 +2146,30 @@ def update_technical_data(df_theme, all_theme_map):
                     cap_clean = re.sub(r'[^0-9]', '', str(row[2]))
                     static_db[code_key] = {
                         'market_cap': int(cap_clean) if cap_clean else 0,
-                        'is_junk': row[3] == 'True',
-                        'is_fin_risk': row[4] == 'True',
-                        'is_chronic_loss': row[5] == 'True'
+                        'is_junk': _sheet_bool(row[3]),
+                        'is_fin_risk': _sheet_bool(row[4]),
+                        'is_chronic_loss': _sheet_bool(row[5])
                     }
+                    if static_db[code_key]['is_junk']:
+                        junk_loaded += 1
         except Exception as e: print(f"⚠️ [Static Sheet Read Error] {e}")
+
+        # 🚨 [조용한 실패 방어] 위험종목 게이트(관리종목·거래정지·투자경고)는 깨져도 예외가 나지 않는다.
+        #    그냥 빈 명단이 되어 걸러져야 할 종목이 조용히 추천에 섞인다 — 가장 위험한 실패 방식이다.
+        #    실제로 2026-08-26까지 이 게이트가 통째로 열려 있었다(시트는 'TRUE', 코드는 'True'와 비교해
+        #    275종목 전부가 False로 읽혔고, 백테스트 픽 13건이 위험종목이었다).
+        #    → 명단이 비정상적으로 작으면 정상으로 간주하지 말고 크게 알린다. 스캔 자체는 계속하되
+        #      (네이버 일시 장애로 파이프라인 전체가 멈추는 게 더 나쁘다) 사람이 반드시 인지하도록 한다.
+        MIN_EXPECTED_JUNK = 50   # hyeoks_static_collector.py 의 MIN_TOTAL 과 동일 기준
+        if junk_loaded < MIN_EXPECTED_JUNK:
+            alarm = (f"🚨 [위험종목 게이트 이상] DB_정적데이터에서 읽어낸 is_junk 종목이 "
+                     f"{junk_loaded}개뿐입니다(기대 {MIN_EXPECTED_JUNK}개 이상). "
+                     f"관리종목·거래정지·투자경고가 걸러지지 않고 추천에 섞일 수 있습니다. "
+                     f"hyeoks_static_collector.py 수집 결과와 시트 값 형식을 즉시 확인하세요.")
+            print(alarm)
+            send_telegram_alert(alarm)
+        else:
+            print(f"🛡️ [위험종목 게이트] is_junk {junk_loaded}종목 로드 완료 (정상)")
 
         theme_rank_dict = {}
         try:
