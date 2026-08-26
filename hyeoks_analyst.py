@@ -107,12 +107,45 @@ def parse_ai_json(text):
             print(f"⚠️ [parse_ai_json 폴백 파싱도 실패] {e}")
             return {"briefing": "응답 오류", "target_price": 0, "stop_loss": 0}
  
+def fetch_stock_news_json(code, limit=3):
+    """종목별 뉴스 JSON 대체재 (신규 PC 사이트 경로).
+    응답이 {'total', 'clusters':[{'items':[기사...]}]} 로 한 겹 더 들어가 있어 펼쳐서 쓴다."""
+    try:
+        r = requests.get("https://stock.naver.com/api/domestic/detail/news",
+                         params={'itemCode': code, 'page': 1, 'pageSize': 15},
+                         headers={'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json',
+                                  'Referer': 'https://stock.naver.com/'},
+                         verify=False, timeout=5)
+        if r.status_code != 200:
+            return []
+        titles = []
+        for cluster in (r.json().get('clusters') or []):
+            for it in (cluster.get('items') or []):
+                t = str(it.get('title') or '').strip()
+                if t:
+                    titles.append(t)
+                if len(titles) >= limit:
+                    return titles
+        return titles
+    except Exception as e:
+        print(f"⚠️ [종목뉴스 JSON 폴백 실패] {code} :: {e}")
+        return []
+
+
 def get_target_stock_news(code):
     try:
         url = f"https://finance.naver.com/item/news_news.naver?code={code}&page=1"
-        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, verify=False, timeout=3)
+        # 🔧 [필수 헤더] Referer 가 없으면 네이버가 뉴스 목록이 빠진 6,390바이트 껍데기를 준다.
+        #    그동안 이 함수는 예외도 없이 매번 '개별 뉴스 없음'을 반환하고 있었다(2026-08-26 발견).
+        #    → AI 리포트가 종목별 뉴스 없이 작성돼 왔다. 실측: Referer 추가 시 0건 → 3건.
+        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0',
+                                         'Referer': 'https://finance.naver.com/'},
+                           verify=False, timeout=3)
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
         news_list = [f"- {a.text.strip()}" for a in soup.select('.title a')[:3]]
+        if not news_list:
+            # 🆕 [개편 폴백] 구 HTML이 죽으면 신규 JSON 경로로 대체
+            news_list = [f"- {t}" for t in fetch_stock_news_json(code, 3)]
         return clean_emojis("\n".join(news_list)) if news_list else "개별 뉴스 없음"
     except Exception as e:
         print(f"⚠️ [개별 뉴스 수집 실패 {code}] {e}")

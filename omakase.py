@@ -408,6 +408,21 @@ def get_news_keywords():
         print(f"❌ [get_news_keywords Exception] {e}")
         return pd.DataFrame()
 
+def fetch_market_cap_json(code):
+    """시가총액(억원) JSON 대체재. marketSum 은 '원' 단위라 1억으로 나눈다.
+    2026-08-26 실측: 6종목 대조에서 구 HTML(#_market_sum) 파싱값과 오차 0.00%."""
+    try:
+        r = GLOBAL_SESSION.get(f"https://stock.naver.com/api/domestic/detail/{code}/detail",
+                               params={'codeType': 'KRX'}, headers=_JSON_HEADERS, verify=False, timeout=5)
+        if r.status_code != 200:
+            return 0
+        ms = r.json().get('marketSum')
+        return int(float(ms) / 100_000_000) if ms else 0
+    except Exception as e:
+        print(f"⚠️ [시가총액 JSON 폴백 실패] {code} :: {e}")
+        return 0
+
+
 def get_market_cap(code):
     try:
         url = f"https://finance.naver.com/item/main.naver?code={code}"
@@ -424,7 +439,8 @@ def get_market_cap(code):
                 return int(text.replace(',', '').strip())
     except Exception as e:
         print(f"⚠️ [get_market_cap Error code {code}] {e}")
-    return 0
+    # 🆕 [개편 폴백] HTML 파싱이 실패했거나 값이 없으면 신규 JSON 경로로 대체
+    return fetch_market_cap_json(code)
 
 def get_real_money_themes():
     try:

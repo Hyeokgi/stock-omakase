@@ -152,6 +152,32 @@ def chk_itemnews():
     return n >= 3, f"{n}건"
 
 
+def chk_market_sum_json():
+    """시가총액 JSON 폴백 (marketSum, 원 단위)"""
+    d = _get("https://stock.naver.com/api/domestic/detail/005930/detail?codeType=KRX").json()
+    ms = d.get('marketSum')
+    return bool(ms) and float(ms) > 0, f"{int(float(ms or 0)/1e8):,}억"
+
+
+def chk_itemnews_json():
+    """종목별 뉴스 JSON 폴백 (clusters → items 로 한 겹 더 들어있음)"""
+    d = _get("https://stock.naver.com/api/domestic/detail/news?itemCode=005930&page=1&pageSize=15").json()
+    n = sum(len(c.get('items') or []) for c in (d.get('clusters') or []))
+    return n >= 3, f"{n}건"
+
+
+def chk_itemnews_prod_headers():
+    """⚠️ 종목별 뉴스를 'analyst 가 실제로 쓰는 헤더'로 호출해본다.
+    Referer 가 없으면 네이버가 뉴스 없는 6,390바이트 껍데기를 준다 —
+    진단기 세션은 Referer 를 항상 붙이므로, 이 항목이 없으면 소비자 쪽 누락을 못 잡는다."""
+    r = requests.get("https://finance.naver.com/item/news_news.naver?code=005930&page=1",
+                     headers={'User-Agent': 'Mozilla/5.0', 'Referer': 'https://finance.naver.com/'},
+                     verify=False, timeout=10)
+    soup = BeautifulSoup(r.content, 'html.parser', from_encoding='cp949')
+    n = len(soup.select('.title a'))
+    return n >= 3, f"{n}건(len={len(r.content)})"
+
+
 def chk_market_sum():
     """시가총액 (#_market_sum)"""
     soup = _get("https://finance.naver.com/item/main.naver?code=005930", 'cp949')
@@ -274,6 +300,9 @@ CHECKS = [
     ("newslist",      MINOR, "시황 뉴스목록",           chk_newslist,      "뉴스 키워드"),
     ("itemnews",      MINOR, "종목별 뉴스",             chk_itemnews,      "AI 리포트 근거"),
     ("lastsearch",    MINOR, "검색상위",                chk_lastsearch,    "네이버 검색상위 탭"),
+    ("itemnews_prod", MAJOR, "종목뉴스(운영헤더)",       chk_itemnews_prod_headers, "analyst 리포트 근거"),
+    ("itemnews_json", MINOR, "종목뉴스 JSON(폴백)",     chk_itemnews_json, "analyst 뉴스 폴백"),
+    ("marketsum_json",MINOR, "시가총액 JSON(폴백)",     chk_market_sum_json, "omakase 시총 폴백"),
     ("overtime",      MINOR, "시간외 단일가 필드",      chk_overtime_json, "KRX/NXT 표기"),
     ("sise_bulk",     MINOR, "전종목 벌크 시세",        chk_sise_bulk,     "대체 소스 후보"),
 ]
