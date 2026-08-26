@@ -1460,7 +1460,8 @@ try:
                         if _n >= 3:
                             doc.batch_update({"requests": [{"sortRange": {
                                 "range": {"sheetId": bt_sheet.id, "startRowIndex": 1, "endRowIndex": _n,
-                                          "startColumnIndex": 0, "endColumnIndex": 36},
+                                          "startColumnIndex": 0, "endColumnIndex": 38},   # 🔧 36→38: 스키마가 38열인데 36으로 정렬하면
+                                                                                       #    AK(트레일링손절가)·AL(목표가알림발송)이 행과 함께 안 움직여 값이 어긋난다
                                 "sortSpecs": [
                                     {"dimensionIndex": 1, "sortOrder": "DESCENDING"},   # B 진입일(최신 위)
                                     {"dimensionIndex": 2, "sortOrder": "ASCENDING"},    # C 채널(날짜 내 그룹)
@@ -1474,7 +1475,7 @@ try:
                             _rows2 = bt_sheet.get_all_values()[1:]
                             _brd = [{"updateBorders": {
                                 "range": {"sheetId": bt_sheet.id, "startRowIndex": 1,
-                                          "endRowIndex": 1 + len(_rows2), "startColumnIndex": 0, "endColumnIndex": 36},
+                                          "endRowIndex": 1 + len(_rows2), "startColumnIndex": 0, "endColumnIndex": 38},
                                 "top": {"style": "NONE"}, "bottom": {"style": "NONE"},
                                 "left": {"style": "NONE"}, "right": {"style": "NONE"},
                                 "innerHorizontal": {"style": "NONE"}, "innerVertical": {"style": "NONE"}}}]
@@ -1485,7 +1486,7 @@ try:
                                     _sr = _i + 1
                                     _brd.append({"updateBorders": {
                                         "range": {"sheetId": bt_sheet.id, "startRowIndex": _sr,
-                                                  "endRowIndex": _sr + 1, "startColumnIndex": 0, "endColumnIndex": 36},
+                                                  "endRowIndex": _sr + 1, "startColumnIndex": 0, "endColumnIndex": 38},
                                         "top": {"style": "SOLID_THICK",
                                                 "color": {"red": 0.12, "green": 0.12, "blue": 0.12}}}})
                                     _cnt += 1

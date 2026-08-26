@@ -844,6 +844,16 @@ def is_excluded_row(row):
     return "제외" in (str(row[25]) if len(row) > 25 else "")
 
 
+def is_touch_confirmed(v):
+    """익절터치/손절터치 칸이 '실제로 닿았음'을 뜻하는가.
+    hyeoks_touch_tracker.py 규약 — 'T+n' = 실제 터치, '추적중'/'미터치'/공란 = 아님.
+    ⚠️ 예전엔 이 칸이 비어있지 않기만 하면 터치로 간주했는데, 추적기가 열린 포지션에
+       '추적중'을 채워 넣기 때문에 모든 포지션이 '손절 완료'로 오인됐다.
+       그 결과 트레일링 스탑이 배포 이후 단 한 번도 실행되지 않았다(2026-08-26 발견).
+    """
+    return str(v).strip().startswith("T+")
+
+
 def _sheet_bool(v):
     """구글시트의 불리언 표기 흔들림을 흡수한다.
     value_input_option='USER_ENTERED'로 "True"를 쓰면 시트가 불리언으로 해석해 'TRUE'로 되돌아온다.
@@ -976,8 +986,9 @@ def check_target_alerts_and_trailing_stop(doc, bt_sheet):
             target_raw, stop_raw = str(row[32]).strip(), str(row[33]).strip()
             if not target_raw or not stop_raw:
                 continue
-            stop_touched = str(row[35]).strip() if len(row) > 35 else ""
-            if stop_touched:  # 이미 원 손절가로 종료 처리된 포지션은 트레일링 대상에서 제외
+            # 🔧 [수정] '추적중'(=아직 안 닿음)을 터치로 오인해 전 포지션을 건너뛰던 버그.
+            #    실제 손절 터치('T+n')일 때만 트레일링 대상에서 뺀다.
+            if is_touch_confirmed(row[35] if len(row) > 35 else ""):
                 continue
             try:
                 target_p = float(target_raw.replace(',', ''))
@@ -2974,8 +2985,10 @@ def update_technical_data(df_theme, all_theme_map):
                                 stop_p = float(str(row[33]).replace(',', '')) if str(row[33]).strip() else None
                             except Exception:
                                 stop_p = None
-                            stop_touched = str(row[35]).strip()
-                            target_touched = str(row[34]).strip()
+                            # 🔧 [수정] '추적중'도 값이 있다는 이유로 확정 취급해 터치 판정을 통째로
+                            #    건너뛰던 버그. 'T+n' 만 확정으로 본다.
+                            stop_touched = str(row[35]).strip() if is_touch_confirmed(row[35]) else ""
+                            target_touched = str(row[34]).strip() if is_touch_confirmed(row[34]) else ""
                             if (target_p or stop_p) and not (target_touched and stop_touched):
                                 for d in range(1, elapsed_td + 1):
                                     if entry_idx + d >= len(bars): break
