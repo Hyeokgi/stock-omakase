@@ -314,6 +314,33 @@ def fetch_investor_trend_json(code, days=5):
     return []
 
 
+def fetch_flash_news_titles(limit=180):
+    """시황 뉴스 제목 목록 — 구 news_list.naver(9페이지=180건)의 대체재.
+
+    ⚠️ 표본 크기를 반드시 맞춘다. FLASHNEWS 는 하루 350건까지 나오는데, 키워드
+       '절대 건수'가 압축장세 판정(kw_counts[0] >= 10)에 쓰이므로 표본이 커지면
+       판정이 더 자주 발동해 SEED 쿼터가 바뀐다. 그래서 구 HTML 수확량과 같은
+       180건에서 자른다.
+       (2026-08-26 실측 — HTML 180건 vs FLASHNEWS 350건, 제목 교집합 141건,
+        상위 키워드 순위는 AI·반도체·바이오·로봇으로 동일)
+    date 파라미터는 필수(없으면 400)이고 pageSize 상한은 50이다.
+    """
+    titles = []
+    today = datetime.datetime.now(KST).strftime('%Y%m%d')
+    for page in range(1, 8):
+        d = _json_get(f"/news/list?category=FLASHNEWS&page={page}&pageSize=50&date={today}")
+        arts = (d or {}).get('articles') if isinstance(d, dict) else None
+        if not arts:
+            break
+        for a in arts:
+            t = str(a.get('title') or '').strip()
+            if t:
+                titles.append(t)
+            if len(titles) >= limit:
+                return titles
+    return titles
+
+
 def fetch_main_news_json(size=20):
     """주요뉴스 — [[시각, 언론사, 제목, 요약, 링크]] (기존 DataFrame 컬럼 순서와 동일)."""
     d = _json_get(f"/news/list?category=MAINNEWS&page=1&pageSize={size}")
@@ -382,21 +409,32 @@ def get_news_keywords():
         if not (30 <= now_minute < 40): return pd.DataFrame()
         full_text = ""
         theme_phrases = []
+        # ── 제목 수집: 구 HTML 9페이지 우선, 실패 시 신규 JSON(FLASHNEWS) ──
+        titles = []
         for page in range(1, 10):
             url = f"https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258&page={page}"
-            res = GLOBAL_SESSION.get(url, verify=False, timeout=5)
-            soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
-            for sub in soup.select('.articleSubject a'):
-                title_text = sub.get_text(strip=True)
-                full_text += title_text + " \n "
-                for m in re.findall(r"['\"‘“](.*?)['\"’”]", title_text):
-                    clean = re.sub(r'(수혜|관련주|테마주|대장주|강세|상한가|특징주|급등|주목|부각)', '', m).strip()
-                    clean = re.sub(r'[^\w\s]', '', clean).strip()
-                    if 1 < len(clean) <= 12 and clean.count(' ') <= 1 and clean not in AD_FILTER:
-                        theme_phrases.append(clean)
-                for m in re.findall(r'([가-힣a-zA-Z0-9]+)(?:\s+)?(?:관련주|테마주|수혜주|대장주|섹터|주도주)', title_text):
-                    m = re.sub(r'[^\w\s]', '', m).strip()
-                    if 1 < len(m) <= 10 and m not in AD_FILTER: theme_phrases.append(m)
+            try:
+                res = GLOBAL_SESSION.get(url, verify=False, timeout=5)
+                soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
+                titles += [sub.get_text(strip=True) for sub in soup.select('.articleSubject a')]
+            except Exception as e:
+                print(f"⚠️ [뉴스목록 {page}페이지 수집 실패] {e}")
+        if not titles:
+            # 🆕 [개편 폴백] 구 HTML이 죽으면 신규 FLASHNEWS 로 대체. 표본 크기를 180건으로
+            #    맞춰서 키워드 절대 건수(압축장세 판정)가 흔들리지 않게 한다.
+            titles = fetch_flash_news_titles(180)
+            if titles: print(f"🔁 [뉴스 키워드 폴백] FLASHNEWS 로 제목 {len(titles)}건 확보")
+
+        for title_text in titles:
+            full_text += title_text + " \n "
+            for m in re.findall(r"['\"‘“](.*?)['\"’”]", title_text):
+                clean = re.sub(r'(수혜|관련주|테마주|대장주|강세|상한가|특징주|급등|주목|부각)', '', m).strip()
+                clean = re.sub(r'[^\w\s]', '', clean).strip()
+                if 1 < len(clean) <= 12 and clean.count(' ') <= 1 and clean not in AD_FILTER:
+                    theme_phrases.append(clean)
+            for m in re.findall(r'([가-힣a-zA-Z0-9]+)(?:\s+)?(?:관련주|테마주|수혜주|대장주|섹터|주도주)', title_text):
+                m = re.sub(r'[^\w\s]', '', m).strip()
+                if 1 < len(m) <= 10 and m not in AD_FILTER: theme_phrases.append(m)
         core_keywords = ['의료AI', '비만치료제', '전고체', '자율주행', '로봇', '반도체', '바이오시밀러', '원격진료', '탈플라스틱', '신재생', '원전', '우주항공', 'UAM', '메타버스', 'OLED', 'LFP', 'HBM', 'CXL', '온디바이스', 'AI', '초전도체', '양자암호', '저전력', '데이터센터', '웹툰', '비트코인', 'STO', '밸류업', '방산', '조선', '피지컬AI', '전력설비', '유리기판', '액침냉각', '엔터', '화장품', '미용기기', '제약', '바이오', '이차전지', '2차전지', '폐배터리', '수소', '태양광', '마이크로바이옴']
         for word in core_keywords: theme_phrases.extend([word] * full_text.count(word))
         final_keywords = [word for word in theme_phrases if word not in STOPWORDS]
@@ -698,27 +736,37 @@ def update_google_sheet(doc, df_theme, df_news, df_naver, df_main_news, is_marke
 def get_market_schedule():
     try:
         today_str = datetime.datetime.now(KST).strftime('%Y-%m-%d')
-        url = "https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258"
-        res = GLOBAL_SESSION.get(url, verify=False, timeout=5)
-        soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
+        # ── 제목 수집: 구 HTML 우선, 실패 시 신규 JSON(FLASHNEWS) ──
+        titles = []
+        try:
+            url = "https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258"
+            res = GLOBAL_SESSION.get(url, verify=False, timeout=5)
+            soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
+            for dl in soup.find_all('dl')[:15]:
+                title_tag = (dl.find('dt', {'class': 'articleSubject'})
+                             or dl.find('dd', {'class': 'articleSubject'}))
+                if title_tag and title_tag.find('a'):
+                    titles.append(title_tag.find('a').text.strip())
+        except Exception as e:
+            print(f"⚠️ [주요일정 뉴스 수집 실패] {e}")
+        if not titles:
+            # 🆕 [개편 폴백] 구 HTML이 죽으면 FLASHNEWS 최신 15건으로 대체
+            titles = fetch_flash_news_titles(15)
+            if titles: print(f"🔁 [주요일정 폴백] FLASHNEWS 로 제목 {len(titles)}건 확보")
+
         schedules = []
         seen_titles = set()
-        for dl in soup.find_all('dl')[:15]:
-            title_tag = dl.find('dt', {'class': 'articleSubject'})
-            if not title_tag:
-                title_tag = dl.find('dd', {'class': 'articleSubject'})
-            if title_tag and title_tag.find('a'):
-                title = title_tag.find('a').text.strip()
-                clean_title = title.replace(" ", "").strip()
-                if not is_mega_cap_or_not_earnings(title): continue
-                include_kws = ['실적', '発表', '만기', '배당', '금통위', 'FOMC', '고용', '학회', '임상', '상장', '개막', '출시']
-                exclude_kws = ['주주총회', '주총', '공모', '청약', '전망', '주목', '대기', '반환점', '서프라이즈', '쇼크', '기대감', '우려', '물귀신', '박스권', '코스피', '코스닥', '증시', '마감', '시황', '특징주', '주간']
-                if any(kw in title for kw in include_kws) and not any(ex_kw in title for ex_kw in exclude_kws):
-                    if "증시전망" not in title and "외환전망" not in title:
-                        if clean_title not in seen_titles:
-                            clean_date = normalize_date_format(today_str)
-                            schedules.append([clean_date, title, "📅 자동수집(당일)"])
-                            seen_titles.add(clean_title)
+        for title in titles:
+            clean_title = title.replace(" ", "").strip()
+            if not is_mega_cap_or_not_earnings(title): continue
+            include_kws = ['실적', '発表', '만기', '배당', '금통위', 'FOMC', '고용', '학회', '임상', '상장', '개막', '출시']
+            exclude_kws = ['주주총회', '주총', '공모', '청약', '전망', '주목', '대기', '반환점', '서프라이즈', '쇼크', '기대감', '우려', '물귀신', '박스권', '코스피', '코스닥', '증시', '마감', '시황', '특징주', '주간']
+            if any(kw in title for kw in include_kws) and not any(ex_kw in title for ex_kw in exclude_kws):
+                if "증시전망" not in title and "외환전망" not in title:
+                    if clean_title not in seen_titles:
+                        clean_date = normalize_date_format(today_str)
+                        schedules.append([clean_date, title, "📅 자동수집(당일)"])
+                        seen_titles.add(clean_title)
         return schedules
     except Exception as e:
         print(f"❌ 일정 수집 에러: {e}")

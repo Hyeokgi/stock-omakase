@@ -145,6 +145,16 @@ def chk_newslist():
     return n >= 5, f"{n}건"
 
 
+def chk_newslist_json():
+    """시황 뉴스목록 JSON 폴백 (FLASHNEWS).
+    date 파라미터 필수(없으면 400), pageSize 상한 50."""
+    today = datetime.datetime.now(KST).strftime('%Y%m%d')
+    d = _get(f"https://stock.naver.com/api/domestic/news/list"
+             f"?category=FLASHNEWS&page=1&pageSize=50&date={today}").json()
+    arts = (d or {}).get('articles') if isinstance(d, dict) else None
+    return bool(arts) and len(arts) >= 20, f"{len(arts) if arts else 0}건"
+
+
 def chk_itemnews():
     """종목별 뉴스 (AI 리포트 근거)"""
     soup = _get("https://finance.naver.com/item/news_news.naver?code=005930&page=1", 'euc-kr')
@@ -302,6 +312,7 @@ CHECKS = [
     ("lastsearch",    MINOR, "검색상위",                chk_lastsearch,    "네이버 검색상위 탭"),
     ("itemnews_prod", MAJOR, "종목뉴스(운영헤더)",       chk_itemnews_prod_headers, "analyst 리포트 근거"),
     ("itemnews_json", MINOR, "종목뉴스 JSON(폴백)",     chk_itemnews_json, "analyst 뉴스 폴백"),
+    ("newslist_json", MINOR, "시황뉴스 JSON(폴백)",     chk_newslist_json, "뉴스키워드·주요일정 폴백"),
     ("marketsum_json",MINOR, "시가총액 JSON(폴백)",     chk_market_sum_json, "omakase 시총 폴백"),
     ("overtime",      MINOR, "시간외 단일가 필드",      chk_overtime_json, "KRX/NXT 표기"),
     ("sise_bulk",     MINOR, "전종목 벌크 시세",        chk_sise_bulk,     "대체 소스 후보"),

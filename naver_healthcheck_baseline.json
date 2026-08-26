@@ -1,5 +1,5 @@
 {
- "savedAt": "2026-08-26T16:56:46.588533+09:00",
+ "savedAt": "2026-08-26T17:23:30.547307+09:00",
  "results": {
   "frgn_html": {
    "ok": true,
@@ -115,7 +115,7 @@
   },
   "itemnews_prod": {
    "ok": true,
-   "detail": "12건(len=15827)",
+   "detail": "20건(len=22039)",
    "error": "",
    "severity": "중요",
    "desc": "종목뉴스(운영헤더)"
@@ -150,7 +150,7 @@
   },
   "itemnews": {
    "ok": true,
-   "detail": "12건",
+   "detail": "19건",
    "error": "",
    "severity": "보통",
    "desc": "종목별 뉴스"
@@ -164,10 +164,17 @@
   },
   "itemnews_json": {
    "ok": true,
-   "detail": "17건",
+   "detail": "25건",
    "error": "",
    "severity": "보통",
    "desc": "종목뉴스 JSON(폴백)"
+  },
+  "newslist_json": {
+   "ok": true,
+   "detail": "50건",
+   "error": "",
+   "severity": "보통",
+   "desc": "시황뉴스 JSON(폴백)"
   },
   "marketsum_json": {
    "ok": true,
