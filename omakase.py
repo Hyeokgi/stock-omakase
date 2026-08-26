@@ -603,6 +603,17 @@ def safe_int(v, default=0):
         return int(str(v).replace(",", "").strip())
     except Exception: return default
 
+def is_excluded_row(row):
+    """백테스트_로그에서 '측정 대상이 아닌' 행인지 판정한다.
+    Z열(실제캡처거래일, idx 25)에 '제외' 표식이 있으면 집계에서 뺀다. 행을 지우지 않고 표식만
+    남기는 이유는 감사 추적을 보존하기 위함이다 — 왜 뺐는지가 시트에 그대로 남는다.
+    현재 표식 두 종류
+      · '제외:위험종목(게이트버그)' — is_junk 게이트가 열려 있던 동안 통과한 픽 (2026-08-26 소급 표기)
+      · '거래정지(일봉 시가=0) — 측정 제외' — 진입일 시가가 없어 수익률 자체를 못 만드는 행
+    """
+    return "제외" in (str(row[25]) if len(row) > 25 else "")
+
+
 def _sheet_bool(v):
     """구글시트의 불리언 표기 흔들림을 흡수한다.
     value_input_option='USER_ENTERED'로 "True"를 쓰면 시트가 불리언으로 해석해 'TRUE'로 되돌아온다.
@@ -833,9 +844,13 @@ def compute_channel_comparison_dashboard(doc):
 
     from collections import defaultdict
     by_channel = defaultdict(lambda: defaultdict(list))
+    excluded_n = 0
     for r in rows:
         ch = str(r[2]).strip() if len(r) > 2 else ""
         if ch not in channels: continue
+        if is_excluded_row(r):   # 🆕 위험종목 게이트 버그로 들어온 픽 등은 표본에서 제외
+            excluded_n += 1
+            continue
         for h, s_col, i_col in horizons:
             if len(r) <= max(s_col, i_col): continue
             s_str = str(r[s_col]).strip().replace('%', '')
@@ -882,6 +897,8 @@ def compute_channel_comparison_dashboard(doc):
             ["※ 실수익 = 실제 손익. 초과α = 지수 대비 상대성과(%p)."],
             ["※ 지수가 크게 빠진 구간에서는 실수익이 마이너스여도 초과α는 크게 양수로 나온다."
              " 즉 초과α가 양수라고 돈을 번 것이 아니다 — 판단은 '실수익'을 먼저 보고 할 것."],
+            [f"※ 집계 제외 {excluded_n}행 (백테스트_로그 Z열 '제외' 표식). "
+             f"위험종목 게이트가 열려 있던 동안 통과한 픽 등 — 행은 보존되어 있고 집계에서만 뺀다."],
         ], value_input_option="RAW")
 
         # 기존 조건부 서식 삭제 후, 초과수익 칸에만 양/음수 색상 규칙 새로 등록(중복 누적 방지)
@@ -944,6 +961,7 @@ def compute_channel_kelly(doc):
         if len(r) < 29: continue
         ch = str(r[2]).strip()
         if ch not in CHANNEL_HORIZON: continue
+        if is_excluded_row(r): continue   # 🆕 제외 표식 행은 승률·손익비 계산에서도 뺀다
         h = CHANNEL_HORIZON[ch]
         col = horizon_col[h]
         val_str = str(r[col]).strip().replace('%', '') if len(r) > col else ""
