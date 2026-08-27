@@ -18,8 +18,17 @@
 #   · 선정·점수·채널에 어떤 영향도 주지 않는다. 순수 관측이다.
 #
 # 저장
-#   data/market_snapshot/YYYY-MM-DD_{tag}.csv.gz  (거래대금 상위 TOP_N)
+#   data/market_snapshot/YYYY-MM-DD_{tag}.csv.gz        (거래대금 상위 TOP_N)
+#   data/market_snapshot/YYYY-MM-DD_{tag}_theme.csv.gz  (네이버 테마 200개 집계)
 #   주도주는 언제나 거래대금 상위권에 있으므로 전 종목을 보관할 이유가 없다.
+#
+# 테마를 왜 같이 찍나
+#   "자금이 어디로 쏠렸나"는 종목 단위로만 보면 안 보인다. 고수가 말하는 대장주는
+#   '테마를 이루고 동반 상승하는 무리의 선두'이지 혼자 뛰는 종목이 아니다. 테마 집계에는
+#   totalAccAmount(테마 전체 거래대금)와 leadingItem(네이버가 지정한 대장주)이 들어 있어,
+#   종목 쏠림과 테마 쏠림을 같은 시각에 나란히 볼 수 있다.
+#   ⚠️ 테마끼리 종목이 겹친다(한 종목이 여러 테마에 속함). 테마 거래대금을 전부 더하면
+#      중복 합산이 되므로 총량이 아니라 '테마 간 순위·비중'으로만 해석할 것.
 #
 # 사용법
 #   python hyeoks_market_snapshot.py --slot 1300
@@ -34,6 +43,7 @@ import csv
 import gzip
 import argparse
 import datetime
+import time
 import xml.etree.ElementTree as ET
 
 import requests
@@ -68,10 +78,36 @@ SESSION.headers.update({
 MARKET_URL = ("https://stock.naver.com/api/domestic/market/stock/default"
               "?tradeType=KRX&marketType=ALL&orderType=priceTop&startIdx=0&pageSize=3000")
 
+# 🏷️ 테마 — type=theme + pageSize=200 이라야 전량(200개)이 나온다.
+#    파라미터를 빼면 등락률 상위 20개만 오고, pageSize 를 250 이상 주면 400 이 떨어진다.
+#    startIdx=200 은 빈 배열이므로 200개가 전부다.
+THEME_LIST_URL = ("https://stock.naver.com/api/domestic/market/theme/list"
+                  "?type=theme&pageSize=200")
+THEME_STOCK_URL = ("https://stock.naver.com/api/domestic/market/theme/{no}/stocklist"
+                   "?marketType=ALL&orderType=priceTop&startIdx=0&pageSize=100")
+
 # 보관 필드 — 나중에 무엇을 물어볼지 다 알 수 없으므로 판단 근거가 될 만한 원자료를 넓게 남긴다.
 FIELDS = ["itemcode", "itemname", "sosok", "nowPrice", "openPrice", "highPrice", "lowPrice",
           "prevChangeRate", "tradeVolume", "tradeAmount", "marketSum", "listedStockCnt",
           "frgnHoldRate", "manageStatusGb", "tradeStopYn", "marketAlertType", "marketStatus"]
+
+# 테마 집계 필드. ⚠️ totalAccAmount 단위는 **천원** 이다 (종목 tradeAmount 는 원 — 서로 다르다).
+THEME_FIELDS = ["no", "name", "totalCnt", "riseCnt", "fallCnt", "steadyCnt", "changeRate",
+                "totalAccQuant", "totalAccAmount", "totalMarketSum",
+                "recent3daysChangeRate", "leadingItem"]
+
+# 종목 행에 덧붙이는 테마 열
+#   themeNos   — 이 종목이 속한 테마 번호 전부(파이프 구분). 테마 파일의 no 와 조인한다.
+#   topThemeNo — 그중 거래대금이 가장 큰 테마. 이 종목의 '주 소속'으로 볼 만한 것.
+#   leadOf     — 네이버가 이 종목을 '대장'으로 지정한 테마 번호들. 비어 있으면 대장이 아니다.
+#
+# ⚠️ leadOf 를 그대로 '당일 대장주'로 쓰면 안 된다.
+#    실측(2026-08-27): 삼성전자가 '공기청정기'·'제습기'·'NFT' 의 대장으로 잡힌다. 즉 네이버의
+#    leadingItem 은 그날의 수급이 아니라 **시가총액 기준의 정적 지정**으로 보인다.
+#    우리가 찾는 대장(당일 거래대금·등락률이 그 테마를 끌고 가는 종목)은 스냅샷에서 직접
+#    계산해야 한다 — themeNos 로 묶어 테마 내 tradeAmount·prevChangeRate 상위를 뽑는 방식.
+#    leadOf 는 그 계산 결과와 얼마나 어긋나는지 보는 **대조군**으로 남긴다.
+THEME_COLS = ["themeNos", "topThemeNo", "leadOf"]
 
 
 def is_trading_day(today_str):
@@ -105,6 +141,59 @@ def index_snapshot():
     return out
 
 
+def fetch_theme_data():
+    """테마 200개 + 각 테마 구성종목을 받아 (테마행, 코드→테마번호들, 코드→대장인테마들) 로 만든다.
+
+    ⚠️ 이 함수는 예외를 밖으로 내지 않는다. 테마가 실패해도 가격 스냅샷은 저장돼야 한다 —
+       관측이 통째로 끊기는 것이 최악이다. 실패 시 빈 값을 주고 종목 행의 테마 열은 공란이 된다.
+    구성종목 조회가 200회라 30초 남짓 걸린다(워크플로 타임아웃 10분 안에서 충분).
+    """
+    try:
+        r = SESSION.get(THEME_LIST_URL, verify=False, timeout=20)
+        raw = r.json() if r.status_code == 200 else []
+        themes = [x for x in raw if isinstance(x, dict) and x.get("no")]
+    except Exception as e:
+        print(f"⚠️ 테마 목록 조회 실패: {e} — 테마 없이 진행한다")
+        return [], {}, {}
+    if not themes:
+        print("⚠️ 테마 목록이 비었다 — 테마 없이 진행한다")
+        return [], {}, {}
+
+    # leadingItem 은 "2,000500,가온전선|2,229640,LS에코에너지" 형태의 문자열이다 (소속,코드,종목명).
+    lead = {}
+    for t in themes:
+        for part in str(t.get("leadingItem") or "").split("|"):
+            bits = part.split(",")
+            if len(bits) >= 2 and bits[1].strip().isdigit():
+                lead.setdefault(bits[1].strip(), []).append(str(t["no"]))
+
+    belong, fails = {}, 0
+    for t in themes:
+        try:
+            rr = SESSION.get(THEME_STOCK_URL.format(no=t["no"]), verify=False, timeout=10)
+            for x in (rr.json() if rr.status_code == 200 else []):
+                c = str(x.get("itemcode", "")).strip()
+                if c.isdigit():
+                    belong.setdefault(c, []).append(str(t["no"]))
+        except Exception:
+            fails += 1
+        time.sleep(0.08)
+
+    print(f"🏷️ 테마 {len(themes)}개 · 매핑 {len(belong)}종목 · 대장 지정 {len(lead)}종목"
+          + (f" (구성종목 조회 실패 {fails}개)" if fails else ""))
+    return themes, belong, lead
+
+
+def _read_theme(path):
+    """테마 스냅샷 1개를 행 dict 리스트로 읽는다. 없거나 깨졌으면 빈 리스트."""
+    try:
+        with gzip.open(path, "rt", encoding="utf-8") as fp:
+            rows = list(csv.reader(fp))
+        return [dict(zip(rows[1], r)) for r in rows[2:]]
+    except Exception:
+        return []
+
+
 def _read(path):
     """스냅샷 1개를 읽어 (메타dict, {코드: 행dict}) 로 돌려준다."""
     with gzip.open(path, "rt", encoding="utf-8") as fp:
@@ -135,7 +224,8 @@ def write_readme():
     그래서 마크다운 요약을 같이 두어, 브라우저만으로 '오늘 무엇이 잡혔는지'를 확인할 수 있게 한다.
     (분석은 여전히 원본 .csv.gz 로 한다. 이 파일은 사람이 보는 용도다.)"""
     try:
-        files = sorted(f for f in os.listdir(OUT_DIR) if f.endswith(".csv.gz"))
+        files = sorted(f for f in os.listdir(OUT_DIR)
+                       if f.endswith(".csv.gz") and not f.endswith("_theme.csv.gz"))
     except Exception:
         return
     days = {}
@@ -206,6 +296,24 @@ def write_readme():
                          f"**+{g:.0f}%** | {_f(x['tradeAmount']) / 1e8:,.0f}억 | {risk(x)} |")
             L.append("")
 
+    # 🏷️ 테마 자금 쏠림 — 종목 단위로는 안 보이는 '무리 단위' 쏠림
+    _tslot = next((k for k in ("1505", "1300") if k in slots), sorted(slots)[-1] if slots else "")
+    th = _read_theme(f"{OUT_DIR}/{latest}_{_tslot}_theme.csv.gz")
+    if th:
+        L += ["### 🏷️ 테마 자금 쏠림 TOP 10", "",
+              "네이버 테마 200개를 거래대금순으로. `대장`은 네이버가 지정한 주도주다.",
+              "테마끼리 종목이 겹치므로 **합계가 아니라 순위로만** 볼 것.", "",
+              "| # | 테마 | 등락률 | 거래대금 | 상승/전체 | 3일 | 대장 |",
+              "|---:|---|---:|---:|:---:|---:|---|"]
+        for i, t in enumerate(th[:10], 1):
+            names = [p.split(",")[2] for p in str(t.get("leadingItem", "")).split("|")
+                     if len(p.split(",")) >= 3]
+            L.append(f"| {i} | {t.get('name', '')[:18]} | {t.get('changeRate', '')}% | "
+                     f"{_f(t.get('totalAccAmount')) / 1e5:,.0f}억 | "
+                     f"{t.get('riseCnt', '')}/{t.get('totalCnt', '')} | "
+                     f"{t.get('recent3daysChangeRate', '')}% | {' · '.join(names[:2])} |")
+        L.append("")
+
     L += ["### 수집 이력", "",
           f"총 **{len(days)}일 / {len(files)}개** 파일", "",
           "| 날짜 | 13:00 | 15:05 |", "|---|:---:|:---:|"]
@@ -269,6 +377,14 @@ def main():
 
     top = sorted(rows, key=amt, reverse=True)[:TOP_N]
 
+    # 🏷️ 테마 — 실패해도 가격 스냅샷 저장은 계속한다.
+    themes, belong, lead = [], {}, {}
+    try:
+        themes, belong, lead = fetch_theme_data()
+    except Exception as e:
+        print(f"⚠️ 테마 수집 전체 실패: {e} — 가격 스냅샷은 그대로 저장한다")
+    tamt = {str(t.get("no")): _f(t.get("totalAccAmount")) for t in themes}
+
     os.makedirs(OUT_DIR, exist_ok=True)
     path = f"{OUT_DIR}/{today}_{a.slot}.csv.gz"
     idx = index_snapshot()
@@ -280,9 +396,28 @@ def main():
                     f"total={len(rows)}", f"kept={len(top)}",
                     f"KOSPI={idx['KOSPI'][0]}({idx['KOSPI'][1]})",
                     f"KOSDAQ={idx['KOSDAQ'][0]}({idx['KOSDAQ'][1]})"])
-        w.writerow(FIELDS)
+        w.writerow(FIELDS + THEME_COLS)
         for x in top:
-            w.writerow([str(x.get(k, "")) for k in FIELDS])
+            c = str(x.get("itemcode", "")).strip()
+            nos = belong.get(c, [])
+            topno = max(nos, key=lambda n: tamt.get(n, 0.0)) if nos else ""
+            w.writerow([str(x.get(k, "")) for k in FIELDS]
+                       + ["|".join(nos), topno, "|".join(lead.get(c, []))])
+
+    # 테마 집계는 별도 파일 — 스키마가 다르고, 이 파일이 없어도 종목 분석은 그대로 된다.
+    if themes:
+        tpath = f"{OUT_DIR}/{today}_{a.slot}_theme.csv.gz"
+        with gzip.open(tpath, "wt", encoding="utf-8", newline="") as fp:
+            tw = csv.writer(fp)
+            tw.writerow(["#meta", f"capturedAt={now.isoformat()}", f"slot={a.slot}",
+                         f"themes={len(themes)}", "amountUnit=천원"])
+            tw.writerow(THEME_FIELDS)
+            for t in sorted(themes, key=lambda z: -_f(z.get("totalAccAmount"))):
+                tw.writerow([str(t.get(k, "")) for k in THEME_FIELDS])
+        print(f"✅ 테마 저장 {tpath}  ({os.path.getsize(tpath):,}바이트)")
+        hot = sorted(themes, key=lambda z: -_f(z.get("totalAccAmount")))[0]
+        print(f"   테마 거래대금 1위: {hot.get('name')} "
+              f"{_f(hot.get('totalAccAmount')) / 1e5:,.0f}억 ({hot.get('changeRate')}%)")
 
     size = os.path.getsize(path)
     lead = top[0] if top else {}
