@@ -105,6 +105,118 @@ def index_snapshot():
     return out
 
 
+def _read(path):
+    """스냅샷 1개를 읽어 (메타dict, {코드: 행dict}) 로 돌려준다."""
+    with gzip.open(path, "rt", encoding="utf-8") as fp:
+        rows = list(csv.reader(fp))
+    meta = {}
+    for kv in rows[0][1:]:
+        if "=" in kv:
+            k, v = kv.split("=", 1)
+            meta[k] = v
+    hdr = rows[1]
+    out = {}
+    for r in rows[2:]:
+        d = dict(zip(hdr, r))
+        out[d["itemcode"]] = d
+    return meta, out
+
+
+def _f(v):
+    try:
+        return float(str(v).replace(",", "").strip() or 0)
+    except Exception:
+        return 0.0
+
+
+def write_readme():
+    """폰에서도 읽히는 요약을 만든다.
+    .csv.gz 는 gzip 바이너리라 깃허브가 미리보기를 못 한다 — 파일명·크기만 보이고 내용은 안 보인다.
+    그래서 마크다운 요약을 같이 두어, 브라우저만으로 '오늘 무엇이 잡혔는지'를 확인할 수 있게 한다.
+    (분석은 여전히 원본 .csv.gz 로 한다. 이 파일은 사람이 보는 용도다.)"""
+    try:
+        files = sorted(f for f in os.listdir(OUT_DIR) if f.endswith(".csv.gz"))
+    except Exception:
+        return
+    days = {}
+    for f in files:
+        d, slot = f[:-7].rsplit("_", 1)
+        days.setdefault(d, {})[slot] = f"{OUT_DIR}/{f}"
+    if not days:
+        return
+
+    L = ["# 📸 장중 시장 스냅샷", "",
+         "거래대금 상위 300종목을 하루 두 번(13:00 / 15:05 KST) 기록한다. "
+         "두 스냅샷의 **거래대금 차이가 곧 '오후 수급'** 이다.", "",
+         "> 이 파일은 사람이 보는 요약이다. 분석은 같은 폴더의 `.csv.gz` 원본으로 한다.",
+         "> 파일명의 슬롯은 '의도한 시각'일 뿐이니, 정확한 시각은 원본 첫 줄의 `capturedAt` 을 볼 것.", ""]
+
+    latest = sorted(days)[-1]
+    slots = days[latest]
+    m13, s13 = _read(slots["1300"]) if "1300" in slots else ({}, {})
+    m15, s15 = _read(slots["1505"]) if "1505" in slots else ({}, {})
+    base = s15 or s13
+    meta = m15 or m13
+
+    L += [f"## 최신: {latest}", "",
+          f"- 캡처 — 13:00슬롯 `{m13.get('capturedAt', '없음')[11:19] or '없음'}` / "
+          f"15:05슬롯 `{m15.get('capturedAt', '없음')[11:19] or '없음'}`",
+          f"- 지수 — KOSPI {meta.get('KOSPI', '?')} · KOSDAQ {meta.get('KOSDAQ', '?')}",
+          f"- 스캔 {meta.get('total', '?')}종목 중 상위 {meta.get('kept', '?')}종목 보관", ""]
+
+    def risk(x):
+        f = []
+        if str(x.get("manageStatusGb") or "0") != "0":
+            f.append("관리")
+        if x.get("tradeStopYn") == "Y":
+            f.append("정지")
+        f.append({"01": "주의", "02": "경고", "03": "위험"}.get(x.get("marketAlertType"), ""))
+        return "·".join(y for y in f if y)
+
+    if base:
+        top = sorted(base.values(), key=lambda x: -_f(x["tradeAmount"]))[:15]
+        L += ["### 거래대금 TOP 15", "",
+              "| # | 종목 | 등락률 | 거래대금 | 오후증가 | 비고 |", "|---:|---|---:|---:|---:|---|"]
+        for i, x in enumerate(top, 1):
+            a15 = _f(x["tradeAmount"])
+            prev = s13.get(x["itemcode"])
+            grow = f"+{(a15 - _f(prev['tradeAmount'])) / _f(prev['tradeAmount']) * 100:.0f}%"                 if prev and _f(prev["tradeAmount"]) > 0 and s15 else "—"
+            L.append(f"| {i} | {x['itemname']} | {x['prevChangeRate']}% | "
+                     f"{a15 / 1e8:,.0f}억 | {grow} | {risk(x)} |")
+        L.append("")
+
+    # 🔥 오후 수급 급증 — 우리가 3주 뒤 검증하려는 바로 그 값이다.
+    if s13 and s15:
+        cand = []
+        for c, x in s15.items():
+            p = s13.get(c)
+            if not p:
+                continue
+            a0, a1 = _f(p["tradeAmount"]), _f(x["tradeAmount"])
+            if a0 <= 0 or a1 < 3e10:          # 오후 거래대금 300억 미만은 노이즈로 제외
+                continue
+            cand.append(((a1 - a0) / a0 * 100, x))
+        cand.sort(key=lambda t: -t[0])
+        if cand:
+            L += ["### 🔥 오후 수급 급증 TOP 10", "",
+                  "13:00 → 15:05 거래대금 증가율. 오후 거래대금 300억 이상만.", "",
+                  "| # | 종목 | 등락률 | 증가율 | 오후 거래대금 | 비고 |", "|---:|---|---:|---:|---:|---|"]
+            for i, (g, x) in enumerate(cand[:10], 1):
+                L.append(f"| {i} | {x['itemname']} | {x['prevChangeRate']}% | "
+                         f"**+{g:.0f}%** | {_f(x['tradeAmount']) / 1e8:,.0f}억 | {risk(x)} |")
+            L.append("")
+
+    L += ["### 수집 이력", "",
+          f"총 **{len(days)}일 / {len(files)}개** 파일", "",
+          "| 날짜 | 13:00 | 15:05 |", "|---|:---:|:---:|"]
+    for d in sorted(days, reverse=True)[:25]:
+        L.append(f"| {d} | {'✅' if '1300' in days[d] else '—'} | {'✅' if '1505' in days[d] else '—'} |")
+    L += ["", f"_자동 생성: {datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')} KST_"]
+
+    io.open(f"{OUT_DIR}/README.md", "w", encoding="utf-8", newline="\n").write("\n".join(L) + "\n")
+    print(f"📝 요약 갱신 — {OUT_DIR}/README.md ({len(days)}일치)")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--slot", required=True, choices=sorted(SLOTS) + ["manual"],
@@ -179,6 +291,8 @@ def main():
     print(f"   지수 KOSPI {idx['KOSPI'][0]}({idx['KOSPI'][1]}) / KOSDAQ {idx['KOSDAQ'][0]}({idx['KOSDAQ'][1]})")
     print(f"   거래대금 1위: {lead.get('itemname')} {amt(lead)/1e8:,.0f}억 "
           f"({lead.get('prevChangeRate')}%)")
+
+    write_readme()   # 폰에서 읽을 수 있는 요약 갱신
     return 0
 
 
