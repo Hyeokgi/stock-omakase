@@ -22,8 +22,10 @@
 #   주도주는 언제나 거래대금 상위권에 있으므로 전 종목을 보관할 이유가 없다.
 #
 # 사용법
-#   python hyeoks_market_snapshot.py --tag 1300
-#   python hyeoks_market_snapshot.py --tag 1510
+#   python hyeoks_market_snapshot.py --slot 1300
+#   python hyeoks_market_snapshot.py --slot 1505
+#   (GAS 시간 트리거가 깃허브 워크플로를 dispatch 하고, 워크플로가 이 스크립트를 슬롯과 함께 부른다.
+#    깃허브 cron 은 지연이 커서 정밀 타이밍을 맡길 수 없다 — GAS 가 정시에 쏜다.)
 # ==========================================================================
 import os
 import io
@@ -44,6 +46,16 @@ KST = datetime.timezone(datetime.timedelta(hours=9))
 OUT_DIR = "data/market_snapshot"
 TOP_N = 300          # 거래대금 상위 N종목만 보관
 MIN_ROWS = 1500      # 전체 스캔이 이보다 적으면 응답이 잘린 것으로 보고 저장하지 않음
+
+# ⏰ [시간 창 가드] 슬롯별로 '이 시각 안에 찍힌 것만 유효'하다.
+#    깃허브 cron 은 지연이 크다(2026-08-27 실측: 정적데이터 4시간 54분, 캘린더 4시간 45분 지연).
+#    늦게 도착한 실행이 그대로 저장되면 13:00 스냅샷도 15:05 스냅샷도 아닌 '그냥 종가 스냅샷'이
+#    표본에 섞여 분석이 오염된다. 창 밖이면 저장하지 않고 종료한다.
+#    창 폭은 GAS 시간 기반 트리거의 지터(±15분)를 감안해 잡았다.
+SLOTS = {
+    "1300": ((12, 40), (13, 40)),   # 오전장 마감 시점
+    "1505": ((14, 50), (15, 25)),   # 종가 동시호가(15:20) 직전
+}
 
 SESSION = requests.Session()
 SESSION.headers.update({
@@ -95,16 +107,34 @@ def index_snapshot():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--tag", required=True, help="스냅샷 시각 태그 (예: 1300, 1510)")
-    ap.add_argument("--force", action="store_true", help="휴장일 판정을 무시하고 저장")
+    ap.add_argument("--slot", required=True, choices=sorted(SLOTS) + ["manual"],
+                    help="스냅샷 슬롯 (1300 | 1505 | manual)")
+    ap.add_argument("--force", action="store_true",
+                    help="휴장일·시간창 판정을 모두 무시하고 저장 (테스트용)")
     a = ap.parse_args()
 
     now = datetime.datetime.now(KST)
     today = now.strftime('%Y-%m-%d')
-    print(f"📸 [시장 스냅샷] tag={a.tag}  {now.strftime('%Y-%m-%d %H:%M:%S')} KST")
+    print(f"📸 [시장 스냅샷] slot={a.slot}  {now.strftime('%Y-%m-%d %H:%M:%S')} KST")
 
     if not a.force and not is_trading_day(today):
         print(f"🚫 {today} 는 거래일이 아님 — 저장하지 않고 종료")
+        return 0
+
+    # ⏰ 시간 창 검사 — 늦게 도착한 실행은 조용히 버린다(빈손이 오염보다 낫다).
+    if not a.force and a.slot in SLOTS:
+        (sh, sm), (eh, em) = SLOTS[a.slot]
+        cur = now.hour * 60 + now.minute
+        if not (sh * 60 + sm <= cur <= eh * 60 + em):
+            print(f"🚫 시간 창 밖 — slot {a.slot} 유효구간 "
+                  f"{sh:02d}:{sm:02d}~{eh:02d}:{em:02d}, 현재 {now.strftime('%H:%M')}")
+            print("   (늦게 도착한 실행은 저장하지 않는다. 오염된 표본보다 결측이 낫다)")
+            return 0
+
+    # 같은 슬롯을 이미 찍었으면 덮어쓰지 않는다 (트리거 중복 발사 대비)
+    dup = f"{OUT_DIR}/{today}_{a.slot}.csv.gz"
+    if not a.force and os.path.exists(dup):
+        print(f"ℹ️ 이미 존재 — {dup} (중복 실행으로 보고 종료)")
         return 0
 
     try:
@@ -128,12 +158,13 @@ def main():
     top = sorted(rows, key=amt, reverse=True)[:TOP_N]
 
     os.makedirs(OUT_DIR, exist_ok=True)
-    path = f"{OUT_DIR}/{today}_{a.tag}.csv.gz"
+    path = f"{OUT_DIR}/{today}_{a.slot}.csv.gz"
     idx = index_snapshot()
     with gzip.open(path, "wt", encoding="utf-8", newline="") as fp:
         w = csv.writer(fp)
         # 1행: 메타 (실제 캡처 시각이 중요하다 — 깃허브 cron 은 10분 이상 늦게 도는 일이 흔하다)
-        w.writerow(["#meta", f"capturedAt={now.isoformat()}", f"tag={a.tag}",
+        # capturedAt 이 진짜 기준이다 — 파일명의 슬롯은 '의도한 시각'일 뿐이다.
+        w.writerow(["#meta", f"capturedAt={now.isoformat()}", f"slot={a.slot}",
                     f"total={len(rows)}", f"kept={len(top)}",
                     f"KOSPI={idx['KOSPI'][0]}({idx['KOSPI'][1]})",
                     f"KOSDAQ={idx['KOSDAQ'][0]}({idx['KOSDAQ'][1]})"])

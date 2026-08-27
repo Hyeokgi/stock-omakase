@@ -9,22 +9,27 @@ name: 📸 HYEOKS 장중 시장 스냅샷
 # 관측 전용: 구글시트를 읽지도 쓰지도 않는다. 선정 로직에 어떤 영향도 없다.
 #            → 시트 락 불필요, 9/7 판정 기준선 무영향.
 #
-# ⚠️ 깃허브 cron 은 정시에 안 돈다(10~20분 지연이 흔하다). 그래서 파일 첫 줄에
-#    실제 캡처 시각(capturedAt)을 기록한다. 분석 시 그 값을 기준으로 삼을 것.
+# ⚠️ 파일 첫 줄에 실제 캡처 시각(capturedAt)을 기록한다. 파일명의 슬롯은 '의도한 시각'일 뿐이니
+#    분석할 때는 반드시 capturedAt 을 기준으로 삼을 것.
+#    스크립트에 시간 창 가드가 있어 창(1300: 12:40~13:40 / 1505: 14:50~15:25) 밖이면 저장을 거부한다.
+#    늦게 도착한 실행이 '그냥 종가 스냅샷'으로 표본에 섞이는 것을 막기 위함이다.
 
+# 🔔 트리거는 GAS 가 쏜다 (매크로.gs 의 triggerMarketSnapshot1300 / 1505).
+#    깃허브 cron 을 쓰지 않는 이유 — 지연이 너무 크다.
+#    2026-08-27 실측: 정적데이터 4시간 54분, 캘린더 4시간 45분 지연. 그날 스냅샷 예약분은
+#    아예 드롭됐다. 15:05 스냅샷은 '동시호가 직전'이라는 게 핵심이라 지연을 감당할 수 없다.
+#    GAS 시간 기반 트리거는 구글 인프라에서 돌아 지터가 ±15분 수준이다.
 on:
-  schedule:
-    - cron: '0 4 * * 1-5'    # 13:00 KST — 오전장 마감 시점
-    - cron: '5 6 * * 1-5'    # 15:05 KST — 동시호가(15:20) 직전
   workflow_dispatch:
     inputs:
-      tag:
-        description: '스냅샷 태그 (수동 실행 시)'
-        required: false
-        default: 'manual'
-        type: string
+      slot:
+        description: '스냅샷 슬롯 (1300 | 1505 | manual)'
+        required: true
+        default: '1505'
+        type: choice
+        options: ['1300', '1505', 'manual']
       force:
-        description: '휴장일 판정을 무시하고 저장'
+        description: '휴장일·시간창 판정을 무시하고 저장 (테스트용)'
         required: false
         default: false
         type: boolean
@@ -55,36 +60,27 @@ jobs:
         python -m pip install --upgrade pip
         pip install requests
 
-    - name: 🏷️ 태그 결정
-      id: tag
-      run: |
-        # 예약 실행이면 현재 KST 시각(HHMM)을, 수동이면 입력값을 쓴다.
-        if [ "${{ github.event_name }}" = "schedule" ]; then
-          echo "value=$(TZ=Asia/Seoul date +%H%M)" >> "$GITHUB_OUTPUT"
-        else
-          echo "value=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
-        fi
-
     - name: 📸 스냅샷 수집
       id: snap
       run: |
         set +e
         FORCE=""
         if [ "${{ inputs.force }}" = "true" ]; then FORCE="--force"; fi
-        python hyeoks_market_snapshot.py --tag "${{ steps.tag.outputs.value }}" $FORCE
+        # 시간 창 밖이거나 휴장일이면 스크립트가 스스로 저장을 거부하고 0으로 끝난다.
+        python hyeoks_market_snapshot.py --slot "${{ inputs.slot }}" $FORCE
         echo "exit_code=$?" >> "$GITHUB_OUTPUT"
         exit 0
 
     - name: 💾 저장소에 커밋
       run: |
         if [ -z "$(git status --porcelain data/market_snapshot)" ]; then
-          echo "ℹ️ 새 파일 없음 (휴장일이거나 수집 실패) — 커밋 생략"
+          echo "ℹ️ 새 파일 없음 (휴장일·시간창 밖·중복·수집실패) — 커밋 생략"
           exit 0
         fi
         git config user.name  "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
         git add data/market_snapshot
-        git commit -m "data: 시장 스냅샷 $(TZ=Asia/Seoul date +%Y-%m-%d_%H%M) [skip ci]"
+        git commit -m "data: 시장 스냅샷 $(TZ=Asia/Seoul date +%Y-%m-%d) slot=${{ inputs.slot }} [skip ci]"
         # 다른 워크플로/사람이 그 사이 푸시했을 수 있으므로 rebase 후 재시도
         for i in 1 2 3; do
           git pull --rebase --autostash origin main && git push origin HEAD:main && exit 0
