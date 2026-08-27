@@ -1,0 +1,86 @@
+name: ⏱️ HYEOKS 분봉 프로파일
+
+# 목적: 하루가 끝난 뒤 거래대금 상위 300종목의 분봉을 30분 버킷으로 압축해 보관한다.
+#       서로 반대되는 두 주장 중 어느 쪽이 맞는지 판정하기 위한 데이터다 —
+#         ① 오후 수급 (유튜브 고수): 오후에 거래량이 **늘어야** 익일이 좋다
+#         ② 거자름/에너지응축 (제미나이): 오후에 거래량이 **말라야** 좋다
+#       시장 스냅샷(13:00/15:05)의 2점 차이로는 '오전 피크 대비 오후가 얼마나 말랐나'를 못 잰다.
+#
+# ⚠️ 네이버 분봉은 최근 6거래일치만 조회된다. 지금 안 모으면 사후 복원이 불가능하다.
+#
+# ✅ 지연에 강하다 — 그래서 GAS 가 아니라 깃허브 cron 으로 충분하다.
+#    분봉은 장이 끝나면 확정된 과거 데이터라 16:00 에 받든 22:00 에 받든 값이 같다.
+#    (시장 스냅샷은 '그 시각의 값'이 핵심이라 GAS 로 정시에 쏴야 했다 — market_snapshot.yml 참고)
+#    설령 하루 통째로 실패해도 6거래일 안에 --date 로 메울 수 있다.
+#
+# 관측 전용: 구글시트를 읽지도 쓰지도 않는다 → 시트 락 불필요, 9/7 기준선 무영향.
+
+on:
+  schedule:
+    - cron: '0 7 * * 1-5'    # 평일 16:00 KST (07:00 UTC). 늦게 돌아도 데이터가 같다.
+  workflow_dispatch:
+    inputs:
+      date:
+        description: '수집할 날짜 YYYY-MM-DD (비우면 오늘). 6거래일 이내만 가능'
+        required: false
+        default: ''
+      top:
+        description: '거래대금 상위 N종목'
+        required: false
+        default: '300'
+
+concurrency:
+  group: hyeoks-intraday-lock    # 시트를 안 쓰므로 다른 워크플로와 분리
+  cancel-in-progress: false
+
+permissions:
+  contents: write                # 프로파일을 저장소에 커밋해야 함
+
+jobs:
+  intraday:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20          # 300종목 × 분봉 = 실측 1~2분. 여유를 크게 둔다.
+
+    steps:
+    - name: 📥 코드 가져오기
+      uses: actions/checkout@v4
+
+    - name: 🐍 파이썬 세팅
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: 📦 라이브러리 설치
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests
+
+    - name: ⏱️ 분봉 프로파일 수집
+      run: |
+        set +e
+        ARGS=""
+        if [ -n "${{ inputs.date }}" ]; then ARGS="$ARGS --date ${{ inputs.date }}"; fi
+        if [ -n "${{ inputs.top }}"  ]; then ARGS="$ARGS --top ${{ inputs.top }}"; fi
+        # 휴장일·장중·이미 존재 등은 스크립트가 스스로 판단해 저장을 건너뛴다.
+        python hyeoks_intraday_collector.py $ARGS
+        echo "exit=$?"
+        exit 0
+
+    - name: 💾 저장소에 커밋
+      run: |
+        if [ -z "$(git status --porcelain data/intraday_profile)" ]; then
+          echo "ℹ️ 새 파일 없음 (휴장일·장중·중복·수집실패) — 커밋 생략"
+          exit 0
+        fi
+        git config user.name  "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add data/intraday_profile
+        git commit -m "data: 분봉 프로파일 $(TZ=Asia/Seoul date +%Y-%m-%d) [skip ci]"
+        # 스냅샷 워크플로가 같은 시간대에 푸시할 수 있으므로 rebase 후 재시도
+        for i in 1 2 3; do
+          git pull --rebase --autostash origin main && git push origin HEAD:main && exit 0
+          echo "⚠️ 푸시 재시도 $i/3"
+          sleep 5
+        done
+        echo "❌ 푸시 실패"
+        exit 1
