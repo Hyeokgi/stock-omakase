@@ -18,9 +18,13 @@
 #   · 선정·점수·채널에 어떤 영향도 주지 않는다. 순수 관측이다.
 #
 # 저장
-#   data/market_snapshot/YYYY-MM-DD_{tag}.csv.gz        (거래대금 상위 TOP_N)
-#   data/market_snapshot/YYYY-MM-DD_{tag}_theme.csv.gz  (네이버 테마 200개 집계)
-#   주도주는 언제나 거래대금 상위권에 있으므로 전 종목을 보관할 이유가 없다.
+#   data/market_snapshot/YYYY-MM-DD_{tag}.csv.gz        (전 종목)
+#   data/market_snapshot/YYYY-MM-DD_{tag}_theme.csv.gz  (네이버 테마 전량)
+#
+#   ⚠️ 처음에는 거래대금 상위 300종목만 남겼다가 전 종목으로 바꿨다(2026-08-27).
+#      거래대금으로 자르면 삼성전자·SK하이닉스가 언제나 위에 있어, 정작 찾으려는
+#      '평소보다 급증해 시장을 주도하기 시작한 종목'이 잘려 나간다. 대장 판정 기준을
+#      아직 정하지 못했으므로 후보를 미리 좁히지 않는다.
 #
 # 테마를 왜 같이 찍나
 #   "자금이 어디로 쏠렸나"는 종목 단위로만 보면 안 보인다. 고수가 말하는 대장주는
@@ -54,7 +58,9 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='repla
 
 KST = datetime.timezone(datetime.timedelta(hours=9))
 OUT_DIR = "data/market_snapshot"
-TOP_N = 300          # 거래대금 상위 N종목만 보관
+TOP_N = 0            # 0 = 전 종목 보관. 대장주 후보를 사전에 좁히지 않기 위함이다 —
+                     # 거래대금 상위만 남기면 삼성전자·SK하이닉스가 늘 1등이라 그 아래에서
+                     # 무슨 일이 있었는지가 통째로 사라진다. 전체 약 2,880종목 / 회당 약 120KB.
 MIN_ROWS = 1500      # 전체 스캔이 이보다 적으면 응답이 잘린 것으로 보고 저장하지 않음
 
 # ⏰ [시간 창 가드] 슬롯별로 '이 시각 안에 찍힌 것만 유효'하다.
@@ -78,11 +84,15 @@ SESSION.headers.update({
 MARKET_URL = ("https://stock.naver.com/api/domestic/market/stock/default"
               "?tradeType=KRX&marketType=ALL&orderType=priceTop&startIdx=0&pageSize=3000")
 
-# 🏷️ 테마 — type=theme + pageSize=200 이라야 전량(200개)이 나온다.
-#    파라미터를 빼면 등락률 상위 20개만 오고, pageSize 를 250 이상 주면 400 이 떨어진다.
-#    startIdx=200 은 빈 배열이므로 200개가 전부다.
-THEME_LIST_URL = ("https://stock.naver.com/api/domestic/market/theme/list"
-                  "?type=theme&pageSize=200")
+# 🏷️ 테마 — rankings v2. 구 `market/theme/list` 보다 이쪽이 낫다.
+#    구 API 는 leadingItem 하나(등락률 상위 2종목)만 주는데, v2 는 대장 후보를
+#    **네 기준으로 따로** 준다 — topByChangeRate / topByTradingValue /
+#    topByMarketCap / topByTradingVolume. 어떤 정의가 맞는지 아직 모르므로
+#    네 가지를 다 받아 두고 판단은 나중에 한다.
+#    cursor 페이지네이션으로 전량(약 266개)을 받는다. 구 API 는 200개에서 잘렸다.
+THEME_V2_URL = ("https://stock.naver.com/api/stockSecurity/rankings/v2/domestic/themes"
+                "?sortType=changeRate&size=100&period=daily")
+# 구성종목(코드→테마) 매핑은 v2 에 없어 구 엔드포인트를 계속 쓴다. 테마 번호 체계는 동일하다.
 THEME_STOCK_URL = ("https://stock.naver.com/api/domestic/market/theme/{no}/stocklist"
                    "?marketType=ALL&orderType=priceTop&startIdx=0&pageSize=100")
 
@@ -91,23 +101,29 @@ FIELDS = ["itemcode", "itemname", "sosok", "nowPrice", "openPrice", "highPrice",
           "prevChangeRate", "tradeVolume", "tradeAmount", "marketSum", "listedStockCnt",
           "frgnHoldRate", "manageStatusGb", "tradeStopYn", "marketAlertType", "marketStatus"]
 
-# 테마 집계 필드. ⚠️ totalAccAmount 단위는 **천원** 이다 (종목 tradeAmount 는 원 — 서로 다르다).
-THEME_FIELDS = ["no", "name", "totalCnt", "riseCnt", "fallCnt", "steadyCnt", "changeRate",
-                "totalAccQuant", "totalAccAmount", "totalMarketSum",
-                "recent3daysChangeRate", "leadingItem"]
+# 테마 집계 필드 (v2). 단위는 전부 **원** 이다 — 종목 tradeAmount 와 같다.
+#   topBy* 4종은 각각 상위 3종목이며 "코드:종목명:값|..." 으로 눌러 담는다.
+THEME_FIELDS = ["ranking", "code", "name", "changeRate",
+                "risingCount", "fallingCount", "unchangedCount",
+                "totalMarketCap", "totalTradingVolume", "totalTradingValue",
+                "topByChangeRate", "topByTradingValue", "topByMarketCap", "topByTradingVolume",
+                "updatedAt"]
+THEME_TOPS = ["topByChangeRate", "topByTradingValue", "topByMarketCap", "topByTradingVolume"]
 
-# 종목 행에 덧붙이는 테마 열
-#   themeNos   — 이 종목이 속한 테마 번호 전부(파이프 구분). 테마 파일의 no 와 조인한다.
-#   topThemeNo — 그중 거래대금이 가장 큰 테마. 이 종목의 '주 소속'으로 볼 만한 것.
-#   leadOf     — 네이버가 이 종목을 '대장'으로 지정한 테마 번호들. 비어 있으면 대장이 아니다.
+# 종목 행에 덧붙이는 테마 열 — 판정에 쓰는 값이 아니라 조인 키다.
+#   themeNos   — 이 종목이 속한 테마 번호 전부(파이프 구분). 테마 파일의 code 와 조인한다.
+#   topThemeNo — 그중 테마 거래대금이 가장 큰 테마. '주 소속'으로 볼 만한 것.
 #
-# ⚠️ leadOf 를 그대로 '당일 대장주'로 쓰면 안 된다.
-#    실측(2026-08-27): 삼성전자가 '공기청정기'·'제습기'·'NFT' 의 대장으로 잡힌다. 즉 네이버의
-#    leadingItem 은 그날의 수급이 아니라 **시가총액 기준의 정적 지정**으로 보인다.
-#    우리가 찾는 대장(당일 거래대금·등락률이 그 테마를 끌고 가는 종목)은 스냅샷에서 직접
-#    계산해야 한다 — themeNos 로 묶어 테마 내 tradeAmount·prevChangeRate 상위를 뽑는 방식.
-#    leadOf 는 그 계산 결과와 얼마나 어긋나는지 보는 **대조군**으로 남긴다.
-THEME_COLS = ["themeNos", "topThemeNo", "leadOf"]
+# 🔻 대장 판정은 수집 단계에서 하지 않는다. 왜인지가 중요하다 —
+#    · 거래대금만 보면 **어느 테마든 1등이 SK하이닉스·삼성전자**다. 2026-08-27 실측에서
+#      거래대금 상위 8개 테마의 topByTradingValue 가 전부 같은 두 종목이었다. 판별력 0.
+#    · 등락률만 보면 **죽은 테마에서 우연히 오른 대형주**가 대장이 된다. 같은 날
+#      '공기청정기'(테마 -0.53%)와 '제습기'(-0.60%)의 등락률 1위가 둘 다 삼성전자(+1.72%)였다.
+#    · 신호는 둘의 교집합에 있어 보인다 — 테마 자체가 살아있고(등락률·거래대금 급증)
+#      그 안에서 자금을 끄는 종목. 전선 테마(+8.72%)는 등락률 1위도 거래대금 1위도
+#      가온전선이었다.
+#    어느 정의가 맞는지는 표본이 쌓인 뒤 정한다. 그래서 지금은 네 기준을 다 저장만 한다.
+THEME_COLS = ["themeNos", "topThemeNo"]
 
 
 def is_trading_day(today_str):
@@ -141,47 +157,61 @@ def index_snapshot():
     return out
 
 
+def _flat_top(v):
+    """topBy* 는 [{code,name,value,itemLogoUrl}, ...] 다. 로고 URL 은 버리고 눌러 담는다."""
+    if not isinstance(v, list):
+        return ""
+    return "|".join(f"{x.get('code','')}:{x.get('name','')}:{x.get('value','')}"
+                    for x in v if isinstance(x, dict))
+
+
 def fetch_theme_data():
-    """테마 200개 + 각 테마 구성종목을 받아 (테마행, 코드→테마번호들, 코드→대장인테마들) 로 만든다.
+    """테마 전량(v2, 커서 페이지네이션) + 각 테마 구성종목을 받아
+    (테마행, 코드→테마번호들) 로 만든다.
 
     ⚠️ 이 함수는 예외를 밖으로 내지 않는다. 테마가 실패해도 가격 스냅샷은 저장돼야 한다 —
        관측이 통째로 끊기는 것이 최악이다. 실패 시 빈 값을 주고 종목 행의 테마 열은 공란이 된다.
-    구성종목 조회가 200회라 30초 남짓 걸린다(워크플로 타임아웃 10분 안에서 충분).
+    구성종목 조회가 테마 수만큼(약 266회) 있어 45초 남짓 걸린다(타임아웃 10분 안에서 충분).
     """
+    themes, cursor, page = [], None, 0
     try:
-        r = SESSION.get(THEME_LIST_URL, verify=False, timeout=20)
-        raw = r.json() if r.status_code == 200 else []
-        themes = [x for x in raw if isinstance(x, dict) and x.get("no")]
+        while page < 15:                       # 안전장치 — 커서가 안 끝나는 경우 대비
+            url = THEME_V2_URL + (f"&cursor={cursor}" if cursor else "")
+            d = SESSION.get(url, verify=False, timeout=20).json()
+            themes += [x for x in d.get("items", []) if isinstance(x, dict) and x.get("code")]
+            page += 1
+            cursor = d.get("cursor")
+            if not d.get("hasNext") or not cursor:
+                break
+            time.sleep(0.1)
     except Exception as e:
         print(f"⚠️ 테마 목록 조회 실패: {e} — 테마 없이 진행한다")
-        return [], {}, {}
+        return [], {}
     if not themes:
         print("⚠️ 테마 목록이 비었다 — 테마 없이 진행한다")
-        return [], {}, {}
+        return [], {}
 
-    # leadingItem 은 "2,000500,가온전선|2,229640,LS에코에너지" 형태의 문자열이다 (소속,코드,종목명).
-    lead = {}
+    # 커서가 겹쳐 같은 테마가 두 번 올 수 있다
+    uniq = {}
     for t in themes:
-        for part in str(t.get("leadingItem") or "").split("|"):
-            bits = part.split(",")
-            if len(bits) >= 2 and bits[1].strip().isdigit():
-                lead.setdefault(bits[1].strip(), []).append(str(t["no"]))
+        uniq[str(t["code"])] = t
+    themes = list(uniq.values())
 
     belong, fails = {}, 0
     for t in themes:
         try:
-            rr = SESSION.get(THEME_STOCK_URL.format(no=t["no"]), verify=False, timeout=10)
+            rr = SESSION.get(THEME_STOCK_URL.format(no=t["code"]), verify=False, timeout=10)
             for x in (rr.json() if rr.status_code == 200 else []):
                 c = str(x.get("itemcode", "")).strip()
                 if c.isdigit():
-                    belong.setdefault(c, []).append(str(t["no"]))
+                    belong.setdefault(c, []).append(str(t["code"]))
         except Exception:
             fails += 1
         time.sleep(0.08)
 
-    print(f"🏷️ 테마 {len(themes)}개 · 매핑 {len(belong)}종목 · 대장 지정 {len(lead)}종목"
-          + (f" (구성종목 조회 실패 {fails}개)" if fails else ""))
-    return themes, belong, lead
+    print(f"🏷️ 테마 {len(themes)}개 ({page}페이지) · 매핑 {len(belong)}종목"
+          + (f" · 구성종목 조회 실패 {fails}개" if fails else ""))
+    return themes, belong
 
 
 def _read_theme(path):
@@ -236,7 +266,7 @@ def write_readme():
         return
 
     L = ["# 📸 장중 시장 스냅샷", "",
-         "거래대금 상위 300종목을 하루 두 번(13:00 / 15:05 KST) 기록한다. "
+         "**전 종목**을 하루 두 번(13:00 / 15:05 KST) 기록한다. "
          "두 스냅샷의 **거래대금 차이가 곧 '오후 수급'** 이다.", "",
          "> 이 파일은 사람이 보는 요약이다. 분석은 같은 폴더의 `.csv.gz` 원본으로 한다.",
          "> 파일명의 슬롯은 '의도한 시각'일 뿐이니, 정확한 시각은 원본 첫 줄의 `capturedAt` 을 볼 것.", ""]
@@ -300,19 +330,31 @@ def write_readme():
     _tslot = next((k for k in ("1505", "1300") if k in slots), sorted(slots)[-1] if slots else "")
     th = _read_theme(f"{OUT_DIR}/{latest}_{_tslot}_theme.csv.gz")
     if th:
-        L += ["### 🏷️ 테마 자금 쏠림 TOP 10", "",
-              "네이버 테마 200개를 거래대금순으로. `대장`은 네이버가 지정한 주도주다.",
-              "테마끼리 종목이 겹치므로 **합계가 아니라 순위로만** 볼 것.", "",
-              "| # | 테마 | 등락률 | 거래대금 | 상승/전체 | 3일 | 대장 |",
-              "|---:|---|---:|---:|:---:|---:|---|"]
-        for i, t in enumerate(th[:10], 1):
-            names = [p.split(",")[2] for p in str(t.get("leadingItem", "")).split("|")
-                     if len(p.split(",")) >= 3]
-            L.append(f"| {i} | {t.get('name', '')[:18]} | {t.get('changeRate', '')}% | "
-                     f"{_f(t.get('totalAccAmount')) / 1e5:,.0f}억 | "
-                     f"{t.get('riseCnt', '')}/{t.get('totalCnt', '')} | "
-                     f"{t.get('recent3daysChangeRate', '')}% | {' · '.join(names[:2])} |")
-        L.append("")
+        def tops(t, key, n=2):
+            out = []
+            for p in str(t.get(key, "")).split("|"):
+                b = p.split(":")
+                if len(b) >= 2 and b[1]:
+                    out.append(b[1])
+            return " · ".join(out[:n])
+
+        hot = sorted(th, key=lambda z: -_f(z.get("changeRate")))[:10]
+        L += ["### 🏷️ 테마 자금 쏠림 — 등락률 상위 10", "",
+              "테마가 **살아있는지 먼저 보고**, 그 안에서 자금을 끄는 종목을 본다.", "",
+              "| # | 테마 | 등락률 | 거래대금 | 상승/전체 | 등락 1위 | 대금 1위 |",
+              "|---:|---|---:|---:|:---:|---|---|"]
+        for i, t in enumerate(hot, 1):
+            tot = _f(t.get("risingCount")) + _f(t.get("fallingCount")) + _f(t.get("unchangedCount"))
+            L.append(f"| {i} | {t.get('name', '')[:18]} | **{t.get('changeRate', '')}%** | "
+                     f"{_f(t.get('totalTradingValue')) / 1e8:,.0f}억 | "
+                     f"{t.get('risingCount', '')}/{tot:.0f} | "
+                     f"{tops(t, 'topByChangeRate')} | {tops(t, 'topByTradingValue')} |")
+        L += ["",
+              "> ⚠️ **거래대금 상위 테마는 일부러 안 싣는다.** 어느 테마든 대금 1위가 "
+              "SK하이닉스·삼성전자로 나와 판별력이 없다(2026-08-27 실측: 대금 상위 8개 테마 전부 동일).",
+              "> 반대로 등락률만 보면 죽은 테마에서 우연히 오른 대형주가 1위가 된다"
+              "(같은 날 공기청정기 −0.53%·제습기 −0.60% 의 등락 1위가 둘 다 삼성전자).",
+              "> 그래서 **테마 강도와 종목 자금을 나란히** 둔다. 대장 정의는 표본이 쌓인 뒤 정한다.", ""]
 
     L += ["### 수집 이력", "",
           f"총 **{len(days)}일 / {len(files)}개** 파일", "",
@@ -375,15 +417,17 @@ def main():
         except Exception:
             return 0.0
 
-    top = sorted(rows, key=amt, reverse=True)[:TOP_N]
+    top = sorted(rows, key=amt, reverse=True)
+    if TOP_N:
+        top = top[:TOP_N]
 
     # 🏷️ 테마 — 실패해도 가격 스냅샷 저장은 계속한다.
-    themes, belong, lead = [], {}, {}
+    themes, belong = [], {}
     try:
-        themes, belong, lead = fetch_theme_data()
+        themes, belong = fetch_theme_data()
     except Exception as e:
         print(f"⚠️ 테마 수집 전체 실패: {e} — 가격 스냅샷은 그대로 저장한다")
-    tamt = {str(t.get("no")): _f(t.get("totalAccAmount")) for t in themes}
+    tamt = {str(t.get("code")): _f(t.get("totalTradingValue")) for t in themes}
 
     os.makedirs(OUT_DIR, exist_ok=True)
     path = f"{OUT_DIR}/{today}_{a.slot}.csv.gz"
@@ -401,8 +445,7 @@ def main():
             c = str(x.get("itemcode", "")).strip()
             nos = belong.get(c, [])
             topno = max(nos, key=lambda n: tamt.get(n, 0.0)) if nos else ""
-            w.writerow([str(x.get(k, "")) for k in FIELDS]
-                       + ["|".join(nos), topno, "|".join(lead.get(c, []))])
+            w.writerow([str(x.get(k, "")) for k in FIELDS] + ["|".join(nos), topno])
 
     # 테마 집계는 별도 파일 — 스키마가 다르고, 이 파일이 없어도 종목 분석은 그대로 된다.
     if themes:
@@ -410,19 +453,21 @@ def main():
         with gzip.open(tpath, "wt", encoding="utf-8", newline="") as fp:
             tw = csv.writer(fp)
             tw.writerow(["#meta", f"capturedAt={now.isoformat()}", f"slot={a.slot}",
-                         f"themes={len(themes)}", "amountUnit=천원"])
+                         f"themes={len(themes)}", "amountUnit=원"])
             tw.writerow(THEME_FIELDS)
-            for t in sorted(themes, key=lambda z: -_f(z.get("totalAccAmount"))):
-                tw.writerow([str(t.get(k, "")) for k in THEME_FIELDS])
+            for t in sorted(themes, key=lambda z: -_f(z.get("totalTradingValue"))):
+                tw.writerow([_flat_top(t.get(k)) if k in THEME_TOPS else str(t.get(k, ""))
+                             for k in THEME_FIELDS])
         print(f"✅ 테마 저장 {tpath}  ({os.path.getsize(tpath):,}바이트)")
-        hot = sorted(themes, key=lambda z: -_f(z.get("totalAccAmount")))[0]
-        print(f"   테마 거래대금 1위: {hot.get('name')} "
-              f"{_f(hot.get('totalAccAmount')) / 1e5:,.0f}억 ({hot.get('changeRate')}%)")
+        hotc = sorted(themes, key=lambda z: -_f(z.get("changeRate")))[0]
+        print(f"   테마 등락률 1위: {hotc.get('name')} {hotc.get('changeRate')}% "
+              f"(거래대금 {_f(hotc.get('totalTradingValue')) / 1e8:,.0f}억)")
 
     size = os.path.getsize(path)
     lead = top[0] if top else {}
     print(f"✅ 저장 {path}  ({size:,}바이트)")
-    print(f"   전체 {len(rows)}종목 중 거래대금 상위 {len(top)}종목 보관")
+    print(f"   전체 {len(rows)}종목 중 {len(top)}종목 보관"
+          + (f" (거래대금 상위 {TOP_N})" if TOP_N else " (전 종목)"))
     print(f"   지수 KOSPI {idx['KOSPI'][0]}({idx['KOSPI'][1]}) / KOSDAQ {idx['KOSDAQ'][0]}({idx['KOSDAQ'][1]})")
     print(f"   거래대금 1위: {lead.get('itemname')} {amt(lead)/1e8:,.0f}억 "
           f"({lead.get('prevChangeRate')}%)")
