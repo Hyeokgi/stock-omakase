@@ -119,9 +119,31 @@ THEME_STOCK_URL = ("https://stock.naver.com/api/domestic/market/theme/{no}/stock
                    "?marketType=ALL&orderType=priceTop&startIdx=0&pageSize=100")
 
 # 보관 필드 — 나중에 무엇을 물어볼지 다 알 수 없으므로 판단 근거가 될 만한 원자료를 넓게 남긴다.
+#
+# 📏 [2026-08-28] 이 응답은 실제로 **75개 필드**를 준다(러너 실측, 2,877종목 전 행 동일).
+#    per·pbr·roe·week52HighPrice·deviationRate·quantDiffRate·listedDate… 가 전부 들어 있다.
+#    그런데 다 담지는 않는다. 기준은 "쓸모"가 아니라 **사후 복원 가능성**이다 —
+#
+#    | 필드 | 나중에 다시 구할 수 있나 |
+#    |---|---|
+#    | week52High/Low · deviationRate · upperLimitPrice | ✅ 일봉으로 사후 계산된다 |
+#    | quantDiffRate · prevQuant | ✅ 저장 중인 tradeVolume + 전일 일봉으로 계산된다 |
+#    | per·pbr·eps·roe·sales | ✅ 분기 단위라 나중에 받아도 거의 같다 |
+#    | listedDate · type | ✅ 정적 정보 |
+#    | **askBuy·askSell·totalBuyVolume·totalSellVolume** | ❌ **그 순간의 호가·잔량. 영영 복원 불가** |
+#
+#    복원되는 것을 지금 담으면 파일만 키운다(전체 75필드 = +434%, 연 341MB).
+#    복원 안 되는 호가 4종만 담으면 +37%(연 88MB)다. 그래서 4종만 담는다.
+#    나머지가 필요해지면 그때 FIELDS 에 이름만 추가하면 된다 — 호출은 늘지 않는다.
 FIELDS = ["itemcode", "itemname", "sosok", "nowPrice", "openPrice", "highPrice", "lowPrice",
           "prevChangeRate", "tradeVolume", "tradeAmount", "marketSum", "listedStockCnt",
-          "frgnHoldRate", "manageStatusGb", "tradeStopYn", "marketAlertType", "marketStatus"]
+          "frgnHoldRate", "manageStatusGb", "tradeStopYn", "marketAlertType", "marketStatus",
+          # 📖 호가 — 이 스냅샷에만 남는 값들. 두 가지를 처음으로 가능하게 한다.
+          #   · orderbook_ratio = totalBuyVolume / totalSellVolume
+          #     (전략로드맵 §6-9 '여전히 못 모으는 것' 표에 "엔드포인트 못 찾음"으로 적혀 있던 항목)
+          #   · 매수·매도 호가 스프레드 → §6-4 모의 집행의 슬리피지 추정 재료
+          #     ("15:20 시점 호가를 찍어두고 실제 종가와 비교한다"는 그 호가가 이것이다)
+          "askBuy", "askSell", "totalBuyVolume", "totalSellVolume"]
 
 # 테마 집계 필드 (v2). 단위는 전부 **원** 이다 — 종목 tradeAmount 와 같다.
 #   topBy* 4종은 각각 상위 3종목이며 "코드:종목명:값|..." 으로 눌러 담는다.
