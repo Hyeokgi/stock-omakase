@@ -286,39 +286,51 @@ def chk_ranking_json():
 
 
 def _probe(url):
-    """상태코드와 건수를 그대로 돌려준다(예외를 삼킨다). 상한 실측용."""
     try:
         r = SESSION.get(url, verify=False, timeout=15)
         if r.status_code != 200:
-            return f"{r.status_code}"
+            return f"HTTP{r.status_code}"
         d = r.json()
         return f"n={len(d)}" if isinstance(d, list) else f"200/{type(d).__name__}"
     except Exception as e:
         return f"ERR:{type(e).__name__}"
 
 
+B = "https://stock.naver.com/api/domestic/market"
+
+
 def chk_upjong_json():
-    """[임시 프로브] 업종 목록의 pageSize 상한과 경로를 실측한다."""
-    B = "https://stock.naver.com/api/domestic/market"
-    out = []
-    for ps in ("", "?pageSize=100", "?pageSize=200", "?pageSize=300", "?pageSize=1000"):
-        out.append(f"list{ps or '(무)'}={_probe(f'{B}/upjong/list{ps}')}")
+    """[임시 프로브 2] 업종 전수 — totalCnt 합·최대, type 분포, 배타성"""
+    d = SESSION.get(f"{B}/upjong/list?pageSize=200", verify=False, timeout=20).json()
+    import collections
+    types = collections.Counter(str(x.get("type")) for x in d)
+    tc = [(int(x.get("totalCnt") or 0), x.get("no"), x.get("name")) for x in d]
+    tc.sort(reverse=True)
+    out = [f"업종 n={len(d)}", f"type분포={dict(types)}",
+           f"totalCnt합={sum(t[0] for t in tc)} (전종목 2877 대비)",
+           f"최대5={[(t[2], t[0]) for t in tc[:5]]}"]
+    # 가장 큰 업종에서 stocklist pageSize 상한을 좁힌다
+    big = tc[0][1]
+    for ps in (200, 250, 300, 400):
+        u = f"{B}/upjong/{big}/stocklist?marketType=ALL&orderType=priceTop&startIdx=0&pageSize={ps}"
+        out.append(f"big@{ps}={_probe(u)}")
     return True, " · ".join(out)
 
 
 def chk_group_json():
-    """[임시 프로브] 구성종목 stocklist 의 pageSize 상한을 실측한다."""
-    B = "https://stock.naver.com/api/domestic/market"
-    out = [f"group/list={_probe(f'{B}/group/list?pageSize=200')}"]
-    try:
-        d = SESSION.get(f"{B}/upjong/list?pageSize=200", verify=False, timeout=15).json()
-        no = d[0].get("no")
-        out.append(f"업종1번={no}/{d[0].get('name')} 키={sorted(d[0].keys())}")
-        for ps in (100, 200, 500, 1000):
-            u = f"{B}/upjong/{no}/stocklist?marketType=ALL&orderType=priceTop&startIdx=0&pageSize={ps}"
-            out.append(f"stock@{ps}={_probe(u)}")
-    except Exception as e:
-        out.append(f"ERR:{e}")
+    """[임시 프로브 2] 그룹사 전수 — 건수·스키마·구성종목 합"""
+    d = SESSION.get(f"{B}/group/list?pageSize=200", verify=False, timeout=20).json()
+    tc = [(int(x.get("totalCnt") or 0), x.get("no"), x.get("name")) for x in d]
+    tc.sort(reverse=True)
+    out = [f"그룹사 n={len(d)}", f"키={sorted(d[0].keys())}",
+           f"totalCnt합={sum(t[0] for t in tc)}",
+           f"최대5={[(t[2], t[0]) for t in tc[:5]]}"]
+    big = tc[0][1]
+    u = f"{B}/group/{big}/stocklist?marketType=ALL&orderType=priceTop&startIdx=0&pageSize=200"
+    out.append(f"big@200={_probe(u)}")
+    r = SESSION.get(u, verify=False, timeout=15).json()
+    if isinstance(r, list) and r:
+        out.append(f"구성종목키={sorted(r[0].keys())[:14]}")
     return True, " · ".join(out)
 
 
