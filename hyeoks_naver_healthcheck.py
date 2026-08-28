@@ -285,6 +285,42 @@ def chk_ranking_json():
     return isinstance(d, list) and len(d) >= 5, f"{len(d) if isinstance(d, list) else 0}종목"
 
 
+def _chk_sector_list(kind, min_n, big_min):
+    """업종·그룹사 목록 + 구성종목 (시장 스냅샷의 무리 축).
+
+    ⚠️ 이 경로는 **없는 이름에도 200 + `[]`** 를 주고(docs/네이버개편_대응.md §3),
+       pageSize 를 빠뜨리면 조용히 **20건**으로 잘린다. 그래서 상태코드가 아니라
+       건수·필수필드·구성종목까지 봐야 '껍데기 200'을 거를 수 있다.
+    ⚠️ pageSize 상한은 200 이다 — 실측(2026-08-28) 결과 목록은 300부터,
+       구성종목은 250부터 HTTP 400 이 난다. 상한을 넘기면 통째로 실패한다.
+    """
+    d = _get(f"https://stock.naver.com/api/domestic/market/{kind}/list?pageSize=200").json()
+    if not isinstance(d, list) or len(d) < min_n:
+        n = len(d) if isinstance(d, list) else '?'
+        return False, f"{n}건(임계 {min_n} — 캐치올이거나 pageSize 무시)"
+    if not {'no', 'name', 'totalCnt'}.issubset(set(d[0].keys())):
+        return False, f"{len(d)}건이지만 필수필드 없음: {sorted(d[0].keys())[:6]}"
+
+    # 가장 큰 분류의 구성종목을 받아 본다. 목록만 200 을 주고 상세가 죽은 경우를 잡는다.
+    big = max(d, key=lambda x: int(float(str(x.get('totalCnt') or 0))))
+    st = _get(f"https://stock.naver.com/api/domestic/market/{kind}/{big['no']}/stocklist"
+              f"?marketType=ALL&orderType=priceTop&startIdx=0&pageSize=200").json()
+    n = len(st) if isinstance(st, list) else 0
+    if n < big_min:
+        return False, f"{len(d)}개지만 최대분류 {big.get('name')} 구성 {n}종목(임계 {big_min})"
+    return True, f"{len(d)}개 · 최대 {big.get('name')} {n}종목(totalCnt {big.get('totalCnt')})"
+
+
+def chk_upjong_json():
+    """업종 79개 — 시장 스냅샷의 산업 분류 축"""
+    return _chk_sector_list("upjong", 40, 100)
+
+
+def chk_group_json():
+    """그룹사 61개 — 시장 스냅샷의 기업집단 축"""
+    return _chk_sector_list("group", 30, 5)
+
+
 CHECKS = [
     # (키, 심각도, 설명, 함수, 담당 기능)
     ("frgn_html",     FATAL, "외국인·기관 수급 HTML",   chk_frgn,          "V2 수급점수 / 수급TOP2"),
@@ -316,6 +352,8 @@ CHECKS = [
     ("marketsum_json",MINOR, "시가총액 JSON(폴백)",     chk_market_sum_json, "omakase 시총 폴백"),
     ("overtime",      MINOR, "시간외 단일가 필드",      chk_overtime_json, "KRX/NXT 표기"),
     ("sise_bulk",     MINOR, "전종목 벌크 시세",        chk_sise_bulk,     "대체 소스 후보"),
+    ("upjong_json",   MINOR, "업종 목록·구성종목",      chk_upjong_json,   "시장 스냅샷 업종 축"),
+    ("group_json",    MINOR, "그룹사 목록·구성종목",    chk_group_json,    "시장 스냅샷 그룹사 축"),
 ]
 
 

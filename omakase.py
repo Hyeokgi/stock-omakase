@@ -73,6 +73,14 @@ stock_alias_map = {
 def bounded_workers(item_count):
     return max(1, min(MAX_WORKERS, item_count or 1))
 
+
+# 📉 [등락률 폴백 감시] 실시간 주가 API 가 실패한 종목을 회차마다 센다.
+#    원래 analyze_single_stock 안에 live_success 플래그가 있었지만 **선언만 되고 어디서도
+#    읽히지 않았다.** 실패를 감지하려던 장치가 배선되지 않은 채 남아 있었던 것이고,
+#    그래서 등락률이 0% 로 떨어진 종목이 몇 개인지 아무도 몰랐다.
+#    list.append 는 GIL 하에서 원자적이라 스레드에서 그냥 써도 된다(락 불필요).
+LIVE_FALLBACK_LOG = []   # (종목명, 사유)
+
 now_kst_check = datetime.datetime.now(KST)
 if 4 <= now_kst_check.hour < 7:
     print(f"🌙 현재 시간({now_kst_check.strftime('%H:%M')}): 시스템을 휴식 모드로 전환합니다. (04시~07시)")
@@ -1595,8 +1603,18 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         current_price = last_day['close']
         today_vol = last_day['volume']
 
-        today_str_ymd = datetime.datetime.now(KST).strftime('%Y-%m-%d')
-        if last_day['date'] == today_str_ymd:
+        # 🚨 [무결성 수정 2026-08-28] 여기가 **항상 거짓**이었다.
+        #    history 의 date 는 fchart 원본 그대로 "20260828"(구분자 없음)인데
+        #    비교 대상은 "%Y-%m-%d" → "2026-08-28" 이었다. 두 문자열은 절대 같아질 수 없다.
+        #    결과: 늘 else 로 빠져 yest_close = current_price → **change_rate 가 항상 0.0**.
+        #    즉 일봉 폴백 경로가 통째로 죽어 있었고, 아래 실시간 API(레이어2)가 성공할 때만
+        #    등락률이 채워졌다. 그 호출이 실패하면 +25% 급등주도 0.00% 로 분석돼
+        #    상한가·단타레인지·V1/V2 점수·대장 판정에서 조용히 탈락했다.
+        #    (로드맵 §5 에 2026-08-21 자로 기록돼 있던 '실시간 API 실패 시 등락률 0% 폴백 위험'이 이것이다.
+        #     §2 동결 규칙이 명시적으로 허용하는 '데이터 무결성 가드'에 해당해 지금 고친다.)
+        today_str_ymd = datetime.datetime.now(KST).strftime('%Y%m%d')
+        has_today_bar = (last_day['date'] == today_str_ymd)
+        if has_today_bar:
             yest_close = int(df_hist['close'].iloc[-2]) if len(df_hist) >= 2 else current_price
         else:
             yest_close = current_price
@@ -1620,6 +1638,17 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     live_success = True
         except Exception as e:
             print(f"⚠️ [analyze_single_stock Live API 1 Exception for {name}] {e}")
+
+        # 🚨 [무결성 수정 2026-08-28] live_success 를 실제로 읽는다(전에는 설정만 하고 방치).
+        #    실시간이 실패해도 오늘 일봉이 있으면 위 폴백이 진짜 등락률을 낸다 — 이제는.
+        #    둘 다 없을 때만 등락률이 0% 인 채로 내려가므로, 그 경우를 따로 남긴다.
+        if not live_success:
+            if has_today_bar:
+                LIVE_FALLBACK_LOG.append((name, "일봉폴백"))
+            else:
+                LIVE_FALLBACK_LOG.append((name, "등락률없음"))
+                print(f"⚠️ [등락률 0% 주의] {name} — 실시간 API 실패 + 오늘 일봉 없음. "
+                      f"이 종목은 보합으로 분석된다(후보 탈락 가능).")
 
         static_info = static_db.get(code)
         if static_info:
@@ -2557,6 +2586,15 @@ def update_technical_data(df_theme, all_theme_map):
             executor.shutdown(wait=True)
 
         print(f"⏱️ 스캔 소요시간: {time.time() - scan_start:.1f}초 ({len(results)}/{len(target_dict)}개 종목 처리 완료)")
+
+        # 📉 등락률 폴백 요약 — 실시간 API 실패율이 곧 표본 오염 위험도다.
+        if LIVE_FALLBACK_LOG:
+            _daily = sum(1 for _, r in LIVE_FALLBACK_LOG if r == "일봉폴백")
+            _none = sum(1 for _, r in LIVE_FALLBACK_LOG if r == "등락률없음")
+            print(f"📉 [등락률 폴백] 실시간 API 실패 {len(LIVE_FALLBACK_LOG)}/{len(target_dict)}종목 "
+                  f"— 일봉으로 복구 {_daily}건 · 등락률 0% 로 남음 {_none}건"
+                  + (f" ⚠️ {[n for n, r in LIVE_FALLBACK_LOG if r == '등락률없음'][:8]}" if _none else ""))
+            LIVE_FALLBACK_LOG.clear()
 
         # 🆕 [RS등급] 전종목을 놓고 백분위 순위를 매겨서, 각 결과의 index 33(원점수)을 최종 RS등급(1~99)으로 덮어씀
         rs_candidates = [(i, r[33]) for i, r in enumerate(results) if len(r) > 33 and isinstance(r[33], (int, float))]
