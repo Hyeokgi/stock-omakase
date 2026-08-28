@@ -18,8 +18,10 @@
 #   · 선정·점수·채널에 어떤 영향도 주지 않는다. 순수 관측이다.
 #
 # 저장
-#   data/market_snapshot/YYYY-MM-DD_{tag}.csv.gz        (전 종목)
-#   data/market_snapshot/YYYY-MM-DD_{tag}_theme.csv.gz  (네이버 테마 전량)
+#   data/market_snapshot/YYYY-MM-DD_{tag}.csv.gz         (전 종목)
+#   data/market_snapshot/YYYY-MM-DD_{tag}_theme.csv.gz   (네이버 테마 전량)
+#   data/market_snapshot/YYYY-MM-DD_{tag}_upjong.csv.gz  (업종 전량)
+#   data/market_snapshot/YYYY-MM-DD_{tag}_group.csv.gz   (그룹사 전량)
 #
 #   ⚠️ 처음에는 거래대금 상위 300종목만 남겼다가 전 종목으로 바꿨다(2026-08-27).
 #      거래대금으로 자르면 삼성전자·SK하이닉스가 언제나 위에 있어, 정작 찾으려는
@@ -34,6 +36,15 @@
 #   ⚠️ 테마끼리 종목이 겹친다(한 종목이 여러 테마에 속함). 테마 거래대금을 전부 더하면
 #      중복 합산이 되므로 총량이 아니라 '테마 간 순위·비중'으로만 해석할 것.
 #
+# 업종·그룹사를 왜 더 찍나 (2026-08-28 추가)
+#   테마만으로는 '무리'를 한 축으로만 본다. 성질이 다른 축이 둘 더 있다 —
+#   · 업종(79개) — 한 종목이 **정확히 하나**에만 속한다(배타적·전수). 겹치지 않으므로
+#     거래대금을 그냥 더해도 중복이 없다. 테마에서는 불가능했던 **'비중'** 을 말할 수 있는
+#     유일한 축이다: "오늘 시장 거래대금의 몇 %가 반도체로 갔나".
+#   · 그룹사(약 20개) — 삼성·SK·LG 같은 기업집단. 지주사 이슈나 그룹 단위 재료가 돌 때
+#     계열사가 함께 움직이는 것을 잡는다. 테마에도 업종에도 안 잡히는 축이다.
+#   셋은 서로 대체재가 아니라 보완재다. 어느 축이 종가베팅에 유효한지는 표본이 쌓인 뒤 정한다.
+#
 # 사용법
 #   python hyeoks_market_snapshot.py --slot 1300
 #   python hyeoks_market_snapshot.py --slot 1505
@@ -44,6 +55,7 @@ import os
 import io
 import sys
 import csv
+import re
 import gzip
 import argparse
 import datetime
@@ -125,6 +137,43 @@ THEME_TOPS = ["topByChangeRate", "topByTradingValue", "topByMarketCap", "topByTr
 #    어느 정의가 맞는지는 표본이 쌓인 뒤 정한다. 그래서 지금은 네 기준을 다 저장만 한다.
 THEME_COLS = ["themeNos", "topThemeNo"]
 
+# 🏭 업종 · 🏢 그룹사 — 구(classic) `market/{종류}/list` 계열을 쓴다.
+#    v2 랭킹 API 는 테마에만 있는 것으로 보여(다른 종류는 미확인) 검증된 구 경로를 택했다.
+#    목록 스키마는 테마와 동일하다: no / name / changeRate / totalAccAmount / leadingItem
+#    (omakase.fetch_theme_list_json · healthcheck.chk_theme_json 에서 검증된 필드들이다.)
+#
+# ⚠️ 캐치올 함정 — `market/{이름}/list` 는 **존재하지 않는 이름에도 HTTP 200 + `[]`** 를 준다
+#    (docs/네이버개편_대응.md §3). `industry` 도 `completelyBogusName123` 도 똑같이 200/[] 다.
+#    그래서 200 을 성공으로 믿으면 안 되고 **건수와 필수 필드를 반드시 검증**해야 한다.
+#    아래 최소 건수가 그 가드다 (실측: 업종 79개 · 그룹사 20개).
+SECTORS = {
+    "upjong": ("🏭 업종",   20),
+    "group":  ("🏢 그룹사",  5),
+}
+SECTOR_LIST_URL = "https://stock.naver.com/api/domestic/market/{kind}/list?pageSize=300"
+# pageSize 를 1000 으로 크게 잡는다 — startIdx 는 무시되므로(§3) 한 번에 전량을 받아야 하고,
+# 업종은 테마와 달리 한 업종에 200종목 넘게 들어갈 수 있어 100 이면 잘린다.
+SECTOR_STOCK_URL = ("https://stock.naver.com/api/domestic/market/{kind}/{no}/stocklist"
+                    "?marketType=ALL&orderType=priceTop&startIdx=0&pageSize=1000")
+
+# 업종·그룹사 집계 필드.
+#   앞 5개(no~leadingItem) — 네이버가 준 원본 그대로.
+#     ⚠️ totalAccAmount 는 **단위가 확인되지 않았다**(구 API 는 백만원 단위인 곳이 있다).
+#        그래서 이 값으로 판정하지 말고, 아래 sum* 을 쓸 것.
+#   뒤 9개 — **같은 스냅샷의 종목 행에서 직접 집계**한 값이다. 네이버 집계를 믿지 않고
+#     우리가 방금 받은 2,877행으로 다시 세는 이유는 두 가지다:
+#       ① 단위가 확실하다 — 종목 행의 tradeAmount 와 같은 '원'이다.
+#       ② 시각이 일치한다 — 같은 호출에서 나온 값이라 집계와 종목이 어긋나지 않는다.
+SECTOR_FIELDS = ["no", "name", "changeRate", "totalAccAmount", "leadingItem",
+                 "memberCount", "matchedCount", "sumTradeAmount", "sumMarketCap",
+                 "risingCount", "fallingCount", "unchangedCount",
+                 "topByTradingValue", "topByChangeRate"]
+
+# 종목 행에 덧붙이는 업종·그룹사 열. 테마(themeNos)와 달리 **단일 값**이다 — 배타적이기 때문.
+# 번호만이 아니라 이름도 같이 넣는다. 파이프 조인 없이 한 칸에 들어가고, gzip 이 반복 문자열을
+# 거의 공짜로 압축해 비용이 사실상 없으며, 종목 파일만 열어도 소속이 읽힌다.
+SECTOR_COLS = ["upjongNo", "upjongName", "groupNo", "groupName"]
+
 
 def is_trading_day(today_str):
     """지수 일봉에 오늘 날짜가 있는지로 개장 여부를 판정한다.
@@ -155,6 +204,18 @@ def index_snapshot():
         except Exception:
             out[name] = ("", "")
     return out
+
+
+def _is_code(c):
+    """종목코드로 볼 수 있는가.
+
+    ⚠️ 원래 여기가 `c.isdigit()` 이었다. 그런데 종목코드는 전부 숫자가 아니다 —
+       우선주 신형·신주인수권 등은 `00680K`·`0155E0` 처럼 영문이 섞인다.
+       2026-08-28 스냅샷 실측으로 **2,877종목 중 84개(2.9%)** 가 그 형태였고,
+       그만큼이 테마 매핑에서 조용히 빠지고 있었다(themeNos 가 늘 공란).
+       6자리 영숫자로 넓힌다.
+    """
+    return len(c) == 6 and c.isalnum()
 
 
 def _flat_top(v):
@@ -203,7 +264,7 @@ def fetch_theme_data():
             rr = SESSION.get(THEME_STOCK_URL.format(no=t["code"]), verify=False, timeout=10)
             for x in (rr.json() if rr.status_code == 200 else []):
                 c = str(x.get("itemcode", "")).strip()
-                if c.isdigit():
+                if _is_code(c):
                     belong.setdefault(c, []).append(str(t["code"]))
         except Exception:
             fails += 1
@@ -214,8 +275,104 @@ def fetch_theme_data():
     return themes, belong
 
 
-def _read_theme(path):
-    """테마 스냅샷 1개를 행 dict 리스트로 읽는다. 없거나 깨졌으면 빈 리스트."""
+def _flat_leading(v):
+    """구 API 의 leadingItem(대장주). 스키마가 딕트인지 리스트인지 확실하지 않아
+    무엇이 오든 사람이 읽히는 문자열로 눌러 담는다 — 깨져도 수집을 멈추지 않기 위함이다."""
+    if isinstance(v, dict):
+        return f"{v.get('itemcode') or v.get('code') or ''}:{v.get('itemname') or v.get('name') or ''}"
+    if isinstance(v, list):
+        return "|".join(_flat_leading(x) for x in v)
+    return str(v or "")
+
+
+def fetch_sector_data(kind, mkt):
+    """업종/그룹사 목록 + 구성종목을 받아 (집계행, {코드: (번호, 이름)}) 로 만든다.
+
+    mkt 는 방금 받은 전 종목 스냅샷({코드: 행})이다. 집계를 네이버 값이 아니라
+    **이 행들로 직접** 내기 위해 받는다 (단위·시각이 종목 파일과 정확히 일치한다).
+
+    ⚠️ 테마와 마찬가지로 예외를 밖으로 내지 않는다. 업종이 실패해도 가격 스냅샷은
+       저장돼야 한다 — 관측이 통째로 끊기는 것이 최악이다.
+    """
+    label, min_n = SECTORS[kind]
+    try:
+        d = SESSION.get(SECTOR_LIST_URL.format(kind=kind), verify=False, timeout=20).json()
+    except Exception as e:
+        print(f"⚠️ {label} 목록 조회 실패: {e} — {label} 없이 진행한다")
+        return [], {}
+
+    # 캐치올 가드 — 200/[] 또는 껍데기 응답을 성공으로 착각하지 않는다.
+    if not isinstance(d, list) or len(d) < min_n:
+        print(f"⚠️ {label} 목록 {len(d) if isinstance(d, list) else '?'}건 — 임계 {min_n} 미달. "
+              f"캐치올 응답(200+[])일 수 있다. {label} 없이 진행한다")
+        return [], {}
+
+    def _amt(x):
+        return _f(x.get("tradeAmount"))
+
+    def _rate(x):
+        return _f(x.get("prevChangeRate"))
+
+    out, belong, fails, dup = [], {}, 0, 0
+    for it in d:
+        if not isinstance(it, dict):
+            continue
+        no = str(it.get("no") or it.get("code") or "").strip()
+        name = str(it.get("name") or "").strip()
+        if not no:
+            continue
+
+        codes = []
+        try:
+            rr = SESSION.get(SECTOR_STOCK_URL.format(kind=kind, no=no), verify=False, timeout=10)
+            for x in (rr.json() if rr.status_code == 200 else []):
+                c = str(x.get("itemcode", "")).strip()
+                if _is_code(c):
+                    codes.append(c)
+        except Exception:
+            fails += 1
+        time.sleep(0.08)
+
+        for c in codes:
+            if c in belong:
+                dup += 1          # 배타적이라는 전제가 깨지면 세어서 알린다(가정을 조용히 믿지 않는다)
+            else:
+                belong[c] = (no, name)
+
+        # 집계는 우리 스냅샷 행으로 직접 낸다. 스캔에 없는 코드(우선주 제외 등)는 그냥 빠진다.
+        mine = [mkt[c] for c in codes if c in mkt]
+        rise = sum(1 for x in mine if _rate(x) > 0)
+        fall = sum(1 for x in mine if _rate(x) < 0)
+
+        def _top(sel, fmt):
+            return "|".join(f"{x.get('itemcode', '')}:{x.get('itemname', '')}:{fmt(sel(x))}"
+                            for x in sorted(mine, key=lambda z: -sel(z))[:3])
+
+        out.append({
+            "no": no,
+            "name": name,
+            "changeRate": str(it.get("changeRate", "")),
+            "totalAccAmount": str(it.get("totalAccAmount", "")),
+            "leadingItem": _flat_leading(it.get("leadingItem")),
+            "memberCount": len(codes),                 # 네이버가 준 구성종목 수
+            "matchedCount": len(mine),                 # 그중 우리 스캔에 있던 수
+            "sumTradeAmount": f"{sum(_amt(x) for x in mine):.0f}",
+            "sumMarketCap": f"{sum(_f(x.get('marketSum')) for x in mine):.0f}",
+            "risingCount": rise,
+            "fallingCount": fall,
+            "unchangedCount": len(mine) - rise - fall,
+            "topByTradingValue": _top(_amt, lambda v: f"{v:.0f}"),
+            "topByChangeRate": _top(_rate, lambda v: f"{v:.2f}"),
+        })
+
+    print(f"{label} {len(out)}개 · 매핑 {len(belong)}종목"
+          + (f" · 구성종목 조회 실패 {fails}개" if fails else "")
+          + (f" · ⚠️ 중복소속 {dup}건(배타 가정 위반)" if dup else ""))
+    return out, belong
+
+
+def _read_agg(path):
+    """집계 스냅샷(테마·업종·그룹사) 1개를 행 dict 리스트로 읽는다. 없거나 깨졌으면 빈 리스트."""
     try:
         with gzip.open(path, "rt", encoding="utf-8") as fp:
             rows = list(csv.reader(fp))
@@ -253,9 +410,13 @@ def write_readme():
     .csv.gz 는 gzip 바이너리라 깃허브가 미리보기를 못 한다 — 파일명·크기만 보이고 내용은 안 보인다.
     그래서 마크다운 요약을 같이 두어, 브라우저만으로 '오늘 무엇이 잡혔는지'를 확인할 수 있게 한다.
     (분석은 여전히 원본 .csv.gz 로 한다. 이 파일은 사람이 보는 용도다.)"""
+    # ⚠️ 종목 스냅샷만 고른다. 집계 파일(_theme/_upjong/_group)이 섞이면 아래 rsplit 이
+    #    `2026-08-28_1505_upjong` 을 날짜 `2026-08-28_1505` + 슬롯 `upjong` 으로 잘라
+    #    수집 이력 표가 통째로 망가진다. 접미사를 하나씩 빼는 방식은 새 축을 더할 때마다
+    #    또 빠뜨리므로, '날짜_슬롯' 형태만 통과시키는 쪽으로 잠근다.
     try:
         files = sorted(f for f in os.listdir(OUT_DIR)
-                       if f.endswith(".csv.gz") and not f.endswith("_theme.csv.gz"))
+                       if re.fullmatch(r"\d{4}-\d{2}-\d{2}_[^_]+\.csv\.gz", f))
     except Exception:
         return
     days = {}
@@ -326,18 +487,20 @@ def write_readme():
                          f"**+{g:.0f}%** | {_f(x['tradeAmount']) / 1e8:,.0f}억 | {risk(x)} |")
             L.append("")
 
-    # 🏷️ 테마 자금 쏠림 — 종목 단위로는 안 보이는 '무리 단위' 쏠림
+    # 🏷️🏭🏢 무리 단위 쏠림 — 테마·업종·그룹사. 종목 단위로는 안 보이는 축이다.
     _tslot = next((k for k in ("1505", "1300") if k in slots), sorted(slots)[-1] if slots else "")
-    th = _read_theme(f"{OUT_DIR}/{latest}_{_tslot}_theme.csv.gz")
-    if th:
-        def tops(t, key, n=2):
-            out = []
-            for p in str(t.get(key, "")).split("|"):
-                b = p.split(":")
-                if len(b) >= 2 and b[1]:
-                    out.append(b[1])
-            return " · ".join(out[:n])
 
+    def tops(t, key, n=2):
+        """topBy* 는 `코드:종목명:값|...` 로 눌러 담겨 있다. 종목명만 뽑아 준다."""
+        out = []
+        for p in str(t.get(key, "")).split("|"):
+            b = p.split(":")
+            if len(b) >= 2 and b[1]:
+                out.append(b[1])
+        return " · ".join(out[:n])
+
+    th = _read_agg(f"{OUT_DIR}/{latest}_{_tslot}_theme.csv.gz")
+    if th:
         hot = sorted(th, key=lambda z: -_f(z.get("changeRate")))[:10]
         L += ["### 🏷️ 테마 자금 쏠림 — 등락률 상위 10", "",
               "테마가 **살아있는지 먼저 보고**, 그 안에서 자금을 끄는 종목을 본다.", "",
@@ -355,6 +518,40 @@ def write_readme():
               "> 반대로 등락률만 보면 죽은 테마에서 우연히 오른 대형주가 1위가 된다"
               "(같은 날 공기청정기 −0.53%·제습기 −0.60% 의 등락 1위가 둘 다 삼성전자).",
               "> 그래서 **테마 강도와 종목 자금을 나란히** 둔다. 대장 정의는 표본이 쌓인 뒤 정한다.", ""]
+
+    # 🏭 업종 — 배타적이라 테마에서는 못 하던 '비중' 계산이 여기서는 된다.
+    up = _read_agg(f"{OUT_DIR}/{latest}_{_tslot}_upjong.csv.gz")
+    if up:
+        tot = sum(_f(u.get("sumTradeAmount")) for u in up)
+        hot = sorted(up, key=lambda z: -_f(z.get("sumTradeAmount")))[:10]
+        L += ["### 🏭 업종 자금 쏠림 — 거래대금 상위 10", "",
+              "업종은 한 종목이 **하나에만** 속한다(배타적). 그래서 테마와 달리 더해도 중복이 없고, "
+              "**비중**으로 읽어도 된다 — 오늘 시장 자금이 어느 산업으로 갔는지가 바로 보인다.", "",
+              "| # | 업종 | 등락률 | 거래대금 | 비중 | 상승/전체 | 대금 1위 |",
+              "|---:|---|---:|---:|---:|:---:|---|"]
+        for i, u in enumerate(hot, 1):
+            amt = _f(u.get("sumTradeAmount"))
+            L.append(f"| {i} | {u.get('name', '')[:18]} | {u.get('changeRate', '')}% | "
+                     f"{amt / 1e8:,.0f}억 | {(amt / tot * 100) if tot else 0:.1f}% | "
+                     f"{u.get('risingCount', '')}/{u.get('matchedCount', '')} | "
+                     f"{tops(u, 'topByTradingValue')} |")
+        L += ["", f"> 비중의 분모는 업종 합계 {tot / 1e12:,.1f}조다(전 종목 합과 거의 같다 — "
+                  "업종에 안 잡히는 종목만큼 작다).", ""]
+
+    # 🏢 그룹사 — 계열사가 함께 움직이는지. 테마·업종 어느 쪽에도 안 잡히는 축이다.
+    gr = _read_agg(f"{OUT_DIR}/{latest}_{_tslot}_group.csv.gz")
+    if gr:
+        hot = sorted(gr, key=lambda z: -_f(z.get("changeRate")))[:5]
+        L += ["### 🏢 그룹사 — 등락률 상위 5", "",
+              "지주사 이슈·그룹 단위 재료가 돌 때 계열사가 같이 뛰는 것을 본다.", "",
+              "| # | 그룹 | 등락률 | 거래대금 | 상승/전체 | 대금 1위 |",
+              "|---:|---|---:|---:|:---:|---|"]
+        for i, g in enumerate(hot, 1):
+            L.append(f"| {i} | {g.get('name', '')[:18]} | **{g.get('changeRate', '')}%** | "
+                     f"{_f(g.get('sumTradeAmount')) / 1e8:,.0f}억 | "
+                     f"{g.get('risingCount', '')}/{g.get('matchedCount', '')} | "
+                     f"{tops(g, 'topByTradingValue')} |")
+        L.append("")
 
     L += ["### 수집 이력", "",
           f"총 **{len(days)}일 / {len(files)}개** 파일", "",
@@ -429,6 +626,17 @@ def main():
         print(f"⚠️ 테마 수집 전체 실패: {e} — 가격 스냅샷은 그대로 저장한다")
     tamt = {str(t.get("code")): _f(t.get("totalTradingValue")) for t in themes}
 
+    # 🏭🏢 업종·그룹사 — 테마와 같은 격리 원칙. 하나가 죽어도 나머지는 그대로 저장한다.
+    #     집계를 우리 스냅샷 행으로 내기 위해 코드→행 맵을 먼저 만든다.
+    mkt = {str(x.get("itemcode", "")).strip(): x for x in rows}
+    sectors = {}
+    for kind in SECTORS:
+        try:
+            sectors[kind] = fetch_sector_data(kind, mkt)
+        except Exception as e:
+            print(f"⚠️ {SECTORS[kind][0]} 수집 전체 실패: {e} — 나머지는 그대로 저장한다")
+            sectors[kind] = ([], {})
+
     os.makedirs(OUT_DIR, exist_ok=True)
     path = f"{OUT_DIR}/{today}_{a.slot}.csv.gz"
     idx = index_snapshot()
@@ -440,12 +648,17 @@ def main():
                     f"total={len(rows)}", f"kept={len(top)}",
                     f"KOSPI={idx['KOSPI'][0]}({idx['KOSPI'][1]})",
                     f"KOSDAQ={idx['KOSDAQ'][0]}({idx['KOSDAQ'][1]})"])
-        w.writerow(FIELDS + THEME_COLS)
+        w.writerow(FIELDS + THEME_COLS + SECTOR_COLS)
+        up_belong = sectors.get("upjong", ([], {}))[1]
+        gr_belong = sectors.get("group", ([], {}))[1]
         for x in top:
             c = str(x.get("itemcode", "")).strip()
             nos = belong.get(c, [])
             topno = max(nos, key=lambda n: tamt.get(n, 0.0)) if nos else ""
-            w.writerow([str(x.get(k, "")) for k in FIELDS] + ["|".join(nos), topno])
+            up = up_belong.get(c, ("", ""))
+            gr = gr_belong.get(c, ("", ""))
+            w.writerow([str(x.get(k, "")) for k in FIELDS]
+                       + ["|".join(nos), topno] + [up[0], up[1], gr[0], gr[1]])
 
     # 테마 집계는 별도 파일 — 스키마가 다르고, 이 파일이 없어도 종목 분석은 그대로 된다.
     if themes:
@@ -462,6 +675,27 @@ def main():
         hotc = sorted(themes, key=lambda z: -_f(z.get("changeRate")))[0]
         print(f"   테마 등락률 1위: {hotc.get('name')} {hotc.get('changeRate')}% "
               f"(거래대금 {_f(hotc.get('totalTradingValue')) / 1e8:,.0f}억)")
+
+    # 업종·그룹사도 각각 별도 파일 — 스키마가 종목·테마와 다르고, 없어도 나머지 분석은 그대로 된다.
+    for kind, (srows, _sb) in sectors.items():
+        if not srows:
+            continue
+        spath = f"{OUT_DIR}/{today}_{a.slot}_{kind}.csv.gz"
+        with gzip.open(spath, "wt", encoding="utf-8", newline="") as fp:
+            sw = csv.writer(fp)
+            sw.writerow(["#meta", f"capturedAt={now.isoformat()}", f"slot={a.slot}",
+                         f"count={len(srows)}", "amountUnit=원",
+                         "note=sum*/topBy*/*Count 는 같은 스냅샷의 종목행에서 직접 집계한 값이다. "
+                         "totalAccAmount 는 네이버 원본이며 단위 미확인 — 판정에 쓰지 말 것"])
+            sw.writerow(SECTOR_FIELDS)
+            for it in sorted(srows, key=lambda z: -_f(z.get("sumTradeAmount"))):
+                sw.writerow([str(it.get(k, "")) for k in SECTOR_FIELDS])
+        label = SECTORS[kind][0]
+        print(f"✅ {label} 저장 {spath}  ({os.path.getsize(spath):,}바이트)")
+        hots = sorted(srows, key=lambda z: -_f(z.get("sumTradeAmount")))[0]
+        print(f"   {label} 거래대금 1위: {hots.get('name')} "
+              f"{_f(hots.get('sumTradeAmount')) / 1e8:,.0f}억 "
+              f"({hots.get('risingCount')}/{hots.get('matchedCount')} 상승)")
 
     size = os.path.getsize(path)
     lead = top[0] if top else {}

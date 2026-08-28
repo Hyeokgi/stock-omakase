@@ -285,6 +285,35 @@ def chk_ranking_json():
     return isinstance(d, list) and len(d) >= 5, f"{len(d) if isinstance(d, list) else 0}종목"
 
 
+def _chk_sector_list(kind, min_n):
+    """업종·그룹사 목록 (시장 스냅샷의 무리 축).
+
+    ⚠️ 이 경로는 **없는 이름에도 200 + `[]`** 를 준다(docs/네이버개편_대응.md §3).
+       그래서 상태코드가 아니라 건수와 필수 필드로 판정한다."""
+    d = _get(f"https://stock.naver.com/api/domestic/market/{kind}/list?pageSize=300").json()
+    if not isinstance(d, list) or len(d) < min_n:
+        return False, f"{len(d) if isinstance(d, list) else '?'}건(임계 {min_n}·캐치올 주의)"
+    need = {'no', 'name'}
+    if not need.issubset(set(d[0].keys())):
+        return False, f"{len(d)}건이지만 필수필드 없음: {sorted(d[0].keys())[:6]}"
+    # 구성종목까지 봐야 '껍데기 200'을 거른다 — 매핑이 안 되면 소속 열이 통째로 빈다.
+    no = d[0].get('no')
+    st = _get(f"https://stock.naver.com/api/domestic/market/{kind}/{no}/stocklist"
+              f"?marketType=ALL&orderType=priceTop&startIdx=0&pageSize=1000").json()
+    n = len(st) if isinstance(st, list) else 0
+    return n >= 2, f"{len(d)}개 · {no}번 구성 {n}종목"
+
+
+def chk_upjong_json():
+    """업종 79개 — 배타적이라 거래대금 비중을 중복 없이 잴 수 있는 유일한 축"""
+    return _chk_sector_list("upjong", 20)
+
+
+def chk_group_json():
+    """그룹사 20개 — 계열사 동반 상승 관측"""
+    return _chk_sector_list("group", 5)
+
+
 CHECKS = [
     # (키, 심각도, 설명, 함수, 담당 기능)
     ("frgn_html",     FATAL, "외국인·기관 수급 HTML",   chk_frgn,          "V2 수급점수 / 수급TOP2"),
@@ -316,6 +345,8 @@ CHECKS = [
     ("marketsum_json",MINOR, "시가총액 JSON(폴백)",     chk_market_sum_json, "omakase 시총 폴백"),
     ("overtime",      MINOR, "시간외 단일가 필드",      chk_overtime_json, "KRX/NXT 표기"),
     ("sise_bulk",     MINOR, "전종목 벌크 시세",        chk_sise_bulk,     "대체 소스 후보"),
+    ("upjong_json",   MINOR, "업종 목록·구성종목",      chk_upjong_json,   "시장 스냅샷 업종 축"),
+    ("group_json",    MINOR, "그룹사 목록·구성종목",    chk_group_json,    "시장 스냅샷 그룹사 축"),
 ]
 
 
