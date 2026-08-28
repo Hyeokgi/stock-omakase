@@ -196,6 +196,20 @@
    "error": "",
    "severity": "보통",
    "desc": "전종목 벌크 시세"
+  },
+  "upjong_json": {
+   "ok": true,
+   "detail": "79개 · 최대 기타 200종목(totalCnt 1538)",
+   "error": "",
+   "severity": "보통",
+   "desc": "업종 목록·구성종목"
+  },
+  "group_json": {
+   "ok": true,
+   "detail": "61개 · 최대 SK 24종목(totalCnt 24)",
+   "error": "",
+   "severity": "보통",
+   "desc": "그룹사 목록·구성종목"
   }
  }
 }
