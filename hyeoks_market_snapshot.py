@@ -38,12 +38,22 @@
 #
 # 업종·그룹사를 왜 더 찍나 (2026-08-28 추가)
 #   테마만으로는 '무리'를 한 축으로만 본다. 성질이 다른 축이 둘 더 있다 —
-#   · 업종(79개) — 한 종목이 **정확히 하나**에만 속한다(배타적·전수). 겹치지 않으므로
-#     거래대금을 그냥 더해도 중복이 없다. 테마에서는 불가능했던 **'비중'** 을 말할 수 있는
-#     유일한 축이다: "오늘 시장 거래대금의 몇 %가 반도체로 갔나".
-#   · 그룹사(약 20개) — 삼성·SK·LG 같은 기업집단. 지주사 이슈나 그룹 단위 재료가 돌 때
+#   · 업종(79개) — 네이버가 종목에 붙인 산업 분류.
+#   · 그룹사(61개) — 삼성·SK·LG 같은 기업집단. 지주사 이슈나 그룹 단위 재료가 돌 때
 #     계열사가 함께 움직이는 것을 잡는다. 테마에도 업종에도 안 잡히는 축이다.
 #   셋은 서로 대체재가 아니라 보완재다. 어느 축이 종가베팅에 유효한지는 표본이 쌓인 뒤 정한다.
+#
+#   🔻 처음에 "업종은 배타적이라 거래대금을 더해도 중복이 없고, 따라서 테마와 달리
+#      '비중'을 말할 수 있다"고 적었다가 **실측으로 철회했다**(2026-08-28 러너 실측).
+#        · 79개 업종의 totalCnt 합이 **4,413** 인데 전 종목은 2,877 이다 → 겹친다.
+#        · '기타' 업종 하나가 **1,538종목**을 담는다(전체의 절반 이상). 분류라기보다 쓰레기통이다.
+#      그래서 업종도 테마처럼 **다중 소속**으로 저장하고, 총합·비중은 계산하지 않는다.
+#      실제 겹침 정도는 수집할 때마다 로그에 찍히니(중복소속 N건) 표본이 쌓이면 다시 본다.
+#
+#   ⚠️ 구성종목 조회는 **한 번에 200개가 상한**이다(실측: 250·300·400 전부 HTTP 400,
+#      startIdx 는 무시됨 — §3). 즉 200종목이 넘는 분류는 **전량을 받을 수 없다.**
+#      현재 걸리는 것은 '기타'(1,538) 하나뿐이고, 그런 행은 truncated=Y 로 표시한다.
+#      잘린 행의 sum*·*Cnt 는 상위 200종목만의 값이므로 그대로 쓰면 안 된다.
 #
 # 사용법
 #   python hyeoks_market_snapshot.py --slot 1300
@@ -145,34 +155,52 @@ THEME_COLS = ["themeNos", "topThemeNo"]
 # ⚠️ 캐치올 함정 — `market/{이름}/list` 는 **존재하지 않는 이름에도 HTTP 200 + `[]`** 를 준다
 #    (docs/네이버개편_대응.md §3). `industry` 도 `completelyBogusName123` 도 똑같이 200/[] 다.
 #    그래서 200 을 성공으로 믿으면 안 되고 **건수와 필수 필드를 반드시 검증**해야 한다.
-#    아래 최소 건수가 그 가드다 (실측: 업종 79개 · 그룹사 20개).
+#
+# ⚠️ 최소 건수를 실측(업종 79 · 그룹사 61)보다 넉넉히 낮추되 **기본 응답(20건)보다는 높게** 잡는다.
+#    pageSize 를 빠뜨리면 목록이 조용히 20건으로 잘리는데, 임계가 20 이하면 그걸 못 잡는다.
 SECTORS = {
-    "upjong": ("🏭 업종",   20),
-    "group":  ("🏢 그룹사",  5),
+    "upjong": ("🏭 업종",   40),   # 실측 79
+    "group":  ("🏢 그룹사", 30),   # 실측 61
 }
-SECTOR_LIST_URL = "https://stock.naver.com/api/domestic/market/{kind}/list?pageSize=300"
-# pageSize 를 1000 으로 크게 잡는다 — startIdx 는 무시되므로(§3) 한 번에 전량을 받아야 하고,
-# 업종은 테마와 달리 한 업종에 200종목 넘게 들어갈 수 있어 100 이면 잘린다.
+# ⚠️ pageSize 상한은 **200** 이다 (실측 2026-08-28: 목록은 300부터, 구성종목은 250부터 HTTP 400).
+#    startIdx 는 무시되므로(§3) 페이지를 넘길 수도 없다 → 200종목 초과 분류는 전량 수집 불가.
+SECTOR_LIST_URL = "https://stock.naver.com/api/domestic/market/{kind}/list?pageSize=200"
 SECTOR_STOCK_URL = ("https://stock.naver.com/api/domestic/market/{kind}/{no}/stocklist"
-                    "?marketType=ALL&orderType=priceTop&startIdx=0&pageSize=1000")
+                    "?marketType=ALL&orderType=priceTop&startIdx=0&pageSize=200")
+SECTOR_PAGE_MAX = 200
 
 # 업종·그룹사 집계 필드.
-#   앞 5개(no~leadingItem) — 네이버가 준 원본 그대로.
-#     ⚠️ totalAccAmount 는 **단위가 확인되지 않았다**(구 API 는 백만원 단위인 곳이 있다).
+#   raw* — 네이버가 준 원본 그대로. 필드명이 테마 v2 와 다르다(riseCnt/fallCnt/…, 실측 확인).
+#     ⚠️ rawTotalAccAmount 는 **단위가 확인되지 않았다**(구 API 는 백만원 단위인 곳이 있다).
 #        그래서 이 값으로 판정하지 말고, 아래 sum* 을 쓸 것.
-#   뒤 9개 — **같은 스냅샷의 종목 행에서 직접 집계**한 값이다. 네이버 집계를 믿지 않고
+#     rawTotalCnt 는 네이버가 말하는 진짜 구성종목 수다. fetchedCount 와 다르면 잘린 것이다.
+#   뒤쪽 — **같은 스냅샷의 종목 행에서 직접 집계**한 값이다. 네이버 집계를 믿지 않고
 #     우리가 방금 받은 2,877행으로 다시 세는 이유는 두 가지다:
 #       ① 단위가 확실하다 — 종목 행의 tradeAmount 와 같은 '원'이다.
 #       ② 시각이 일치한다 — 같은 호출에서 나온 값이라 집계와 종목이 어긋나지 않는다.
-SECTOR_FIELDS = ["no", "name", "changeRate", "totalAccAmount", "leadingItem",
-                 "memberCount", "matchedCount", "sumTradeAmount", "sumMarketCap",
+#   truncated — Y 면 구성종목이 200 상한에 잘렸다는 뜻이다. **그 행의 sum*·*Count 는
+#     상위 200종목만의 값**이므로 분류 간 비교에 쓰면 안 된다.
+SECTOR_FIELDS = ["no", "name", "type",
+                 "rawChangeRate", "rawRecent3daysChangeRate", "rawTotalAccAmount",
+                 "rawTotalAccQuant", "rawTotalMarketSum", "rawTotalCnt",
+                 "rawRiseCnt", "rawFallCnt", "rawSteadyCnt", "leadingItem",
+                 "fetchedCount", "matchedCount", "truncated",
+                 "sumTradeAmount", "sumMarketCap",
                  "risingCount", "fallingCount", "unchangedCount",
                  "topByTradingValue", "topByChangeRate"]
 
-# 종목 행에 덧붙이는 업종·그룹사 열. 테마(themeNos)와 달리 **단일 값**이다 — 배타적이기 때문.
-# 번호만이 아니라 이름도 같이 넣는다. 파이프 조인 없이 한 칸에 들어가고, gzip 이 반복 문자열을
-# 거의 공짜로 압축해 비용이 사실상 없으며, 종목 파일만 열어도 소속이 읽힌다.
-SECTOR_COLS = ["upjongNo", "upjongName", "groupNo", "groupName"]
+# 네이버 원본 필드명 → 우리 열 이름. (테마 v2 와 이름 체계가 다르다는 것이 실측으로 확인됐다)
+SECTOR_RAW_MAP = {
+    "rawChangeRate": "changeRate", "rawRecent3daysChangeRate": "recent3daysChangeRate",
+    "rawTotalAccAmount": "totalAccAmount", "rawTotalAccQuant": "totalAccQuant",
+    "rawTotalMarketSum": "totalMarketSum", "rawTotalCnt": "totalCnt",
+    "rawRiseCnt": "riseCnt", "rawFallCnt": "fallCnt", "rawSteadyCnt": "steadyCnt",
+}
+
+# 종목 행에 덧붙이는 업종·그룹사 열.
+# 테마(themeNos)와 같은 **다중 소속**으로 둔다 — 업종이 배타적이라는 전제가 실측으로 깨졌기 때문이다
+# (79개 업종의 totalCnt 합 4,413 > 전 종목 2,877). 번호와 이름을 각각 파이프로 잇는다.
+SECTOR_COLS = ["upjongNos", "upjongNames", "groupNos", "groupNames"]
 
 
 def is_trading_day(today_str):
@@ -286,7 +314,7 @@ def _flat_leading(v):
 
 
 def fetch_sector_data(kind, mkt):
-    """업종/그룹사 목록 + 구성종목을 받아 (집계행, {코드: (번호, 이름)}) 로 만든다.
+    """업종/그룹사 목록 + 구성종목을 받아 (집계행, {코드: [(번호, 이름), ...]}) 로 만든다.
 
     mkt 는 방금 받은 전 종목 스냅샷({코드: 행})이다. 집계를 네이버 값이 아니라
     **이 행들로 직접** 내기 위해 받는다 (단위·시각이 종목 파일과 정확히 일치한다).
@@ -301,10 +329,10 @@ def fetch_sector_data(kind, mkt):
         print(f"⚠️ {label} 목록 조회 실패: {e} — {label} 없이 진행한다")
         return [], {}
 
-    # 캐치올 가드 — 200/[] 또는 껍데기 응답을 성공으로 착각하지 않는다.
+    # 캐치올 가드 — 200/[] 도, pageSize 를 빠뜨려 20건으로 잘린 응답도 여기서 걸린다.
     if not isinstance(d, list) or len(d) < min_n:
         print(f"⚠️ {label} 목록 {len(d) if isinstance(d, list) else '?'}건 — 임계 {min_n} 미달. "
-              f"캐치올 응답(200+[])일 수 있다. {label} 없이 진행한다")
+              f"캐치올(200+[]) 이거나 pageSize 누락일 수 있다. {label} 없이 진행한다")
         return [], {}
 
     def _amt(x):
@@ -313,7 +341,7 @@ def fetch_sector_data(kind, mkt):
     def _rate(x):
         return _f(x.get("prevChangeRate"))
 
-    out, belong, fails, dup = [], {}, 0, 0
+    out, belong, fails, cut = [], {}, 0, []
     for it in d:
         if not isinstance(it, dict):
             continue
@@ -333,13 +361,16 @@ def fetch_sector_data(kind, mkt):
             fails += 1
         time.sleep(0.08)
 
-        for c in codes:
-            if c in belong:
-                dup += 1          # 배타적이라는 전제가 깨지면 세어서 알린다(가정을 조용히 믿지 않는다)
-            else:
-                belong[c] = (no, name)
+        # 200 상한에 잘렸는가. 네이버가 말하는 totalCnt 와 실제로 받은 수를 맞춰 본다.
+        total = int(_f(it.get("totalCnt")))
+        truncated = len(codes) >= SECTOR_PAGE_MAX and total > len(codes)
+        if truncated:
+            cut.append(f"{name}({len(codes)}/{total})")
 
-        # 집계는 우리 스냅샷 행으로 직접 낸다. 스캔에 없는 코드(우선주 제외 등)는 그냥 빠진다.
+        for c in codes:
+            belong.setdefault(c, []).append((no, name))
+
+        # 집계는 우리 스냅샷 행으로 직접 낸다. 스캔에 없는 코드는 그냥 빠진다.
         mine = [mkt[c] for c in codes if c in mkt]
         rise = sum(1 for x in mine if _rate(x) > 0)
         fall = sum(1 for x in mine if _rate(x) < 0)
@@ -348,26 +379,26 @@ def fetch_sector_data(kind, mkt):
             return "|".join(f"{x.get('itemcode', '')}:{x.get('itemname', '')}:{fmt(sel(x))}"
                             for x in sorted(mine, key=lambda z: -sel(z))[:3])
 
-        out.append({
-            "no": no,
-            "name": name,
-            "changeRate": str(it.get("changeRate", "")),
-            "totalAccAmount": str(it.get("totalAccAmount", "")),
-            "leadingItem": _flat_leading(it.get("leadingItem")),
-            "memberCount": len(codes),                 # 네이버가 준 구성종목 수
-            "matchedCount": len(mine),                 # 그중 우리 스캔에 있던 수
-            "sumTradeAmount": f"{sum(_amt(x) for x in mine):.0f}",
-            "sumMarketCap": f"{sum(_f(x.get('marketSum')) for x in mine):.0f}",
-            "risingCount": rise,
-            "fallingCount": fall,
-            "unchangedCount": len(mine) - rise - fall,
-            "topByTradingValue": _top(_amt, lambda v: f"{v:.0f}"),
-            "topByChangeRate": _top(_rate, lambda v: f"{v:.2f}"),
-        })
+        row = {"no": no, "name": name, "type": str(it.get("type", "")),
+               "leadingItem": _flat_leading(it.get("leadingItem")),
+               "fetchedCount": len(codes), "matchedCount": len(mine),
+               "truncated": "Y" if truncated else "",
+               "sumTradeAmount": f"{sum(_amt(x) for x in mine):.0f}",
+               "sumMarketCap": f"{sum(_f(x.get('marketSum')) for x in mine):.0f}",
+               "risingCount": rise, "fallingCount": fall,
+               "unchangedCount": len(mine) - rise - fall,
+               "topByTradingValue": _top(_amt, lambda v: f"{v:.0f}"),
+               "topByChangeRate": _top(_rate, lambda v: f"{v:.2f}")}
+        for col, src in SECTOR_RAW_MAP.items():
+            row[col] = str(it.get(src, ""))
+        out.append(row)
 
+    # 겹침 정도를 매번 센다 — '배타적'이라는 전제가 실측으로 깨졌으므로 조용히 믿지 않는다.
+    multi = sum(1 for v in belong.values() if len(v) > 1)
     print(f"{label} {len(out)}개 · 매핑 {len(belong)}종목"
+          + (f" · 다중소속 {multi}종목" if multi else " · 다중소속 없음")
           + (f" · 구성종목 조회 실패 {fails}개" if fails else "")
-          + (f" · ⚠️ 중복소속 {dup}건(배타 가정 위반)" if dup else ""))
+          + (f" · ⚠️ 200상한에 잘림: {', '.join(cut[:5])}" if cut else ""))
     return out, belong
 
 
@@ -519,39 +550,40 @@ def write_readme():
               "(같은 날 공기청정기 −0.53%·제습기 −0.60% 의 등락 1위가 둘 다 삼성전자).",
               "> 그래서 **테마 강도와 종목 자금을 나란히** 둔다. 대장 정의는 표본이 쌓인 뒤 정한다.", ""]
 
-    # 🏭 업종 — 배타적이라 테마에서는 못 하던 '비중' 계산이 여기서는 된다.
+    def _agg_table(rows, head, note, n, key):
+        """업종·그룹사 요약표. 둘의 스키마가 같아 한 함수로 낸다."""
+        hot = sorted(rows, key=lambda z: -_f(z.get(key)))[:n]
+        out = [head, "", note, "",
+               "| # | 이름 | 등락률 | 거래대금 | 상승/구성 | 대금 1위 |",
+               "|---:|---|---:|---:|:---:|---|"]
+        for i, r in enumerate(hot, 1):
+            mark = " ⚠️" if r.get("truncated") == "Y" else ""
+            out.append(f"| {i} | {r.get('name', '')[:18]}{mark} | "
+                       f"**{r.get('rawChangeRate', '')}%** | "
+                       f"{_f(r.get('sumTradeAmount')) / 1e8:,.0f}억 | "
+                       f"{r.get('risingCount', '')}/{r.get('matchedCount', '')} | "
+                       f"{tops(r, 'topByTradingValue')} |")
+        return out + [""]
+
+    # 🏭 업종
     up = _read_agg(f"{OUT_DIR}/{latest}_{_tslot}_upjong.csv.gz")
     if up:
-        tot = sum(_f(u.get("sumTradeAmount")) for u in up)
-        hot = sorted(up, key=lambda z: -_f(z.get("sumTradeAmount")))[:10]
-        L += ["### 🏭 업종 자금 쏠림 — 거래대금 상위 10", "",
-              "업종은 한 종목이 **하나에만** 속한다(배타적). 그래서 테마와 달리 더해도 중복이 없고, "
-              "**비중**으로 읽어도 된다 — 오늘 시장 자금이 어느 산업으로 갔는지가 바로 보인다.", "",
-              "| # | 업종 | 등락률 | 거래대금 | 비중 | 상승/전체 | 대금 1위 |",
-              "|---:|---|---:|---:|---:|:---:|---|"]
-        for i, u in enumerate(hot, 1):
-            amt = _f(u.get("sumTradeAmount"))
-            L.append(f"| {i} | {u.get('name', '')[:18]} | {u.get('changeRate', '')}% | "
-                     f"{amt / 1e8:,.0f}억 | {(amt / tot * 100) if tot else 0:.1f}% | "
-                     f"{u.get('risingCount', '')}/{u.get('matchedCount', '')} | "
-                     f"{tops(u, 'topByTradingValue')} |")
-        L += ["", f"> 비중의 분모는 업종 합계 {tot / 1e12:,.1f}조다(전 종목 합과 거의 같다 — "
-                  "업종에 안 잡히는 종목만큼 작다).", ""]
+        L += _agg_table(up, "### 🏭 업종 자금 쏠림 — 거래대금 상위 10",
+                        "네이버 산업 분류 79개. **총합·비중은 내지 않는다** — 업종끼리 종목이 겹치는 것이 "
+                        "실측으로 확인됐다(totalCnt 합 4,413 > 전 종목 2,877). 테마와 같이 **분류 간 순위**로만 읽을 것.",
+                        10, "sumTradeAmount")
+        if any(u.get("truncated") == "Y" for u in up):
+            cut = [u.get("name", "") for u in up if u.get("truncated") == "Y"]
+            L += [f"> ⚠️ 표시된 분류({' · '.join(cut)})는 구성종목이 **200개 상한에 잘렸다.** "
+                  "거래대금·상승수가 상위 200종목만의 부분값이라 다른 행과 나란히 비교하면 안 된다.", ""]
 
     # 🏢 그룹사 — 계열사가 함께 움직이는지. 테마·업종 어느 쪽에도 안 잡히는 축이다.
     gr = _read_agg(f"{OUT_DIR}/{latest}_{_tslot}_group.csv.gz")
     if gr:
-        hot = sorted(gr, key=lambda z: -_f(z.get("changeRate")))[:5]
-        L += ["### 🏢 그룹사 — 등락률 상위 5", "",
-              "지주사 이슈·그룹 단위 재료가 돌 때 계열사가 같이 뛰는 것을 본다.", "",
-              "| # | 그룹 | 등락률 | 거래대금 | 상승/전체 | 대금 1위 |",
-              "|---:|---|---:|---:|:---:|---|"]
-        for i, g in enumerate(hot, 1):
-            L.append(f"| {i} | {g.get('name', '')[:18]} | **{g.get('changeRate', '')}%** | "
-                     f"{_f(g.get('sumTradeAmount')) / 1e8:,.0f}억 | "
-                     f"{g.get('risingCount', '')}/{g.get('matchedCount', '')} | "
-                     f"{tops(g, 'topByTradingValue')} |")
-        L.append("")
+        L += _agg_table(gr, "### 🏢 그룹사 — 등락률 상위 5",
+                        "기업집단 61개. 지주사 이슈·그룹 단위 재료가 돌 때 계열사가 같이 뛰는 것을 본다. "
+                        "가장 큰 그룹도 24종목이라 잘림이 없다.",
+                        5, "rawChangeRate")
 
     L += ["### 수집 이력", "",
           f"총 **{len(days)}일 / {len(files)}개** 파일", "",
@@ -655,10 +687,12 @@ def main():
             c = str(x.get("itemcode", "")).strip()
             nos = belong.get(c, [])
             topno = max(nos, key=lambda n: tamt.get(n, 0.0)) if nos else ""
-            up = up_belong.get(c, ("", ""))
-            gr = gr_belong.get(c, ("", ""))
+            up = up_belong.get(c, [])
+            gr = gr_belong.get(c, [])
             w.writerow([str(x.get(k, "")) for k in FIELDS]
-                       + ["|".join(nos), topno] + [up[0], up[1], gr[0], gr[1]])
+                       + ["|".join(nos), topno]
+                       + ["|".join(t[0] for t in up), "|".join(t[1] for t in up),
+                          "|".join(t[0] for t in gr), "|".join(t[1] for t in gr)])
 
     # 테마 집계는 별도 파일 — 스키마가 다르고, 이 파일이 없어도 종목 분석은 그대로 된다.
     if themes:
@@ -685,8 +719,9 @@ def main():
             sw = csv.writer(fp)
             sw.writerow(["#meta", f"capturedAt={now.isoformat()}", f"slot={a.slot}",
                          f"count={len(srows)}", "amountUnit=원",
-                         "note=sum*/topBy*/*Count 는 같은 스냅샷의 종목행에서 직접 집계한 값이다. "
-                         "totalAccAmount 는 네이버 원본이며 단위 미확인 — 판정에 쓰지 말 것"])
+                         "note=sum*/topBy*/*Count 는 같은 스냅샷의 종목행에서 직접 집계한 값. "
+                         "raw* 는 네이버 원본이며 rawTotalAccAmount 는 단위 미확인 — 판정에 쓰지 말 것. "
+                         "truncated=Y 는 구성종목 200 상한에 잘린 행이라 sum*/*Count 가 부분값"])
             sw.writerow(SECTOR_FIELDS)
             for it in sorted(srows, key=lambda z: -_f(z.get("sumTradeAmount"))):
                 sw.writerow([str(it.get(k, "")) for k in SECTOR_FIELDS])
