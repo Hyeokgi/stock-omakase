@@ -25,6 +25,12 @@ on:
         required: false
         default: false
         type: boolean
+      assign:
+        description: '비어 있던 목표가·손절가 사후 배정 (both = 두 규칙 비교, 시트에는 안 씀)'
+        required: false
+        default: 'none'
+        type: choice
+        options: ['none', 'band', 'chart', 'both']
 
 concurrency:
   group: hyeoks-sheet-lock   # 메인 스캐너와 동일 — 시트를 읽는 동안 쓰기와 겹치지 않게
@@ -67,7 +73,8 @@ jobs:
         set +e
         DIAG=""
         if [ "${{ inputs.diagnose }}" = "true" ]; then DIAG="--diagnose"; fi
-        python hyeoks_phase2_exit.py --horizon "${{ inputs.horizon || '20' }}" $DIAG 2>&1 | tee phase2.txt
+        python hyeoks_phase2_exit.py --horizon "${{ inputs.horizon || '20' }}" \
+          --assign "${{ inputs.assign || 'none' }}" $DIAG 2>&1 | tee phase2.txt
         echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
         exit 0
 

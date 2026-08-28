@@ -60,6 +60,45 @@ C_ENTRY_PRICE, C_CAPTURE_MEMO = 16, 25
 C_T5, C_TARGET, C_STOP = 19, 32, 33
 
 TRAILING_PCT = 0.92      # omakase.check_target_alerts_and_trailing_stop 과 같은 값
+
+# ── 🔻 사후 배정 (--assign) — 반드시 읽고 쓸 것 ────────────────────────────
+# 백테스트_로그 310행 중 **121행**이 목표가·손절가가 비어 있다(차트TOP2 54 · 랜덤2 47 ·
+# 수급TOP2 20 · 리포트 채널은 0). omakase.py 의 적재 코드 주석이 원인을 말한다 —
+# "관망류는 빈 값". 즉 그 값들은 **애초에 존재하지 않았다.** 지금 채우는 것은 복원이
+# 아니라 **없던 값을 만드는 것**이다.
+#
+# ⚠️ 그리고 우리는 이미 원본 17행의 Phase 2 결과를 봤다. 그 뒤에 배정 규칙을 고르면
+#    무의식적으로라도 결과에 유리한 쪽을 고를 수 있다(§0 이 금지하는 바로 그 행동).
+#    그래서 세 가지 방어를 건다.
+#      ① 백테스트_로그에 **쓰지 않는다.** 별도 파일에만 남긴다.
+#      ② **규칙을 두 개** 돌려 결론이 규칙 선택에 흔들리는지 본다.
+#         순위가 뒤집히면 그건 '배정 방식에 의존하는 결론'이라는 뜻이고, 그 자체가 답이다.
+#      ③ 원본 표본과 **합치지 않는다.** 늘 따로 보고한다.
+#    §3-5 의 **탐색적 항목**이므로, 독립 표본에서 재현되기 전까지 채택하지 않는다.
+#
+# 규칙 A (band) — 로드맵 §3-4 가 사전등록한 단기 손익비 밴드의 중앙값.
+#   진입가만 쓰므로 자의성이 가장 적다. 차트를 보지 않는다.
+# 규칙 B (chart) — omakase.analyze_single_stock 의 일반 분기(2191~2192행)를 재현.
+#   target = max(60일 고가, 진입가×1.05) · stop = min(20일선, 진입가×0.95)
+#   ⚠️ 원본은 타점유형별로 ATR·기준봉 등 다른 분기를 타지만, 그 플래그를 사후에
+#      복원할 수 없다. 따라서 이것은 원본의 재현이 아니라 **근사**다.
+ASSIGN_BAND = (0.095, 0.07)   # §3-4 단기: 목표 +7~12% / 손절 -6~8% → 각 중앙값
+
+
+def assign_levels(mode, bars, entry_idx, base):
+    """비어 있는 목표가·손절가를 사후 배정한다. **진입일 이전 정보만** 쓴다(미래참조 없음)."""
+    if mode == "band":
+        return base * (1 + ASSIGN_BAND[0]), base * (1 - ASSIGN_BAND[1])
+    if mode == "chart":
+        past = bars[max(0, entry_idx - 59): entry_idx + 1]     # 진입일까지만
+        if len(past) < 20:
+            return 0.0, 0.0
+        high60 = max(b['high'] for b in past)
+        ma20 = sum(b['close'] for b in past[-20:]) / 20.0
+        target = high60 if high60 > base else base * 1.05
+        stop = min(ma20, base * 0.95)
+        return target, stop
+    return 0.0, 0.0
 MIN_N_FOR_VERDICT = 30   # §3-1 판정 문턱. 이보다 적으면 방향만 기록한다.
 CALIB_TOLERANCE = 0.05   # T+5 재계산 허용 오차(%p)
 CALIB_MIN_MATCH = 0.95   # 이 비율 미만이면 앵커 해석이 틀린 것으로 보고 중단
@@ -305,7 +344,7 @@ def build_report(recs, horizon, calib, skipped):
 
 # ── 메인 ──────────────────────────────────────────────────────────────────
 
-def analyze(rows, horizon, diag=None):
+def analyze(rows, horizon, diag=None, assign="none"):
     """diag 가 주어지면 스킵 사유를 원인별·채널별로 쌓는다(왜 표본이 줄었는지 추적용)."""
     recs, skipped = [], {"제외표식": 0, "값없음": 0, "일봉없음": 0, "미성숙": 0}
     calib = {"n": 0, "match": 0, "worst": []}
@@ -338,6 +377,16 @@ def analyze(rows, horizon, diag=None):
         target, stop = _num(row[C_TARGET]), _num(row[C_STOP])
         entry_date = str(row[C_ENTRY_DATE]).strip()
         code = str(row[C_CODE]).replace("'", "").strip().zfill(6)
+        # 사후 배정 모드 — 목표가·손절가만 비고 나머지가 온전한 행을 되살린다.
+        assigned = False
+        if assign != "none" and base > 0 and entry_date and code.strip('0') \
+                and (target <= 0 or stop <= 0):
+            _b = get_daily_bars(code)
+            _i = next((k for k, b in enumerate(_b) if b['date'] == entry_date), None)
+            if _b and _i is not None:
+                target, stop = assign_levels(assign, _b, _i, base)
+                assigned = target > 0 and stop > 0
+
         if base <= 0 or target <= 0 or stop <= 0 or not entry_date or not code.strip('0'):
             skipped["값없음"] += 1
             miss = []
@@ -379,7 +428,8 @@ def analyze(rows, horizon, diag=None):
         sim = simulate_exits(bars, entry_idx, base, target, stop, horizon)
         if sim:
             recs.append({"name": str(row[C_NAME]).strip(), "channel": channel,
-                         "code": code, "entry": entry_date, "sim": sim})
+                         "code": code, "entry": entry_date, "sim": sim,
+                         "assigned": assigned})
 
     calib["worst"].sort(key=lambda w: -abs(w[4]))
     calib["rate"] = calib["match"] / calib["n"] if calib["n"] else 0.0
@@ -455,6 +505,9 @@ def main():
     ap.add_argument("--self-test", action="store_true", help="시트 없이 규칙 엔진만 검증")
     ap.add_argument("--diagnose", action="store_true",
                     help="분석 대신 '왜 표본에서 빠졌는가'를 원인별·채널별로 출력")
+    ap.add_argument("--assign", choices=["none", "band", "chart", "both"], default="none",
+                    help="비어 있는 목표가·손절가를 사후 배정한다(원본과 분리 보고). "
+                         "both 는 두 규칙을 다 돌려 결론이 규칙에 흔들리는지 본다")
     ap.add_argument("--horizon", type=int, default=20, help="비교 보유창(거래일). 기본 20")
     a = ap.parse_args()
 
@@ -470,8 +523,50 @@ def main():
         return 1
     print(f"📖 {len(rows) - 1}행 로드 (읽기 전용 — 시트에 쓰지 않는다)")
 
+    # ── 사후 배정 비교 모드 — 두 규칙의 결론이 같은지 본다 ──────────────────
+    if a.assign == "both":
+        print("\n🔻 [사후 배정 비교] 목표가·손절가가 비어 있던 행을 두 규칙으로 각각 채워 돌린다.")
+        print("   결론이 규칙에 따라 뒤집히면 그건 '배정 방식에 의존하는 결론'이라는 뜻이다.\n")
+        table = {}
+        for mode in ("none", "band", "chart"):
+            r, _c, _s = analyze(rows, a.horizon, None, mode)
+            if not r:
+                continue
+            asg = sum(1 for x in r if x.get("assigned"))
+            table[mode] = {
+                "n": len(r), "배정": asg,
+                "① 고정": statistics.mean([x['sim']['fixed'][0] for x in r]),
+                "② 트레일링": statistics.mean([x['sim']['trailing'][0] for x in r]),
+                "③ T+20": statistics.mean([x['sim']['tn'][20][0] for x in r if 20 in x['sim']['tn']]),
+            }
+        label = {"none": "원본만(배정 없음)", "band": "밴드 배정(§3-4 단기)", "chart": "차트 배정(60일고가/20일선)"}
+        print(f"{'':<26}{'N':>5}{'배정분':>6}{'① 고정':>10}{'② 트레일링':>12}{'③ T+20':>10}")
+        print("-" * 71)
+        for m in ("none", "band", "chart"):
+            if m not in table:
+                continue
+            t = table[m]
+            print(f"{label[m]:<26}{t['n']:>5}{t['배정']:>6}"
+                  f"{t['① 고정']:>+10.2f}{t['② 트레일링']:>+12.2f}{t['③ T+20']:>+10.2f}")
+
+        # 규칙 순위가 배정 방식에 흔들리는가
+        print()
+        orders = {m: sorted(("① 고정", "② 트레일링", "③ T+20"), key=lambda k: -table[m][k])
+                  for m in table}
+        uniq = {tuple(v) for v in orders.values()}
+        for m, o in orders.items():
+            print(f"   {label[m]:<26} 순위: {' > '.join(o)}")
+        print()
+        if len(uniq) == 1:
+            print("   ✅ 세 경우 모두 **같은 순위**다. 청산 규칙의 우열은 배정 방식에 의존하지 않는다.")
+        else:
+            print("   ⚠️ 순위가 **배정 방식에 따라 뒤집힌다.** 이 비교로는 결론을 낼 수 없다.")
+        print("\n   ⚠️ 배정분은 원본에 없던 값을 만든 것이다. §3-5 탐색적 항목이므로")
+        print("      독립 표본에서 재현되기 전까지 채택하지 않는다. 시트에는 쓰지 않았다.")
+        return 0
+
     diag = {} if a.diagnose else None
-    recs, calib, skipped = analyze(rows, a.horizon, diag)
+    recs, calib, skipped = analyze(rows, a.horizon, diag, a.assign)
 
     if a.diagnose:
         total = sum(len(v) for r in diag.values() for v in r.values())
