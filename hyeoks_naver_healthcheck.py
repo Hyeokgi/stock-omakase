@@ -285,40 +285,51 @@ def chk_ranking_json():
     return isinstance(d, list) and len(d) >= 5, f"{len(d) if isinstance(d, list) else 0}종목"
 
 
-def _chk_sector_list(kind, min_n, big_min):
-    """업종·그룹사 목록 + 구성종목 (시장 스냅샷의 무리 축).
-
-    ⚠️ 이 경로는 **없는 이름에도 200 + `[]`** 를 주고(docs/네이버개편_대응.md §3),
-       pageSize 를 빠뜨리면 조용히 **20건**으로 잘린다. 그래서 상태코드가 아니라
-       건수·필수필드·구성종목까지 봐야 '껍데기 200'을 거를 수 있다.
-    ⚠️ pageSize 상한은 200 이다 — 실측(2026-08-28) 결과 목록은 300부터,
-       구성종목은 250부터 HTTP 400 이 난다. 상한을 넘기면 통째로 실패한다.
-    """
-    d = _get(f"https://stock.naver.com/api/domestic/market/{kind}/list?pageSize=200").json()
-    if not isinstance(d, list) or len(d) < min_n:
-        n = len(d) if isinstance(d, list) else '?'
-        return False, f"{n}건(임계 {min_n} — 캐치올이거나 pageSize 무시)"
-    if not {'no', 'name', 'totalCnt'}.issubset(set(d[0].keys())):
-        return False, f"{len(d)}건이지만 필수필드 없음: {sorted(d[0].keys())[:6]}"
-
-    # 가장 큰 분류의 구성종목을 받아 본다. 목록만 200 을 주고 상세가 죽은 경우를 잡는다.
-    big = max(d, key=lambda x: int(float(str(x.get('totalCnt') or 0))))
-    st = _get(f"https://stock.naver.com/api/domestic/market/{kind}/{big['no']}/stocklist"
-              f"?marketType=ALL&orderType=priceTop&startIdx=0&pageSize=200").json()
-    n = len(st) if isinstance(st, list) else 0
-    if n < big_min:
-        return False, f"{len(d)}개지만 최대분류 {big.get('name')} 구성 {n}종목(임계 {big_min})"
-    return True, f"{len(d)}개 · 최대 {big.get('name')} {n}종목(totalCnt {big.get('totalCnt')})"
+def _probe_stocklist(url, label):
+    """[임시 프로브 3] 사용자가 지목한 구성종목 URL 을 그대로 두들겨 스키마 전부를 본다."""
+    out = []
+    try:
+        r = SESSION.get(url, verify=False, timeout=15)
+        out.append(f"HTTP{r.status_code}")
+        d = r.json()
+    except Exception as e:
+        return True, f"{label} ERR:{type(e).__name__}:{str(e)[:60]}"
+    if isinstance(d, dict):
+        out.append(f"dict keys={sorted(d.keys())[:10]}")
+        d = d.get("stocks") or d.get("items") or d.get("list") or []
+    if not isinstance(d, list):
+        return True, f"{label} 예상 못 한 타입 {type(d).__name__}"
+    out.append(f"n={len(d)}")
+    if d:
+        k = sorted(d[0].keys())
+        out.append(f"키{len(k)}개={','.join(k)}")
+        x = d[0]
+        pick = {p: x.get(p) for p in ("itemcode", "itemname", "prevChangeRate", "tradeAmount",
+                                      "marketSum", "sosok", "upjongName", "groupName",
+                                      "nowPrice", "tradeVolume") if p in x}
+        out.append(f"1행={pick}")
+    return True, f"{label} :: " + " · ".join(out)
 
 
 def chk_upjong_json():
-    """업종 79개 — 시장 스냅샷의 산업 분류 축"""
-    return _chk_sector_list("upjong", 40, 100)
+    return _probe_stocklist(
+        "https://stock.naver.com/api/domestic/market/upjong/308/stocklist"
+        "?marketType=ALL&orderType=priceTop&startIdx=0&pageSize=100", "업종308")
 
 
 def chk_group_json():
-    """그룹사 61개 — 시장 스냅샷의 기업집단 축"""
-    return _chk_sector_list("group", 30, 5)
+    r = _probe_stocklist(
+        "https://stock.naver.com/api/domestic/market/group/120/stocklist"
+        "?marketType=ALL&orderType=priceTop&startIdx=0&pageSize=100", "그룹120")
+    # 그룹 120 이 어떤 그룹인지도 같이 확인한다
+    try:
+        gl = SESSION.get("https://stock.naver.com/api/domestic/market/group/list?pageSize=200",
+                         verify=False, timeout=15).json()
+        g = next((x for x in gl if str(x.get("no")) == "120"), None)
+        extra = f" | group/list 의 120 = {g.get('name')} totalCnt={g.get('totalCnt')}" if g else                 f" | ⚠️ group/list 에 no=120 이 없다. 실제 no 예시={[x.get('no') for x in gl[:8]]}"
+    except Exception as e:
+        extra = f" | 목록조회 ERR {e}"
+    return True, r[1] + extra
 
 
 CHECKS = [
