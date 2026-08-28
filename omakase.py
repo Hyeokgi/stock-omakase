@@ -1727,7 +1727,11 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         #     업종별 5~15%). 목표가를 ma20(=이격률 0% 회귀)으로 잡은 현행 로직은 이미 BNF와 같다.
         #   · 즉 바꿔야 할 것은 청산이 아니라 '진입 문턱'이다.
         # 왜 지금 켜지 않나: 켜면 과매도 진입 건수가 늘어 그 시점부터 표본 성격이 달라진다.
-        #   3주 뒤 재점검(2026-09-07 예약) 때 다른 항목들과 함께 판단할 것.
+        # 📌 [사전등록 2026-08-29] 켜는 시점이 확정됐다 — 로드맵 §3-2-1.
+        #   9/7 판정 스냅샷을 박제한 **직후** ON. 그 전엔 안 켠다(§2 동결).
+        #   단 SUPPLY_V2_BAND 가 조건 충족이면 그쪽이 먼저고 이건 10/5 로 밀린다(한 날 하나만).
+        #   ⚠️ 배선 주의: 이 코드는 있지만 main.yml 에 env 가 없다. 켜려면
+        #      .github/workflows/main.yml 의 '파이썬 실행!' 스텝 env 에 ENVELOPE_BAND: "on" 추가.
         # 켜는 법: ENVELOPE_BAND=on  (문턱 조정은 ENVELOPE_PCT_NORMAL / ENVELOPE_PCT_WARNING, 단위 %)
         #   기본 완화값은 평시 -12%(BNF 전기주 기준대), 경계장 -20%(현행 유지)로 국면 연동한다.
         if os.environ.get("ENVELOPE_BAND", "off").strip().lower() in ("on", "true", "1"):
