@@ -285,40 +285,44 @@ def chk_ranking_json():
     return isinstance(d, list) and len(d) >= 5, f"{len(d) if isinstance(d, list) else 0}종목"
 
 
-def _chk_sector_list(kind, min_n, big_min):
-    """업종·그룹사 목록 + 구성종목 (시장 스냅샷의 무리 축).
-
-    ⚠️ 이 경로는 **없는 이름에도 200 + `[]`** 를 주고(docs/네이버개편_대응.md §3),
-       pageSize 를 빠뜨리면 조용히 **20건**으로 잘린다. 그래서 상태코드가 아니라
-       건수·필수필드·구성종목까지 봐야 '껍데기 200'을 거를 수 있다.
-    ⚠️ pageSize 상한은 200 이다 — 실측(2026-08-28) 결과 목록은 300부터,
-       구성종목은 250부터 HTTP 400 이 난다. 상한을 넘기면 통째로 실패한다.
-    """
-    d = _get(f"https://stock.naver.com/api/domestic/market/{kind}/list?pageSize=200").json()
-    if not isinstance(d, list) or len(d) < min_n:
-        n = len(d) if isinstance(d, list) else '?'
-        return False, f"{n}건(임계 {min_n} — 캐치올이거나 pageSize 무시)"
-    if not {'no', 'name', 'totalCnt'}.issubset(set(d[0].keys())):
-        return False, f"{len(d)}건이지만 필수필드 없음: {sorted(d[0].keys())[:6]}"
-
-    # 가장 큰 분류의 구성종목을 받아 본다. 목록만 200 을 주고 상세가 죽은 경우를 잡는다.
-    big = max(d, key=lambda x: int(float(str(x.get('totalCnt') or 0))))
-    st = _get(f"https://stock.naver.com/api/domestic/market/{kind}/{big['no']}/stocklist"
-              f"?marketType=ALL&orderType=priceTop&startIdx=0&pageSize=200").json()
-    n = len(st) if isinstance(st, list) else 0
-    if n < big_min:
-        return False, f"{len(d)}개지만 최대분류 {big.get('name')} 구성 {n}종목(임계 {big_min})"
-    return True, f"{len(d)}개 · 최대 {big.get('name')} {n}종목(totalCnt {big.get('totalCnt')})"
+WANT = ["askBuy", "askSell", "totalBuyVolume", "totalSellVolume", "deviationRate",
+        "deviationSign", "quantDiffRate", "quantDiff", "prevQuant",
+        "week52HighPrice", "week52LowPrice", "per", "pbr", "eps", "roe", "roa",
+        "sales", "operatingProfit", "netIncome", "salesIncreasingRate",
+        "upperLimitPrice", "lowerLimitPrice", "listedDate", "reserveRatio",
+        "oneMonthEarnRate", "threeMonthEarnRate", "sixMonthEarnRate", "oneYearEarnRate"]
 
 
 def chk_upjong_json():
-    """업종 79개 — 시장 스냅샷의 산업 분류 축"""
-    return _chk_sector_list("upjong", 40, 100)
+    """[임시 프로브 4] 전 종목 스캔이 stocklist 와 같은 75필드를 주는가."""
+    u = ("https://stock.naver.com/api/domestic/market/stock/default"
+         "?tradeType=KRX&marketType=ALL&orderType=priceTop&startIdx=0&pageSize=3000")
+    d = SESSION.get(u, verify=False, timeout=30).json()
+    if not isinstance(d, list) or not d:
+        return True, f"전종목스캔 비정상: {type(d).__name__} len={len(d) if isinstance(d, list) else '?'}"
+    k = set(d[0].keys())
+    have = [w for w in WANT if w in k]
+    miss = [w for w in WANT if w not in k]
+    x = d[0]
+    samp = {p: x.get(p) for p in ("itemcode", "itemname", "askBuy", "askSell",
+                                  "deviationRate", "week52HighPrice", "per", "quantDiffRate") if p in x}
+    return True, (f"n={len(d)} · 키{len(k)}개 · 원하는{len(WANT)}중 보유{len(have)}"
+                  + (f" · 없음={miss}" if miss else " · 전부있음")
+                  + f" · 표본={samp}")
 
 
 def chk_group_json():
-    """그룹사 61개 — 시장 스냅샷의 기업집단 축"""
-    return _chk_sector_list("group", 30, 5)
+    """[임시 프로브 4] 전 종목 스캔의 전체 키 목록."""
+    u = ("https://stock.naver.com/api/domestic/market/stock/default"
+         "?tradeType=KRX&marketType=ALL&orderType=priceTop&startIdx=0&pageSize=3000")
+    d = SESSION.get(u, verify=False, timeout=30).json()
+    if not isinstance(d, list) or not d:
+        return True, "비정상"
+    # 필드가 종목마다 다를 수 있으니 여러 행의 합집합도 본다
+    uni = set()
+    for x in d[:50]:
+        uni |= set(x.keys())
+    return True, f"1행키{len(d[0].keys())}개 · 50행합집합{len(uni)}개 = {','.join(sorted(uni))}"
 
 
 CHECKS = [
