@@ -1092,7 +1092,8 @@ def compute_channel_comparison_dashboard(doc):
     #    10행 전부를 드라이브의 원본 PDF 전략배너로 단기/중기에 재분류해 넘겼다
     #    (AGGRESSIVE TREND MOMENTUM STRATEGY→단기, DEFENSIVE PLATFORM ACCUMULATION SWING→중기.
     #     신형 라벨 보유 28행에서 1:1 대응이 검증된 매핑이다). 남은 행이 없어 목록에서 제거.
-    channels = ["차트TOP2", "수급TOP2", "랜덤2", "리포트TOP2_단기", "리포트TOP2_중기", "리포트TOP2_장기",
+    channels = ["차트TOP2", "수급TOP2", "랜덤2", "랜덤2_배지",
+                "리포트TOP2_단기", "리포트TOP2_중기", "리포트TOP2_장기",
                 "지수벤치_KOSPI", "지수벤치_KOSDAQ"]  # 🆕 두 지수 이격을 나란히 비교할 수 있도록 추가
 
     from collections import defaultdict
@@ -1194,7 +1195,7 @@ def compute_channel_kelly(doc):
 
     # 채널별로 어느 호라이즌을 기준으로 볼지 — 단기 성격 채널은 T+5, 중기(스윙)는 T+10, 장기(구조적 성장)는 T+60
     CHANNEL_HORIZON = {
-        "차트TOP2": 5, "수급TOP2": 5, "랜덤2": 5,
+        "차트TOP2": 5, "수급TOP2": 5, "랜덤2": 5, "랜덤2_배지": 5,
         "리포트TOP2_단기": 5, "리포트TOP2_중기": 10, "리포트TOP2_장기": 60,
     }
     horizon_col = {1: 17, 3: 18, 5: 19, 10: 20, 20: 26, 60: 27, 120: 28}  # 종목 수익률 컬럼(0-based)
@@ -1393,7 +1394,8 @@ def apply_backtest_formatting(doc, bt_sheet, sorted_rows):
     # ② 채널별 배경색 규칙 추가 (C열=채널 값으로 행 전체를 물들임)
     channel_colors = {
         "차트TOP2": (0.85, 0.92, 1.0), "수급TOP2": (1.0, 0.93, 0.82),
-        "랜덤2": (0.93, 0.93, 0.93), "지수벤치_KOSPI": (0.85, 0.97, 0.87), "지수벤치_KOSDAQ": (0.87, 0.95, 0.97),
+        "랜덤2": (0.93, 0.93, 0.93), "랜덤2_배지": (0.82, 0.82, 0.82),
+        "지수벤치_KOSPI": (0.85, 0.97, 0.87), "지수벤치_KOSDAQ": (0.87, 0.95, 0.97),
         "리포트TOP2_단기": (1.0, 0.87, 0.87), "리포트TOP2_중기": (0.93, 0.87, 1.0), "리포트TOP2_장기": (1.0, 0.95, 0.78),
         # 🔧 [누락 보완] 구 채널명 '지수벤치'(_KOSPI/_KOSDAQ 접미사 없는 과거 행)가 빠져 있어
         #    해당 행들만 색이 없는 채로 남아 있었음.
@@ -3136,6 +3138,35 @@ def update_technical_data(df_theme, all_theme_map):
                 rng = random.Random(today_str)
                 random2 = rng.sample(valid_results, 2) if len(valid_results) >= 2 else list(valid_results)
 
+                # 🆕 [대조군 추가 2026-08-28] 랜덤2_배지 — '배지필터 **이후**' 풀에서 뽑는 두 번째 대조군.
+                #
+                # 왜 필요한가 (실측 근거)
+                #   기존 랜덤2 는 전 종목(약 2,900개)에서 뽑는데, 배지 통과 종목이 극소수라
+                #   **실제 구성의 95%가 '관망' 종목**이었다(2026-08-28 실측: 84행 중 80행).
+                #   그러면 "채널 vs 랜덤2" 검정은 사실상 **"우리 필터가 작동하는가"** 를 묻는 것이지
+                #   **"우리 랭킹이 좋은가"** 를 묻는 것이 아니다. 필터만 좋아도 통과한다.
+                #   그런데 Phase 1 의 목표는 '채널 10개 → 5개 이하', 즉 **랭킹**의 우열 판정이다.
+                #   지금 대조군으로는 그 질문에 답할 수 없다.
+                #
+                # 설계
+                #   · 모집단 = candidate_pool (배지 통과 = 우리가 '살 만하다'고 본 종목)
+                #   · 그중 **오늘 실제로 뽑힌 픽(차트TOP2·수급TOP2)은 제외**한다.
+                #     "우리가 상위로 고른 것" vs "고를 수 있었지만 안 고른 것" 이 되어야 랭킹 검정이 된다.
+                #   · 남은 후보가 2개 미만이면 있는 만큼만 적재한다(억지로 채우지 않는다).
+                #
+                # ⚠️ 기존 랜덤2 는 **그대로 둔다.** 8월 표본과 9월 표본의 t 값을 비교할 기준선이
+                #    사라지면 안 되기 때문이다. 이건 교체가 아니라 **추가**다.
+                # ⚠️ 대조군은 §3-1 에서 '판정 대상 아님'이므로, 채널이 하나 늘어도
+                #    §3-5 다중비교의 m 은 증가하지 않는다.
+                _already = {id(x) for x in (chart_top2 + supply_top2)}
+                _badge_pool = [r for r in candidate_pool
+                               if id(r) not in _already and parse_price_num(r[2]) > 0]
+                rng_badge = random.Random(today_str + "_badge")
+                random2_badge = (rng_badge.sample(_badge_pool, 2) if len(_badge_pool) >= 2
+                                 else list(_badge_pool))
+                print(f"🎲 [랜덤2_배지] 배지풀 {len(candidate_pool)}개 − 당일픽 {len(_already)}개 "
+                      f"→ 추출대상 {len(_badge_pool)}개 · 선정 {len(random2_badge)}개")
+
                 # 채널별 '오늘 이미 적재된 수'(이전 실행분 포함, bt_data 재독으로 반영) → 멀티런에도 하루 N개 고정
                 channel_today_count = {}
                 for row in bt_data[1:]:
@@ -3169,6 +3200,7 @@ def update_technical_data(df_theme, all_theme_map):
                 add_channel("차트TOP2", chart_top2)
                 add_channel("수급TOP2", supply_top2)
                 add_channel("랜덤2", random2)
+                add_channel("랜덤2_배지", random2_badge)
 
                 # 지수벤치(KOSPI·KOSDAQ 각 1행/일) — 순수 지수보유 베이스라인. 둘을 별개 채널로 분리해서
                 # 코스피·코스닥 이격이 클 때 나란히 비교할 수 있게 함(기존엔 KOSPI 하나만 있었음).
