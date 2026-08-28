@@ -305,20 +305,33 @@ def build_report(recs, horizon, calib, skipped):
 
 # ── 메인 ──────────────────────────────────────────────────────────────────
 
-def analyze(rows, horizon):
+def analyze(rows, horizon, diag=None):
+    """diag 가 주어지면 스킵 사유를 원인별·채널별로 쌓는다(왜 표본이 줄었는지 추적용)."""
     recs, skipped = [], {"제외표식": 0, "값없음": 0, "일봉없음": 0, "미성숙": 0}
     calib = {"n": 0, "match": 0, "worst": []}
 
+    def note(reason, ch, row=None):
+        # ⚠️ '값없음' 으로 뭉뚱그리면 목표가가 없는 건지 진입가가 없는 건지 구분이 안 된다.
+        #    표본이 왜 줄었는지는 Phase 2 해석에 직결되므로 원인을 쪼개서 남긴다.
+        if diag is None:
+            return
+        diag.setdefault(reason, {}).setdefault(ch or "(채널없음)", []).append(
+            (str(row[C_NAME]).strip() if row else "", str(row[C_ENTRY_DATE]).strip() if row else ""))
+
     for row in rows[1:]:
+        ch = str(row[C_CHANNEL]).strip() if len(row) > C_CHANNEL else ""
         if len(row) < 34:
             skipped["값없음"] += 1
+            note("행이짧음(34열미만)", ch, row if len(row) > C_ENTRY_DATE else None)
             continue
         if is_excluded_row(row):
             skipped["제외표식"] += 1
+            note("Z열 제외표식", ch, row)
             continue
-        channel = str(row[C_CHANNEL]).strip()
+        channel = ch
         if channel.startswith("지수벤치"):
             skipped["제외표식"] += 1
+            note("지수벤치(대조군)", ch, row)
             continue
 
         base = _num(row[C_ENTRY_PRICE])
@@ -327,15 +340,28 @@ def analyze(rows, horizon):
         code = str(row[C_CODE]).replace("'", "").strip().zfill(6)
         if base <= 0 or target <= 0 or stop <= 0 or not entry_date or not code.strip('0'):
             skipped["값없음"] += 1
+            miss = []
+            if target <= 0: miss.append("목표가")
+            if stop <= 0: miss.append("손절가")
+            if base <= 0: miss.append("진입가")
+            if not entry_date: miss.append("진입일")
+            if not code.strip('0'): miss.append("종목코드")
+            note("없음: " + "·".join(miss), ch, row)
             continue
 
         bars = get_daily_bars(code)
         if not bars:
             skipped["일봉없음"] += 1
+            note("일봉 조회 실패", ch, row)
             continue
         entry_idx = next((k for k, b in enumerate(bars) if b['date'] == entry_date), None)
-        if entry_idx is None or entry_idx + 1 + horizon > len(bars):
+        if entry_idx is None:
             skipped["미성숙"] += 1
+            note("진입일이 일봉에 없음", ch, row)
+            continue
+        if entry_idx + 1 + horizon > len(bars):
+            skipped["미성숙"] += 1
+            note(f"보유창 미성숙(T+{horizon} 미도달)", ch, row)
             continue
 
         # 자기검증 — 로그의 T+5 를 다시 계산해 본다
@@ -427,6 +453,8 @@ def self_test():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--self-test", action="store_true", help="시트 없이 규칙 엔진만 검증")
+    ap.add_argument("--diagnose", action="store_true",
+                    help="분석 대신 '왜 표본에서 빠졌는가'를 원인별·채널별로 출력")
     ap.add_argument("--horizon", type=int, default=20, help="비교 보유창(거래일). 기본 20")
     a = ap.parse_args()
 
@@ -442,7 +470,23 @@ def main():
         return 1
     print(f"📖 {len(rows) - 1}행 로드 (읽기 전용 — 시트에 쓰지 않는다)")
 
-    recs, calib, skipped = analyze(rows, a.horizon)
+    diag = {} if a.diagnose else None
+    recs, calib, skipped = analyze(rows, a.horizon, diag)
+
+    if a.diagnose:
+        total = sum(len(v) for r in diag.values() for v in r.values())
+        print(f"\n🔎 [표본 진단] 전체 {len(rows) - 1}행 · 시뮬 대상 {len(recs)}행 · 제외 {total}행\n")
+        for reason in sorted(diag, key=lambda r: -sum(len(v) for v in diag[r].values())):
+            per = diag[reason]
+            n = sum(len(v) for v in per.values())
+            print(f"── {reason} — {n}행")
+            for chan in sorted(per, key=lambda c: -len(per[c])):
+                items = per[chan]
+                sample = ", ".join(f"{nm}({dt})" for nm, dt in items[:3] if nm)
+                print(f"     {chan:<22} {len(items):>4}행   {sample}")
+            print()
+        return 0
+
     print(f"🧮 시뮬레이션 {len(recs)}행 · 건너뜀 {skipped}")
     print(f"🔍 자기검증 T+5 일치율 {calib['rate'] * 100:.1f}% ({calib['match']}/{calib['n']})")
     if not calib['ok']:
