@@ -1,0 +1,104 @@
+name: 🚪 HYEOKS Phase 2 청산 규칙 비교
+
+# 목적: 백테스트_로그의 **같은 진입 표본** 위에서 청산 규칙 3종(고정 / 트레일링 92% / T+N)을
+#       나란히 돌려 비교한다. 전략로드맵 Phase 2 의 산출물이며, 로드맵이 직접 적어둔 대로
+#       "추가 채널 없이 기존 로그로 계산 가능 — 새 인프라 불필요"한 작업이다.
+#
+# 읽기 전용: 구글시트를 **읽기만** 한다. 쓰지 않는다.
+#            그래도 락 그룹은 메인 스캐너와 공유한다 — omakase 가 백테스트_로그를 갱신하는
+#            도중에 읽으면 절반만 갱신된 상태를 볼 수 있기 때문이다(찢어진 읽기 방지).
+#
+# 수동 전용: cron 이 없다. 분석은 표본이 쌓인 뒤 사람이 판단해서 돌리는 것이지
+#            매일 자동으로 돌 이유가 없다. 자동화하면 '결과를 매일 보는' 습관이 생기고,
+#            그게 사전등록 규율(§3)이 막으려는 바로 그 행동이다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      horizon:
+        description: '비교 보유창 (거래일). 기본 20'
+        required: false
+        default: '20'
+        type: string
+
+concurrency:
+  group: hyeoks-sheet-lock   # 메인 스캐너와 동일 — 시트를 읽는 동안 쓰기와 겹치지 않게
+  cancel-in-progress: false
+
+permissions:
+  contents: write            # 리포트를 저장소에 커밋
+
+jobs:
+  exit-compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20      # 종목별 일봉 조회가 있어 넉넉히
+
+    steps:
+    - name: 📥 코드 가져오기
+      uses: actions/checkout@v4
+
+    - name: 🐍 파이썬 세팅
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: 📦 라이브러리 설치
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests gspread oauth2client
+
+    - name: 🧪 규칙 엔진 자기검증
+      # 시트를 건드리기 전에 청산 규칙 로직부터 검증한다. 여기서 깨지면 분석을 돌릴 이유가 없다.
+      run: python hyeoks_phase2_exit.py --self-test
+
+    - name: 🔑 비밀번호 파일(secret.json) 만들기
+      env:
+        GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+      run: echo "$GCP_CREDENTIALS" > secret.json
+
+    - name: 🚪 청산 규칙 비교
+      id: run
+      run: |
+        set +e
+        python hyeoks_phase2_exit.py --horizon "${{ inputs.horizon || '20' }}" 2>&1 | tee phase2.txt
+        echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        exit 0
+
+    - name: 🧹 자격증명 삭제
+      if: always()
+      run: rm -f secret.json
+
+    - name: 📋 실행 로그 보관
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: phase2-log
+        path: phase2.txt
+        retention-days: 90
+
+    - name: 💾 리포트 커밋
+      run: |
+        if [ -z "$(git status --porcelain data/phase2_exit)" ]; then
+          echo "ℹ️ 새 리포트 없음 — 커밋 생략"
+          exit 0
+        fi
+        git config user.name  "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add data/phase2_exit
+        git commit -m "data: Phase 2 청산 규칙 비교 $(TZ=Asia/Seoul date +%Y-%m-%d) [skip ci]"
+        for i in 1 2 3; do
+          git pull --rebase --autostash origin main && git push origin HEAD:main && exit 0
+          echo "⚠️ 푸시 재시도 $i/3"
+          sleep 5
+        done
+        echo "❌ 푸시 실패"
+        exit 1
+
+    - name: 🚦 분석 실패 시 잡 실패 처리
+      if: always()
+      run: |
+        if [ "${{ steps.run.outputs.exit_code }}" != "0" ]; then
+          echo "❌ 분석 스크립트가 0이 아닌 코드로 종료했습니다 (로그 확인)"
+          exit 1
+        fi
+        echo "✅ 정상 종료"
