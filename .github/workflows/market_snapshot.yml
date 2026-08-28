@@ -19,7 +19,22 @@ name: 📸 HYEOKS 장중 시장 스냅샷
 #    2026-08-27 실측: 정적데이터 4시간 54분, 캘린더 4시간 45분 지연. 그날 스냅샷 예약분은
 #    아예 드롭됐다. 15:05 스냅샷은 '동시호가 직전'이라는 게 핵심이라 지연을 감당할 수 없다.
 #    GAS 시간 기반 트리거는 구글 인프라에서 돌아 지터가 ±15분 수준이다.
+#
+# 🪃 백업 발사 (2026-08-29 추가) — GAS 가 죽은 날을 위한 두 번째 시도.
+#    GAS 는 단일 실패점이고, 스냅샷은 놓치면 **영구 복원 불가**다. 그래서 슬롯마다
+#    깃허브 cron 을 하나씩 더 건다. 깃허브 cron 은 늦지만, 늦으면 스크립트의 시간 창
+#    가드가 알아서 저장을 거부하므로 **표본이 오염될 위험은 0 이고 얻을 것만 있다.**
+#    이미 그 슬롯 파일이 있으면 중복 가드가 걸려 그냥 종료한다(스크립트 649행).
+#
+#    발사 시각은 '정시 도착이 가장 좋은 값'이 되도록 잡았다.
+#      1300 → 13:20 KST 발사, 창 마감 13:40 까지 약 18분의 지연 여유
+#      1505 → 15:05 KST 발사, 창 마감 15:25 까지 약 18분의 지연 여유
+#    둘 다 GAS 정시 발사(13:02 / 15:02)보다 **뒤**에 둔다. GAS 가 정상이면
+#    중복 가드에 걸려 조용히 끝나고, GAS 가 죽은 날에만 실제로 찍힌다.
 on:
+  schedule:
+    - cron: '20 4 * * 1-5'   # 13:20 KST — 1300 슬롯 백업
+    - cron: '5 6 * * 1-5'    # 15:05 KST — 1505 슬롯 백업
   workflow_dispatch:
     inputs:
       slot:
@@ -60,6 +75,22 @@ jobs:
         python -m pip install --upgrade pip
         pip install requests
 
+    - name: 🎯 슬롯 결정
+      # schedule 로 들어오면 inputs 가 비어 있으므로 cron 식으로 슬롯을 되짚는다.
+      id: slot
+      run: |
+        case "${{ github.event.schedule }}" in
+          "20 4 * * 1-5") SLOT=1300 ;;
+          "5 6 * * 1-5")  SLOT=1505 ;;
+          *)              SLOT="${{ inputs.slot }}" ;;
+        esac
+        if [ -z "$SLOT" ]; then
+          echo "❌ 슬롯을 정할 수 없다 (schedule='${{ github.event.schedule }}', input 없음)"
+          exit 1
+        fi
+        echo "slot=$SLOT" >> "$GITHUB_OUTPUT"
+        echo "▶ slot=$SLOT (트리거: ${{ github.event_name }})"
+
     - name: 📸 스냅샷 수집
       id: snap
       run: |
@@ -67,7 +98,8 @@ jobs:
         FORCE=""
         if [ "${{ inputs.force }}" = "true" ]; then FORCE="--force"; fi
         # 시간 창 밖이거나 휴장일이면 스크립트가 스스로 저장을 거부하고 0으로 끝난다.
-        python hyeoks_market_snapshot.py --slot "${{ inputs.slot }}" $FORCE
+        # 백업 cron 이 늦게 도착한 경우가 바로 여기서 걸러진다 — 빈손이 오염보다 낫다.
+        python hyeoks_market_snapshot.py --slot "${{ steps.slot.outputs.slot }}" $FORCE
         echo "exit_code=$?" >> "$GITHUB_OUTPUT"
         exit 0
 
@@ -80,7 +112,7 @@ jobs:
         git config user.name  "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
         git add data/market_snapshot
-        git commit -m "data: 시장 스냅샷 $(TZ=Asia/Seoul date +%Y-%m-%d) slot=${{ inputs.slot }} [skip ci]"
+        git commit -m "data: 시장 스냅샷 $(TZ=Asia/Seoul date +%Y-%m-%d) slot=${{ steps.slot.outputs.slot }} [skip ci]"
         # 다른 워크플로/사람이 그 사이 푸시했을 수 있으므로 rebase 후 재시도
         for i in 1 2 3; do
           git pull --rebase --autostash origin main && git push origin HEAD:main && exit 0

@@ -51,6 +51,10 @@ INTRADAY_RECOVERABLE_DAYS = 5
 # 슬롯별 '의도한 시각' 창. 수집기의 시간 창 가드와 같은 값이어야 한다.
 SLOT_WINDOW = {"1300": ("12:40", "13:40"), "1505": ("14:50", "15:25")}
 
+# GAS 정시 발사가 끝났을 시각. 이보다 늦게 찍혔으면 백업 cron 이 대신 찍은 날로 본다.
+# 창 안이라 데이터는 유효하지만, §6-12 진입가가 그날만 다른 시각의 값이므로 표시해 둔다.
+SLOT_PRIMARY_BY = {"1300": "13:10", "1505": "15:05"}
+
 # 스냅샷이 처음 쌓이기 시작한 날. 이 앞은 애초에 없는 것이므로 결측으로 세지 않는다.
 SNAPSHOT_EPOCH = "2026-08-28"
 # 업종·그룹사 축과 호가 4열이 들어간 날(merge 4236a7c, 19:54 KST → 실제 적용은 다음 거래일).
@@ -204,10 +208,14 @@ def main():
                 print(f"   {slot}: ⚠️ 읽기 실패 — {m['_error']}")
                 lost.append((d, [f"{slot} 파일 손상"]))
                 continue
-            ok = in_window(m.get("capturedAt", ""), slot)
+            cap = m.get("capturedAt", "")
+            ok = in_window(cap, slot)
             mark = "✅" if ok else ("⚠️ 창 밖" if ok is False else "?")
-            print(f"   {slot}: capturedAt={m.get('capturedAt','?')[11:19]} {mark} · "
-                  f"{m['_rows']}행 · {len(m['_cols'])}열")
+            late = ""
+            if ok and cap[11:16] > SLOT_PRIMARY_BY.get(slot, "23:59"):
+                late = "  🪃 백업 발사로 보임 (GAS 정시분 없음 — 진입가 시각이 평소와 다르다)"
+            print(f"   {slot}: capturedAt={cap[11:19]} {mark} · "
+                  f"{m['_rows']}행 · {len(m['_cols'])}열{late}")
             if d >= SECTOR_EPOCH:
                 for col in ("askBuy", "askSell", "totalBuyVolume", "totalSellVolume"):
                     if col not in m["_cols"]:
