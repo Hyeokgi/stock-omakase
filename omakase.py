@@ -2668,8 +2668,21 @@ def update_technical_data(df_theme, all_theme_map):
                 # 👑 [긴급 보정 2]: 빈 정적시트 강제 트랩을 피하기 위해 시간 검증 전용 플래그(is_official_reset_time)로 가드 교체
                 if not is_official_reset_time:
                     r[9] = existing_data[c_code]["briefing"]
-                    r[23] = existing_data[c_code]["target"]
-                    r[24] = existing_data[c_code]["stop"]
+                    # 🚨 [무결성 수정 2026-08-28] 예전엔 시트 값을 무조건 덮어썼다. 그런데
+                    #    hyeoks_analyst.py 가 매일 07:00 에 DB_스캐너 O·P열(목표가·손절가)을
+                    #    'AI 데이터 계산중' 으로 리셋하고, **리포트 종목에만** 실제 값을 채운다.
+                    #    그 결과 차트TOP2·수급TOP2·랜덤2 는 omakase 가 방금 계산해 둔 유효한
+                    #    target_price/stop_loss 를 플레이스홀더로 덮어쓰고, 15시 백테스트 적재 때
+                    #    _parse_price_cell('AI 데이터 계산중') → '' 이 되어 **목표가가 영구 결측**됐다.
+                    #    (실측 2026-08-28: 310행 중 121행 결측 — 차트TOP2 54·랜덤2 47·수급TOP2 20,
+                    #     리포트 채널은 0건. Phase 2 청산 규칙 비교의 표본이 17행으로 쪼그라든 원인이다.)
+                    #    → 시트 값이 **실제 숫자일 때만** 덮어쓴다. 플레이스홀더면 계산값을 지킨다.
+                    #    목표가·손절가는 선정 로직에 쓰이지 않는 연구용 값이므로(§2) 선정은 안 바뀐다.
+                    _sheet_t, _sheet_s = existing_data[c_code]["target"], existing_data[c_code]["stop"]
+                    if _parse_price_cell(_sheet_t) != "":
+                        r[23] = _sheet_t
+                    if _parse_price_cell(_sheet_s) != "":
+                        r[24] = _sheet_s
                 if is_preserve_time and not is_regular_market:
                     if not r[26] and not r[27]:
                         r[26] = str(existing_data[c_code]["raw_row"][16]).strip() if len(existing_data[c_code]["raw_row"]) > 16 else ""

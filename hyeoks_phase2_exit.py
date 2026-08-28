@@ -539,28 +539,49 @@ def main():
                 "② 트레일링": statistics.mean([x['sim']['trailing'][0] for x in r]),
                 "③ T+20": statistics.mean([x['sim']['tn'][20][0] for x in r if 20 in x['sim']['tn']]),
             }
-        label = {"none": "원본만(배정 없음)", "band": "밴드 배정(§3-4 단기)", "chart": "차트 배정(60일고가/20일선)"}
-        print(f"{'':<26}{'N':>5}{'배정분':>6}{'① 고정':>10}{'② 트레일링':>12}{'③ T+20':>10}")
-        print("-" * 71)
-        for m in ("none", "band", "chart"):
+            # ⚠️ 배정분만 따로 — 전체를 비교하면 '배정 규칙의 차이'와 '모집단의 차이'가 섞인다.
+            #    원본 17행은 리포트 채널이고 배정분 98행은 차트/수급/랜덤 채널이라 애초에 다른 집단이다.
+            only = [x for x in r if x.get("assigned")]
+            if only:
+                table[mode + "_배정분"] = {
+                    "n": len(only), "배정": len(only),
+                    "① 고정": statistics.mean([x['sim']['fixed'][0] for x in only]),
+                    "② 트레일링": statistics.mean([x['sim']['trailing'][0] for x in only]),
+                    "③ T+20": statistics.mean([x['sim']['tn'][20][0] for x in only if 20 in x['sim']['tn']]),
+                }
+        label = {"none": "원본만(리포트 채널)", "band": "원본+밴드 배정", "chart": "원본+차트 배정",
+                 "band_배정분": "  └ 배정분만(밴드)", "chart_배정분": "  └ 배정분만(차트)"}
+        order_keys = ("none", "band", "band_배정분", "chart", "chart_배정분")
+        print(f"{'':<26}{'N':>5}{'배정':>5}{'① 고정':>10}{'② 트레일링':>12}{'③ T+20':>10}")
+        print("-" * 70)
+        for m in order_keys:
             if m not in table:
                 continue
             t = table[m]
-            print(f"{label[m]:<26}{t['n']:>5}{t['배정']:>6}"
+            print(f"{label[m]:<26}{t['n']:>5}{t['배정']:>5}"
                   f"{t['① 고정']:>+10.2f}{t['② 트레일링']:>+12.2f}{t['③ T+20']:>+10.2f}")
 
-        # 규칙 순위가 배정 방식에 흔들리는가
+        rank = lambda m: sorted(("① 고정", "② 트레일링", "③ T+20"), key=lambda k: -table[m][k])
         print()
-        orders = {m: sorted(("① 고정", "② 트레일링", "③ T+20"), key=lambda k: -table[m][k])
-                  for m in table}
-        uniq = {tuple(v) for v in orders.values()}
-        for m, o in orders.items():
-            print(f"   {label[m]:<26} 순위: {' > '.join(o)}")
+        for m in order_keys:
+            if m in table:
+                print(f"   {label[m]:<26} 순위: {' > '.join(rank(m))}")
+
+        # 🔑 핵심 판정을 두 개로 나눈다 — 배정 '규칙'의 영향과 '모집단'의 영향은 다른 문제다.
         print()
-        if len(uniq) == 1:
-            print("   ✅ 세 경우 모두 **같은 순위**다. 청산 규칙의 우열은 배정 방식에 의존하지 않는다.")
+        rule_same = ("band_배정분" in table and "chart_배정분" in table
+                     and rank("band_배정분") == rank("chart_배정분"))
+        pop_same = ("band_배정분" in table and rank("none") == rank("band_배정분"))
+        if rule_same:
+            print("   ✅ [배정 규칙] 밴드와 차트가 **같은 순위**다. 결론은 배정 방식에 의존하지 않는다.")
         else:
-            print("   ⚠️ 순위가 **배정 방식에 따라 뒤집힌다.** 이 비교로는 결론을 낼 수 없다.")
+            print("   ⚠️ [배정 규칙] 밴드와 차트의 순위가 다르다. 배정 방식에 의존하는 결론이다.")
+        if pop_same:
+            print("   ✅ [모집단] 원본(리포트)과 배정분(차트/수급/랜덤)의 순위도 같다.")
+        else:
+            print("   🔻 [모집단] 원본(리포트)과 배정분(차트/수급/랜덤)의 순위가 **다르다.**")
+            print("      → 이건 배정 탓이 아니라 **채널마다 최적 청산이 다르다**는 신호일 수 있다.")
+            print("        원본과 배정분을 합쳐서 하나의 결론을 내면 안 된다.")
         print("\n   ⚠️ 배정분은 원본에 없던 값을 만든 것이다. §3-5 탐색적 항목이므로")
         print("      독립 표본에서 재현되기 전까지 채택하지 않는다. 시트에는 쓰지 않았다.")
         return 0
