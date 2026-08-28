@@ -57,6 +57,7 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ
 # 백테스트_로그 열 인덱스 (omakase.BT_HEADER 와 동일 — 여기서 재정의하지 말고 이름으로 참조할 것)
 C_ENTRY_DATE, C_CHANNEL, C_NAME, C_CODE = 1, 2, 3, 4
 C_ENTRY_PRICE, C_CAPTURE_MEMO = 16, 25
+C_TAJEOM = 6   # 타점유형 = 적재 시점의 master_tajeom (관망 여부가 여기 남는다)
 C_T5, C_TARGET, C_STOP = 19, 32, 33
 
 TRAILING_PCT = 0.92      # omakase.check_target_alerts_and_trailing_stop 과 같은 값
@@ -590,6 +591,41 @@ def main():
     recs, calib, skipped = analyze(rows, a.horizon, diag, a.assign)
 
     if a.diagnose:
+        # ── 채널 × 관망여부 × 목표가유무 교차표 ────────────────────────────
+        # 두 가지를 한 번에 답한다.
+        #   ① 대조군 랜덤2 에 '관망' 종목이 얼마나 섞였는가
+        #      (omakase 는 랜덤2 를 '배지필터 이전' 전체 results 에서 뽑는다 — 의도인지 확인 필요)
+        #   ② 목표가 결측이 관망 여부와 어떻게 얽혀 있는가
+        #      (관망 종목은 DB_스캐너에 안 들어가 플레이스홀더 덮어쓰기를 피한다 → 값이 남아야 한다)
+        NEG = ("관망", "조건미달", "매매금지", "🚫")
+        xt = {}
+        for row in rows[1:]:
+            if len(row) <= C_TAJEOM:
+                continue
+            ch = str(row[C_CHANNEL]).strip()
+            if not ch or ch.startswith("지수벤치"):
+                continue
+            watch = any(k in str(row[C_TAJEOM]) for k in NEG)
+            has_t = _num(row[C_TARGET] if len(row) > C_TARGET else "") > 0
+            d = xt.setdefault(ch, {"n": 0, "관망": 0, "관망_목표가있음": 0,
+                                   "배지": 0, "배지_목표가있음": 0})
+            d["n"] += 1
+            k = "관망" if watch else "배지"
+            d[k] += 1
+            if has_t:
+                d[k + "_목표가있음"] += 1
+
+        print(f"\n🔬 [채널 구성] 관망 종목이 섞였는가 · 목표가는 어느 쪽이 살아남았는가\n")
+        print(f"{'채널':<20}{'전체':>5}{'관망':>6}{'관망%':>7}"
+              f"{'관망중 목표가':>13}{'배지중 목표가':>13}")
+        print("-" * 66)
+        for ch in sorted(xt, key=lambda c: -xt[c]["n"]):
+            d = xt[ch]
+            wr = d["관망"] / d["n"] * 100 if d["n"] else 0
+            wt = f"{d['관망_목표가있음']}/{d['관망']}" if d["관망"] else "—"
+            bt = f"{d['배지_목표가있음']}/{d['배지']}" if d["배지"] else "—"
+            print(f"{ch:<20}{d['n']:>5}{d['관망']:>6}{wr:>6.0f}%{wt:>13}{bt:>13}")
+        print()
         total = sum(len(v) for r in diag.values() for v in r.values())
         print(f"\n🔎 [표본 진단] 전체 {len(rows) - 1}행 · 시뮬 대상 {len(recs)}행 · 제외 {total}행\n")
         for reason in sorted(diag, key=lambda r: -sum(len(v) for v in diag[r].values())):
