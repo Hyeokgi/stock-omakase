@@ -285,33 +285,41 @@ def chk_ranking_json():
     return isinstance(d, list) and len(d) >= 5, f"{len(d) if isinstance(d, list) else 0}종목"
 
 
-def _chk_sector_list(kind, min_n):
-    """업종·그룹사 목록 (시장 스냅샷의 무리 축).
-
-    ⚠️ 이 경로는 **없는 이름에도 200 + `[]`** 를 준다(docs/네이버개편_대응.md §3).
-       그래서 상태코드가 아니라 건수와 필수 필드로 판정한다."""
-    d = _get(f"https://stock.naver.com/api/domestic/market/{kind}/list?pageSize=300").json()
-    if not isinstance(d, list) or len(d) < min_n:
-        return False, f"{len(d) if isinstance(d, list) else '?'}건(임계 {min_n}·캐치올 주의)"
-    need = {'no', 'name'}
-    if not need.issubset(set(d[0].keys())):
-        return False, f"{len(d)}건이지만 필수필드 없음: {sorted(d[0].keys())[:6]}"
-    # 구성종목까지 봐야 '껍데기 200'을 거른다 — 매핑이 안 되면 소속 열이 통째로 빈다.
-    no = d[0].get('no')
-    st = _get(f"https://stock.naver.com/api/domestic/market/{kind}/{no}/stocklist"
-              f"?marketType=ALL&orderType=priceTop&startIdx=0&pageSize=1000").json()
-    n = len(st) if isinstance(st, list) else 0
-    return n >= 2, f"{len(d)}개 · {no}번 구성 {n}종목"
+def _probe(url):
+    """상태코드와 건수를 그대로 돌려준다(예외를 삼킨다). 상한 실측용."""
+    try:
+        r = SESSION.get(url, verify=False, timeout=15)
+        if r.status_code != 200:
+            return f"{r.status_code}"
+        d = r.json()
+        return f"n={len(d)}" if isinstance(d, list) else f"200/{type(d).__name__}"
+    except Exception as e:
+        return f"ERR:{type(e).__name__}"
 
 
 def chk_upjong_json():
-    """업종 79개 — 배타적이라 거래대금 비중을 중복 없이 잴 수 있는 유일한 축"""
-    return _chk_sector_list("upjong", 20)
+    """[임시 프로브] 업종 목록의 pageSize 상한과 경로를 실측한다."""
+    B = "https://stock.naver.com/api/domestic/market"
+    out = []
+    for ps in ("", "?pageSize=100", "?pageSize=200", "?pageSize=300", "?pageSize=1000"):
+        out.append(f"list{ps or '(무)'}={_probe(f'{B}/upjong/list{ps}')}")
+    return True, " · ".join(out)
 
 
 def chk_group_json():
-    """그룹사 20개 — 계열사 동반 상승 관측"""
-    return _chk_sector_list("group", 5)
+    """[임시 프로브] 구성종목 stocklist 의 pageSize 상한을 실측한다."""
+    B = "https://stock.naver.com/api/domestic/market"
+    out = [f"group/list={_probe(f'{B}/group/list?pageSize=200')}"]
+    try:
+        d = SESSION.get(f"{B}/upjong/list?pageSize=200", verify=False, timeout=15).json()
+        no = d[0].get("no")
+        out.append(f"업종1번={no}/{d[0].get('name')} 키={sorted(d[0].keys())}")
+        for ps in (100, 200, 500, 1000):
+            u = f"{B}/upjong/{no}/stocklist?marketType=ALL&orderType=priceTop&startIdx=0&pageSize={ps}"
+            out.append(f"stock@{ps}={_probe(u)}")
+    except Exception as e:
+        out.append(f"ERR:{e}")
+    return True, " · ".join(out)
 
 
 CHECKS = [
