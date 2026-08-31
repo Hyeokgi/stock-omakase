@@ -81,6 +81,19 @@ def bounded_workers(item_count):
 #    list.append 는 GIL 하에서 원자적이라 스레드에서 그냥 써도 된다(락 불필요).
 LIVE_FALLBACK_LOG = []   # (종목명, 사유)
 
+# 📊 [타점 인구조사] 스캔한 전 종목의 타점유형 분포를 회차마다 센다.
+#    왜 필요한가 — 2026-08-31 에 리포트 중기 채널이 또 000000 을 반환했고 사유가
+#    "'유형:SEED' + '타점:과매도 · 역배팅' 을 동시에 만족하는 종목이 **리스트에** 없다" 였다.
+#    그런데 여기서 '리스트'는 DB_스캐너 20행이다. 즉 이 로그만으로는
+#      (a) 시장 전체에 과매도 태그가 애초에 없었다
+#      (b) 있었지만 상위 20 안에 못 들었다
+#    를 구분할 수 없다. 둘은 처방이 정반대다 — (a) 면 ENVELOPE_BAND 완화가 답이지만
+#    (b) 면 병목이 문턱이 아니라 20행 깔때기라서 완화해도 중기 채널은 계속 굶는다.
+#    9/7 직후 ENVELOPE_BAND 를 켜기로 사전등록해 뒀으므로(로드맵 §3-2-1),
+#    그 결정이 맞는지 확인할 근거를 지금부터 쌓아 둔다.
+#    ⚠️ 관측 전용이다. 세는 것 말고 아무것도 하지 않는다(§2 동결 유지).
+TAJEOM_CENSUS = []       # (타점base, 엔벨로프게이트통과여부)
+
 now_kst_check = datetime.datetime.now(KST)
 if 4 <= now_kst_check.hour < 7:
     print(f"🌙 현재 시간({now_kst_check.strftime('%H:%M')}): 시스템을 휴식 모드로 전환합니다. (04시~07시)")
@@ -2159,6 +2172,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             tajeom_multiplier = 0.6
 
         master_tajeom = master_tajeom_base + master_tajeom_suffix
+        TAJEOM_CENSUS.append((master_tajeom_base, bool(is_envelope_over_under)))
 
         if is_warning_market and track_type == "돌파":
             tajeom_multiplier = 0.0
@@ -2593,8 +2607,24 @@ def update_technical_data(df_theme, all_theme_map):
 
         print(f"⏱️ 스캔 소요시간: {time.time() - scan_start:.1f}초 ({len(results)}/{len(target_dict)}개 종목 처리 완료)")
 
+        # 📊 타점 인구조사 — 과매도 태그가 '시장에 없었나' 대 '상위 20에 못 들었나'를 가른다.
+        if TAJEOM_CENSUS:
+            _env = sum(1 for _, e in TAJEOM_CENSUS if e)
+            _over = sum(1 for b, _ in TAJEOM_CENSUS if b == "📉 과매도 · 역배팅")
+            _knife = sum(1 for b, _ in TAJEOM_CENSUS if b.startswith("⏸ 관망 · 과매도"))
+            print(f"📊 [타점 인구조사] 스캔 {len(TAJEOM_CENSUS)}종목 · "
+                  f"엔벨로프(-20%) 통과 {_env}종목 → 과매도·역배팅 {_over}건 · 반등미확인 {_knife}건")
+            if _over == 0 and _env > 0:
+                print("   ↳ 밴드는 통과했는데 반등 확인 게이트에서 전멸했다 → 문턱이 아니라 관문②가 병목")
+            elif _env == 0:
+                print("   ↳ -20% 이탈 종목 자체가 0 → ENVELOPE_BAND 완화의 표적이 바로 이 경우")
+            TAJEOM_CENSUS.clear()
+
         # 📉 등락률 폴백 요약 — 실시간 API 실패율이 곧 표본 오염 위험도다.
-        if LIVE_FALLBACK_LOG:
+        #    ⚠️ 실패가 0 건이어도 반드시 한 줄 찍는다. 줄이 없으면 '실패 0' 인지
+        #       '계측기가 또 배선이 끊긴 것'인지 구분이 안 되는데, 이 결함이 정확히
+        #       그런 식(live_success 가 선언만 되고 안 읽힘)으로 두 달간 숨어 있었다.
+        if True:
             _daily = sum(1 for _, r in LIVE_FALLBACK_LOG if r == "일봉폴백")
             _none = sum(1 for _, r in LIVE_FALLBACK_LOG if r == "등락률없음")
             print(f"📉 [등락률 폴백] 실시간 API 실패 {len(LIVE_FALLBACK_LOG)}/{len(target_dict)}종목 "
