@@ -34,6 +34,7 @@ concurrency:
 
 permissions:
   contents: read              # 읽기만 한다. 커밋하지 않는다.
+  actions:  read              # 🪃 백업 발사(schedule) 이력 조회용 — 정상 동작은 파일을 안 남기므로
 
 jobs:
   watch:
@@ -70,6 +71,8 @@ jobs:
 
     - name: 🛡️ 결측 감시
       id: watch
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         set +e
         python hyeoks_snapshot_watch.py --days "${{ inputs.days || '20' }}" 2>&1 | tee watch.txt

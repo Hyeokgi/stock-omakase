@@ -115,6 +115,45 @@ def in_window(captured_at, slot):
     return w[0] <= hhmm <= w[1]
 
 
+def backup_cron_report(days):
+    """🪃 백업 발사(schedule) 가 실제로 돌았는지 깃허브 액션 API 로 확인한다.
+
+    왜 파일로 알 수 없나 — 백업이 제대로 동작한 날은 GAS 가 이미 찍어 둔 뒤라
+    중복 가드에 걸려 **아무 파일도 만들지 않는다.** 즉 정상 동작의 증거가 저장소에
+    남지 않는다. 그래서 '발사되긴 했는가'는 실행 이력으로만 확인된다.
+    (액션 러너에서는 GITHUB_TOKEN 이 있으므로 추가 비밀 없이 조회된다.)"""
+    tok = os.environ.get("GITHUB_TOKEN", "")
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    if not tok or not repo:
+        print("ℹ️ 백업 발사 확인 생략 — GITHUB_TOKEN/GITHUB_REPOSITORY 없음 (로컬 실행)")
+        return
+    url = (f"https://api.github.com/repos/{repo}/actions/workflows/"
+           f"market_snapshot.yml/runs?event=schedule&per_page=20")
+    try:
+        r = requests.get(url, timeout=15, headers={
+            "Authorization": f"Bearer {tok}",
+            "Accept": "application/vnd.github+json"})
+        runs = r.json().get("workflow_runs", []) if r.status_code == 200 else None
+    except Exception as e:
+        print(f"⚠️ 백업 발사 확인 실패: {e}")
+        return
+    if runs is None:
+        print(f"⚠️ 백업 발사 확인 실패: HTTP {r.status_code}")
+        return
+
+    print("\n🪃 백업 발사(schedule) 이력")
+    if not runs:
+        print("   ❌ **한 번도 발사되지 않았다.** cron 이 등록되지 않았을 수 있다.")
+        print("      스냅샷은 놓치면 영구 복원 불가이고 이것이 유일한 2차 방어선이다.")
+        print("      확인: .github/workflows/market_snapshot.yml 의 schedule 블록이 main 에 있는가,")
+        print("            저장소 Actions 가 비활성(60일 무활동 자동중지)은 아닌가.")
+        return
+    for run in runs[:6]:
+        started = str(run.get("run_started_at", ""))[:16].replace("T", " ")
+        print(f"   · {started} UTC · {run.get('conclusion') or run.get('status')}")
+    print(f"   → 최근 {len(runs)}회 발사 확인. 정상인 날은 중복 가드로 조용히 끝나는 것이 설계된 동작이다.")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=20, help="거슬러 볼 거래일 수")
@@ -221,6 +260,8 @@ def main():
                     if col not in m["_cols"]:
                         print(f"      ⚠️ 호가 열 없음: {col} — §6-4 모의 집행 재료가 빠진다")
                         break
+
+    backup_cron_report(args.days)
 
     # ── 결론
     print()

@@ -637,6 +637,41 @@ def main():
                 sample = ", ".join(f"{nm}({dt})" for nm, dt in items[:3] if nm)
                 print(f"     {chan:<22} {len(items):>4}행   {sample}")
             print()
+
+        # ── 진입일별 목표가 채움률 (최근 8일) ─────────────────────────────
+        # 이 표가 답하는 것: 2026-08-28 에 넣은 플레이스홀더 덮어쓰기 가드가
+        # **실제로 먹었는가.** 가드는 그 이후 적재분에만 적용되므로 날짜별로 갈라 봐야 한다.
+        # 일부러 출력 맨 끝에 둔다 — 워크플로 로그를 tail 로 볼 때 이 줄이 먼저 보이도록.
+        GUARD_DAY = "2026-08-31"   # 가드 배포(8/28 19:xx) 이후 첫 적재일
+        byday = {}
+        for row in rows[1:]:
+            if len(row) <= C_TARGET:
+                continue
+            ch = str(row[C_CHANNEL]).strip()
+            if not ch or ch.startswith("지수벤치"):
+                continue
+            d = str(row[C_ENTRY_DATE]).strip()[:10]
+            if not d:
+                continue
+            e = byday.setdefault(d, [0, 0])
+            e[0] += 1
+            if _num(row[C_TARGET]) > 0:
+                e[1] += 1
+        print("🎯 [목표가 채움률 — 진입일별] 8/28 플레이스홀더 가드가 먹었는지 보는 표")
+        print(f"   (가드 적용 시작일 {GUARD_DAY}. 그 이전 결측은 정상 — 소급 적용 안 됨)")
+        for d in sorted(byday)[-8:]:
+            n, t = byday[d]
+            mark = "✅" if (d >= GUARD_DAY and t == n) else ("⚠️" if d >= GUARD_DAY else "  ")
+            print(f"     {d}  목표가 {t}/{n}행 ({t / n * 100:.0f}%) {mark}")
+        _after = [(d, v) for d, v in byday.items() if d >= GUARD_DAY]
+        if _after:
+            _n = sum(v[0] for _, v in _after)
+            _t = sum(v[1] for _, v in _after)
+            verdict = "✅ 가드 작동" if _t == _n else f"❌ 가드 이후에도 {_n - _t}행 결측 — omakase.py:2671 재확인 필요"
+            print(f"   → 가드 이후 합계 {_t}/{_n}행  {verdict}")
+        else:
+            print(f"   → 가드 이후({GUARD_DAY}~) 적재된 행이 아직 없다")
+        print()
         return 0
 
     print(f"🧮 시뮬레이션 {len(recs)}행 · 건너뜀 {skipped}")
