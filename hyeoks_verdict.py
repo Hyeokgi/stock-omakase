@@ -145,8 +145,24 @@ def is_excluded(row):
 
 
 def collect(rows):
-    """채널 → {horizon: [순알파...]}. 비용은 §3-4-2 대로 여기서 뺀다."""
-    out, skipped = {}, {"제외표식": 0, "채널없음": 0, "값없음": 0}
+    """채널 → {horizon: [순알파...]}. 비용은 §3-4-2 대로 여기서 뺀다.
+
+    ⚠️ 리허설(2026-09-04)에서 두 가지 결함이 드러나 고친 버전이다.
+
+    ① 대조군을 **자기 호라이즌에서만** 모으고 있었다. 그래서 리포트중기(T+10)를
+       검정할 때 비교할 랜덤2 T+10 이 없어 t 가 통째로 '—' 로 나왔다.
+       9/7 에 그대로 돌았다면 '표본 부족'이 아니라 '대조군 부재' 때문에
+       판정 불가가 뜨는데, 로그만 봐서는 그 둘을 구분할 수 없었다.
+       → 대조군은 **쓰이는 모든 호라이즌**에서 모은다.
+
+    ② 아직 호라이즌에 도달하지 않은 채널이 **표에서 통째로 사라졌다**.
+       랜덤2_배지(8/31 신설)는 T+5 가 아직 안 채워져 한 줄도 안 나왔다.
+       "채널이 없다"와 "표본이 아직 안 익었다"는 완전히 다른 이야기다.
+       → 원시 행수(raw)를 따로 세어 N=0 이어도 표에 남긴다.
+    """
+    horizons_in_use = set(HORIZON.values()) | {DEFAULT_HORIZON, 20}
+    out, raw = {}, {}
+    skipped = {"제외표식": 0, "채널없음": 0, "미성숙(호라이즌 미도달)": 0}
     for row in rows[1:]:
         if len(row) <= C_CHANNEL:
             continue
@@ -157,20 +173,30 @@ def collect(rows):
         if not ch:
             skipped["채널없음"] += 1
             continue
+        raw[ch] = raw.get(ch, 0) + 1
         h = HORIZON.get(ch, DEFAULT_HORIZON)
-        # 장기 채널은 §3-3 대로 T+20 중간지표도 같이 모은다
-        for hh in ({h, 20} if ch == LONG_CHANNEL else {h}):
+        # 대조군은 모든 호라이즌에서 모은다(①). 장기 채널은 §3-3 대로 T+20 도 같이(②는 raw 로).
+        if ch == CONTROL:
+            want = horizons_in_use
+        elif ch == LONG_CHANNEL:
+            want = {h, 20}
+        else:
+            want = {h}
+        matured = False
+        for hh in want:
             si, ii = STOCK_COL.get(hh), INDEX_COL.get(hh)
             if si is None or len(row) <= max(si, ii):
                 continue
             s, i = _num(row[si]), _num(row[ii])
             if s is None or i is None:
-                if hh == h:
-                    skipped["값없음"] += 1
                 continue
             cost = 0.0 if ch.startswith("지수벤치") else COST_PCT
             out.setdefault(ch, {}).setdefault(hh, []).append(s - i - cost)
-    return out, skipped
+            if hh == h:
+                matured = True
+        if not matured:
+            skipped["미성숙(호라이즌 미도달)"] += 1
+    return out, raw, skipped
 
 
 def verdict_for(ch, n, t, mean):
@@ -205,13 +231,15 @@ def holm(pairs):
 
 
 # ── 리포트 ────────────────────────────────────────────────────────────────
-def build_report(data, skipped, today):
+def build_report(data, raw, skipped, today):
     ctrl = data.get(CONTROL, {})
     rows_out, conf = [], []
 
-    for ch in sorted(data):
+    # 사전등록된 채널은 표본이 0 이어도 표에 남긴다 — "채널이 없다"와
+    # "아직 안 익었다"를 구분하기 위해서다(리허설에서 랜덤2_배지가 사라졌던 문제).
+    for ch in sorted(set(data) | set(raw) | set(HORIZON)):
         h = HORIZON.get(ch, DEFAULT_HORIZON)
-        vals = data[ch].get(h, [])
+        vals = data.get(ch, {}).get(h, [])   # 표본 0 인 채널도 표에 남긴다
         n = len(vals)
         mean = sum(vals) / n if n else None
         base = ctrl.get(h, [])
@@ -222,8 +250,12 @@ def build_report(data, skipped, today):
         v = "대조군(판정 대상 아님)" if is_ctrl else verdict_for(ch, n, t, mean)
         if (not is_ctrl) and ch != LONG_CHANNEL and n >= MIN_N and p is not None:
             conf.append((ch, p))
-        rows_out.append({"ch": ch, "h": h, "n": n, "mean": mean, "ann": ann,
-                         "t": t, "p": p, "v": v, "ctrl": is_ctrl})
+        if n == 0:
+            v = (f"표본 0 — 원시 {raw.get(ch, 0)}행 전부 T+{h} 미도달"
+                 if raw.get(ch) else "행 없음")
+        rows_out.append({"ch": ch, "h": h, "n": n, "raw": raw.get(ch, 0),
+                         "mean": mean, "ann": ann, "t": t, "p": p,
+                         "v": v, "ctrl": is_ctrl})
 
     passed = holm(conf) if conf else set()
     for r in rows_out:
@@ -255,11 +287,11 @@ def build_report(data, skipped, today):
     A("")
     A("## 채널별 결과")
     A("")
-    A("| 채널 | H | N | 평균 순알파 | 연율 환산 | Welch t | p | 판정 |")
-    A("|---|--:|--:|--:|--:|--:|--:|---|")
+    A("| 채널 | H | 원시행 | N(성숙) | 평균 순알파 | 연율 환산 | Welch t | p | 판정 |")
+    A("|---|--:|--:|--:|--:|--:|--:|--:|---|")
     for r in sorted(rows_out, key=lambda x: (x["ctrl"], -(x["t"] or -9))):
         f = lambda v, s="{:+.2f}%": s.format(v) if v is not None else "—"
-        A(f"| {'*' if r['ctrl'] else ''}{r['ch']} | T+{r['h']} | {r['n']} | "
+        A(f"| {'*' if r['ctrl'] else ''}{r['ch']} | T+{r['h']} | {r['raw']} | {r['n']} | "
           f"{f(r['mean'])} | {f(r['ann'])} | "
           f"{('%.2f' % r['t']) if r['t'] is not None else '—'} | "
           f"{('%.3f' % r['p']) if r['p'] is not None else '—'} | {r['v']} |")
@@ -365,15 +397,34 @@ def self_test():
         r[C_CHANNEL], r[C_EXCLUDE] = ch, memo
         r[STOCK_COL[5]], r[INDEX_COL[5]] = str(s), str(i)
         return r
-    d, sk = collect([hdr, mk("차트TOP2", 3.0, 1.0)])
+    d, rw, sk = collect([hdr, mk("차트TOP2", 3.0, 1.0)])
     chk("순알파 = 종목−지수−0.35", abs(d["차트TOP2"][5][0] - (3.0 - 1.0 - 0.35)) < 1e-9,
         f"={d['차트TOP2'][5][0]:.2f}")
-    d, sk = collect([hdr, mk("지수벤치_KOSPI", 3.0, 1.0)])
+    d, rw, sk = collect([hdr, mk("지수벤치_KOSPI", 3.0, 1.0)])
     chk("지수벤치는 비용 면제", abs(d["지수벤치_KOSPI"][5][0] - 2.0) < 1e-9)
-    d, sk = collect([hdr, mk("차트TOP2", 3.0, 1.0, "거래정지 — 측정 제외")])
+    d, rw, sk = collect([hdr, mk("차트TOP2", 3.0, 1.0, "거래정지 — 측정 제외")])
     chk("'제외' 표식 행은 빠진다", sk["제외표식"] == 1 and not d)
-    d, sk = collect([hdr, mk("차트TOP2", 3.0, 1.0, "집계복귀 — 철회")])
+    d, rw, sk = collect([hdr, mk("차트TOP2", 3.0, 1.0, "집계복귀 — 철회")])
     chk("'집계복귀' 는 살린다", sk["제외표식"] == 0 and bool(d))
+
+    print("🧪 리허설에서 드러난 두 결함 (2026-09-04)")
+    # ① 대조군은 모든 호라이즌에서 모여야 한다 — 안 그러면 중기(T+10) 검정의 t 가 통째로 없다
+    def mk10(ch, s10, i10):
+        r = [""] * 34
+        r[C_CHANNEL] = ch
+        r[STOCK_COL[10]], r[INDEX_COL[10]] = str(s10), str(i10)
+        return r
+    d, rw, sk = collect([hdr, mk10(CONTROL, 1.0, 0.0), mk10("리포트TOP2_중기", 2.0, 0.0)])
+    chk("대조군이 T+10 에서도 모인다(중기 검정용)",
+        10 in d.get(CONTROL, {}), f"랜덤2 호라이즌={sorted(d.get(CONTROL, {}))}")
+    # ② 호라이즌 미도달 채널이 표에서 사라지면 안 된다
+    d, rw, sk = collect([hdr, mk10("랜덤2_배지", 1.0, 0.0)])   # T+5 는 비어 있음
+    chk("미성숙 채널도 원시행수로 남는다",
+        rw.get("랜덤2_배지") == 1 and sk["미성숙(호라이즌 미도달)"] == 1,
+        f"raw={rw.get('랜덤2_배지')} 미성숙={sk['미성숙(호라이즌 미도달)']}")
+    md, ro, cf, ps = build_report(d, rw, sk, "2026-01-01")
+    chk("N=0 이어도 표에 남고 사유가 적힌다",
+        any(r["ch"] == "랜덤2_배지" and r["n"] == 0 for r in ro) and "T+5 미도달" in md)
 
     print("\n" + ("✅ 전부 통과" if ok else "❌ 실패 있음 — 판정을 돌리지 말 것"))
     return 0 if ok else 1
@@ -398,8 +449,8 @@ def main():
     rows = doc.worksheet(SHEET_NAME).get_all_values()   # 읽기 전용. 여기 한 줄뿐이다.
 
     today = datetime.datetime.now(KST).strftime("%Y-%m-%d")
-    data, skipped = collect(rows)
-    md, rows_out, conf, passed = build_report(data, skipped, today)
+    data, raw, skipped = collect(rows)
+    md, rows_out, conf, passed = build_report(data, raw, skipped, today)
 
     if a.stdout_only:
         print(md)
@@ -414,7 +465,8 @@ def main():
     print("\n════════ 판정 요약 ════════")
     print(f"전체 {len(rows) - 1}행 · 채널 {len(rows_out)}개 · 확증 검정 대상 m={len(conf)}")
     for r in sorted(rows_out, key=lambda x: (x["ctrl"], -(x["t"] or -9))):
-        print(f"  {'*' if r['ctrl'] else ' '}{r['ch']:<18} T+{r['h']:<3} N={r['n']:<4}"
+        print(f"  {'*' if r['ctrl'] else ' '}{r['ch']:<18} T+{r['h']:<3}"
+              f" raw={r['raw']:<4} N={r['n']:<4}"
               f" 순알파={('%+.2f%%' % r['mean']) if r['mean'] is not None else '—':>9}"
               f" t={('%.2f' % r['t']) if r['t'] is not None else '—':>6}  {r['v']}")
     if not conf:
