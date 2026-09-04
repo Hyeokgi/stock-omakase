@@ -34,6 +34,10 @@
 import os, sys, math, argparse, datetime
 
 KST = datetime.timezone(datetime.timedelta(hours=9))
+# ⚠️ 문서 지정은 **URL 로** 한다. 처음에 open("HYEOKS_주식_자동화") 로 썼다가
+#    첫 실행이 그대로 죽었다 — 이름으로 여는 방식은 드라이브 검색에 의존해서
+#    이름이 조금만 달라도 실패한다. phase2 가 쓰는 URL 을 그대로 재사용한다.
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit"
 SHEET_NAME = "백테스트_로그"
 OUT_DIR = "docs"
 
@@ -390,7 +394,7 @@ def main():
     scope = ["https://spreadsheets.google.com/feeds",
              "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
-    doc = gspread.authorize(creds).open("HYEOKS_주식_자동화")
+    doc = gspread.authorize(creds).open_by_url(SHEET_URL)
     rows = doc.worksheet(SHEET_NAME).get_all_values()   # 읽기 전용. 여기 한 줄뿐이다.
 
     today = datetime.datetime.now(KST).strftime("%Y-%m-%d")

@@ -102,7 +102,14 @@ jobs:
       if: always()
       run: |
         echo "════════ 판정 요약 ════════"
-        sed -n '/판정 요약/,$p' verdict.txt || true
+        # 성공하면 요약 구간을, 실패하면 마지막 30줄(=트레이스백)을 찍는다.
+        # 첫 실행에서 sed 가 아무것도 못 찾아 원인 파악이 한 번 밀렸다.
+        if grep -q "판정 요약" verdict.txt 2>/dev/null; then
+          sed -n '/판정 요약/,$p' verdict.txt
+        else
+          echo "⚠️ 요약 구간 없음 — 실패한 것으로 보고 로그 끝부분을 찍는다"
+          tail -n 30 verdict.txt || true
+        fi
 
     - name: 🚦 실패 시 잡 실패 처리
       if: always()
