@@ -139,9 +139,18 @@ def _num(v):
 
 
 def is_excluded(row):
-    """§4-2 — Z열에 '제외' 가 있으면 뺀다. '집계복귀' 는 철회 표식이라 살린다."""
-    memo = str(row[C_EXCLUDE]) if len(row) > C_EXCLUDE else ""
-    return ("제외" in memo) and ("집계복귀" not in memo)
+    """§4-2 — Z열에 '제외' 두 글자가 있으면 뺀다.
+
+    ⚠️ 처음엔 여기에 `and "집계복귀" not in memo` 를 덧붙였다. 더 안전해 보였지만
+       **틀린 판단이었다.** 같은 규칙이 `omakase.py:857` 과
+       `hyeoks_phase2_exit.py:165` 에도 있는데 둘 다 단순 포함 검사다.
+       나만 다르게 굴면 같은 행을 어떤 도구는 세고 어떤 도구는 빼게 된다 —
+       집계가 도구마다 갈리는 것이 결측보다 훨씬 나쁘다.
+       §4-2 가 등록한 규칙도 "'제외' 두 글자가 들어가면 뺀다"이고, 철회는
+       '제외' 가 안 들어가는 '집계복귀…' 로 쓰기로 정해 두었다. 규칙을 따른다.
+       (남은 위험: '집계복귀 — 이전 제외 철회' 처럼 두 단어가 같이 든 문구를
+        쓰면 세 도구 모두 그 행을 뺀다. 그런 문구를 쓰지 않는 것이 규약이다.)"""
+    return "제외" in (str(row[C_EXCLUDE]) if len(row) > C_EXCLUDE else "")
 
 
 def collect(rows):
@@ -405,7 +414,14 @@ def self_test():
     d, rw, sk = collect([hdr, mk("차트TOP2", 3.0, 1.0, "거래정지 — 측정 제외")])
     chk("'제외' 표식 행은 빠진다", sk["제외표식"] == 1 and not d)
     d, rw, sk = collect([hdr, mk("차트TOP2", 3.0, 1.0, "집계복귀 — 철회")])
-    chk("'집계복귀' 는 살린다", sk["제외표식"] == 0 and bool(d))
+    chk("'집계복귀'(제외 두 글자 없음) 는 살린다", sk["제외표식"] == 0 and bool(d))
+    # 세 구현이 같은 판정을 하는지 — 단순 포함 검사와 일치해야 한다
+    for memo, want in [("거래정지 — 측정 제외", True), ("제외:위험종목", True),
+                       ("집계복귀 — 철회", False), ("", False),
+                       ("집계복귀 — 이전 제외 철회", True)]:
+        r = [""] * 34
+        r[C_EXCLUDE] = memo
+        chk(f"제외판정 '{memo or '(빈칸)'}' → {want}", is_excluded(r) is want)
 
     print("🧪 리허설에서 드러난 두 결함 (2026-09-04)")
     # ① 대조군은 모든 호라이즌에서 모여야 한다 — 안 그러면 중기(T+10) 검정의 t 가 통째로 없다
