@@ -41,6 +41,7 @@ import csv
 import time
 import argparse
 import datetime
+import math
 import statistics
 import xml.etree.ElementTree as ET
 
@@ -169,6 +170,23 @@ def is_excluded_row(row):
 
 # ── 청산 규칙 3종 ──────────────────────────────────────────────────────────
 
+def ohlc_ok(b):
+    """일봉 한 개가 쓸 만한가.
+
+    🚨 [R4 · 2026-09-08] 어제는 시가가 없거나 0 이하이면 **조용히 선 가격으로 복귀**했다.
+       값이 없는 것과 값이 선 위에 있는 것은 완전히 다른데 결과가 같아졌다.
+       이제 이런 봉이 하나라도 있으면 그 행 전체를 계산에서 뺀다(무언의 근사 금지).
+    """
+    try:
+        o, h, l, c = (float(b["open"]), float(b["high"]),
+                      float(b["low"]), float(b["close"]))
+    except (KeyError, TypeError, ValueError):
+        return False
+    if not all(math.isfinite(x) and x > 0 for x in (o, h, l, c)):
+        return False
+    return l <= h and l <= o <= h and l <= c <= h
+
+
 def simulate_exits(bars, entry_idx, base, target, stop, horizon, gap_model="open"):
     """진입 다음날부터 horizon 거래일까지 보유하며 세 규칙을 각각 돌린다.
 
@@ -199,6 +217,9 @@ def simulate_exits(bars, entry_idx, base, target, stop, horizon, gap_model="open
     window = bars[entry_idx + 1: entry_idx + 1 + horizon]
     if not window or base <= 0:
         return None
+    # R4 — 일봉이 이상하면 조용히 근사하지 않고 그 행을 통째로 뺀다.
+    if not all(ohlc_ok(b) for b in window):
+        return None
 
     def pct(p):
         return (p - base) / base * 100.0
@@ -210,32 +231,61 @@ def simulate_exits(bars, entry_idx, base, target, stop, horizon, gap_model="open
     # "몇 건이 영향을 받았나"가 부풀려진다(자기검증에서 실제로 2로 나왔다).
     gapped = {"fixed": 0, "trailing": 0}
 
-    def fill(level, bar, favorable, rule):
-        """체결가 근사. 시가가 이미 선을 넘었으면 시가로 본다.
-        favorable=True 는 목표가(위로 넘음), False 는 손절가(아래로 넘음)."""
-        if legacy:
-            return level
-        o = bar.get("open") or 0
-        if o <= 0:
-            return level
-        if (not favorable and o <= level) or (favorable and o >= level):
-            if abs(o - level) > 1e-9:
+    def resolve(b, tgt, stp, rule):
+        """하루의 체결을 정한다. 반환 (체결가, 사유) 또는 None(그날은 미체결).
+
+        🚨 [R4 · 2026-09-08 재검증] **시가를 먼저 본다.** 이게 어제 수정의 결함이었다.
+           어제는 저가·고가로 접촉 여부를 먼저 판정하고 **손절을 우선 선택한 뒤**
+           시가 보정을 했다. 그래서 시가가 이미 목표를 넘긴 날도 손절로 처리됐다.
+
+           재현 — 진입 100 · 손절 92 · 목표 110, 다음 봉 O=115/H=120/L=90/C=100
+             · 어제 코드: 저가 90 ≤ 손절 92 → 손절 92 체결 → **−8%**
+             · 올바른 처리: 개장가 115 가 이미 목표 위 → **+15%**
+
+           '장중 순서 불명 → 손절 우선'은 **시가로 판별되지 않을 때만** 쓰는 가정이다.
+           시가는 우리가 순서를 아는 유일한 가격이므로 그것부터 쓴다.
+        """
+        o = b["open"]
+        # ① 시가 — 순서를 아는 값. 이미 선을 넘었으면 그 가격에 체결된 것으로 본다.
+        if stp > 0 and o <= stp:
+            if abs(o - stp) > 1e-9:
                 gapped[rule] += 1
-            return o
-        return level
+            return o, "손절"
+        if tgt > 0 and o >= tgt:
+            if abs(o - tgt) > 1e-9:
+                gapped[rule] += 1
+            return o, "익절"
+        # ② 장중 — 고가·저가의 순서를 모른다. 여기서만 보수적으로 손절을 우선한다.
+        hit_stp = stp > 0 and b["low"] <= stp
+        hit_tgt = tgt > 0 and b["high"] >= tgt
+        if hit_stp and hit_tgt:
+            nonlocal ambiguous
+            ambiguous = True
+        if hit_stp:
+            return stp, "손절"          # 시가가 선 위였으므로 갭이 아니다 — 선 가격 체결
+        if hit_tgt:
+            return tgt, "익절"
+        return None
+
+    def resolve_legacy(b, tgt, stp):
+        """수정 전(2026-09-07) 동작. **동일 표본 비교용으로만** 남긴다."""
+        nonlocal ambiguous
+        hit_stp = stp > 0 and b["low"] <= stp
+        hit_tgt = tgt > 0 and b["high"] >= tgt
+        if hit_stp and hit_tgt:
+            ambiguous = True
+        if hit_stp:
+            return stp, "손절"
+        if hit_tgt:
+            return tgt, "익절"
+        return None
 
     # ① 고정 — 목표가/손절가 도달 시 청산
     fixed = None
     for d, b in enumerate(window, start=1):
-        hit_stop = stop > 0 and b['low'] <= stop
-        hit_tgt = target > 0 and b['high'] >= target
-        if hit_stop and hit_tgt:
-            ambiguous = True
-        if hit_stop:
-            fixed = (pct(fill(stop, b, False, "fixed")), "손절", d)
-            break
-        if hit_tgt:
-            fixed = (pct(fill(target, b, True, "fixed")), "익절", d)
+        r = resolve_legacy(b, target, stop) if legacy else resolve(b, target, stop, "fixed")
+        if r:
+            fixed = (pct(r[0]), r[1], d)
             break
     if fixed is None:
         fixed = (pct(window[-1]['close']), "만기", len(window))
@@ -244,15 +294,20 @@ def simulate_exits(bars, entry_idx, base, target, stop, horizon, gap_model="open
     #    (omakase.check_target_alerts_and_trailing_stop 의 일봉 근사)
     trail_line, hit_target, trailing = stop, False, None
     for d, b in enumerate(window, start=1):
-        if trail_line > 0 and b['low'] <= trail_line:
-            trailing = (pct(fill(trail_line, b, False, "trailing")),
-                        "트레일링손절" if hit_target else "손절", d)
+        # 목표를 이미 친 뒤에는 '목표가 청산'이 없다 — 추적선만 본다.
+        eff_tgt = 0.0 if hit_target else target
+        r = (resolve_legacy(b, eff_tgt, trail_line) if legacy
+             else resolve(b, eff_tgt, trail_line, "trailing"))
+        if r and r[1] == "손절":
+            trailing = (pct(r[0]), "트레일링손절" if hit_target else "손절", d)
             break
-        if not hit_target and target > 0 and b['high'] >= target:
+        if r and r[1] == "익절":
             hit_target = True
             trail_line = max(trail_line, base)          # 본전 확보
         if hit_target:
-            # ⚠️ 여기서 올린 선은 **다음 루프(=다음날)부터** 검사된다. 위 주석 참조.
+            # ⚠️ 여기서 올린 선은 **다음 루프(=다음날)부터** 검사된다.
+            #    '하루가 끝난 뒤 당일 고가로 선을 갱신해 다음 거래일부터 적용'하는
+            #    일봉 모형이다. 장중 실시간 추적 주문과 같은 전략이 아니다(재검증 Q2).
             trail_line = max(trail_line, b['high'] * TRAILING_PCT)
     if trailing is None:
         trailing = (pct(window[-1]['close']), "만기", len(window))
@@ -423,7 +478,8 @@ def build_report(recs, horizon, calib, skipped):
 
 def analyze(rows, horizon, diag=None, assign="none"):
     """diag 가 주어지면 스킵 사유를 원인별·채널별로 쌓는다(왜 표본이 줄었는지 추적용)."""
-    recs, skipped = [], {"제외표식": 0, "값없음": 0, "일봉없음": 0, "미성숙": 0}
+    recs, skipped = [], {"제외표식": 0, "값없음": 0, "일봉없음": 0, "미성숙": 0,
+                         "일봉이상(OHLC)": 0}
     calib = {"n": 0, "match": 0, "worst": []}
 
     def note(reason, ch, row=None):
@@ -507,6 +563,9 @@ def analyze(rows, horizon, diag=None, assign="none"):
         #    "얼마나 과대평가였나"는 재계산해서 보여야지 단정할 수 없다(감사 지적).
         sim_legacy = simulate_exits(bars, entry_idx, base, target, stop, horizon,
                                     gap_model="legacy")
+        if sim is None:
+            # R4 — 조용히 사라지지 않게 사유를 남긴다. 일봉이 이상해서 뺀 행이다.
+            skipped["일봉이상(OHLC)"] += 1
         if sim:
             recs.append({"name": str(row[C_NAME]).strip(), "channel": channel,
                          "code": code, "entry": entry_date, "sim": sim,
@@ -616,6 +675,45 @@ def self_test():
     tr_ok = round(tr['trailing'][0], 2) == -20.0
     ok = ok and tr_ok
     print(f"  {'✅' if tr_ok else '❌'} 트레일링도 갭 시가로 체결(−20%)")
+
+    # ── R4 시가 우선순위 (2026-09-08 재검증) ─────────────────────────────
+    print("\n🧪 R4 — 시가로 판별되면 장중 '손절 우선' 가정을 쓰지 않는다")
+
+    # 감사자 재현 그대로: 진입 100 · 손절 92 · 목표 110 · 다음 봉 O=115/H=120/L=90/C=100
+    #   어제 코드: 저가 90 ≤ 손절 92 → 손절 92 체결 → −8%
+    #   올바른 처리: 개장가 115 가 이미 목표 위 → +15%
+    r4 = [bar(115, 120, 90, 100)]
+    gapchk("시가가 목표 위 + 장중 손절선 터치 → 시가 익절(+15%)", r4, 15.0, "익절")
+    lg4 = simulate_exits([bar(100, 100, 100, 100)] + r4, 0, base, target, stop, 1,
+                         gap_model="legacy")
+    lg4_ok = round(lg4['fixed'][0], 2) == -8.0 and lg4['fixed'][1] == "손절"
+    ok = ok and lg4_ok
+    print(f"  {'✅' if lg4_ok else '❌'} legacy 는 수정 전 오답(−8.0% 손절)을 재현 — 비교용")
+
+    # 반대 방향: 시가가 손절 아래 + 장중 목표 터치 → 시가 손절이 먼저
+    gapchk("시가가 손절 아래 + 장중 목표 터치 → 시가 손절(−20%)",
+           [bar(80, 130, 75, 120)], -20.0, "손절")
+
+    # 시가가 둘 사이면 그때만 장중 보수 가정(손절 우선)
+    amb2 = simulate_exits([bar(100, 100, 100, 100), bar(100, 115, 90, 100)], 0,
+                          base, target, stop, 1)
+    amb2_ok = amb2['fixed'][1] == "손절" and amb2['ambiguous'] and amb2['gapped']['fixed'] == 0
+    ok = ok and amb2_ok
+    print(f"  {'✅' if amb2_ok else '❌'} 시가가 선 사이 → 장중 양방 터치는 종전대로 손절 우선")
+
+    print("\n🧪 R4 — 이상한 일봉은 조용히 근사하지 않고 행을 뺀다")
+    for label, b_ in [("시가 0", bar(0, 110, 90, 100)),
+                      ("저가 > 고가", bar(100, 90, 110, 100)),
+                      ("종가가 범위 밖", bar(100, 110, 90, 200)),
+                      ("음수 가격", bar(-1, 110, 90, 100))]:
+        got = simulate_exits([bar(100, 100, 100, 100), b_], 0, base, target, stop, 1)
+        hit = got is None
+        ok = ok and hit
+        print(f"  {'✅' if hit else '❌'} {label} → 계산 거부(None)")
+    good = simulate_exits([bar(100, 100, 100, 100), bar(100, 105, 96, 104)], 0,
+                          base, target, stop, 1)
+    ok = ok and good is not None
+    print(f"  {'✅' if good is not None else '❌'} 정상 일봉은 그대로 계산된다")
 
     print("\n✅ 전부 통과" if ok else "\n❌ 실패한 항목이 있다")
     return 0 if ok else 1
