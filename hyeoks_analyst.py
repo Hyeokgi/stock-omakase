@@ -7,6 +7,10 @@ from google import genai
 import urllib3
 import xml.etree.ElementTree as ET
 import concurrent.futures
+# 🏷️ 타점 해석은 의존성 없는 별도 모듈로 뺐다(F01, 2026-09-07).
+#    이 파일은 gspread·pdfkit·genai 를 최상단에서 import 하므로 로직만 시험할 수 없었다.
+#    사본을 시험하면 원본이 맞다는 보장이 없어서, 원본을 옮기고 여기서 가져다 쓴다.
+from hyeoks_tajeom import clean_tajeom, trend_phase, POLICY_ID, POLICY_SINCE
  
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings("ignore")
@@ -793,20 +797,9 @@ try:
         if is_structural_seed and v3_score is not None and v3_score < 20:
             continue
         
-        tajeom_clean = tajeom_raw.split('⚠️')[0].strip()
-        tajeom_clean = tajeom_clean.split('🎯')[0].strip()
-
-        # ⑤ 추세 위상(trend phase)을 AI에 명시적으로 전달 (omakase 칼만 시크릿 텍스트에서 추출)
-        if any(k in tajeom_raw for k in ["📉", "하락 전환", "3파 익절", "고점 리스크", "반등 미확인", "하락장"]):
-            trend_phase_txt = "하락/고점주의"
-        elif any(k in tajeom_raw for k in ["가속", "2파"]):
-            trend_phase_txt = "상승가속"
-        elif any(k in tajeom_raw for k in ["전환", "1파"]):
-            trend_phase_txt = "상승전환초기"
-        elif "추세 유지" in tajeom_raw:
-            trend_phase_txt = "상승유지"
-        else:
-            trend_phase_txt = "중립"
+        # 🏷️ 타점 해석은 hyeoks_tajeom 모듈에 있다(F01 수정 + 회귀 테스트 대상).
+        tajeom_clean = clean_tajeom(tajeom_raw)
+        trend_phase_txt = trend_phase(tajeom_raw)
 
         v3_info_txt = f" | 실적점수(V3):{v3_score}점" if v3_score is not None else ""
         rs_info_txt = f" | RS등급(상대강도):{rs_grade}" if rs_grade is not None else ""
@@ -986,7 +979,16 @@ try:
        실적점수(V3)를 적극 반영하십시오 — 매출·영업이익이 여러 분기 꾸준히 개선 중일수록 우선순위를 높게 두고,
        실적점수가 낮게 명시된 종목은 기술적으로 좋아 보여도 피하십시오. 실적점수 표시 자체가 없는 종목은
        아직 데이터가 없는 것이니 다른 기준(코어픽 여부·차트 위치 등)으로 판단하십시오.
-    4. 🚨 [추세 절대 거부권 - 최우선 규칙]: '추세:하락/고점주의'이거나 타점에 '📉 / 3파 익절 / 하락 전환 / 반등 미확인'이 포함된 종목은 점수가 아무리 높아도 절대 선정하지 마십시오. 추세 반전이 확인되지 않은 '떨어지는 칼'은 반드시 "000000"으로 회피하십시오.
+    4. 🚨 [추세 절대 거부권 - 최우선 규칙]: '추세:하락/고점주의'이거나 타점에
+       '3파 익절 / 하락 전환 / 반등 미확인 / 고점 리스크 / 하락장'이 포함된 종목은 점수가 아무리 높아도
+       절대 선정하지 마십시오. 추세 반전이 확인되지 않은 '떨어지는 칼'은 반드시 "000000"으로 회피하십시오.
+       ▸ **단 하나의 예외 (2026-09-07 수정, 정책 oversold-veto-v2)**: 타점 '📉 과매도 · 역배팅' **그 자체**는
+         거부 사유가 아닙니다. 이 태그는 스캐너가 '엔벨로프 이탈 + 반등 확인'을 **둘 다** 통과시킨 경우에만
+         붙이는 것이라, 이미 떨어지는 칼을 걸러낸 결과물입니다. 반등이 확인되지 않은 종목에는
+         '⏸ 관망 · 과매도 반등 미확인'이 붙고 그건 위 규칙대로 계속 거부됩니다.
+       ▸ 이 예외는 **2번(중기 스윙) 자리에만** 적용합니다. 1번(단기)·3번(장기)에서는 '📉'가 붙은 종목을
+         종전대로 선정하지 마십시오.
+       ▸ '📉 과매도 · 역배팅' 태그가 붙었더라도 위 위험 문구를 **함께** 달고 있으면 그때는 거부하십시오.
     5. 🆕 [RS등급 활용 — 참고용 우선순위, 절대 기준 아님]: RS등급(상대강도, 1~99 백분위)은 전종목 대비 상대적 강도를 나타냅니다.
        다른 조건(타점·추세·V1·V2)이 비슷한 후보가 여럿이라면 RS등급이 높은 쪽을 우선하십시오.
        단, RS등급이 낮거나 표시가 없다는 이유만으로 다른 조건이 확실히 좋은 종목을 배제하지는 마십시오 — 어디까지나 동점자 처리용 참고 지표입니다.
@@ -1034,6 +1036,10 @@ try:
     # 🆕 [근거 로그] Gemini가 왜 이 종목을(또는 왜 000000을) 골랐는지 콘솔에 남겨서, 나중에 픽 품질을
     #    복기할 때 "이유를 알 수 없는 블랙박스" 상태가 아니라 근거를 추적할 수 있게 함.
     print(f"🧠 [단기 픽 근거] {picks_json.get('reasoning_short', '(근거 없음)')}")
+    # 🏷️ 선정 정책 식별자를 로그에 남긴다 — F01 수정 전/후 표본을 갈라야 하기 때문이다.
+    #    원장(백테스트_로그)에는 정책 버전 열이 없으므로, 당분간 **진입일 + 이 로그**로 구분한다.
+    print(f"🏷️ [선정 정책] {POLICY_ID} (적용 시작 {POLICY_SINCE}) — "
+          f"이 날짜 이후 리포트 채널 표본은 이전 정책과 합치지 말 것")
     print(f"🧠 [중기 스윙 픽 근거] {picks_json.get('reasoning_mid', '(근거 없음)')}")
     print(f"🧠 [장기 추세추종 픽 근거] {picks_json.get('reasoning_long', '(근거 없음)')}")
     

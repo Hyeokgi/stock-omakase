@@ -43,6 +43,11 @@ jobs:
         python -m pip install --upgrade pip
         pip install requests gspread oauth2client google-genai pdfkit markdown Pillow beautifulsoup4 pandas
                 
+    - name: 🧪 타점 해석 회귀 테스트 (F01)
+      # 시트·AI 를 건드리기 전에 선정 정책 로직부터 검증한다.
+      # 2026-09-07 감사가 찾은 모순(중기 모수가 거부권에 걸림)이 되살아나면 여기서 멈춘다.
+      run: python test_tajeom.py
+
     - name: 🚀 구글 시트 보안 인증 파일(secret.json) 생성
       env:
         SECRET_JSON: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
