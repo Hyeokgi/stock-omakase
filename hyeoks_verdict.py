@@ -311,7 +311,14 @@ def validate_ledger(rows, today=None):
                 blank_date_val += 1
 
         # R2 — 성숙/결손 구분
-        if d_ok and ch and not ch.startswith("지수벤치"):
+        #   ⚠️ §4-2 로 **제외된 행은 빼고 본다.** 실측(2026-09-08)에서 이 검사가
+        #      행271 랜덤2(2026-07-22)를 "성숙했는데 값이 없다"로 잡았는데,
+        #      제외 표식이 붙은 행이 정확히 1행이었다. 거래정지 같은 사유로 제외한
+        #      행은 T+5 값이 없는 것이 **정상**이다 — collect() 도 그 행을 안 센다.
+        #      집계에 안 들어가는 행을 "데이터 결손"이라 부르면 경고가 무뎌진다.
+        #      (무결성 검사 — 중복 id·비유한 수치·미래 날짜 — 는 제외 행에도
+        #       그대로 적용한다. 그건 집계 여부와 무관한 시트 손상 신호다.)
+        if d_ok and ch and not ch.startswith("지수벤치") and not is_excluded(row):
             note = maturity_note(d_raw, h, today)
             si = STOCK_COL.get(h)
             has_h = (si is not None and len(row) > si and str(row[si]).strip() != "")
@@ -775,6 +782,15 @@ def self_test():
         sev(miss) == [WARN], f"{sev(miss)}")
     early = [hdr34, mkrow("Y1", "차트TOP2", date="2026-09-29")]
     chk("아직 미성숙인데 값이 있다 → WARN", sev(early) == [WARN], f"{sev(early)}")
+    # §4-2 로 뺀 행은 값이 없는 게 정상이다 — 실측에서 이걸로 헛경고가 났다
+    _ex = mkrow("X1", "차트TOP2", s5=None, i5=None, date="2026-09-01")
+    _ex[C_EXCLUDE] = "거래정지 — 측정 제외"
+    chk("제외 행은 값이 없어도 결손 경고를 내지 않는다", sev([hdr34, _ex]) == [],
+        f"{sev([hdr34, _ex])}")
+    _exf = mkrow("X2", "차트TOP2", date="2099-01-01")
+    _exf[C_EXCLUDE] = "거래정지 — 측정 제외"
+    chk("그래도 제외 행의 무결성 검사(미래 날짜)는 살아 있다",
+        ABORT in sev([hdr34, _exf]), f"{sev([hdr34, _exf])}")
 
     # ── R3 — 지문은 셀 경계를 구분해야 한다 ─────────────────────────────
     _f1 = ledger_fingerprint(good)
