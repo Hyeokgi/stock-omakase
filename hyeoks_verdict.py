@@ -40,7 +40,12 @@ KST = datetime.timezone(datetime.timedelta(hours=9))
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit"
 SHEET_NAME = "백테스트_로그"
 OUT_DIR = "docs"
-# 원장 원본 보관 위치. **공개 저장소에 커밋하지 않는다**(.gitignore) — 아티팩트로만 남긴다.
+# 원장 원본 보관 위치.
+# ⚠️ [R1 · 2026-09-08] 어제 여기에 "아티팩트로만 남긴다 = 비공개"라고 적었는데 **틀렸다.**
+#    이 저장소는 public 이고, `.gitignore` 는 git 커밋만 막을 뿐 아티팩트 접근은 못 막는다.
+#    아티팩트 업로드에서 이 디렉터리를 뺐다(verdict.yml 참조).
+#    지금 이 파일은 **실행 머신에만** 남고 어디로도 전송되지 않는다.
+#    접근 제한 보관소가 생기기 전까지는 공개 쪽에 **SHA256 지문만** 둔다.
 LEDGER_DIR = "data/verdict_ledger"
 
 
@@ -659,8 +664,11 @@ def main():
 
         # ── F07 ④ 원장 원본을 근거로 남긴다 ─────────────────────────────
         #    결과 Markdown 만 남기면 "그때 무엇을 봤나"를 복원할 수 없다(감사 지적).
-        #    ⚠️ 공개 저장소에 원장을 커밋하지 않는다 — .gitignore 대상이고
-        #       워크플로 아티팩트로만 보존한다.
+        #    ⚠️ [R1 정정 2026-09-08] 이 파일은 **실행 머신에만** 남는다.
+        #       저장소 커밋 대상이 아니고(.gitignore), 아티팩트에도 싣지 않는다.
+        #       즉 액션 러너에서 돌리면 잡이 끝날 때 **사라진다.**
+        #       접근 제한 보관소를 붙이기 전까지는 그게 의도된 동작이다 —
+        #       공개 경로로 새는 것보다 낫다. 재현 근거는 판정표의 SHA256 지문이 맡는다.
         lp = f"{LEDGER_DIR}/판정_{today}_ledger.json"
         os.makedirs(LEDGER_DIR, exist_ok=True)
         with open(lp, "w", encoding="utf-8") as f:
@@ -670,7 +678,10 @@ def main():
                        "issues": [{"severity": s_, "name": n, "detail": d}
                                   for s_, n, d in issues],
                        "rows": rows}, f, ensure_ascii=False)
-        print(f"🗄️ 원장 근거: {lp} (저장소에 커밋하지 않음 · 아티팩트로 보존)")
+        print(f"🗄️ 원장 근거: {lp}")
+        print("   ⚠️ 이 파일은 실행 머신에만 남는다(커밋·아티팩트 모두 제외, R1).")
+        print("      액션에서 돌렸다면 잡 종료와 함께 사라진다. 보존이 필요하면")
+        print("      접근 제한 보관소를 먼저 붙여라. 공개 경로로 내보내지 말 것.")
 
     # 로그 tail 에서 바로 보이도록 핵심만 다시 찍는다
     print("\n════════ 판정 요약 ════════")
