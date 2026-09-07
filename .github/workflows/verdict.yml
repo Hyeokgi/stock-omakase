@@ -66,6 +66,16 @@ jobs:
         echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
         exit 0
 
+    - name: 🔀 §3-2 스위치 조건 확인
+      # 판정 스냅샷과 **별개 파일**로 잰다. 판정기는 결과 보기 전에 굳힌 코드라
+      # 판정일에 열지 않는다(로드맵 §3-1-1). 재는 대상도 다르다 —
+      # 판정기는 §3-1 채널 생사, 이쪽은 §3-2 스위치 순서.
+      if: always()
+      run: |
+        set +e
+        python hyeoks_switch_check.py 2>&1 | tee -a verdict.txt
+        exit 0
+
     - name: 🧹 자격증명 삭제
       if: always()
       run: rm -f secret.json
