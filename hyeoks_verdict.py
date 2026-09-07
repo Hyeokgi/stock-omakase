@@ -389,6 +389,37 @@ def ledger_fingerprint(rows):
     return sha256_of(canon)
 
 
+def run_bundle_id(ledger_sha, code_sha, now=None):
+    """실행 하나를 가리키는 이름. 시각 + 원장·코드 지문."""
+    now = now or datetime.datetime.now(KST)
+    return f"{now.strftime('%Y%m%dT%H%M%S')}_{ledger_sha[:8]}_{code_sha[:8]}"
+
+
+def save_run_bundle(base_dir, run_id, meta, rows, report_md):
+    """판정 하나의 근거를 **한 디렉터리에 묶어** 배타 생성한다.
+
+    ⚠️ [R3 2026-09-08] 예전에는 `판정_{날짜}_ledger.json` 이라는 날짜 고정
+       이름에 `"w"` 로 썼다. 판정표는 배타 생성으로 막아 놓고 근거 파일만
+       같은 날 재실행 때 조용히 덮어써진 것이다 — 두 번째 실행이 첫 번째가
+       무엇을 봤는지를 지운다.
+
+    ⚠️ 이 함수는 main() 안에 인라인으로 있었고, 그래서 `--self-test` 가
+       **한 줄도 지나가지 못했다.** 검증 못 하는 코드에 결함이 숨는다는 것이
+       이번 감사가 반복해서 짚은 지점이라 밖으로 뺐다.
+
+    이미 있으면 FileExistsError 를 그대로 올린다 — 근거를 덮어쓰지 않는다.
+    """
+    run_dir = os.path.join(base_dir, run_id)
+    os.makedirs(run_dir)              # exist_ok 없음 = 배타 생성
+    writes = (("meta.json", json.dumps(meta, ensure_ascii=False, indent=2)),
+              ("ledger.json", json.dumps({"rows": rows}, ensure_ascii=False)),
+              ("판정.md", report_md))
+    for name, payload in writes:
+        with open(os.path.join(run_dir, name), "x", encoding="utf-8") as f:
+            f.write(payload)
+    return run_dir
+
+
 def is_excluded(row):
     """§4-2 — Z열에 '제외' 두 글자가 있으면 뺀다.
 
@@ -757,6 +788,38 @@ def self_test():
     chk("R3 줄바꿈도 마찬가지",
         ledger_fingerprint([["a\nb"], ["c"]]) != ledger_fingerprint([["a"], ["b\nc"]]))
     chk("R3 지문 방식에 버전이 박혀 있다", LEDGER_SHA_ALGO.startswith("canonical-json"))
+
+    # 실행 근거 묶음 — 예전엔 main() 안에 인라인이라 자기검증이 못 지나갔다
+    import tempfile, shutil
+    _tmp = tempfile.mkdtemp(prefix="verdict_selftest_")
+    try:
+        _rid = run_bundle_id("a" * 64, "b" * 64,
+                             now=datetime.datetime(2026, 9, 8, 17, 0, 0))
+        chk("R3 실행 id 에 시각·원장·코드 지문이 다 들어간다",
+            _rid == "20260908T170000_aaaaaaaa_bbbbbbbb", _rid)
+        _d = save_run_bundle(_tmp, _rid, {"run_id": _rid}, [["h"], ["r"]], "# 판정")
+        chk("R3 근거 세 파일이 한 디렉터리에 같이 남는다",
+            all(os.path.exists(os.path.join(_d, n))
+                for n in ("meta.json", "ledger.json", "판정.md")))
+        chk("R3 원장이 그대로 복원된다",
+            json.load(open(os.path.join(_d, "ledger.json"),
+                           encoding="utf-8"))["rows"] == [["h"], ["r"]])
+        _again = None
+        try:
+            save_run_bundle(_tmp, _rid, {}, [["x"]], "# 다른 판정")
+        except FileExistsError:
+            _again = "raised"
+        chk("R3 같은 실행 id 로 다시 쓰면 덮어쓰지 않고 예외", _again == "raised")
+        chk("R3 첫 실행의 근거가 그대로 살아 있다",
+            open(os.path.join(_d, "판정.md"), encoding="utf-8").read() == "# 판정")
+        # 원장이 한 셀만 달라도 실행 id 가 갈린다 → 같은 초라도 디렉터리가 다르다
+        chk("R3 원장이 다르면 실행 id 도 다르다",
+            run_bundle_id(ledger_fingerprint([["a"]]), "b" * 64,
+                          now=datetime.datetime(2026, 9, 8, 17, 0, 0))
+            != run_bundle_id(ledger_fingerprint([["b"]]), "b" * 64,
+                             now=datetime.datetime(2026, 9, 8, 17, 0, 0)))
+    finally:
+        shutil.rmtree(_tmp, ignore_errors=True)
     print()
 
     print("🧪 §3-4-2 비용·§4-2 제외")
@@ -892,16 +955,7 @@ def main():
         #       실행마다 **고유 디렉터리**를 배타 생성하고, 판정표·원장·설정을
         #       한 묶음으로 같이 넣는다. 흩어져 있으면 나중에 어느 원장이 어느
         #       판정표에 대응하는지 맞출 수가 없다.
-        run_id = (f"{datetime.datetime.now(KST).strftime('%Y%m%dT%H%M%S')}"
-                  f"_{ledger_sha[:8]}_{code_sha[:8]}")
-        run_dir = os.path.join(LEDGER_DIR, run_id)
-        try:
-            os.makedirs(run_dir)          # exist_ok 없음 = 배타 생성
-        except FileExistsError:
-            print(f"\n❌ 실행 디렉터리가 이미 있다 — {run_dir}")
-            print("   같은 초에 같은 원장·같은 코드로 두 번 돌았다는 뜻이다.")
-            print("   근거를 덮어쓰지 않고 멈춘다.")
-            return 2
+        run_id = run_bundle_id(ledger_sha, code_sha)
         meta = {"run_id": run_id,
                 "captured_at": datetime.datetime.now(KST).isoformat(),
                 "sheet": SHEET_NAME, "sheet_url": SHEET_URL,
@@ -916,12 +970,13 @@ def main():
                            "DEFAULT_HORIZON": DEFAULT_HORIZON},
                 "issues": [{"severity": s_, "name": n, "detail": d}
                            for s_, n, d in issues]}
-        for name, payload in (
-                ("meta.json", lambda f: json.dump(meta, f, ensure_ascii=False, indent=2)),
-                ("ledger.json", lambda f: json.dump({"rows": rows}, f, ensure_ascii=False)),
-                ("판정.md", lambda f: f.write(md))):
-            with open(os.path.join(run_dir, name), "x", encoding="utf-8") as f:
-                payload(f)
+        try:
+            run_dir = save_run_bundle(LEDGER_DIR, run_id, meta, rows, md)
+        except FileExistsError:
+            print(f"\n❌ 실행 근거가 이미 있다 — {LEDGER_DIR}/{run_id}")
+            print("   같은 초에 같은 원장·같은 코드로 두 번 돌았다는 뜻이다.")
+            print("   근거를 덮어쓰지 않고 멈춘다.")
+            return 2
         print(f"🗄️ 실행 근거 한 묶음: {run_dir}/ (meta.json · ledger.json · 판정.md)")
         print("   ⚠️ 이 디렉터리는 실행 머신에만 남는다(커밋·아티팩트 모두 제외, R1).")
         print("      액션에서 돌렸다면 잡 종료와 함께 사라진다. 보존이 필요하면")
