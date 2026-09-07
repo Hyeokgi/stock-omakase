@@ -169,13 +169,32 @@ def is_excluded_row(row):
 
 # ── 청산 규칙 3종 ──────────────────────────────────────────────────────────
 
-def simulate_exits(bars, entry_idx, base, target, stop, horizon):
+def simulate_exits(bars, entry_idx, base, target, stop, horizon, gap_model="open"):
     """진입 다음날부터 horizon 거래일까지 보유하며 세 규칙을 각각 돌린다.
 
     반환 dict — 각 규칙의 (수익률%, 종료사유, 종료일차).
+
     ⚠️ 일봉은 고가·저가의 **순서**를 주지 않는다. 같은 날 목표가·손절가를 둘 다 건드리면
        omakase 의 기존 터치 판정과 같은 규약으로 **손절을 먼저** 적용한다(보수적).
        그런 날이 있었는지는 'ambiguous' 로 따로 돌려준다.
+
+    🚨 [F03 · 2026-09-07 외부 감사] 갭 체결 결함
+       원래는 `low <= stop` 이면 **무조건 stop 가격에 체결**된 것으로 계산했다.
+       그런데 시가가 손절선을 뛰어넘어 갭하락하면 그 가격에는 아무도 못 판다.
+       감사자 예시 — 진입 100 · 손절 92 · 다음 봉 O=80/H=85/L=75/C=82.
+       그날 **최고가조차 85**인데 기존 코드는 92 에 팔린 것으로 보고 −8% 로 계산했다.
+       시가 근사만 써도 −20% 다. 즉 손절 기반 규칙이 **체계적으로 낙관 편향**돼 있었다.
+
+    gap_model
+      "open"   — (기본) 시가가 이미 선을 넘었으면 **시가**로 체결 근사한다.
+      "legacy" — 수정 전 동작. **동일 표본 비교용으로만** 남긴다. 새 분석에 쓰지 말 것.
+
+    ⚠️ 시가 근사도 체결 보장이 아니다. 하한가·거래정지·호가 잔량·슬리피지는 미반영이며,
+       실제 체결은 이보다 나쁠 수 있고 좋기는 어렵다.
+
+    ⚠️ 트레일링 모델 명시(감사 지적) — 당일 고가로 올린 손절선은 **다음날부터** 적용한다.
+       당일 종가가 그날 갱신된 선 아래여도 그날은 청산하지 않는다. 이는 '전일 확정 선을
+       다음날 적용'하는 일봉 근사이며, 장중 실시간 트레일링과는 다른 모델이다.
     """
     window = bars[entry_idx + 1: entry_idx + 1 + horizon]
     if not window or base <= 0:
@@ -184,7 +203,26 @@ def simulate_exits(bars, entry_idx, base, target, stop, horizon):
     def pct(p):
         return (p - base) / base * 100.0
 
+    legacy = (gap_model == "legacy")
     ambiguous = False
+    # 갭으로 체결가가 선과 달라진 건수. **규칙별로 따로 센다** —
+    # 고정과 트레일링이 같은 날 각각 갭 체결하면 하나의 사건이 두 번 세어져
+    # "몇 건이 영향을 받았나"가 부풀려진다(자기검증에서 실제로 2로 나왔다).
+    gapped = {"fixed": 0, "trailing": 0}
+
+    def fill(level, bar, favorable, rule):
+        """체결가 근사. 시가가 이미 선을 넘었으면 시가로 본다.
+        favorable=True 는 목표가(위로 넘음), False 는 손절가(아래로 넘음)."""
+        if legacy:
+            return level
+        o = bar.get("open") or 0
+        if o <= 0:
+            return level
+        if (not favorable and o <= level) or (favorable and o >= level):
+            if abs(o - level) > 1e-9:
+                gapped[rule] += 1
+            return o
+        return level
 
     # ① 고정 — 목표가/손절가 도달 시 청산
     fixed = None
@@ -194,10 +232,10 @@ def simulate_exits(bars, entry_idx, base, target, stop, horizon):
         if hit_stop and hit_tgt:
             ambiguous = True
         if hit_stop:
-            fixed = (pct(stop), "손절", d)
+            fixed = (pct(fill(stop, b, False, "fixed")), "손절", d)
             break
         if hit_tgt:
-            fixed = (pct(target), "익절", d)
+            fixed = (pct(fill(target, b, True, "fixed")), "익절", d)
             break
     if fixed is None:
         fixed = (pct(window[-1]['close']), "만기", len(window))
@@ -207,12 +245,14 @@ def simulate_exits(bars, entry_idx, base, target, stop, horizon):
     trail_line, hit_target, trailing = stop, False, None
     for d, b in enumerate(window, start=1):
         if trail_line > 0 and b['low'] <= trail_line:
-            trailing = (pct(trail_line), "트레일링손절" if hit_target else "손절", d)
+            trailing = (pct(fill(trail_line, b, False, "trailing")),
+                        "트레일링손절" if hit_target else "손절", d)
             break
         if not hit_target and target > 0 and b['high'] >= target:
             hit_target = True
             trail_line = max(trail_line, base)          # 본전 확보
         if hit_target:
+            # ⚠️ 여기서 올린 선은 **다음 루프(=다음날)부터** 검사된다. 위 주석 참조.
             trail_line = max(trail_line, b['high'] * TRAILING_PCT)
     if trailing is None:
         trailing = (pct(window[-1]['close']), "만기", len(window))
@@ -224,8 +264,8 @@ def simulate_exits(bars, entry_idx, base, target, stop, horizon):
             tn[h] = (pct(window[h - 1]['close']), f"T+{h}", h)
 
     return {"fixed": fixed, "trailing": trailing, "tn": tn,
-            "ambiguous": ambiguous, "final": pct(window[-1]['close']),
-            "held": len(window)}
+            "ambiguous": ambiguous, "gapped": gapped,
+            "final": pct(window[-1]['close']), "held": len(window)}
 
 
 # ── 집계 ──────────────────────────────────────────────────────────────────
@@ -260,7 +300,9 @@ def build_report(recs, horizon, calib, skipped):
           "진입가·기준일 해석이 틀리면 여기서 어긋난다.", "",
           f"- 대조 가능 행 **{calib['n']}건** · 일치(±{CALIB_TOLERANCE}%p) **{calib['match']}건** "
           f"= **{calib['rate'] * 100:.1f}%**",
-          f"- 판정 — {'✅ 통과' if calib['ok'] else '❌ 실패. 아래 숫자를 신뢰하지 말 것'}", ""]
+          f"- 판정 — " + ("⚠️ **검증 불가** — 대조 가능 행이 0건이다. 통과가 아니라 '확인 못 함'이다"
+                          if calib.get("unverified") else
+                          ('✅ 통과' if calib['ok'] else '❌ 실패. 아래 숫자를 신뢰하지 말 것')), ""]
     if calib['worst']:
         L += ["가장 크게 어긋난 3건:", "",
               "| 종목 | 진입일 | 로그값 | 재계산 | 차이 |", "|---|---|---:|---:|---:|"]
@@ -297,6 +339,40 @@ def build_report(recs, horizon, calib, skipped):
           f"({n_amb / len(recs) * 100:.0f}%). 일봉은 순서를 모르므로 보수적으로 손절 처리했다. "
           + ("**이 비율이 높아 비교의 해상도가 낮다.**" if n_amb / len(recs) > 0.2
              else "비율이 낮아 결론에 큰 영향은 없다."), ""]
+
+    # ── F03 갭 체결 수정 전/후 (2026-09-07) ─────────────────────────────
+    #    "얼마나 과대평가였나"는 재계산해서 보여야지 단정할 수 없다(감사 지적).
+    #    완전히 같은 표본·같은 일봉에 수정 전 모델만 갈아끼운 결과다.
+    lg = [r for r in recs if r.get('sim_legacy')]
+    if lg:
+        gap_fixed = sum(1 for r in lg if r['sim']['gapped']['fixed'] > 0)
+        gap_trail = sum(1 for r in lg if r['sim']['gapped']['trailing'] > 0)
+        f_new = [r['sim']['fixed'][0] for r in lg]
+        f_old = [r['sim_legacy']['fixed'][0] for r in lg]
+        t_new = [r['sim']['trailing'][0] for r in lg]
+        t_old = [r['sim_legacy']['trailing'][0] for r in lg]
+        L += ["## 🚨 F03 — 갭 체결 수정 전/후 (동일 표본)", "",
+              "수정 전에는 저가가 손절선을 스치기만 하면 **손절가 그대로 체결**된 것으로 계산했다. "
+              "시가가 그 선을 뛰어넘어 갭한 날에는 그 가격에 팔 수 없으므로, "
+              "손절 기반 규칙이 **체계적으로 낙관 편향**돼 있었다. "
+              "지금은 시가가 선을 넘었으면 **시가로 체결 근사**한다.", "",
+              f"- 갭 체결이 실제로 발생한 행 — 고정 **{gap_fixed}건** · 트레일링 **{gap_trail}건** "
+              f"(전체 {len(lg)}건 중)", "",
+              "| 규칙 | 수정 전 평균 | 수정 후 평균 | 차이 |",
+              "|---|---:|---:|---:|",
+              f"| ① 고정 | {statistics.mean(f_old):+.2f}% | {statistics.mean(f_new):+.2f}% | "
+              f"**{statistics.mean(f_new) - statistics.mean(f_old):+.2f}%p** |",
+              f"| ② 트레일링 | {statistics.mean(t_old):+.2f}% | {statistics.mean(t_new):+.2f}% | "
+              f"**{statistics.mean(t_new) - statistics.mean(t_old):+.2f}%p** |", ""]
+        if gap_fixed == 0 and gap_trail == 0:
+            L += ["> ✅ 이 표본에서는 갭 체결이 **한 건도 없었다.** 따라서 기존 숫자는 "
+                  "이 결함의 영향을 받지 않았다. 결함이 없다는 뜻은 아니고, "
+                  "**이 표본에 마침 해당 사례가 없었다**는 뜻이다.", ""]
+        else:
+            L += ["> ⚠️ 기존에 보고한 숫자는 위 '수정 전' 열이다. "
+                  "**차이만큼 낙관적이었다.** 이후 인용은 '수정 후'로 한다.", ""]
+        L += ["> 시가 근사도 체결 보장이 아니다. 하한가·거래정지·호가 잔량·슬리피지는 "
+              "여전히 미반영이며, 실제 체결은 이보다 나쁠 수 있고 좋기는 어렵다.", ""]
 
     # 로드맵이 요구한 바로 그 숫자
     early = [(r, r['sim']['final'] - r['sim']['fixed'][0])
@@ -427,14 +503,22 @@ def analyze(rows, horizon, diag=None, assign="none"):
                                        _num(logged_t5), recomputed, diff))
 
         sim = simulate_exits(bars, entry_idx, base, target, stop, horizon)
+        # 🔁 [F03] **완전히 같은 표본**에 수정 전 모델도 돌려 나란히 남긴다.
+        #    "얼마나 과대평가였나"는 재계산해서 보여야지 단정할 수 없다(감사 지적).
+        sim_legacy = simulate_exits(bars, entry_idx, base, target, stop, horizon,
+                                    gap_model="legacy")
         if sim:
             recs.append({"name": str(row[C_NAME]).strip(), "channel": channel,
                          "code": code, "entry": entry_date, "sim": sim,
-                         "assigned": assigned})
+                         "sim_legacy": sim_legacy, "assigned": assigned})
 
     calib["worst"].sort(key=lambda w: -abs(w[4]))
     calib["rate"] = calib["match"] / calib["n"] if calib["n"] else 0.0
-    calib["ok"] = calib["n"] == 0 or calib["rate"] >= CALIB_MIN_MATCH
+    # 🚨 [F03 · 2026-09-07 감사] 원래는 `calib["n"] == 0 or ...` 였다.
+    #    대조 가능 행이 0건이면 **검증을 못 한 것**인데 '통과'로 표시됐다.
+    #    "확인할 게 없었다"와 "확인해서 맞았다"는 완전히 다르다.
+    calib["ok"] = calib["n"] > 0 and calib["rate"] >= CALIB_MIN_MATCH
+    calib["unverified"] = (calib["n"] == 0)
     return recs, calib, skipped
 
 
@@ -496,6 +580,42 @@ def self_test():
     amb = s['ambiguous'] and s['fixed'][1] == "손절"
     ok = ok and amb
     print(f"  {'✅' if amb else '❌'} 같은 날 양방 터치 → 손절 우선 + ambiguous 표시")
+
+    # ── F03 갭 체결 (2026-09-07 외부 감사) ────────────────────────────────
+    print("\n🧪 F03 — 갭으로 선을 뛰어넘으면 시가로 체결 근사한다")
+
+    def gapchk(label, bars, want_pct, want_reason, want_gapped=1):
+        nonlocal ok
+        sim = simulate_exits([bar(100, 100, 100, 100)] + bars, 0,
+                             base, target, stop, len(bars))
+        got = (round(sim['fixed'][0], 2), sim['fixed'][1], sim['gapped']["fixed"])
+        hit = got == (want_pct, want_reason, want_gapped)
+        ok = ok and hit
+        print(f"  {'✅' if hit else '❌'} {label}\n      고정={got[:2]} 갭체결={got[2]}"
+              + ("" if hit else f"\n      기대=({want_pct}, {want_reason!r}, {want_gapped})"))
+
+    # 감사자 예시 그대로 — 진입 100 · 손절 92 · O=80/H=85/L=75/C=82
+    # 그날 최고가조차 85 인데 수정 전에는 92 에 팔린 것으로 −8% 를 냈다.
+    gapchk("갭하락으로 손절선 관통 → 시가 80 체결(−20%)",
+           [bar(80, 85, 75, 82)], -20.0, "손절")
+    gapchk("갭상승으로 목표가 관통 → 시가 120 체결(+20%)",
+           [bar(120, 125, 118, 122)], 20.0, "익절")
+    gapchk("갭 없이 장중에만 손절선 터치 → 손절가 92 그대로",
+           [bar(100, 101, 91, 93)], -8.0, "손절", 0)
+
+    # legacy 모드는 수정 전 값을 그대로 재현해야 한다(동일 표본 비교용)
+    lg = simulate_exits([bar(100, 100, 100, 100), bar(80, 85, 75, 82)], 0,
+                        base, target, stop, 1, gap_model="legacy")
+    lg_ok = round(lg['fixed'][0], 2) == -8.0 and sum(lg['gapped'].values()) == 0
+    ok = ok and lg_ok
+    print(f"  {'✅' if lg_ok else '❌'} legacy 모드는 수정 전 값(−8.0%)을 재현 — 동일 표본 비교용")
+
+    # 트레일링도 같은 갭 처리를 받아야 한다
+    tr = simulate_exits([bar(100, 100, 100, 100), bar(80, 85, 75, 82)], 0,
+                        base, target, stop, 1)
+    tr_ok = round(tr['trailing'][0], 2) == -20.0
+    ok = ok and tr_ok
+    print(f"  {'✅' if tr_ok else '❌'} 트레일링도 갭 시가로 체결(−20%)")
 
     print("\n✅ 전부 통과" if ok else "\n❌ 실패한 항목이 있다")
     return 0 if ok else 1
