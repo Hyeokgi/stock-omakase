@@ -31,7 +31,7 @@
 #   · 문턱을 조정하지 않는다. 판정을 해석하지 않는다. 표를 만들 뿐이다.
 #   · 대조군(랜덤2·랜덤2_배지·지수벤치)은 판정 대상에서 뺀다(§3-1).
 # ==========================================================================
-import os, sys, math, argparse, datetime
+import os, sys, math, json, hashlib, argparse, datetime
 
 KST = datetime.timezone(datetime.timedelta(hours=9))
 # ⚠️ 문서 지정은 **URL 로** 한다. 처음에 open("HYEOKS_주식_자동화") 로 썼다가
@@ -40,8 +40,17 @@ KST = datetime.timezone(datetime.timedelta(hours=9))
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit"
 SHEET_NAME = "백테스트_로그"
 OUT_DIR = "docs"
+# 원장 원본 보관 위치. **공개 저장소에 커밋하지 않는다**(.gitignore) — 아티팩트로만 남긴다.
+LEDGER_DIR = "data/verdict_ledger"
+
+
+def io_read_self():
+    """판정기 자기 자신의 소스. 코드 해시를 남겨 '어느 코드로 판정했나'를 고정한다."""
+    with open(os.path.abspath(__file__), "r", encoding="utf-8") as f:
+        return f.read()
 
 # ── 시트 열 (BT_HEADER 기준, 0-based) ─────────────────────────────────────
+C_TRADE_ID = 0
 C_ENTRY_DATE, C_CHANNEL = 1, 2
 C_EXCLUDE = 25                       # 실제캡처거래일 = 제외 표식이 남는 칸
 STOCK_COL = {1: 17, 3: 18, 5: 19, 10: 20, 20: 26, 60: 27, 120: 28}
@@ -132,10 +141,111 @@ def welch(a, b):
 
 # ── 시트 → 채널별 순알파 ──────────────────────────────────────────────────
 def _num(v):
+    """숫자 파싱. **비유한(nan/inf)은 None 으로 돌려준다.**
+
+    🚨 [F07 · 2026-09-07 감사] 원래는 float() 결과를 그대로 냈다. 그런데
+       `float("nan")` 은 예외를 안 내고 **None 도 아니다.** 그래서 원장에 'nan' 이
+       들어 있으면 성숙값으로 세어지고, 평균·분산이 통째로 nan 이 된다.
+       판정표 전체가 조용히 무의미해지는 경로였다."""
     try:
-        return float(str(v).replace(",", "").replace("%", "").strip())
+        f = float(str(v).replace(",", "").replace("%", "").strip())
     except Exception:
         return None
+    return f if math.isfinite(f) else None
+
+
+# ── F07 1차 — 원장 입력 검증 (2026-09-07 감사) ────────────────────────────
+#
+# 감사 지적 그대로다 — 판정기가 원장을 **아무 검사 없이** 집계하고 있었다.
+#   · 같은 trade_id 가 두 번 있으면 N=2 로 센다(중복 거부 없음)
+#   · float("nan") 은 None 이 아니라 성숙값에 포함된다
+#   · 헤더·날짜 형식 검사가 없다
+#   · 결과 Markdown 만 저장하고 원장은 남기지 않아, 나중에 "그때 무엇을 봤나"를 복원 못 한다
+#   · 같은 날 재실행하면 박제 파일을 덮어쓴다
+#
+# 방침 — **조용히 고치지 않는다.** 중복은 삭제가 아니라 **충돌 보고 후 판정 중단**이다
+# (감사 권고). 어떤 행을 살릴지는 사람이 원장을 보고 정해야 할 문제다.
+
+ABORT, WARN = "ABORT", "WARN"
+SANE_RETURN_ABS = 500.0      # |수익률| 상한(%). 넘으면 이상치로 보고만 한다
+
+
+def validate_ledger(rows):
+    """원장을 집계하기 **전에** 검사한다. (심각도, 항목, 상세) 목록을 돌려준다."""
+    issues = []
+    if not rows or len(rows) < 2:
+        issues.append((ABORT, "원장 비어 있음", f"행 {len(rows)}개"))
+        return issues
+
+    header = [str(c).strip() for c in rows[0]]
+    need = max(C_TRADE_ID, C_ENTRY_DATE, C_CHANNEL, C_EXCLUDE,
+               max(STOCK_COL.values()), max(INDEX_COL.values()))
+    if len(header) <= need:
+        issues.append((ABORT, "헤더 열 부족",
+                       f"{len(header)}열 · 최소 {need + 1}열 필요"))
+    if header and header[C_TRADE_ID] != "trade_id":
+        issues.append((ABORT, "헤더 불일치",
+                       f"0번 열이 'trade_id' 가 아님 — '{header[C_TRADE_ID] if header else ''}'"))
+
+    seen, dup, no_id, bad_date, nonfinite, extreme = {}, [], 0, [], [], []
+    for i, row in enumerate(rows[1:], start=2):
+        if len(row) <= C_CHANNEL:
+            continue
+        tid = str(row[C_TRADE_ID]).strip() if len(row) > C_TRADE_ID else ""
+        if not tid:
+            no_id += 1
+        elif tid in seen:
+            dup.append((tid, seen[tid], i))
+        else:
+            seen[tid] = i
+
+        d = str(row[C_ENTRY_DATE]).strip()[:10] if len(row) > C_ENTRY_DATE else ""
+        if d:
+            try:
+                datetime.datetime.strptime(d, "%Y-%m-%d")
+            except ValueError:
+                bad_date.append((i, d))
+
+        for col in set(STOCK_COL.values()) | set(INDEX_COL.values()):
+            if len(row) <= col:
+                continue
+            raw = str(row[col]).strip()
+            if not raw:
+                continue
+            try:
+                f = float(raw.replace(",", "").replace("%", ""))
+            except Exception:
+                continue
+            if not math.isfinite(f):
+                nonfinite.append((i, col, raw))
+            elif abs(f) > SANE_RETURN_ABS:
+                extreme.append((i, col, f))
+
+    if dup:
+        issues.append((ABORT, "trade_id 중복",
+                       "; ".join(f"{t} (행 {a}, {b})" for t, a, b in dup[:5])
+                       + (f" 외 {len(dup) - 5}건" if len(dup) > 5 else "")))
+    if nonfinite:
+        issues.append((ABORT, "비유한 수치(nan/inf)",
+                       "; ".join(f"행{i} 열{c}='{v}'" for i, c, v in nonfinite[:5])))
+    if no_id:
+        issues.append((WARN, "trade_id 빈 행", f"{no_id}행"))
+    if bad_date:
+        issues.append((WARN, "진입일 형식 이상",
+                       "; ".join(f"행{i}='{d}'" for i, d in bad_date[:5])))
+    if extreme:
+        issues.append((WARN, f"|수익률| > {SANE_RETURN_ABS:.0f}%",
+                       "; ".join(f"행{i} 열{c}={v:+.1f}%" for i, c, v in extreme[:5])))
+    return issues
+
+
+def sha256_of(text):
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def ledger_fingerprint(rows):
+    """원장 내용의 지문. 행 순서까지 포함한다 — 같은 데이터면 같은 값이 나와야 한다."""
+    return sha256_of("\n".join("\t".join(str(c) for c in r) for r in rows))
 
 
 def is_excluded(row):
@@ -399,6 +509,35 @@ def self_test():
     chk("전부 유의하지 않으면 아무도 통과 못 함",
         holm([("a", 0.4), ("b", 0.5)]) == set())
 
+    print("🧪 F07 — 원장 입력 검증 (2026-09-07 감사)")
+    def mkrow(tid, ch, s5=1.0, i5=0.0, date="2026-09-01"):
+        r = [""] * 34
+        r[C_TRADE_ID], r[C_ENTRY_DATE], r[C_CHANNEL] = tid, date, ch
+        r[STOCK_COL[5]], r[INDEX_COL[5]] = str(s5), str(i5)
+        return r
+    hdr34 = ["trade_id"] + [""] * 33
+    good = [hdr34, mkrow("A_차트TOP2_000660", "차트TOP2")]
+    chk("정상 원장 → 이상 없음", validate_ledger(good) == [], f"{validate_ledger(good)}")
+    dup = [hdr34, mkrow("SAME", "차트TOP2"), mkrow("SAME", "수급TOP2")]
+    chk("trade_id 중복 → ABORT", ABORT in [x[0] for x in validate_ledger(dup)])
+    nan = [hdr34, mkrow("N1", "차트TOP2", s5="nan")]
+    chk("비유한 수치(nan) → ABORT", ABORT in [x[0] for x in validate_ledger(nan)])
+    chk("_num('nan') 은 None (성숙값에 안 들어간다)", _num("nan") is None)
+    chk("_num('inf') 은 None", _num("inf") is None)
+    chk("_num('1.5') 는 살아 있다", _num("1.5") == 1.5)
+    bad = [hdr34, mkrow("D1", "차트TOP2", date="2026-13-99")]
+    chk("날짜 형식 이상 → WARN(중단 아님)", [x[0] for x in validate_ledger(bad)] == [WARN])
+    ext = [hdr34, mkrow("E1", "차트TOP2", s5=9999.0)]
+    chk("극단 수익률 → WARN(중단 아님)", [x[0] for x in validate_ledger(ext)] == [WARN])
+    noh = [["엉뚱한열"] + [""] * 33, mkrow("H1", "차트TOP2")]
+    chk("헤더 불일치 → ABORT", ABORT in [x[0] for x in validate_ledger(noh)])
+    chk("빈 원장 → ABORT", validate_ledger([])[0][0] == ABORT)
+    _f1 = ledger_fingerprint(good)
+    chk("같은 원장 → 같은 지문", _f1 == ledger_fingerprint(good))
+    chk("행 하나만 달라도 지문이 바뀐다",
+        _f1 != ledger_fingerprint([hdr34, mkrow("A_차트TOP2_000660", "차트TOP2", s5=1.1)]))
+    print()
+
     print("🧪 §3-4-2 비용·§4-2 제외")
     hdr = [""] * 34
     def mk(ch, s, i, memo=""):
@@ -451,6 +590,9 @@ def main():
     ap.add_argument("--self-test", action="store_true", help="통계·판정 로직만 검증(시트 접근 없음)")
     ap.add_argument("--out", default="", help="출력 파일 경로. 비우면 docs/판정_<오늘>.md")
     ap.add_argument("--stdout-only", action="store_true", help="파일로 쓰지 않고 화면에만")
+    ap.add_argument("--force", action="store_true",
+                    help="같은 날짜 판정 파일이 있어도 덮어쓴다. 박제를 깨는 행위이므로 "
+                         "정말 다시 만들어야 할 때만 쓴다")
     a = ap.parse_args()
 
     if a.self_test:
@@ -465,17 +607,70 @@ def main():
     rows = doc.worksheet(SHEET_NAME).get_all_values()   # 읽기 전용. 여기 한 줄뿐이다.
 
     today = datetime.datetime.now(KST).strftime("%Y-%m-%d")
+
+    # ── F07 ① 집계하기 **전에** 원장을 검사한다 ──────────────────────────
+    issues = validate_ledger(rows)
+    if issues:
+        print("\n🔎 [원장 입력 검증]")
+        for sev, name, detail in issues:
+            print(f"  {'❌' if sev == ABORT else '⚠️'} [{sev}] {name} — {detail}")
+    if any(sev == ABORT for sev, _, _ in issues):
+        print("\n❌ 치명적 결함이 있어 판정을 중단한다.")
+        print("   중복 trade_id 는 **조용히 지우지 않는다** — 어떤 행을 살릴지는")
+        print("   원장을 보고 사람이 정할 문제다(감사 권고). 원장을 고친 뒤 다시 돌려라.")
+        return 2
+
+    ledger_sha = ledger_fingerprint(rows)
+    code_sha = sha256_of(io_read_self())
     data, raw, skipped = collect(rows)
     md, rows_out, conf, passed = build_report(data, raw, skipped, today)
+
+    # ── F07 ② 근거를 판정표에 박아 넣는다 ────────────────────────────────
+    md += ("\n## 재현 정보 (F07)\n\n"
+           f"- 원장 행수 — **{len(rows) - 1}행**(헤더 제외)\n"
+           f"- 원장 SHA256 — `{ledger_sha}`\n"
+           f"- 판정기 SHA256 — `{code_sha}`\n"
+           f"- 입력 검증 — {'경고 ' + str(len(issues)) + '건' if issues else '이상 없음'}\n"
+           + "".join(f"  - [{sev}] {n} — {d}\n" for sev, n, d in issues)
+           + "\n> 같은 원장·같은 판정기로 다시 돌리면 같은 표가 나와야 한다.\n"
+             "> 두 해시가 다르면 그건 **다른 판정**이다.\n")
 
     if a.stdout_only:
         print(md)
     else:
         path = a.out or f"{OUT_DIR}/판정_{today}.md"
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(md)
+        # ── F07 ③ 박제 파일은 **배타 생성**한다 ──────────────────────────
+        #    §3-7 이 "그날 값 그대로, 이후 수정 금지"라고 정해 놓고
+        #    같은 날 재실행하면 조용히 덮어써지고 있었다.
+        try:
+            with open(path, "x", encoding="utf-8") as f:
+                f.write(md)
+        except FileExistsError:
+            if not a.force:
+                print(f"\n❌ 이미 존재한다 — {path}")
+                print("   §3-7 이 정한 박제 파일이다. 덮어쓰지 않는다.")
+                print("   정말 다시 만들어야 하면 --force, 아니면 --out 으로 다른 이름을 주라.")
+                return 2
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(md)
+            print(f"⚠️ --force 로 덮어썼다 — {path} (박제를 깬 것이므로 이유를 기록할 것)")
         print(f"💾 저장: {path}")
+
+        # ── F07 ④ 원장 원본을 근거로 남긴다 ─────────────────────────────
+        #    결과 Markdown 만 남기면 "그때 무엇을 봤나"를 복원할 수 없다(감사 지적).
+        #    ⚠️ 공개 저장소에 원장을 커밋하지 않는다 — .gitignore 대상이고
+        #       워크플로 아티팩트로만 보존한다.
+        lp = f"{LEDGER_DIR}/판정_{today}_ledger.json"
+        os.makedirs(LEDGER_DIR, exist_ok=True)
+        with open(lp, "w", encoding="utf-8") as f:
+            json.dump({"captured_at": datetime.datetime.now(KST).isoformat(),
+                       "sheet": SHEET_NAME, "ledger_sha256": ledger_sha,
+                       "code_sha256": code_sha,
+                       "issues": [{"severity": s_, "name": n, "detail": d}
+                                  for s_, n, d in issues],
+                       "rows": rows}, f, ensure_ascii=False)
+        print(f"🗄️ 원장 근거: {lp} (저장소에 커밋하지 않음 · 아티팩트로 보존)")
 
     # 로그 tail 에서 바로 보이도록 핵심만 다시 찍는다
     print("\n════════ 판정 요약 ════════")

@@ -85,8 +85,12 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: verdict-log
-        path: verdict.txt
+        path: |
+          verdict.txt
+          data/verdict_ledger/
         retention-days: 365   # 판정 근거는 오래 남긴다
+        # 🗄️ 원장 근거 JSON 을 함께 보존한다(F07). 저장소에는 커밋하지 않으므로
+        #    "그때 무엇을 봤나"를 복원할 수 있는 곳은 여기뿐이다.
 
     - name: 💾 판정 스냅샷 박제
       if: ${{ inputs.stdout_only != true }}
