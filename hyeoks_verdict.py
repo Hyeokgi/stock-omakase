@@ -172,27 +172,88 @@ def _num(v):
 # (감사 권고). 어떤 행을 살릴지는 사람이 원장을 보고 정해야 할 문제다.
 
 ABORT, WARN = "ABORT", "WARN"
+# 원장 지문 계산 방식. R3(2026-09-08) 이전은 "tab-join-v1" 이었고 값이 다르다.
+LEDGER_SHA_ALGO = "canonical-json-v2"
 SANE_RETURN_ABS = 500.0      # |수익률| 상한(%). 넘으면 이상치로 보고만 한다
 
+# ── R2 (2026-09-08 재검증) — **읽는 열의 이름을 전부 검증한다** ──────────────
+#
+# 어제는 헤더 길이와 0번이 'trade_id' 인지만 봤다. 재검증이 재현한 구멍:
+#   · 종목T+5 와 지수T+5 의 **열과 값을 맞바꿔도 무경고** (순알파 +1.65% → −2.35%)
+#   · 수익률 셀이 `#REF!` 여도 무경고로 집계에서 빠짐
+#   · 진입일 `2099-01-01` 인데 수익률이 있으면 무경고로 **성숙 표본에 포함**
+#   · 진입일 공란인데 수익률이 있어도 동일
+# 열 이름이 자리와 맞는지 확인하면 첫 번째가 잡히고, 나머지는 아래 검사가 맡는다.
+EXPECTED_HEADER = {
+    C_TRADE_ID: "trade_id", C_ENTRY_DATE: "진입일", C_CHANNEL: "채널",
+    C_EXCLUDE: "실제캡처거래일",
+    17: "종목T+1", 18: "종목T+3", 19: "종목T+5", 20: "종목T+10",
+    21: "지수T+1", 22: "지수T+3", 23: "지수T+5", 24: "지수T+10",
+    26: "종목T+20", 27: "종목T+60", 28: "종목T+120",
+    29: "지수T+20", 30: "지수T+60", 31: "지수T+120",
+}
 
-def validate_ledger(rows):
+# 성숙 판정은 **거래일 기준**이어야 하지만 이 스크립트에는 거래일 달력이 없다.
+# 달력일 근사로 하되 넉넉히 잡아 **거짓 경보를 줄이고**, 근사임을 리포트에 밝힌다.
+#   5거래일 ≈ 7달력일이므로 여유를 둬 1.6배 + 3일.
+def calendar_margin(h):
+    return int(h * 1.6) + 3
+
+
+def maturity_note(entry_date, h, today):
+    """성숙 상태를 세 갈래로 나눈다(재검증 R2 요구).
+
+    NOT_MATURED          — 아직 T+h 가 안 지났다. 값이 없는 게 정상
+    MATURED_DATA_MISSING — 지났는데 값이 없다. **데이터 결손**이지 표본 부족이 아니다
+    INVALID              — 진입일이 미래이거나 형식이 깨졌다
+
+    ⚠️ 거래일 달력이 없어 **달력일 근사**다. 경계에서는 판정을 유보한다(None).
+    """
+    if not entry_date:
+        return "INVALID"
+    try:
+        d = datetime.datetime.strptime(entry_date, "%Y-%m-%d").date()
+    except ValueError:
+        return "INVALID"
+    if d > today:
+        return "INVALID"
+    gap = (today - d).days
+    if gap < h:                       # 달력일조차 h 를 못 채웠으면 확실히 미성숙
+        return "NOT_MATURED"
+    if gap >= calendar_margin(h):     # 넉넉히 지났으면 확실히 성숙 가능
+        return "MATURED"
+    return None                       # 경계 — 판정 유보
+
+
+def validate_ledger(rows, today=None):
     """원장을 집계하기 **전에** 검사한다. (심각도, 항목, 상세) 목록을 돌려준다."""
     issues = []
+    today = today or datetime.datetime.now(KST).date()
     if not rows or len(rows) < 2:
         issues.append((ABORT, "원장 비어 있음", f"행 {len(rows)}개"))
         return issues
 
     header = [str(c).strip() for c in rows[0]]
-    need = max(C_TRADE_ID, C_ENTRY_DATE, C_CHANNEL, C_EXCLUDE,
-               max(STOCK_COL.values()), max(INDEX_COL.values()))
+    need = max(EXPECTED_HEADER)
     if len(header) <= need:
         issues.append((ABORT, "헤더 열 부족",
                        f"{len(header)}열 · 최소 {need + 1}열 필요"))
-    if header and header[C_TRADE_ID] != "trade_id":
-        issues.append((ABORT, "헤더 불일치",
-                       f"0번 열이 'trade_id' 가 아님 — '{header[C_TRADE_ID] if header else ''}'"))
+        return issues                 # 열이 모자라면 이름 검사는 의미가 없다
 
-    seen, dup, no_id, bad_date, nonfinite, extreme = {}, [], 0, [], [], []
+    # R2 ① — 읽는 열의 **이름이 자리와 맞는가**. 열 교환·삽입·삭제를 여기서 잡는다.
+    mism = [(i, EXPECTED_HEADER[i], header[i])
+            for i in sorted(EXPECTED_HEADER) if header[i] != EXPECTED_HEADER[i]]
+    if mism:
+        issues.append((ABORT, "헤더 이름 불일치(스키마 변경 의심)",
+                       "; ".join(f"{i}번='{got}' (기대 '{want}')"
+                                 for i, want, got in mism[:6])
+                       + (f" 외 {len(mism) - 6}건" if len(mism) > 6 else "")))
+
+    RET_COLS = set(STOCK_COL.values()) | set(INDEX_COL.values())
+    seen, dup, no_id, bad_date, future, nonfinite, extreme = {}, [], 0, [], [], [], []
+    nonnum, matured_missing, early_val = [], [], []
+    blank_date_val, broken_date_val = 0, []
+
     for i, row in enumerate(rows[1:], start=2):
         if len(row) <= C_CHANNEL:
             continue
@@ -204,27 +265,60 @@ def validate_ledger(rows):
         else:
             seen[tid] = i
 
-        d = str(row[C_ENTRY_DATE]).strip()[:10] if len(row) > C_ENTRY_DATE else ""
-        if d:
+        d_raw = str(row[C_ENTRY_DATE]).strip()[:10] if len(row) > C_ENTRY_DATE else ""
+        d_ok = False
+        if d_raw:
             try:
-                datetime.datetime.strptime(d, "%Y-%m-%d")
+                dd = datetime.datetime.strptime(d_raw, "%Y-%m-%d").date()
+                d_ok = True
+                if dd > today:
+                    future.append((i, d_raw))
             except ValueError:
-                bad_date.append((i, d))
+                bad_date.append((i, d_raw))
 
-        for col in set(STOCK_COL.values()) | set(INDEX_COL.values()):
+        ch = str(row[C_CHANNEL]).strip()
+        h = HORIZON.get(ch, DEFAULT_HORIZON)
+        has_any_val = False
+
+        for col in RET_COLS:
             if len(row) <= col:
                 continue
             raw = str(row[col]).strip()
             if not raw:
                 continue
+            has_any_val = True
             try:
                 f = float(raw.replace(",", "").replace("%", ""))
             except Exception:
+                # R2 ② — `#REF!` 같은 수식 오류. 조용히 건너뛰지 않는다.
+                nonnum.append((i, col, raw[:12]))
                 continue
             if not math.isfinite(f):
                 nonfinite.append((i, col, raw))
             elif abs(f) > SANE_RETURN_ABS:
                 extreme.append((i, col, f))
+
+        # R2 ③④ — 진입일을 믿을 수 없는데 값이 있으면 그대로 성숙 표본에 섞인다.
+        #   collect() 는 진입일을 **한 번도 보지 않는다**(위 함수 확인). 그래서
+        #   날짜가 공란이든 형식이 깨졌든, 값만 있으면 평균·t 에 그대로 들어간다.
+        #   ⚠️ 날짜 형식 이상 자체는 여전히 WARN 이다 — 값이 없는 행은
+        #      어차피 집계에 안 들어가므로 판정을 멈출 이유가 없다.
+        #      **값이 같이 있을 때만** 중단으로 올린다.
+        if has_any_val and not d_ok:
+            if d_raw:
+                broken_date_val.append((i, d_raw))
+            else:
+                blank_date_val += 1
+
+        # R2 — 성숙/결손 구분
+        if d_ok and ch and not ch.startswith("지수벤치"):
+            note = maturity_note(d_raw, h, today)
+            si = STOCK_COL.get(h)
+            has_h = (si is not None and len(row) > si and str(row[si]).strip() != "")
+            if note == "MATURED" and not has_h:
+                matured_missing.append((i, ch, d_raw))
+            elif note == "NOT_MATURED" and has_h:
+                early_val.append((i, ch, d_raw))
 
     if dup:
         issues.append((ABORT, "trade_id 중복",
@@ -233,14 +327,39 @@ def validate_ledger(rows):
     if nonfinite:
         issues.append((ABORT, "비유한 수치(nan/inf)",
                        "; ".join(f"행{i} 열{c}='{v}'" for i, c, v in nonfinite[:5])))
+    if nonnum:
+        issues.append((ABORT, "수익률 셀에 숫자가 아닌 값(수식 오류 의심)",
+                       "; ".join(f"행{i} 열{c}='{v}'" for i, c, v in nonnum[:5])
+                       + (f" 외 {len(nonnum) - 5}건" if len(nonnum) > 5 else "")))
+    if future:
+        issues.append((ABORT, "진입일이 미래",
+                       "; ".join(f"행{i}='{d}'" for i, d in future[:5])))
+    if blank_date_val:
+        issues.append((ABORT, "진입일 공란인데 수익률이 있는 행",
+                       f"{blank_date_val}행 — 집계는 진입일을 보지 않으므로 "
+                       "성숙 여부를 확인할 길 없이 표본에 섞인다"))
+    if broken_date_val:
+        issues.append((ABORT, "진입일 형식이 깨졌는데 수익률이 있는 행",
+                       "; ".join(f"행{i}='{d}'" for i, d in broken_date_val[:5])
+                       + (f" 외 {len(broken_date_val) - 5}건"
+                          if len(broken_date_val) > 5 else "")))
     if no_id:
-        issues.append((WARN, "trade_id 빈 행", f"{no_id}행"))
+        issues.append((ABORT, "trade_id 빈 행",
+                       f"{no_id}행 — 실거래 행이면 중복 판정이 불가능하므로 중단한다"))
     if bad_date:
         issues.append((WARN, "진입일 형식 이상",
                        "; ".join(f"행{i}='{d}'" for i, d in bad_date[:5])))
     if extreme:
         issues.append((WARN, f"|수익률| > {SANE_RETURN_ABS:.0f}%",
                        "; ".join(f"행{i} 열{c}={v:+.1f}%" for i, c, v in extreme[:5])))
+    if matured_missing:
+        issues.append((WARN, "성숙했는데 값이 없음(MATURED_DATA_MISSING)",
+                       f"{len(matured_missing)}행 — 표본 부족이 아니라 **데이터 결손**이다. "
+                       + "; ".join(f"행{i} {c}({d})" for i, c, d in matured_missing[:3])))
+    if early_val:
+        issues.append((WARN, "아직 미성숙인데 값이 있음",
+                       f"{len(early_val)}행 — "
+                       + "; ".join(f"행{i} {c}({d})" for i, c, d in early_val[:3])))
     return issues
 
 
@@ -249,8 +368,25 @@ def sha256_of(text):
 
 
 def ledger_fingerprint(rows):
-    """원장 내용의 지문. 행 순서까지 포함한다 — 같은 데이터면 같은 값이 나와야 한다."""
-    return sha256_of("\n".join("\t".join(str(c) for c in r) for r in rows))
+    """원장 내용의 지문. 행 순서까지 포함한다 — 같은 데이터면 같은 값이 나와야 한다.
+
+    ⚠️ [R3 정정 2026-09-08] 예전 구현은 셀을 탭으로, 행을 줄바꿈으로 이어 붙였다.
+       셀 값 안에 탭이나 줄바꿈이 들어가는 순간 그 구분자가 **경계와 구별되지
+       않아서**, 서로 다른 원장이 같은 지문을 냈다:
+           [["a\tb", "c"]]  와  [["a", "b\tc"]]  →  같은 해시
+       메모 열에 줄바꿈이 든 행은 이 원장에 실제로 있을 수 있다. 지문은 "이 판정이
+       무엇을 보고 나왔나"를 고정하는 유일한 근거이므로, 충돌 가능성이 남아 있으면
+       근거 구실을 못 한다. JSON 은 셀 안의 탭·줄바꿈·따옴표를 모두 이스케이프하고
+       셀 경계를 대괄호·쉼표로 따로 표시하므로 그 모호함이 없다.
+
+    ⚠️ 이 변경으로 **지문 값 자체가 달라진다.** 2026-09-07 판정표에 박혀 있는
+       원장 SHA256 은 옛 방식(tab-join-v1)으로 계산된 값이고, 이 코드로는 다시
+       나오지 않는다. 그래서 방식 이름을 같이 기록한다 — 지문을 비교할 때는
+       **어느 방식으로 계산했는지부터** 맞춰야 한다.
+    """
+    canon = json.dumps([[str(c) for c in r] for r in rows],
+                       ensure_ascii=False, separators=(",", ":"))
+    return sha256_of(canon)
 
 
 def is_excluded(row):
@@ -515,32 +651,112 @@ def self_test():
         holm([("a", 0.4), ("b", 0.5)]) == set())
 
     print("🧪 F07 — 원장 입력 검증 (2026-09-07 감사)")
+    # ⚠️ today 를 **고정**해서 부른다. 성숙 판정은 오늘 날짜에 의존하므로
+    #    이걸 안 박아 두면 같은 검사가 내일은 다른 결과를 낸다.
+    T0 = datetime.date(2026, 9, 30)
+
+    def mkheader(**over):
+        """실제 BT_HEADER 이름으로 헤더를 만든다.
+
+        ⚠️ 예전에는 `["trade_id"] + [""] * 33` 을 썼다. R2 가 열 이름 검사를
+           넣은 뒤로는 그 가짜 헤더가 **정상 원장 검사까지 깨뜨린다** —
+           검사가 강해진 만큼 검사용 표본도 진짜와 같아야 한다.
+        """
+        h = [""] * 34
+        for i, name in EXPECTED_HEADER.items():
+            h[i] = name
+        for i, name in over.items():
+            h[int(i)] = name
+        return h
+
     def mkrow(tid, ch, s5=1.0, i5=0.0, date="2026-09-01"):
         r = [""] * 34
         r[C_TRADE_ID], r[C_ENTRY_DATE], r[C_CHANNEL] = tid, date, ch
-        r[STOCK_COL[5]], r[INDEX_COL[5]] = str(s5), str(i5)
+        if s5 is not None:
+            r[STOCK_COL[5]] = str(s5)
+        if i5 is not None:
+            r[INDEX_COL[5]] = str(i5)
         return r
-    hdr34 = ["trade_id"] + [""] * 33
+
+    def sev(rows):
+        return [x[0] for x in validate_ledger(rows, today=T0)]
+
+    hdr34 = mkheader()
     good = [hdr34, mkrow("A_차트TOP2_000660", "차트TOP2")]
-    chk("정상 원장 → 이상 없음", validate_ledger(good) == [], f"{validate_ledger(good)}")
+    chk("정상 원장 → 이상 없음", sev(good) == [], f"{validate_ledger(good, today=T0)}")
     dup = [hdr34, mkrow("SAME", "차트TOP2"), mkrow("SAME", "수급TOP2")]
-    chk("trade_id 중복 → ABORT", ABORT in [x[0] for x in validate_ledger(dup)])
+    chk("trade_id 중복 → ABORT", ABORT in sev(dup))
     nan = [hdr34, mkrow("N1", "차트TOP2", s5="nan")]
-    chk("비유한 수치(nan) → ABORT", ABORT in [x[0] for x in validate_ledger(nan)])
+    chk("비유한 수치(nan) → ABORT", ABORT in sev(nan))
     chk("_num('nan') 은 None (성숙값에 안 들어간다)", _num("nan") is None)
     chk("_num('inf') 은 None", _num("inf") is None)
     chk("_num('1.5') 는 살아 있다", _num("1.5") == 1.5)
-    bad = [hdr34, mkrow("D1", "차트TOP2", date="2026-13-99")]
-    chk("날짜 형식 이상 → WARN(중단 아님)", [x[0] for x in validate_ledger(bad)] == [WARN])
+    bad = [hdr34, mkrow("D1", "차트TOP2", s5=None, i5=None, date="2026-13-99")]
+    chk("날짜 형식 이상 + 값 없음 → WARN(중단 아님)", sev(bad) == [WARN], f"{sev(bad)}")
     ext = [hdr34, mkrow("E1", "차트TOP2", s5=9999.0)]
-    chk("극단 수익률 → WARN(중단 아님)", [x[0] for x in validate_ledger(ext)] == [WARN])
+    chk("극단 수익률 → WARN(중단 아님)", sev(ext) == [WARN], f"{sev(ext)}")
     noh = [["엉뚱한열"] + [""] * 33, mkrow("H1", "차트TOP2")]
-    chk("헤더 불일치 → ABORT", ABORT in [x[0] for x in validate_ledger(noh)])
-    chk("빈 원장 → ABORT", validate_ledger([])[0][0] == ABORT)
+    chk("헤더 불일치 → ABORT", ABORT in sev(noh))
+    chk("빈 원장 → ABORT", validate_ledger([], today=T0)[0][0] == ABORT)
+
+    # ── R2 재검증(2026-09-08)이 지목한 네 구멍 ──────────────────────────
+    # ① 종목T+5 와 지수T+5 의 열·값을 맞바꿔도 무경고였다(순알파 +1.65 → −2.35).
+    swap = [mkheader(**{"19": "지수T+5", "23": "종목T+5"}),
+            mkrow("S1", "차트TOP2")]
+    chk("R2① 종목T+5↔지수T+5 열 교환 → ABORT", ABORT in sev(swap), f"{sev(swap)}")
+    chk("R2① 교환 사유가 '스키마'로 찍힌다",
+        any("스키마" in n for s_, n, _ in validate_ledger(swap, today=T0) if s_ == ABORT))
+    ins = [mkheader(**{"20": "끼워넣은열"}), mkrow("S2", "차트TOP2")]
+    chk("R2① 열 하나만 밀려도 → ABORT", ABORT in sev(ins))
+
+    # ② 수익률 셀이 `#REF!` 여도 무경고로 집계에서만 빠졌다.
+    ref = [hdr34, mkrow("R1", "차트TOP2", s5="#REF!")]
+    chk("R2② 수익률 '#REF!' → ABORT", ABORT in sev(ref), f"{sev(ref)}")
+    chk("R2② `#REF!` 는 조용히 빠지던 값이었다 — _num 은 여전히 None",
+        _num("#REF!") is None)
+    chk("R2② 콤마·% 붙은 정상 값은 통과", sev([hdr34, mkrow("R2", "차트TOP2", s5="1,234.5%")])
+        == [WARN])   # |1234.5%| > 500 이라 극단 경고만 뜬다(숫자 파싱은 성공)
+
+    # ③ 진입일 2099-01-01 인데 값이 있으면 무경고로 성숙 표본에 들어갔다.
+    fut = [hdr34, mkrow("F1", "차트TOP2", date="2099-01-01")]
+    chk("R2③ 미래 진입일 → ABORT", ABORT in sev(fut), f"{sev(fut)}")
+
+    # ④ 진입일 공란 + 값 존재도 동일했다.
+    nod = [hdr34, mkrow("B1", "차트TOP2", date="")]
+    chk("R2④ 진입일 공란 + 값 존재 → ABORT", ABORT in sev(nod), f"{sev(nod)}")
+    brk = [hdr34, mkrow("B2", "차트TOP2", date="2026-13-99")]
+    chk("R2④ 형식 깨진 진입일 + 값 존재 → ABORT (값 없을 때와 다르다)",
+        ABORT in sev(brk), f"{sev(brk)}")
+
+    # ── 성숙/결손 구분 — '표본 부족'과 '데이터 결손'은 다른 이야기다 ──────
+    chk("성숙 여유는 거래일이 아니라 달력일 근사", calendar_margin(5) == 11)
+    chk("maturity_note — 한참 지났으면 MATURED",
+        maturity_note("2026-09-01", 5, T0) == "MATURED")
+    chk("maturity_note — 아직 h 달력일도 안 지났으면 NOT_MATURED",
+        maturity_note("2026-09-28", 5, T0) == "NOT_MATURED")
+    chk("maturity_note — 경계에서는 판정 유보(None)",
+        maturity_note("2026-09-24", 5, T0) is None)
+    chk("maturity_note — 미래 진입일은 INVALID",
+        maturity_note("2099-01-01", 5, T0) == "INVALID")
+    chk("maturity_note — 공란도 INVALID", maturity_note("", 5, T0) == "INVALID")
+    miss = [hdr34, mkrow("M1", "차트TOP2", s5=None, i5=None, date="2026-09-01")]
+    chk("성숙했는데 값이 없다 → WARN(데이터 결손, 표본 부족 아님)",
+        sev(miss) == [WARN], f"{sev(miss)}")
+    early = [hdr34, mkrow("Y1", "차트TOP2", date="2026-09-29")]
+    chk("아직 미성숙인데 값이 있다 → WARN", sev(early) == [WARN], f"{sev(early)}")
+
+    # ── R3 — 지문은 셀 경계를 구분해야 한다 ─────────────────────────────
     _f1 = ledger_fingerprint(good)
     chk("같은 원장 → 같은 지문", _f1 == ledger_fingerprint(good))
     chk("행 하나만 달라도 지문이 바뀐다",
         _f1 != ledger_fingerprint([hdr34, mkrow("A_차트TOP2_000660", "차트TOP2", s5=1.1)]))
+    # 예전 구현은 셀을 탭으로 이어 붙였다. 그래서 셀 안에 탭이 있으면
+    # 서로 다른 원장이 **같은 지문**을 냈다 — 재현 근거가 무너지는 결함이다.
+    chk("R3 셀 안의 탭이 경계를 흉내 내도 지문이 갈린다",
+        ledger_fingerprint([["a\tb", "c"]]) != ledger_fingerprint([["a", "b\tc"]]))
+    chk("R3 줄바꿈도 마찬가지",
+        ledger_fingerprint([["a\nb"], ["c"]]) != ledger_fingerprint([["a"], ["b\nc"]]))
+    chk("R3 지문 방식에 버전이 박혀 있다", LEDGER_SHA_ALGO.startswith("canonical-json"))
     print()
 
     print("🧪 §3-4-2 비용·§4-2 제외")
@@ -633,7 +849,7 @@ def main():
     # ── F07 ② 근거를 판정표에 박아 넣는다 ────────────────────────────────
     md += ("\n## 재현 정보 (F07)\n\n"
            f"- 원장 행수 — **{len(rows) - 1}행**(헤더 제외)\n"
-           f"- 원장 SHA256 — `{ledger_sha}`\n"
+           f"- 원장 SHA256 — `{ledger_sha}` (계산 방식 `{LEDGER_SHA_ALGO}`)\n"
            f"- 판정기 SHA256 — `{code_sha}`\n"
            f"- 입력 검증 — {'경고 ' + str(len(issues)) + '건' if issues else '이상 없음'}\n"
            + "".join(f"  - [{sev}] {n} — {d}\n" for sev, n, d in issues)
@@ -669,17 +885,45 @@ def main():
         #       즉 액션 러너에서 돌리면 잡이 끝날 때 **사라진다.**
         #       접근 제한 보관소를 붙이기 전까지는 그게 의도된 동작이다 —
         #       공개 경로로 새는 것보다 낫다. 재현 근거는 판정표의 SHA256 지문이 맡는다.
-        lp = f"{LEDGER_DIR}/판정_{today}_ledger.json"
-        os.makedirs(LEDGER_DIR, exist_ok=True)
-        with open(lp, "w", encoding="utf-8") as f:
-            json.dump({"captured_at": datetime.datetime.now(KST).isoformat(),
-                       "sheet": SHEET_NAME, "ledger_sha256": ledger_sha,
-                       "code_sha256": code_sha,
-                       "issues": [{"severity": s_, "name": n, "detail": d}
-                                  for s_, n, d in issues],
-                       "rows": rows}, f, ensure_ascii=False)
-        print(f"🗄️ 원장 근거: {lp}")
-        print("   ⚠️ 이 파일은 실행 머신에만 남는다(커밋·아티팩트 모두 제외, R1).")
+        #    ⚠️ [R3 정정 2026-09-08] 예전에는 `판정_{날짜}_ledger.json` 이라는
+        #       **날짜 고정 이름**에 `"w"` 로 썼다. 판정표는 배타 생성으로
+        #       막아 놓고 근거 파일만 같은 날 재실행 때 조용히 덮어써진 것이다 —
+        #       두 번째 실행이 첫 번째가 무엇을 봤는지를 지워 버린다.
+        #       실행마다 **고유 디렉터리**를 배타 생성하고, 판정표·원장·설정을
+        #       한 묶음으로 같이 넣는다. 흩어져 있으면 나중에 어느 원장이 어느
+        #       판정표에 대응하는지 맞출 수가 없다.
+        run_id = (f"{datetime.datetime.now(KST).strftime('%Y%m%dT%H%M%S')}"
+                  f"_{ledger_sha[:8]}_{code_sha[:8]}")
+        run_dir = os.path.join(LEDGER_DIR, run_id)
+        try:
+            os.makedirs(run_dir)          # exist_ok 없음 = 배타 생성
+        except FileExistsError:
+            print(f"\n❌ 실행 디렉터리가 이미 있다 — {run_dir}")
+            print("   같은 초에 같은 원장·같은 코드로 두 번 돌았다는 뜻이다.")
+            print("   근거를 덮어쓰지 않고 멈춘다.")
+            return 2
+        meta = {"run_id": run_id,
+                "captured_at": datetime.datetime.now(KST).isoformat(),
+                "sheet": SHEET_NAME, "sheet_url": SHEET_URL,
+                "ledger_sha256": ledger_sha,
+                "ledger_sha_algo": LEDGER_SHA_ALGO,
+                "code_sha256": code_sha,
+                "verdict_path": path,
+                "row_count": len(rows) - 1,
+                "config": {"COST_PCT": COST_PCT, "MIN_N": MIN_N,
+                           "T_SURVIVE": T_SURVIVE, "T_DISCARD": T_DISCARD,
+                           "CONTROL": CONTROL, "HORIZON": HORIZON,
+                           "DEFAULT_HORIZON": DEFAULT_HORIZON},
+                "issues": [{"severity": s_, "name": n, "detail": d}
+                           for s_, n, d in issues]}
+        for name, payload in (
+                ("meta.json", lambda f: json.dump(meta, f, ensure_ascii=False, indent=2)),
+                ("ledger.json", lambda f: json.dump({"rows": rows}, f, ensure_ascii=False)),
+                ("판정.md", lambda f: f.write(md))):
+            with open(os.path.join(run_dir, name), "x", encoding="utf-8") as f:
+                payload(f)
+        print(f"🗄️ 실행 근거 한 묶음: {run_dir}/ (meta.json · ledger.json · 판정.md)")
+        print("   ⚠️ 이 디렉터리는 실행 머신에만 남는다(커밋·아티팩트 모두 제외, R1).")
         print("      액션에서 돌렸다면 잡 종료와 함께 사라진다. 보존이 필요하면")
         print("      접근 제한 보관소를 먼저 붙여라. 공개 경로로 내보내지 말 것.")
 
