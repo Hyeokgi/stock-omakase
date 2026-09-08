@@ -1,440 +1,361 @@
-"""계좌 수준 성과 — 종목별 평균 수익률과 계좌 수익률은 다르다.
+"""Cash NAV reconstruction from frozen, synchronous prices (no network).
 
-왜 만들었나 (2026-09-08, 외부 4차 검토)
----------------------------------------
-§3 은 **행 단위 평균 순알파**를 잰다. 그건 계좌 수익률이 아니다.
-
-> "같은 날 여러 종목을 보유할 때의 자금 배분, 보유 기간 중첩, 업종 집중,
->  실제 체결 비용을 반영해야 한다. **평균 수익률이 양수여도 큰 손실 몇 번으로
->  계좌가 크게 훼손될 수 있다.**"
-
-채널 10개가 하루 최대 20건을 쌓는데, 그게 계좌에 어떤 부담인지 지금까지
-아무도 재지 않았다. 이 모듈은 그걸 잰다.
-
-⚠️ **관측이지 집행이 아니다.** 이 숫자로 매매하지 않는다(§0).
-
-무엇을 가정하는가 — 전부 명시한다
-----------------------------------
-1. **포지션당 명목금액 1단위 균등.** §3-4-3 의 1단계(균등 비중)와 같다.
-2. **보유기간은 채널 호라이즌.** T+H 에 청산한다고 본다.
-3. **거래일은 평일 근사.** 거래소 달력이 없다(§3-2-0-b3 과 같은 한계).
-   휴장일이 있으면 실제보다 짧게 잡히므로 **동시 보유가 과소평가**된다.
-4. **비용은 §3-4-2 의 0.35%** 를 포지션마다 한 번 뺀다. 슬리피지 미반영.
-5. **중간 평가는 관측된 마크(T+1·3·5·10·20)만** 쓴다. 그 사이는 직전 마크를
-   유지하는 계단으로 본다 — 없는 값을 지어내지 않는다.
-
-⚠️ 그래서 **MDD 는 하한이다.** 마크 사이의 골은 보이지 않는다. 실제 MDD 는
-   이 값보다 **크면 컸지 작지 않다.** 이 사실을 리포트에 항상 같이 적는다.
+Ledger 진입일 is SIGNAL day; buy next session open, sell signal+H close.
+Sparse ledger returns are NOT account prices. Defaults are research assumptions.
 """
-import datetime
+from __future__ import annotations
+import argparse
+import dataclasses
+import datetime as dt
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import tempfile
+import uuid
+from hyeoks_verdict import ABORT, HORIZON, DEFAULT_HORIZON, validate_ledger, is_excluded
 
-KST = datetime.timezone(datetime.timedelta(hours=9))
-
-C_TRADE_ID, C_ENTRY, C_CHANNEL, C_NAME, C_CODE, C_THEME = 0, 1, 2, 3, 4, 5
-C_EXCLUDE = 25
-
-HORIZON = {"리포트TOP2_중기": 10, "리포트TOP2_장기": 60}
-DEFAULT_HORIZON = 5
-COST_PCT = 0.35
-# 관측된 중간 마크. (일수, 종목열, 지수열)
-MARKS = ((1, 17, 21), (3, 18, 22), (5, 19, 23), (10, 20, 24), (20, 26, 29),
-         (60, 27, 30), (120, 28, 31))
-# 대조군·벤치마크는 '전략 계좌'가 아니다. 따로 센다.
-CONTROL_PREFIXES = ("랜덤2", "지수벤치")
+VERSION = 'account-nav-v2'
 
 
-def _num(v):
+class InputError(ValueError):
+    pass
+
+
+def canonical(value):
+    return json.dumps(value, ensure_ascii=False, sort_keys=True,
+                      separators=(',', ':'), allow_nan=False).encode('utf-8')
+
+
+def digest(value):
+    return hashlib.sha256(canonical(value)).hexdigest()
+
+
+def number(value, label, positive=False):
     try:
-        f = float(str(v).strip().replace(",", "").replace("%", ""))
+        n = float(str(value).replace(',', '').replace('%', '').strip())
     except (TypeError, ValueError):
+        raise InputError(f'{label}: invalid number') from None
+    if not math.isfinite(n) or (positive and n <= 0):
+        raise InputError(f'{label}: invalid finite/positive value')
+    return n
+
+
+def date(value):
+    try:
+        if not isinstance(value, str) or dt.date.fromisoformat(value).isoformat() != value:
+            raise ValueError
+    except (TypeError, ValueError):
+        raise InputError(f'invalid ISO date: {value!r}') from None
+    return value
+
+
+@dataclasses.dataclass(frozen=True)
+class Config:
+    initial_cash: float = 1_000_000
+    ticket_cash: float = 50_000
+    max_stock_weight: float = .10
+    max_theme_weight: float = .20
+    buy_fee: float = .00175
+    sell_fee: float = .00175
+    slippage: float = 0.0
+
+    def validate(self):
+        for field in dataclasses.fields(self):
+            value = getattr(self, field.name)
+            if isinstance(value, bool) or not isinstance(value, (float, int)):
+                raise InputError(f'{field.name}: require numeric value')
+            number(value, field.name)
+        if not 0 < self.ticket_cash <= self.initial_cash:
+            raise InputError('require 0 < ticket_cash <= initial_cash')
+        if not 0 < self.max_stock_weight <= 1 or not 0 < self.max_theme_weight <= 1:
+            raise InputError('weight caps must be in (0, 1]')
+        if any(not 0 <= x < 1 for x in (self.buy_fee, self.sell_fee, self.slippage)):
+            raise InputError('fees/slippage must be in [0, 1)')
+
+
+def group(channel):
+    if channel.startswith('지수벤치'):
         return None
-    return f if f == f and abs(f) != float("inf") else None
+    if channel == '랜덤2':
+        return 'random'
+    if channel == '랜덤2_배지':
+        return 'random_badge'
+    if channel.startswith('랜덤'):
+        raise InputError(f'unknown control channel: {channel}')
+    return 'strategy'
 
 
-def is_excluded(row):
-    return "제외" in (str(row[C_EXCLUDE]) if len(row) > C_EXCLUDE else "")
+def validate_bundle(bundle):
+    if bundle.get('schema') != 'account-input-v2':
+        raise InputError('require account-input-v2 frozen input, not sparse marks')
+    for key in ('calendar_source', 'price_source', 'captured_at', 'price_basis'):
+        if not isinstance(bundle.get(key), str) or not bundle[key].strip():
+            raise InputError(f'missing provenance: {key}')
+    if bundle['price_basis'] != 'consistent_adjusted_ohlc':
+        raise InputError('require consistent_adjusted_ohlc throughout frozen history')
+    as_of, sessions = date(bundle['as_of']), bundle['sessions']
+    if not sessions or sessions != sorted(set(sessions)):
+        raise InputError('calendar sessions must be sorted, unique and nonempty')
+    for d in sessions:
+        date(d)
+    if as_of not in sessions:
+        raise InputError('as_of must be a completed supplied trading session')
+    try:
+        captured = dt.datetime.fromisoformat(bundle['captured_at'].replace('Z', '+00:00'))
+        if captured.tzinfo is None or captured.astimezone(dt.timezone(dt.timedelta(hours=9))).date() < dt.date.fromisoformat(as_of):
+            raise ValueError
+    except ValueError:
+        raise InputError('captured_at must have timezone and not precede as_of') from None
+    if not bundle.get('prices') or not bundle.get('theme_map'):
+        raise InputError('prices and point-in-time theme_map required')
+    rows = bundle['rows']
+    issues = validate_ledger(rows, today=dt.date.fromisoformat(as_of))
+    errors = [f'{name}: {detail}' for severity, name, detail in issues if severity == ABORT]
+    for col, name in {3:'종목명', 4:'종목코드', 5:'주도테마', 16:'진입가(T+1시가)'}.items():
+        if not rows or len(rows[0]) <= col or rows[0][col] != name:
+            errors.append(f'account column {col} must be {name}')
+    if errors:
+        raise InputError('; '.join(errors))
+    cfg = Config(**bundle.get('config', {}))
+    cfg.validate()
+    return sessions, as_of, cfg, issues
 
 
-def is_control(channel):
-    return any(channel.startswith(p) for p in CONTROL_PREFIXES)
-
-
-def add_trading_days(d, n):
-    """평일 기준 n거래일 뒤. ⚠️ 휴장일 미반영 — 실제보다 이르게 잡힌다."""
-    cur, left = d, n
-    while left > 0:
-        cur += datetime.timedelta(days=1)
-        if cur.weekday() < 5:
-            left -= 1
-    return cur
-
-
-def build_positions(rows, today=None):
-    """원장 행 → 포지션. 비용은 여기서 한 번 뺀다(§3-4-2).
-
-    반환 포지션의 `marks` 는 {경과거래일: 순수익률%} 이고 **관측된 것만** 담는다.
-    """
-    today = today or datetime.datetime.now(KST).date()
-    out, skipped = [], {"제외표식": 0, "날짜없음": 0, "채널없음": 0, "마크없음": 0}
-    for row in rows[1:]:
-        if len(row) <= C_CHANNEL:
+def orders_from_ledger(bundle, sessions, as_of):
+    orders, diagnostics = [], []
+    indices = {d:i for i,d in enumerate(sessions)}
+    for row_no, row in enumerate(bundle['rows'][1:], 2):
+        if not any(str(c).strip() for c in row):
             continue
+        if len(row) < 17:
+            raise InputError(f'row {row_no}: truncated record')
         if is_excluded(row):
-            skipped["제외표식"] += 1
+            diagnostics.append(dict(row=row_no, status='explicit_exclusion'))
             continue
-        ch = str(row[C_CHANNEL]).strip()
-        if not ch:
-            skipped["채널없음"] += 1
+        signal, channel = date(str(row[1]).strip()), str(row[2]).strip()
+        if not channel or signal not in indices or signal > as_of:
+            raise InputError(f'row {row_no}: invalid signal date/channel')
+        g = group(channel)
+        if g is None:
+            diagnostics.append(dict(row=row_no, status='index_ledger_not_pooled'))
             continue
-        try:
-            entry = datetime.datetime.strptime(
-                str(row[C_ENTRY]).strip()[:10], "%Y-%m-%d").date()
-        except ValueError:
-            skipped["날짜없음"] += 1
+        idx = indices[signal]
+        if idx+1 >= len(sessions) or sessions[idx+1] > as_of:
+            diagnostics.append(dict(row=row_no, status='pending_entry'))
             continue
-        h = HORIZON.get(ch, DEFAULT_HORIZON)
-        cost = 0.0 if ch.startswith("지수벤치") else COST_PCT
-        marks = {}
-        for d, si, ii in MARKS:
-            if d > h or len(row) <= max(si, ii):
-                continue
-            s, i = _num(row[si]), _num(row[ii])
-            if s is None or i is None:
-                continue
-            marks[d] = s - i - cost          # 순알파 = 종목 − 지수 − 비용
-        if not marks:
-            skipped["마크없음"] += 1
-            continue
-        out.append({
-            "trade_id": str(row[C_TRADE_ID]).strip(),
-            "channel": ch, "horizon": h, "entry": entry,
-            "name": str(row[C_NAME]).strip() if len(row) > C_NAME else "",
-            "code": str(row[C_CODE]).strip() if len(row) > C_CODE else "",
-            "theme": str(row[C_THEME]).strip() if len(row) > C_THEME else "",
-            "marks": marks,
-            "closed": max(marks) >= h,       # 호라이즌 마크가 있으면 청산 완료
-            "close_date": add_trading_days(entry, min(h, max(marks))),
-            "final": marks[min(h, max(marks))],
-        })
-    return out, skipped
+        code = str(row[4]).strip().lstrip("'").zfill(6)
+        if len(code) != 6 or not code.isdigit() or code == '000000':
+            raise InputError(f'row {row_no}: invalid code')
+        themes = bundle['theme_map'].get(signal, {}).get(code)
+        if not isinstance(themes, list) or not themes or any(not isinstance(t,str) or not t for t in themes):
+            raise InputError(f'row {row_no}: missing point-in-time theme IDs')
+        horizon = HORIZON.get(channel, DEFAULT_HORIZON)
+        exit_date = sessions[idx+horizon] if idx+horizon < len(sessions) else None
+        orders.append(dict(id=str(row[0]), channel=channel, group=g, code=code,
+                           signal=signal, entry=sessions[idx+1], exit=exit_date,
+                           horizon=horizon, themes=sorted(set(themes))))
+    return sorted(orders, key=lambda x:(x['entry'], x['channel'], x['id'])), diagnostics
 
 
-def mark_at(pos, day):
-    """경과 `day` 거래일 시점의 평가값. **관측된 직전 마크를 유지**한다."""
-    seen = [d for d in pos["marks"] if d <= day]
-    return pos["marks"][max(seen)] if seen else 0.0
+def bar(prices, code, day):
+    raw = prices.get(code, {}).get(day)
+    if raw is None:
+        raise InputError(f'missing synchronized price: {code} {day}')
+    out = {k:number(raw.get(k), f'{code}/{day}/{k}', True) for k in ('open','high','low','close')}
+    if not out['low'] <= min(out['open'],out['close']) <= max(out['open'],out['close']) <= out['high']:
+        raise InputError(f'inconsistent OHLC: {code} {day}')
+    if not isinstance(raw.get('tradable'),bool):
+        raise InputError(f'explicit tradable boolean required: {code} {day}')
+    out['tradable'] = raw['tradable']
+    return out
 
 
-def daily_series(positions):
-    """거래일마다 (열린 포지션 수, 미실현 포함 평가손익 합, 실현손익 누적)."""
-    if not positions:
-        return []
-    start = min(p["entry"] for p in positions)
-    end = max(p["close_date"] for p in positions)
-    days, cur = [], start
-    while cur <= end:
-        if cur.weekday() < 5:
-            days.append(cur)
-        cur += datetime.timedelta(days=1)
-
-    rows = []
-    for d in days:
-        open_n, mtm, realized = 0, 0.0, 0.0
-        for p in positions:
-            if d < p["entry"]:
-                continue
-            elapsed = sum(1 for x in days if p["entry"] < x <= d)
-            if d >= p["close_date"]:
-                realized += p["final"]
-            else:
-                open_n += 1
-                mtm += mark_at(p, elapsed)
-        rows.append({"date": d, "open": open_n,
-                     "equity": realized + mtm, "realized": realized})
-    return rows
-
-
-def metrics(positions, series=None):
-    """계좌 지표. 단위는 '포지션 1단위' 기준 %."""
-    series = series if series is not None else daily_series(positions)
-    if not series:
-        return None
-    peak_open = max(r["open"] for r in series)
-    eq = [r["equity"] for r in series]
-    peak, mdd, mdd_at = eq[0], 0.0, None
-    for r in series:
-        peak = max(peak, r["equity"])
-        dd = peak - r["equity"]
+def nav_metrics(series, initial_cash):
+    peak, mdd, trough = initial_cash, 0.0, None
+    for point in series:
+        peak = max(peak,point['nav'])
+        dd = 1-point['nav']/peak
         if dd > mdd:
-            mdd, mdd_at = dd, r["date"]
-    # 계좌 % 로 환산 — 최대 동시 보유만큼 슬롯을 두고 균등 배분했다고 본다
-    denom = peak_open or 1
-    return {
-        "positions": len(positions),
-        "trading_days": len(series),
-        "max_concurrent": peak_open,
-        "avg_concurrent": sum(r["open"] for r in series) / len(series),
-        "sum_pnl_units": eq[-1],
-        "account_return_pct": eq[-1] / denom,
-        "mdd_units": mdd,
-        "mdd_pct": mdd / denom,
-        "mdd_at": mdd_at,
-        "win_rate": (sum(1 for p in positions if p["final"] > 0) / len(positions) * 100
-                     if positions else 0.0),
-        "worst": min((p["final"] for p in positions), default=0.0),
-        "best": max((p["final"] for p in positions), default=0.0),
-    }
+            mdd,trough = dd,point['date']
+    final = series[-1]['nav'] if series else initial_cash
+    return dict(return_pct=100*(final/initial_cash-1), mdd_pct=100*mdd,
+                mdd_date=trough, final_nav=final)
 
 
-def concentration(positions):
-    """같은 날 같은 테마·채널에 몇 개가 겹쳤나. §3-4-3 의 20% 상한 대비 참고."""
-    by_day = {}
-    for p in positions:
-        by_day.setdefault(p["entry"], []).append(p)
-    worst_theme, worst_day, worst_n = "", None, 0
-    same_stock = 0
-    for d, ps in by_day.items():
-        themes = {}
-        codes = {}
-        for p in ps:
-            if p["theme"]:
-                themes[p["theme"]] = themes.get(p["theme"], 0) + 1
-            if p["code"]:
-                codes[p["code"]] = codes.get(p["code"], 0) + 1
-        for t, n in themes.items():
-            if n > worst_n:
-                worst_theme, worst_day, worst_n = t, d, n
-        same_stock += sum(n - 1 for n in codes.values() if n > 1)
-    return {"max_same_theme": worst_n, "theme": worst_theme, "theme_day": worst_day,
-            "same_stock_dup": same_stock,
-            "max_entries_in_a_day": max((len(v) for v in by_day.values()), default=0)}
+def simulate(orders, sessions, prices, cfg):
+    """Open buys BEFORE close sells, whole shares, no leverage, no stale marks.
+
+    Halted planned exits remain open. Invalid valuation aborts, never zero-fills.
+    Caps restrict new buys; subsequent market drift does not force liquidation.
+    """
+    cfg.validate()
+    cash,realized,fees = cfg.initial_cash,0.0,0.0
+    active,trades,rejected,series = [],[],[],[]
+    peak_positions = peak_codes = 0
+    peak_stock_weight = peak_theme_weight = 0.0
+    for day in sessions:
+        opening = sorted([o for o in orders if o['entry']==day],key=lambda o:(o['channel'],o['id']))
+        bars = {c:bar(prices,c,day) for c in {p['code'] for p in active}|{o['code'] for o in opening}}
+        def exposures(field):
+            codes,themes = {},{}
+            for p in active:
+                value = p['qty']*bars[p['code']][field]
+                codes[p['code']] = codes.get(p['code'],0)+value
+                for t in p['themes']:
+                    themes[t] = themes.get(t,0)+value
+            return codes,themes
+        for order in opening:
+            b = bars[order['code']]
+            if not b['tradable']:
+                rejected.append(dict(id=order['id'],date=day,reason='not_tradable'))
+                continue
+            codes,themes = exposures('open')
+            fill = b['open']*(1+cfg.slippage)
+            qty = math.floor(cfg.ticket_cash/(fill*(1+cfg.buy_fee)))
+            debit = qty*fill*(1+cfg.buy_fee)
+            value = qty*b['open']
+            nav_after = cash+sum(codes.values())-debit+value
+            reason = None
+            if qty<=0: reason='below_one_share'
+            elif debit>cash+1e-8: reason='insufficient_cash'
+            elif codes.get(order['code'],0)+value>cfg.max_stock_weight*nav_after+1e-8: reason='stock_cap'
+            elif any(themes.get(t,0)+value>cfg.max_theme_weight*nav_after+1e-8 for t in order['themes']): reason='theme_cap'
+            if reason:
+                rejected.append(dict(id=order['id'],date=day,reason=reason))
+                continue
+            cash -= debit
+            fees += qty*fill*cfg.buy_fee
+            active.append(dict(order,qty=qty,entry_fill=fill,cost_basis=debit))
+        peak_positions = max(peak_positions,len(active))
+        peak_codes = max(peak_codes,len({p['code'] for p in active}))
+        for field in ('open','close'):
+            codes,themes = exposures(field)
+            nav = cash+sum(codes.values())
+            if nav<=0: raise InputError('nonpositive NAV')
+            peak_stock_weight = max(peak_stock_weight,max(codes.values(),default=0)/nav)
+            peak_theme_weight = max(peak_theme_weight,max(themes.values(),default=0)/nav)
+        remaining = []
+        for p in active:
+            b = bars[p['code']]
+            if p['exit'] is not None and day>=p['exit'] and b['tradable']:
+                fill = b['close']*(1-cfg.slippage)
+                proceeds = p['qty']*fill*(1-cfg.sell_fee)
+                profit = proceeds-p['cost_basis']
+                cash += proceeds
+                fees += p['qty']*fill*cfg.sell_fee
+                realized += profit
+                trades.append(dict(p,exit_actual=day,exit_fill=fill,pnl=profit,return_pct=100*profit/p['cost_basis']))
+            else:
+                remaining.append(p)
+        active = remaining
+        value = sum(p['qty']*bars[p['code']]['close'] for p in active)
+        unrealized = sum(p['qty']*bars[p['code']]['close']-p['cost_basis'] for p in active)
+        nav = cash+value
+        if cash < -1e-7 or not math.isclose(nav-cfg.initial_cash,realized+unrealized,abs_tol=1e-6):
+            raise InputError('cash/NAV/PnL reconciliation failed')
+        series.append(dict(date=day,cash=cash,market_value=value,nav=nav,
+                           realized=realized,unrealized=unrealized,open_positions=len(active)))
+    result = nav_metrics(series,cfg.initial_cash)
+    result.update(series=series,closed_trades=trades,open_positions=active,rejected=rejected,
+                  fees=fees,max_concurrent=peak_positions,max_unique_codes=peak_codes,
+                  max_stock_weight=peak_stock_weight,max_theme_weight=peak_theme_weight,
+                  closed_win_rate_pct=(100*sum(t['pnl']>0 for t in trades)/len(trades) if trades else None))
+    return result
 
 
-def self_test():
-    ok = True
-
-    def chk(label, cond, note=""):
-        nonlocal ok
-        ok = ok and bool(cond)
-        print(f"  {'✅' if cond else '❌'} {label}" + (f"   {note}" if note else ""))
-
-    print("🧪 계좌 수준 성과")
-    hdr = [""] * 38
-
-    def mk(tid, ch, entry, s5=None, i5=0.0, s1=None, i1=0.0, name="A", code="000001",
-           theme="", memo=""):
-        r = [""] * 38
-        r[C_TRADE_ID], r[C_ENTRY], r[C_CHANNEL] = tid, entry, ch
-        r[C_NAME], r[C_CODE], r[C_THEME] = name, code, theme
-        r[C_EXCLUDE] = memo
-        if s1 is not None:
-            r[17], r[21] = str(s1), str(i1)
-        if s5 is not None:
-            r[19], r[23] = str(s5), str(i5)
-        return r
-
-    T = datetime.date(2026, 9, 30)
-    ps, sk = build_positions([hdr, mk("A1", "차트TOP2", "2026-09-01", s5=3.0, i5=1.0)], T)
-    chk("순알파 = 종목 − 지수 − 0.35", abs(ps[0]["final"] - 1.65) < 1e-9, f"{ps[0]['final']}")
-    chk("청산일이 평일 5거래일 뒤",
-        ps[0]["close_date"] == datetime.date(2026, 9, 8), f"{ps[0]['close_date']}")
-    chk("제외 행은 빠진다",
-        build_positions([hdr, mk("X", "차트TOP2", "2026-09-01", s5=3.0,
-                                 memo="거래정지 — 측정 제외")], T)[0] == [])
-    chk("마크가 하나도 없으면 포지션이 아니다",
-        build_positions([hdr, mk("N", "차트TOP2", "2026-09-01")], T)[1]["마크없음"] == 1)
-
-    # 중간 마크를 실제로 쓰는가 — 이게 MDD 의 핵심이다
-    p = build_positions([hdr, mk("M", "차트TOP2", "2026-09-01", s1=-8.0, s5=3.0)], T)[0][0]
-    chk("T+1 마크가 보존된다", abs(p["marks"][1] - (-8.35)) < 1e-9, f"{p['marks']}")
-    chk("경과 0일이면 아직 마크 없음 → 0", mark_at(p, 0) == 0.0)
-    chk("경과 2일이면 **직전 마크(T+1)를 유지**", abs(mark_at(p, 2) - (-8.35)) < 1e-9)
-    chk("경과 5일이면 T+5", abs(mark_at(p, 5) - 2.65) < 1e-9)
-
-    ser = daily_series([p])
-    lowest = min(r["equity"] for r in ser)
-    chk("중간에 −8.35 까지 빠지는 것이 곡선에 보인다",
-        abs(lowest - (-8.35)) < 1e-9, f"최저={lowest:.2f}")
-    m = metrics([p], ser)
-    # ⚠️ 8.35 다. 처음엔 11.0(= −8.35 에서 +2.65 까지)으로 적었다가 이 검사가 잡았다.
-    #    그건 낙폭이 아니라 **진폭**이다. 낙폭은 **앞선 고점**에서의 하락이고,
-    #    골(−8.35) 앞의 고점은 진입 시점 0 이므로 8.35 가 맞다. 내 기대값이 틀렸다.
-    chk("MDD 가 그 골을 잡는다(청산가만 봤다면 0 이었다)",
-        abs(m["mdd_units"] - 8.35) < 1e-9, f"MDD={m['mdd_units']:.2f}단위")
-    # 청산가만 보는 곡선이었다면 낙폭이 0 이었다는 것도 고정해 둔다
-    _close_only = [{"date": p["close_date"], "open": 0,
-                    "equity": p["final"], "realized": p["final"]}]
-    chk("같은 포지션도 청산가만 보면 MDD 0 — 중간 마크가 있어야 보인다",
-        metrics([p], _close_only)["mdd_units"] == 0.0)
-    chk("최종 손익은 청산값", abs(m["sum_pnl_units"] - 2.65) < 1e-9)
-
-    # 동시 보유와 자금
-    rows = [hdr,
-            mk("C1", "차트TOP2", "2026-09-01", s5=1.0, code="000001"),
-            mk("C2", "차트TOP2", "2026-09-01", s5=1.0, code="000002"),
-            mk("C3", "차트TOP2", "2026-09-02", s5=1.0, code="000003")]
-    ps3, _ = build_positions(rows, T)
-    m3 = metrics(ps3)
-    chk("최대 동시 보유 3", m3["max_concurrent"] == 3, f"{m3['max_concurrent']}")
-    chk("계좌 % 는 최대 동시 보유로 나눈다",
-        abs(m3["account_return_pct"] - m3["sum_pnl_units"] / 3) < 1e-9)
-    chk("하루 최대 진입 2건", concentration(ps3)["max_entries_in_a_day"] == 2)
-
-    conc = concentration(build_positions([hdr,
-        mk("T1", "차트TOP2", "2026-09-01", s5=1.0, code="1", theme="반도체"),
-        mk("T2", "수급TOP2", "2026-09-01", s5=1.0, code="2", theme="반도체"),
-        mk("T3", "리포트TOP2_단기", "2026-09-01", s5=1.0, code="1", theme="반도체")], T)[0])
-    chk("같은 날 같은 테마 3건을 잡는다", conc["max_same_theme"] == 3, f"{conc}")
-    chk("같은 날 같은 종목 중복도 센다", conc["same_stock_dup"] == 1)
-
-    chk("대조군 판별", is_control("랜덤2") and is_control("지수벤치_KOSPI")
-        and not is_control("차트TOP2"))
-    chk("지수벤치는 비용 면제",
-        abs(build_positions([hdr, mk("B", "지수벤치_KOSPI", "2026-09-01",
-                                     s5=2.0, i5=1.0)], T)[0][0]["final"] - 1.0) < 1e-9)
-    chk("중기 채널은 T+10 호라이즌", HORIZON["리포트TOP2_중기"] == 10)
-    chk("빈 원장도 죽지 않는다", metrics([]) is None)
-
-    print("\n" + ("✅ 전부 통과" if ok else "❌ 실패 있음"))
-    return 0 if ok else 1
+def calculate(bundle):
+    sessions,as_of,cfg,issues = validate_bundle(bundle)
+    orders,diagnostics = orders_from_ledger(bundle,sessions,as_of)
+    dates = [d for d in sessions if d<=as_of]
+    accounts = {g:simulate([o for o in orders if o['group']==g],dates,bundle['prices'],cfg)
+                for g in ('strategy','random','random_badge')}
+    benchmarks = {}
+    for name,prices in sorted(bundle.get('indices',{}).items()):
+        order = dict(id='benchmark',channel=name,code=name,entry=dates[0],exit=None,
+                     signal=dates[0],themes=[name],horizon=None)
+        benchmarks[name] = simulate([order],dates,{name:prices},Config(cfg.initial_cash,cfg.initial_cash,1,1,0,0,0))
+    return dict(version=VERSION,as_of=as_of,config=dataclasses.asdict(cfg),input_sha256=digest(bundle),
+                diagnostics=diagnostics,ledger_warnings=issues,accounts=accounts,benchmarks=benchmarks)
 
 
-def build_report(strat, ctrl, sk, today):
-    """계좌 리포트. ⚠️ 가정을 숫자보다 먼저 적는다."""
-    L = []
-    A = L.append
-    A(f"# 💰 계좌 수준 성과 — {today}")
-    A("")
-    A("> §3 이 재는 **행 단위 평균 순알파**는 계좌 수익률이 아니다. 이 표는 같은 원장을")
-    A("> **계좌 관점**으로 다시 본 것이다. 자금 배분·보유 중첩·집중도가 들어간다.")
-    A("> ⚠️ **관측이지 집행이 아니다.** 이 숫자로 매매하지 않는다(§0).")
-    A("")
-    A("## 가정 (숫자보다 먼저 읽을 것)")
-    A("")
-    A("| # | 가정 | 영향 |")
-    A("|---|---|---|")
-    A("| 1 | 포지션당 명목금액 **1단위 균등** (§3-4-3 1단계) | 비중을 바꾸면 결과가 바뀐다 |")
-    A("| 2 | 보유기간 = 채널 호라이즌, T+H 청산 | 실제 청산 규칙(손절·트레일링) 미반영 |")
-    A("| 3 | 거래일은 **평일 근사** (거래소 달력 없음) | 휴장일만큼 **동시 보유가 과소평가** |")
-    A("| 4 | 비용 **0.35%** 포지션당 1회, 슬리피지 미반영 | 실전은 이보다 나쁘다 |")
-    A("| 5 | 중간 평가는 **관측 마크(T+1·3·5·10·20)만**, 사이는 직전 마크 유지 | 마크 사이의 골은 안 보인다 |")
-    A("")
-    A("> 🚨 **그래서 MDD 는 하한이다.** 실제 최대낙폭은 이 값보다 **크면 컸지 작지 않다.**")
-    A("")
-
-    def block(title, m, c, note=""):
-        A(f"## {title}")
-        A("")
-        if not m:
-            A("_포지션 없음_")
-            A("")
-            return
-        A("| 지표 | 값 |")
-        A("|---|--:|")
-        A(f"| 포지션 수 | {m['positions']}건 |")
-        A(f"| 관측 거래일 | {m['trading_days']}일 |")
-        A(f"| **최대 동시 보유** | **{m['max_concurrent']}건** |")
-        A(f"| 평균 동시 보유 | {m['avg_concurrent']:.1f}건 |")
-        A(f"| 누적 손익(1단위 기준) | {m['sum_pnl_units']:+.2f} |")
-        A(f"| **계좌 수익률**(최대 동시 보유 슬롯 균등) | **{m['account_return_pct']:+.2f}%** |")
-        A(f"| **최대낙폭(MDD)** | **{m['mdd_pct']:.2f}%** ({m['mdd_units']:.2f}단위) |")
-        A(f"| MDD 시점 | {m['mdd_at']} |")
-        A(f"| 승률 | {m['win_rate']:.0f}% |")
-        A(f"| 최악 / 최고 1건 | {m['worst']:+.2f}% / {m['best']:+.2f}% |")
-        A("")
-        A(f"- 하루 최대 진입 **{c['max_entries_in_a_day']}건**")
-        A(f"- 같은 날 같은 테마 최대 **{c['max_same_theme']}건**"
-          + (f" ({c['theme']}, {c['theme_day']})" if c['max_same_theme'] > 1 else ""))
-        A(f"- 같은 날 같은 종목 중복 **{c['same_stock_dup']}건**"
-          + " — 서로 다른 채널이 같은 종목을 담으면 분산이 아니라 **배수 베팅**이다"
-          if c['same_stock_dup'] else "")
-        if note:
-            A("")
-            A(note)
-        A("")
-
-    ms, cs = metrics(strat), concentration(strat)
-    mc, cc = metrics(ctrl), concentration(ctrl)
-    block("전략 채널 합산", ms, cs)
-    block("대조군(랜덤2·지수벤치) 합산", mc, cc,
-          "> 대조군은 '전략 계좌'가 아니다. **같은 계좌 규칙을 대조군에 적용하면 어떤가**를")
-    if ms and mc:
-        A("## 전략 − 대조군")
-        A("")
-        A("| 지표 | 전략 | 대조군 | 차이 |")
-        A("|---|--:|--:|--:|")
-        A(f"| 계좌 수익률 | {ms['account_return_pct']:+.2f}% | "
-          f"{mc['account_return_pct']:+.2f}% | "
-          f"{ms['account_return_pct'] - mc['account_return_pct']:+.2f}%p |")
-        A(f"| MDD | {ms['mdd_pct']:.2f}% | {mc['mdd_pct']:.2f}% | "
-          f"{ms['mdd_pct'] - mc['mdd_pct']:+.2f}%p |")
-        A(f"| 최대 동시 보유 | {ms['max_concurrent']}건 | {mc['max_concurrent']}건 | |")
-        A("")
-        A("> ⚠️ 이 차이에 **유의성 검정을 붙이지 않았다.** 계좌 곡선은 일별 값이 서로")
-        A("> 독립이 아니라 §3 의 t 검정을 그대로 쓸 수 없다. 여기서는 **크기만 본다.**")
-        A("")
-
-    A("## 채널별")
-    A("")
-    A("| 채널 | 건수 | 누적손익 | 최대동시 | MDD |")
-    A("|---|--:|--:|--:|--:|")
-    for ch in sorted({p["channel"] for p in strat + ctrl}):
-        sub = [p for p in strat + ctrl if p["channel"] == ch]
-        mm = metrics(sub)
-        if mm:
-            A(f"| {'*' if is_control(ch) else ''}{ch} | {mm['positions']} | "
-              f"{mm['sum_pnl_units']:+.2f} | {mm['max_concurrent']} | {mm['mdd_pct']:.2f}% |")
-    A("")
-    A("`*` = 대조군")
-    A("")
-    A("## 제외된 행")
-    A("")
-    for k, v in sk.items():
-        A(f"- {k}: {v}행")
-    A("")
-    return "\n".join(L)
+def report(result):
+    lines = [f"# 계좌 NAV 재구성 — {result['as_of']}",'',
+             '고정 입력에 대한 연구용 가상 집행입니다. 실거래 계좌 실적이 아닙니다.',
+             '종목 가격·수량과 현금으로 평가하며 지수 수익률을 차감하지 않습니다.',
+             '신호 다음 거래일 시가 매수, 신호+H 거래일 종가 청산. 당일 시가 매수는 종가 매도보다 먼저입니다.',
+             '동기화한 일별 종가 MDD이며 장중 MDD·실체결은 미검증입니다. 비동기 마크 보간은 없습니다.',
+             '동일 수정주가 기준 가상 수량 모형입니다. 실제 배당/권리처리 현금흐름 계좌와 다를 수 있습니다.',
+             '비용·슬리피지는 고정 가정이며 실측값이 아닙니다. 상한은 신규 매수에 적용하며 이후 비중 변동으로 강제매도하지 않습니다.','',
+             f"입력 SHA256: `{result['input_sha256']}`",'',
+             '| 계좌 | 수익률 | 종가 MDD | 확정 거래 승률 | 종료/열린 포지션 | 거절 |',
+             '|---|---:|---:|---:|---:|---:|']
+    for name,r in {**result['accounts'],**{'index:'+k:v for k,v in result['benchmarks'].items()}}.items():
+        win = '미정' if r['closed_win_rate_pct'] is None else f"{r['closed_win_rate_pct']:.2f}%"
+        lines.append(f"| {name} | {r['return_pct']:+.2f}% | {r['mdd_pct']:.2f}% | {win} | {len(r['closed_trades'])}/{len(r['open_positions'])} | {len(r['rejected'])} |")
+    lines += ['','지수는 무비용 가상 whole-unit buy-and-hold이며 랜덤 계좌와 합치지 않습니다.',
+              '동일 자금 설정이어도 채널별 신호 날짜·보유기간 차이가 있어 이 표만으로 선정 능력의 인과효과를 확정하지 않습니다.',
+              '## 고정 설정','','```json',json.dumps(result['config'],ensure_ascii=False,indent=2),'```','',
+              f"원장 경고 {len(result['ledger_warnings'])}건, 제외/대기 기록 {len(result['diagnostics'])}건.",
+              '세부 NAV·거절·열린 포지션·입력·코드는 같은 실행 묶음에 보존합니다. 통계적 우위·채택 판정은 하지 않습니다.','']
+    return '\n'.join(lines)
 
 
-def main():
-    import argparse, os
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--self-test", action="store_true")
-    ap.add_argument("--stdout-only", action="store_true")
-    ap.add_argument("--out", default=None)
-    a = ap.parse_args()
-    if a.self_test:
-        return self_test()
+def save_bundle(bundle,result,output):
+    """Exclusive run directory, readback hashes, atomic visible completion.
 
-    import gspread
-    from oauth2client.service_account import ServiceAccountCredentials
-    scope = ["https://spreadsheets.google.com/feeds",
-             "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
-    doc = gspread.authorize(creds).open_by_url(
-        "https://docs.google.com/spreadsheets/d/"
-        "1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit")
-    rows = doc.worksheet("백테스트_로그").get_all_values()   # 읽기 전용
-    today = datetime.datetime.now(KST).strftime("%Y-%m-%d")
+    Local_verified does not imply durable/private cloud storage.
+    """
+    output = Path(output); output.mkdir(parents=True,exist_ok=True)
+    run_id = dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%S')+'_'+uuid.uuid4().hex
+    staging = Path(tempfile.mkdtemp(prefix='.incomplete-',dir=output))
+    payloads = {'input.json':canonical(bundle),'result.json':canonical(result),'report.md':report(result).encode('utf-8')}
+    for filename in ('hyeoks_account.py','hyeoks_verdict.py'):
+        payloads[filename] = Path(__file__).with_name(filename).read_bytes()
+    hashes = {}
+    for name,content in payloads.items():
+        with (staging/name).open('xb') as stream:
+            stream.write(content); stream.flush(); os.fsync(stream.fileno())
+        actual = hashlib.sha256((staging/name).read_bytes()).hexdigest()
+        if actual != hashlib.sha256(content).hexdigest():
+            raise InputError('preservation readback mismatch')
+        hashes[name] = actual
+    manifest = dict(version=VERSION,run_id=run_id,files=hashes,status='local_verified',
+                    github_run_id=os.getenv('GITHUB_RUN_ID'),github_run_attempt=os.getenv('GITHUB_RUN_ATTEMPT'))
+    for name,content in [('manifest.json',canonical(manifest)),('COMPLETE',b'local_verified\n')]:
+        with (staging/name).open('xb') as stream:
+            stream.write(content); stream.flush(); os.fsync(stream.fileno())
+    final = output/run_id
+    if final.exists(): raise FileExistsError(final)
+    staging.rename(final)
+    return final
 
-    pos, sk = build_positions(rows)
-    strat = [p for p in pos if not is_control(p["channel"])]
-    ctrl = [p for p in pos if is_control(p["channel"])]
-    print(f"📒 원장 {len(rows) - 1}행 → 포지션 {len(pos)}건 "
-          f"(전략 {len(strat)} · 대조군 {len(ctrl)})")
 
-    md = build_report(strat, ctrl, sk, today)
-    if a.stdout_only:
-        print(md)
-    else:
-        path = a.out or f"data/account/{today}_account.md"
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(md)
-        print(f"💾 저장: {path}")
-        print(md)
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--input',help='private frozen account-input-v2 JSON; no live fetch')
+    parser.add_argument('--output-dir',default='data/account_private')
+    parser.add_argument('--self-test',action='store_true')
+    args = parser.parse_args(argv)
+    if args.self_test:
+        import unittest
+        suite = unittest.defaultTestLoader.discover(str(Path(__file__).parent/'tests'),pattern='test_account*.py')
+        if suite.countTestCases() == 0:
+            return 1
+        return 0 if unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful() else 1
+    if not args.input:
+        parser.error('--input required: sparse ledger marks cannot reconstruct NAV')
+    try:
+        bundle = json.loads(Path(args.input).read_text(encoding='utf-8-sig'))
+        result = calculate(bundle)
+        path = save_bundle(bundle,result,args.output_dir)
+    except (InputError,KeyError,TypeError,ValueError,OSError) as exc:
+        print(f'ACCOUNT_FAILED: {type(exc).__name__}; inspect private input locally')
+        return 2
+    print(f'ACCOUNT_LOCAL_VERIFIED: {path.name}; input_sha256={result["input_sha256"]}')
     return 0
 
 
-if __name__ == "__main__":
-    import sys
-    sys.exit(main())
+if __name__ == '__main__':
+    raise SystemExit(main())

@@ -21,3 +21,7 @@ data/verdict_ledger/
 #    보존은 **구글 드라이브(비공개)** 가 맡는다(마스터 결정 2026-09-08).
 data/run_freeze/
 freeze_status.json
+
+# Account NAV: frozen ledger, daily prices and trade details are private.
+data/account_private/
+account_input_private.json
