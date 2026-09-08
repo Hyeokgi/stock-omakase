@@ -294,15 +294,34 @@ def simulate_exits(bars, entry_idx, base, target, stop, horizon, gap_model="open
     #    (omakase.check_target_alerts_and_trailing_stop 의 일봉 근사)
     trail_line, hit_target, trailing = stop, False, None
     for d, b in enumerate(window, start=1):
+        active_stop = trail_line      # 오늘 유효한 선 — 어제까지 갱신된 값
+        was_trailing = hit_target     # 오늘 **시작 시점**에 이미 추적 중이었나
         # 목표를 이미 친 뒤에는 '목표가 청산'이 없다 — 추적선만 본다.
         eff_tgt = 0.0 if hit_target else target
-        r = (resolve_legacy(b, eff_tgt, trail_line) if legacy
-             else resolve(b, eff_tgt, trail_line, "trailing"))
+        r = (resolve_legacy(b, eff_tgt, active_stop) if legacy
+             else resolve(b, eff_tgt, active_stop, "trailing"))
         if r and r[1] == "손절":
-            trailing = (pct(r[0]), "트레일링손절" if hit_target else "손절", d)
+            trailing = (pct(r[0]), "트레일링손절" if was_trailing else "손절", d)
             break
         if r and r[1] == "익절":
+            # 🚨 [A · 2026-09-08 2차 재검증] 목표 도달은 **추적 모드 전환**이지 청산이 아니다.
+            #    고정 규칙은 목표에서 포지션이 끝나지만 트레일링은 계속 들고 간다.
+            #    그러면 **그날의 유효 손절선은 여전히 살아 있다** — 새 추적선은 내일부터다.
+            #
+            #    재현 — 진입 100 · 손절 92 · 목표 110, 봉 O=115/H=120/L=90/C=100
+            #      · 시가 115 가 목표 위 → resolve 가 '익절'을 돌려주고 거기서 끝났다.
+            #        그래서 저가 90 이 손절 92 를 뚫은 사실을 **아무도 안 봤다** → 0%(만기)
+            #      · 올바른 처리: 추적 모드로 바꾸되 그날 손절 접촉을 계속 본다 → −8%
+            #
+            #    ⚠️ 이건 **R4(시가 우선) 수정이 만들어 낸 회귀다.** 수정 전 코드는
+            #       저가부터 봤기 때문에 이 사례에서 오히려 맞는 답을 냈다.
+            #       한 결함을 고치면서 다른 결함을 넣은 것이고, 그래서 legacy 경로는
+            #       손대지 않는다(동일 표본 비교의 기준선이어야 한다).
             hit_target = True
+            if not legacy and active_stop > 0 and b["low"] <= active_stop:
+                # 시가가 목표 위였으므로 갭이 아니다 — 선 가격에 체결된 것으로 본다.
+                trailing = (pct(active_stop), "손절", d)
+                break
             trail_line = max(trail_line, base)          # 본전 확보
         if hit_target:
             # ⚠️ 여기서 올린 선은 **다음 루프(=다음날)부터** 검사된다.
@@ -693,6 +712,39 @@ def self_test():
     # 반대 방향: 시가가 손절 아래 + 장중 목표 터치 → 시가 손절이 먼저
     gapchk("시가가 손절 아래 + 장중 목표 터치 → 시가 손절(−20%)",
            [bar(80, 130, 75, 120)], -20.0, "손절")
+
+    # ── A: R4 가 만들어 낸 회귀 (2026-09-08 2차 재검증) ──────────────────
+    print("\n🧪 A — 목표 도달은 '추적 모드 전환'이지 청산이 아니다")
+
+    def trchk(label, bars, want_pct, want_reason):
+        nonlocal ok
+        sim = simulate_exits([bar(100, 100, 100, 100)] + bars, 0,
+                             base, target, stop, len(bars))
+        got = (round(sim['trailing'][0], 2), sim['trailing'][1])
+        hit = got == (want_pct, want_reason)
+        ok = ok and hit
+        print(f"  {'✅' if hit else '❌'} {label}\n      트레일링={got}"
+              + ("" if hit else f"  기대=({want_pct}, {want_reason!r})"))
+
+    # 감사자 재현 그대로. 고정은 +15%(시가 익절)가 맞지만 트레일링은 다르다 —
+    # 목표에서 팔지 않고 계속 들고 가므로 **그날 손절 92 는 아직 살아 있다.**
+    # 고치기 전: 익절로 추적 모드만 켜고 저가 90 을 아무도 안 봐서 0%(만기).
+    trchk("시가가 목표 위 + 같은 날 기존 손절 관통 → 손절 92(−8%)",
+          [bar(115, 120, 90, 100)], -8.0, "손절")
+    # ⚠️ legacy 는 저가부터 보므로 이 사례에서 **오히려 맞는 답**을 낸다.
+    #    A 는 R4 가 넣은 회귀라는 증거이고, 그래서 legacy 는 고치지 않는다.
+    lgA = simulate_exits([bar(100, 100, 100, 100), bar(115, 120, 90, 100)], 0,
+                         base, target, stop, 1, gap_model="legacy")
+    lgA_ok = round(lgA['trailing'][0], 2) == -8.0
+    ok = ok and lgA_ok
+    print(f"  {'✅' if lgA_ok else '❌'} legacy 도 −8% — A 는 R4 가 만든 회귀임을 보여준다")
+
+    # 손절을 안 건드리면 종전대로 추적 모드로 넘어가고 그날 청산하지 않는다
+    trchk("시가가 목표 위 + 손절 미접촉 → 청산 없이 추적 전환(만기 0%)",
+          [bar(115, 120, 99, 100)], 0.0, "만기")
+    # 이틀짜리 — 첫날 추적 전환, 둘째 날 올라간 선(120×0.92=110.4)에 걸린다
+    trchk("추적 전환 다음 날 새 선에 걸리면 '트레일링손절'로 표시",
+          [bar(115, 120, 111, 119), bar(112, 113, 105, 106)], 10.4, "트레일링손절")
 
     # 시가가 둘 사이면 그때만 장중 보수 가정(손절 우선)
     amb2 = simulate_exits([bar(100, 100, 100, 100), bar(100, 115, 90, 100)], 0,

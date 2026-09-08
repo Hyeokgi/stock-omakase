@@ -63,14 +63,14 @@ before = "📉" in OVERSOLD_TAG
 chk("과매도 태그는 실제로 📉 를 포함한다(모순의 원인)", before, True)
 chk("그럼에도 지금은 위험이 아니다", is_downtrend_risk(OVERSOLD_TAG), False)
 
-print("\n🧪 단계별 후보 계측 (Q1 · 2026-09-08)")
+print("\n🧪 단계별 후보 계측 (Q1 · 2026-09-08, D 반영)")
 def mk(name, typ, tajeom):
     return {"name": name, "type": typ, "tajeom_raw": tajeom}
 
 RISK = "📉 과매도 · 역배팅 ⚠️ 하락 전환"
 POOL = [
     mk("A", "SEED",   OVERSOLD_TAG),          # 적격
-    mk("B", "SEED",   RISK),                  # 교집합이지만 위험문구로 거부
+    mk("B", "SEED",   RISK),                  # 교집합이지만 위험문구로 제외
     mk("C", "SEED",   "🌱 바닥 · 분할매수"),   # SEED 지만 과매도 아님
     mk("D", "NORMAL", OVERSOLD_TAG),          # 과매도지만 NORMAL
     mk("E", "NORMAL", "🚀 대장 · 당일단타"),   # 둘 다 아님
@@ -80,28 +80,32 @@ chk("풀 전체", f["풀"], 5)
 chk("SEED 수", f["SEED"], 3)
 # ⚠️ 3 이다. B 의 타점("📉 과매도 · 역배팅 ⚠️ 하락 전환")도 과매도 태그를 **포함**한다.
 # 처음엔 2 로 적었다가 이 검사가 잡았다 — 구현이 아니라 내 기대값이 틀렸다.
-# '과매도태그' 는 위험문구 여부와 무관한 순수 태그 보유 수이고, 그래야
-# "태그는 붙었는데 전부 거부됐다"를 다음 줄에서 구분할 수 있다.
 chk("과매도 태그 수(위험문구 포함·유형 무관)", f["과매도태그"], 3)
 chk("교집합(SEED ∩ 과매도)", f["교집합"], 2)
-chk("위험문구로 거부", f["위험문구거부"], 1)
-chk("최종 적격", f["최종적격"], 1)
+chk("위험 조건으로 제외", f["위험제외"], 1)
+chk("적격", f["적격"], 1)
 chk("적격 종목명이 남는다", f["적격종목"], ["A"])
-chk("교집합 = 거부 + 적격", f["위험문구거부"] + f["최종적격"], f["교집합"])
+chk("교집합 = 위험제외 + 적격", f["위험제외"] + f["적격"], f["교집합"])
 
-# 세 가지 '0개' 를 서로 다른 문장으로 구분하는 것이 이 계측의 목적이다
-chk("SEED 가 0 이면 상위 관문 문제라고 말한다",
-    "상위 관문" in funnel_line(channel_funnel([mk("X", "NORMAL", OVERSOLD_TAG)])), True)
-chk("SEED 는 있는데 과매도가 0 이면 스캐너 문턱이라고 말한다",
-    "문턱" in funnel_line(channel_funnel([mk("X", "SEED", "🌱 바닥 · 분할매수")])), True)
-chk("교집합이 전부 거부되면 F01 재발 신호라고 말한다",
-    "재발" in funnel_line(channel_funnel([mk("X", "SEED", RISK)])), True)
+# ── D (2차 재검증) — 계측은 세기만 하고 **원인을 단정하지 않는다** ──
+_veto_only = funnel_line(channel_funnel([mk("X", "SEED", RISK)]))
+chk("위험 전원 제외를 'F01 재발'이라 부르지 않는다", "재발" in _veto_only, False)
+chk("그 경우 '정상 거부'로 설명한다", "정상 거부" in _veto_only, True)
+_no_oversold = funnel_line(channel_funnel([mk("X", "SEED", "🌱 바닥 · 분할매수")]))
+chk("과매도 0 을 '엔벨로프 문턱'이라 단정하지 않는다", "엔벨로프" in _no_oversold, False)
+chk("그 경우 원인 불명임을 밝힌다", "불명" in _no_oversold, True)
+_no_seed = funnel_line(channel_funnel([mk("X", "NORMAL", OVERSOLD_TAG)]))
+chk("SEED 0 도 원인 불명으로 적는다", "불명" in _no_seed, True)
+chk("병렬 집계를 화살표로 잇지 않는다", "→" in funnel_line(f), False)
+# 둘 다 있는데 교집합만 0 인 경우를 따로 말한다(D-3)
+_disjoint = funnel_line(channel_funnel([mk("S", "SEED", "🌱 바닥"),
+                                        mk("O", "NORMAL", OVERSOLD_TAG)]))
+chk("SEED·과매도 둘 다 있고 교집합만 0 인 경우를 구분", "교집합이 0" in _disjoint, True)
 chk("적격이 있으면 종목명을 찍는다",
-    "적격: A" in funnel_line(channel_funnel([mk("A", "SEED", OVERSOLD_TAG)])), True)
-# 9/8 실제 로그가 말한 상태 — 적격 0, 그런데 사유는 거부가 아니어야 한다
+    "적격 1건: A" in funnel_line(channel_funnel([mk("A", "SEED", OVERSOLD_TAG)])), True)
 _none = channel_funnel([mk("C", "SEED", "🌱 바닥 · 분할매수"), mk("E", "NORMAL", "🚀 대장")])
-chk("적격 0 이어도 거부 0 이면 모순이 아니다", (_none["최종적격"], _none["위험문구거부"]), (0, 0))
-chk("빈 풀도 죽지 않는다", channel_funnel([])["최종적격"], 0)
+chk("적격 0 이어도 위험제외 0 이면 모순이 아니다", (_none["적격"], _none["위험제외"]), (0, 0))
+chk("빈 풀도 죽지 않는다", channel_funnel([])["적격"], 0)
 
 print("\n" + ("❌ 실패 " + str(len(FAIL)) + "건: " + ", ".join(FAIL) if FAIL else "✅ 전부 통과"))
 sys.exit(1 if FAIL else 0)

@@ -252,6 +252,7 @@ def validate_ledger(rows, today=None):
     RET_COLS = set(STOCK_COL.values()) | set(INDEX_COL.values())
     seen, dup, no_id, bad_date, future, nonfinite, extreme = {}, [], 0, [], [], [], []
     nonnum, matured_missing, early_val = [], [], []
+    pair_missing = []
     blank_date_val, broken_date_val = 0, []
 
     for i, row in enumerate(rows[1:], start=2):
@@ -319,13 +320,29 @@ def validate_ledger(rows, today=None):
         #      (무결성 검사 — 중복 id·비유한 수치·미래 날짜 — 는 제외 행에도
         #       그대로 적용한다. 그건 집계 여부와 무관한 시트 손상 신호다.)
         if d_ok and ch and not ch.startswith("지수벤치") and not is_excluded(row):
-            note = maturity_note(d_raw, h, today)
-            si = STOCK_COL.get(h)
-            has_h = (si is not None and len(row) > si and str(row[si]).strip() != "")
-            if note == "MATURED" and not has_h:
-                matured_missing.append((i, ch, d_raw))
-            elif note == "NOT_MATURED" and has_h:
-                early_val.append((i, ch, d_raw))
+            # ⚠️ [B · 2차 재검증] 채널 **기본 기간만** 보고 있었다. 랜덤2 는 여러
+            #    비교 기간에 쓰이므로 나머지 기간은 검사되지 않았다.
+            #    판정에 실제로 쓰이는 모든 채널×기간을 본다.
+            if ch == CONTROL:
+                hs = set(HORIZON.values()) | {DEFAULT_HORIZON, 20}
+            elif ch == LONG_CHANNEL:
+                hs = {h, 20}
+            else:
+                hs = {h}
+            for hh in sorted(hs):
+                note = maturity_note(d_raw, hh, today)
+                si, ii = STOCK_COL.get(hh), INDEX_COL.get(hh)
+                if si is None or ii is None:
+                    continue
+                has_s = len(row) > si and str(row[si]).strip() != ""
+                has_i = len(row) > ii and str(row[ii]).strip() != ""
+                if note == "MATURED" and not (has_s or has_i):
+                    matured_missing.append((i, f"{ch}/T+{hh}", d_raw))
+                elif note == "NOT_MATURED" and (has_s or has_i):
+                    early_val.append((i, f"{ch}/T+{hh}", d_raw))
+                elif has_s != has_i:
+                    # 한쪽만 있는 쌍 — 예전에는 조용히 집계에서 빠졌다
+                    pair_missing.append((i, f"{ch}/T+{hh}", d_raw))
 
     if dup:
         issues.append((ABORT, "trade_id 중복",
@@ -363,8 +380,13 @@ def validate_ledger(rows, today=None):
         issues.append((WARN, "성숙했는데 값이 없음(MATURED_DATA_MISSING)",
                        f"{len(matured_missing)}행 — 표본 부족이 아니라 **데이터 결손**이다. "
                        + "; ".join(f"행{i} {c}({d})" for i, c, d in matured_missing[:3])))
+    if pair_missing:
+        issues.append((WARN, "종목값·지수값 중 한쪽만 있음(쌍결손)",
+                       f"{len(pair_missing)}건 — 순알파를 만들 수 없어 집계에서 빠진다. "
+                       "'미성숙'과 구분해 세어야 한다. "
+                       + "; ".join(f"행{i} {c}({d})" for i, c, d in pair_missing[:3])))
     if early_val:
-        issues.append((WARN, "아직 미성숙인데 값이 있음",
+        issues.append((WARN, "아직 미성숙인데 값이 있음(집계에서 제외됨)",
                        f"{len(early_val)}행 — "
                        + "; ".join(f"행{i} {c}({d})" for i, c, d in early_val[:3])))
     return issues
@@ -442,25 +464,41 @@ def is_excluded(row):
     return "제외" in (str(row[C_EXCLUDE]) if len(row) > C_EXCLUDE else "")
 
 
-def collect(rows):
+def collect(rows, today=None):
     """채널 → {horizon: [순알파...]}. 비용은 §3-4-2 대로 여기서 뺀다.
 
     ⚠️ 리허설(2026-09-04)에서 두 가지 결함이 드러나 고친 버전이다.
 
     ① 대조군을 **자기 호라이즌에서만** 모으고 있었다. 그래서 리포트중기(T+10)를
        검정할 때 비교할 랜덤2 T+10 이 없어 t 가 통째로 '—' 로 나왔다.
-       9/7 에 그대로 돌았다면 '표본 부족'이 아니라 '대조군 부재' 때문에
-       판정 불가가 뜨는데, 로그만 봐서는 그 둘을 구분할 수 없었다.
        → 대조군은 **쓰이는 모든 호라이즌**에서 모은다.
 
     ② 아직 호라이즌에 도달하지 않은 채널이 **표에서 통째로 사라졌다**.
-       랜덤2_배지(8/31 신설)는 T+5 가 아직 안 채워져 한 줄도 안 나왔다.
-       "채널이 없다"와 "표본이 아직 안 익었다"는 완전히 다른 이야기다.
        → 원시 행수(raw)를 따로 세어 N=0 이어도 표에 남긴다.
+
+    🚨 [B · 2026-09-08 2차 재검증] **성숙 검사가 집계와 끊겨 있었다.**
+
+       `validate_ledger` 가 "아직 미성숙인데 값이 있다"를 경고로 찍어도 이 함수는
+       그 값을 **그대로 평균과 t 에 넣었다.** 경고는 사람이 읽는 텍스트일 뿐
+       집계를 막지 못했다. 재현 — 9/8 진입 · 기준일 9/8 · T+5 값 존재 →
+       WARN 은 떴지만 순알파 +1.65% 로 N 에 포함됐다.
+       → 성숙 판정을 **여기서 직접** 하고, 확실히 조기인 값은 **집계에서 뺀다.**
+
+       그리고 종목값·지수값을 **쌍으로** 본다. 예전에는 지수값만 비면 `continue` 로
+       조용히 빠졌고 그 행은 '미성숙'으로 세어졌다. 성숙했는데 한쪽이 빈 것은
+       미성숙이 아니라 **데이터 결손**이고, 둘은 뜻이 완전히 다르다.
+
+       ⚠️ 성숙 판정은 여전히 **달력일 근사**다(`maturity_note`). 경계에서 `None`
+          을 돌려주면 **집계에 넣는다** — 근사 때문에 진짜 값을 버리는 쪽이 더
+          나쁘기 때문이다. 확실히 조기인 경우(NOT_MATURED)만 뺀다.
+          거래일 달력이 붙기 전까지는 이것이 한계이고, 그 사실을 리포트에 적는다.
     """
     horizons_in_use = set(HORIZON.values()) | {DEFAULT_HORIZON, 20}
     out, raw = {}, {}
-    skipped = {"제외표식": 0, "채널없음": 0, "미성숙(호라이즌 미도달)": 0}
+    today = today or datetime.datetime.now(KST).date()
+    skipped = {"제외표식": 0, "채널없음": 0, "미성숙(호라이즌 미도달)": 0,
+               "조기값(성숙 전·집계 제외)": 0, "쌍결손(한쪽만 있음)": 0,
+               "성숙결측(둘 다 없음)": 0}
     for row in rows[1:]:
         if len(row) <= C_CHANNEL:
             continue
@@ -473,7 +511,8 @@ def collect(rows):
             continue
         raw[ch] = raw.get(ch, 0) + 1
         h = HORIZON.get(ch, DEFAULT_HORIZON)
-        # 대조군은 모든 호라이즌에서 모은다(①). 장기 채널은 §3-3 대로 T+20 도 같이(②는 raw 로).
+        d_raw = str(row[C_ENTRY_DATE]).strip()[:10] if len(row) > C_ENTRY_DATE else ""
+        # 대조군은 모든 호라이즌에서 모은다(①). 장기 채널은 §3-3 대로 T+20 도 같이.
         if ch == CONTROL:
             want = horizons_in_use
         elif ch == LONG_CHANNEL:
@@ -485,11 +524,25 @@ def collect(rows):
             si, ii = STOCK_COL.get(hh), INDEX_COL.get(hh)
             if si is None or len(row) <= max(si, ii):
                 continue
-            s, i = _num(row[si]), _num(row[ii])
-            if s is None or i is None:
+            s_, i_ = _num(row[si]), _num(row[ii])
+            # ── B ① 성숙 판정을 집계에 **연결**한다 ──────────────────────
+            #    쓰이는 **모든 호라이즌**에 대해 따로 본다. 랜덤2 는 여러 기간에
+            #    쓰이므로 채널 기본 기간만 보면 나머지 기간이 검사되지 않는다.
+            note = maturity_note(d_raw, hh, today) if d_raw else "INVALID"
+            if note == "NOT_MATURED" and (s_ is not None or i_ is not None):
+                # 확실히 조기다. 경고만 하고 넣던 값 — 이제 뺀다.
+                skipped["조기값(성숙 전·집계 제외)"] += 1
+                continue
+            # ── B ② 종목·지수를 쌍으로 본다 ─────────────────────────────
+            if (s_ is None) != (i_ is None):
+                skipped["쌍결손(한쪽만 있음)"] += 1
+                continue
+            if s_ is None:
+                if note == "MATURED":
+                    skipped["성숙결측(둘 다 없음)"] += 1
                 continue
             cost = 0.0 if ch.startswith("지수벤치") else COST_PCT
-            out.setdefault(ch, {}).setdefault(hh, []).append(s - i - cost)
+            out.setdefault(ch, {}).setdefault(hh, []).append(s_ - i_ - cost)
             if hh == h:
                 matured = True
         if not matured:
@@ -861,6 +914,51 @@ def self_test():
         r = [""] * 34
         r[C_EXCLUDE] = memo
         chk(f"제외판정 '{memo or '(빈칸)'}' → {want}", is_excluded(r) is want)
+
+    print("🧪 B — 성숙 검사가 실제 집계를 막는가 (2차 재검증 · 2026-09-08)")
+    _T = datetime.date(2026, 9, 8)
+
+    def mkb(ch, s5=None, i5=None, date="2026-08-01"):
+        r = [""] * 34
+        r[C_TRADE_ID], r[C_ENTRY_DATE], r[C_CHANNEL] = f"B_{ch}_{date}", date, ch
+        if s5 is not None: r[STOCK_COL[5]] = str(s5)
+        if i5 is not None: r[INDEX_COL[5]] = str(i5)
+        return r
+
+    hdrb = [""] * 34
+    # ① 감사자 재현: 당일 진입인데 T+5 값이 있다 → 예전엔 WARN 만 뜨고 N 에 들어갔다
+    d, rw, sk = collect([hdrb, mkb("차트TOP2", 3.0, 1.0, "2026-09-08")], today=_T)
+    chk("① 조기값은 이제 **집계에서 빠진다**(예전엔 순알파 +1.65% 로 포함)",
+        d == {} and sk["조기값(성숙 전·집계 제외)"] == 1, f"data={d} skipped={sk}")
+    # ② 종목값만 있고 지수값이 없다 → 예전엔 무경고로 '미성숙'에 섞였다
+    d, rw, sk = collect([hdrb, mkb("차트TOP2", 3.0, None)], today=_T)
+    chk("② 쌍결손을 '미성숙'과 따로 센다",
+        sk["쌍결손(한쪽만 있음)"] == 1 and d == {}, f"skipped={sk}")
+    # ③ 둘 다 없는데 성숙했다 → '성숙결측'
+    d, rw, sk = collect([hdrb, mkb("차트TOP2")], today=_T)
+    chk("③ 성숙했는데 둘 다 없으면 '성숙결측'으로 센다",
+        sk["성숙결측(둘 다 없음)"] == 1, f"skipped={sk}")
+    # 정상값은 종전대로 들어간다
+    d, rw, sk = collect([hdrb, mkb("차트TOP2", 3.0, 1.0)], today=_T)
+    chk("정상 성숙값은 그대로 집계된다",
+        abs(d["차트TOP2"][5][0] - (3.0 - 1.0 - 0.35)) < 1e-9, f"{d}")
+    # 경계(달력일 근사가 유보)는 **버리지 않는다** — 근사로 진짜 값을 버리는 쪽이 더 나쁘다
+    d, rw, sk = collect([hdrb, mkb("차트TOP2", 3.0, 1.0, "2026-09-02")], today=_T)
+    chk("경계 유보(None)는 집계에 넣는다", d.get("차트TOP2", {}).get(5) is not None,
+        f"note={maturity_note('2026-09-02', 5, _T)} data={d}")
+    # 검증기도 모든 채널×기간을 본다 — 랜덤2 는 여러 기간에 쓰인다.
+    # ⚠️ 처음엔 T+5 값만 넣고 "T+10 이 검사되는가"를 물었다가 실패했다.
+    #    T+10 값이 없으면 T+10 에 경고할 것이 없는 게 **맞다** — 내 시험이 틀렸다.
+    #    실제로 다기간을 타는지 보려면 **T+10 열에 값을 넣어야** 한다.
+    _r10 = [""] * 34
+    _r10[C_TRADE_ID], _r10[C_ENTRY_DATE], _r10[C_CHANNEL] = "R10", "2026-09-01", CONTROL
+    _r10[STOCK_COL[10]], _r10[INDEX_COL[10]] = "3.0", "1.0"   # T+10 은 아직 미성숙
+    _iss = validate_ledger([mkheader(), _r10], today=_T)
+    chk("랜덤2 의 T+10 조기값이 잡힌다(기본 기간 T+5 만 보던 것 수정)",
+        any("T+10" in d_ for _s, _n, d_ in _iss), f"{_iss}")
+    chk("그 조기값은 집계에서도 빠진다",
+        collect([hdrb, _r10], today=_T)[0] == {}, f"{collect([hdrb, _r10], today=_T)[0]}")
+    print()
 
     print("🧪 리허설에서 드러난 두 결함 (2026-09-04)")
     # ① 대조군은 모든 호라이즌에서 모여야 한다 — 안 그러면 중기(T+10) 검정의 t 가 통째로 없다
