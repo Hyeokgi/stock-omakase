@@ -67,3 +67,13 @@ jobs:
           FORCE_BRIEFING: ${{ inputs.force_briefing }}
       run: |
         python hyeoks_analyst.py
+
+    - name: 🧊 실행 입력 동결 확인
+      # ⚠️ 보존 실패를 성공처럼 넘기지 않는다(외부 3차 검토 C).
+      #    리포트는 이미 나갔으므로 사용자는 PDF 를 받는다. 대신 잡을 빨갛게 만들어
+      #    "사람이 봐야 한다"를 남긴다. 오늘 후보 풀은 지금 못 남기면 영영 없다.
+      if: always()
+      run: |
+        test -f freeze_status.json || { echo "❌ freeze_status.json 이 없다 — 동결 코드가 아예 안 돌았다"; exit 1; }
+        cat freeze_status.json; echo
+        python -c "import json,sys; st=json.load(open('freeze_status.json',encoding='utf-8')); ok=st.get('ok'); print(('✅ 동결 보존 확인 — '+str(st.get('file'))) if ok else ('::error::실행 입력 동결 실패 — '+str(st.get('detail')))); sys.exit(0 if ok else 1)"

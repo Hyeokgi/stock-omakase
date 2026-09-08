@@ -35,6 +35,7 @@
 #   python hyeoks_phase2_exit.py --horizon 20 → 비교 보유창(거래일) 지정 (기본 20)
 # ==========================================================================
 import os
+from hyeoks_run_freeze import build_bundle, freeze, write_status, sha8_of_file
 import io
 import sys
 import csv
@@ -508,6 +509,7 @@ def analyze(rows, horizon, diag=None, assign="none"):
     """diag 가 주어지면 스킵 사유를 원인별·채널별로 쌓는다(왜 표본이 줄었는지 추적용)."""
     recs, skipped = [], {"제외표식": 0, "값없음": 0, "일봉없음": 0, "미성숙": 0,
                          "일봉이상(OHLC)": 0}
+    freeze_rows = []   # 🧊 실행 입력 동결 — 원시 일봉과 그때의 선 가격
     calib = {"n": 0, "match": 0, "worst": []}
 
     def note(reason, ch, row=None):
@@ -606,7 +608,7 @@ def analyze(rows, horizon, diag=None, assign="none"):
     #    "확인할 게 없었다"와 "확인해서 맞았다"는 완전히 다르다.
     calib["ok"] = calib["n"] > 0 and calib["rate"] >= CALIB_MIN_MATCH
     calib["unverified"] = (calib["n"] == 0)
-    return recs, calib, skipped
+    return recs, calib, skipped, freeze_rows
 
 
 def write_outputs(recs, horizon, calib, skipped):
@@ -836,7 +838,7 @@ def main():
         print("   결론이 규칙에 따라 뒤집히면 그건 '배정 방식에 의존하는 결론'이라는 뜻이다.\n")
         table = {}
         for mode in ("none", "band", "chart"):
-            r, _c, _s = analyze(rows, a.horizon, None, mode)
+            r, _c, _s, _fr = analyze(rows, a.horizon, None, mode)
             if not r:
                 continue
             asg = sum(1 for x in r if x.get("assigned"))
@@ -894,7 +896,24 @@ def main():
         return 0
 
     diag = {} if a.diagnose else None
-    recs, calib, skipped = analyze(rows, a.horizon, diag, a.assign)
+    recs, calib, skipped, freeze_rows = analyze(rows, a.horizon, diag, a.assign)
+
+    # ── 🧊 실행 입력 동결 (§4-5) ──────────────────────────────────────
+    #    원시 일봉을 안 남겨서 F03·R4·A 수정의 실표본 영향을 못 쟀다.
+    #    "고정 입력으로 재계산"은 그 입력을 먼저 저장해야 성립한다 —
+    #    네이버 일봉을 다시 조회하는 것은 과거 입력 고정이 아니다(외부 3차 검토).
+    try:
+        _fb = build_bundle("phase2",
+                           extra={"horizon": a.horizon, "assign": a.assign,
+                                  "row_count": len(freeze_rows), "rows": freeze_rows},
+                           code_sha=sha8_of_file(__file__))
+        _ok, _nm, _dt = freeze(bundle=_fb, local_dir="data/run_freeze")
+        print(f"{'🧊' if _ok else '❌'} [실행 입력 동결] {_nm} — {_dt}")
+        if not _ok:
+            print("   ⚠️ 이 일봉은 지금 저장하지 않으면 나중에 같은 값을 못 얻는다.")
+    except Exception as _e:
+        write_status(False, None, f"동결 코드 자체가 예외: {_e}")
+        print(f"❌ [실행 입력 동결] 예외로 실패: {_e}")
 
     if a.diagnose:
         # ── 채널 × 관망여부 × 목표가유무 교차표 ────────────────────────────

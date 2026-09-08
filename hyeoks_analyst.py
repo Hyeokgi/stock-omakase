@@ -12,6 +12,8 @@ import concurrent.futures
 #    사본을 시험하면 원본이 맞다는 보장이 없어서, 원본을 옮기고 여기서 가져다 쓴다.
 from hyeoks_tajeom import (clean_tajeom, trend_phase, POLICY_ID, POLICY_SINCE,
                           channel_funnel, funnel_line)
+from hyeoks_run_freeze import (build_bundle, freeze, write_status,
+                               sha8_of_file)
  
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings("ignore")
@@ -1059,6 +1061,36 @@ try:
     best_long = next((c for c in pool_150 if c['code'] == code_long), None) if code_long != "000000" else None
  
     print(f"🔥 최종 발굴 결과 -> 단기: {best_short['name'] if best_short else '없음(000000)'} / 중기 스윙: {best_mid['name'] if best_mid else '없음(000000)'} / 장기 추세추종: {best_long['name'] if best_long else '없음(000000)'}\n")
+
+    # ── 🧊 실행 입력 동결 (로드맵 §4-5) ────────────────────────────────
+    #    지금까지 pool_150 을 만들어 AI 에 넘기고 **버렸다.** 그래서 "같은 후보군에서
+    #    규칙이 골랐다면 무엇을 골랐을까"(A2)를 사후에 재현할 방법이 없었다.
+    #    ⚠️ 이 저장소는 공개다. 후보 풀에는 V1·V2·V3·RS 점수가 종목마다 붙어 있어
+    #       **시스템의 신호 그 자체**이므로 커밋하지 않고 **드라이브 비공개**로 올린다.
+    try:
+        _freeze_bundle = build_bundle(
+            "analyst",
+            pool=pool_150,
+            prompt=pick_prompt,
+            response=(result_text if market_stage != 3 else "(STAGE 3 자동 제로픽)"),
+            picks=picks_json,
+            extra={"market_stage": market_stage,
+                   "policy_id": POLICY_ID, "policy_since": POLICY_SINCE,
+                   "funnel": _funnel,
+                   "upstream": {"원시": len(cands_list), "점수선별": len(pre_pool),
+                                "DNA검증": len(validated_pool), "풀": len(pool_150)}},
+            code_sha=sha8_of_file(__file__))
+        _fz_ok, _fz_name, _fz_detail = freeze(
+            GAS_WEB_APP_URL, _freeze_bundle, local_dir="data/run_freeze")
+        print(f"{'🧊' if _fz_ok else '❌'} [실행 입력 동결] {_fz_name} — {_fz_detail}")
+        if not _fz_ok:
+            print("   ⚠️ 보존에 실패했다. 오늘 후보 풀은 이 잡이 끝나면 사라지고,")
+            print("      A1·A2 반사실 비교에서 오늘 구간은 **영구히 빠진다.**")
+            print("      워크플로가 이 상태를 읽어 잡을 실패시킨다 — 사람이 봐야 한다.")
+    except Exception as _e:
+        # 동결이 리포트를 죽이면 안 된다. 대신 **조용히 넘어가지도 않는다.**
+        write_status(False, None, f"동결 코드 자체가 예외: {_e}")
+        print(f"❌ [실행 입력 동결] 예외로 실패: {_e}")
  
     # ==========================================
     # 5. 시황 및 딥리딩 PDF 리포트 본문 생성
