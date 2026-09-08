@@ -588,6 +588,19 @@ def analyze(rows, horizon, diag=None, assign="none"):
                 calib["worst"].append((str(row[C_NAME]).strip(), entry_date,
                                        _num(logged_t5), recomputed, diff))
 
+        # 🧊 [실행 입력 동결 · §4-5] 이 행의 **원시 일봉과 그때의 선 가격**을 남긴다.
+        #    이게 없어 F03·R4·A 수정의 실표본 영향을 못 쟀다. "고정 입력으로 재계산"은
+        #    그 입력을 먼저 저장해야 성립한다 — 네이버 일봉 재조회는 과거 입력 고정이
+        #    아니다(외부 3차 검토). 보유 창 앞뒤 1봉까지만 남긴다.
+        _lo = max(0, entry_idx)
+        _hi = min(len(bars), entry_idx + horizon + 2)
+        freeze_rows.append({
+            "code": code, "name": str(row[C_NAME]).strip(), "channel": channel,
+            "entry": entry_date, "entry_idx_in_slice": entry_idx - _lo,
+            "base": base, "target": target, "stop": stop, "horizon": horizon,
+            "bars": bars[_lo:_hi],
+        })
+
         sim = simulate_exits(bars, entry_idx, base, target, stop, horizon)
         # 🔁 [F03] **완전히 같은 표본**에 수정 전 모델도 돌려 나란히 남긴다.
         #    "얼마나 과대평가였나"는 재계산해서 보여야지 단정할 수 없다(감사 지적).

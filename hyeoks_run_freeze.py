@@ -128,6 +128,22 @@ def upload(gas_url, name, data, timeout=60):
     return fid
 
 
+def bundle_is_empty(bundle):
+    """묶음에 **실제 내용이 있는가.**
+
+    🚨 [2026-09-08 실측에서 잡힘] 첫 실행이 213바이트짜리 묶음을 올리고
+       `ok=true` 로 보고했다. `freeze_rows.append` 가 패치 중 유실돼 목록이
+       내내 비어 있었는데, 업로드 자체는 성공해서 **성공처럼 보였다.**
+       빈 묶음을 성공으로 세는 것은 실패보다 나쁘다 — 보존됐다고 믿게 만든다.
+       그래서 내용 유무를 따로 본다.
+    """
+    if bundle.get("kind") == "analyst":
+        return not bundle.get("pool")
+    if bundle.get("kind") == "phase2":
+        return not (bundle.get("extra") or {}).get("rows")
+    return False
+
+
 def freeze(gas_url=None, bundle=None, local_dir=None, status_path=STATUS_FILE):
     """묶음을 만들어 올리고 결과를 기록한다. **예외를 삼키지 않는다.**
 
@@ -137,6 +153,11 @@ def freeze(gas_url=None, bundle=None, local_dir=None, status_path=STATUS_FILE):
     gas_url = DEFAULT_GAS_URL if gas_url is None else gas_url
     name = bundle_name(bundle)
     data = bundle_bytes(bundle)
+    if bundle_is_empty(bundle):
+        d = ("묶음이 비어 있다 — 올려도 보존되는 내용이 없다. "
+             "수집 지점이 끊겼는지 확인하라(2026-09-08 실측에서 이 상태가 있었다)")
+        write_status(False, name, d, status_path)
+        return False, name, d
     if local_dir:                      # 러너에 남겨 두면 같은 잡 안에서는 볼 수 있다
         os.makedirs(local_dir, exist_ok=True)
         with open(os.path.join(local_dir, name), "wb") as f:
@@ -222,6 +243,15 @@ def self_test():
         okf2, nm2, det2 = freeze("http://127.0.0.1:9/none", b,
                                  local_dir=tmp, status_path=sp)
         chk("업로드가 터져도 예외로 죽지 않고 실패를 기록한다", okf2 is False)
+        # 🚨 빈 묶음을 성공으로 세지 않는다 — 실측에서 실제로 있었던 상태다
+        empty_p2 = build_bundle("phase2", extra={"horizon": 20, "rows": []}, now=now)
+        chk("빈 phase2 묶음은 비어 있다고 판정한다", bundle_is_empty(empty_p2))
+        eok, enm, edet = freeze("https://example.invalid", empty_p2,
+                                local_dir=tmp, status_path=sp)
+        chk("빈 묶음은 업로드 시도조차 하지 않고 실패로 기록한다",
+            eok is False and "비어" in edet, edet)
+        chk("내용이 있으면 통과한다", bundle_is_empty(b) is False)
+        chk("phase2 도 행이 있으면 통과", bundle_is_empty(p2) is False)
         chk("그때 상태 파일도 ok=false", json.load(open(sp, encoding="utf-8"))["ok"] is False)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
