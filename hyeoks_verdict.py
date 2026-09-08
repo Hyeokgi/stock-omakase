@@ -200,6 +200,24 @@ def calendar_margin(h):
     return int(h * 1.6) + 3
 
 
+def weekdays_between(d, today):
+    """진입일 **다음 날부터** 기준일까지의 평일 수.
+
+    거래일 달력이 없으므로 평일 수를 **상한**으로 쓴다. 휴장일은 평일이어도
+    거래가 없으니 실제 거래일 수는 이보다 작거나 같다. 따라서
+    **평일 수 < H 이면 T+H 는 확실히 도달할 수 없다.**
+    반대로 평일 수가 충분하다고 성숙을 확정할 수는 없다(추석·대체공휴일).
+    """
+    if today <= d:
+        return 0
+    n, cur = 0, d + datetime.timedelta(days=1)
+    while cur <= today:
+        if cur.weekday() < 5:
+            n += 1
+        cur += datetime.timedelta(days=1)
+    return n
+
+
 def maturity_note(entry_date, h, today):
     """성숙 상태를 세 갈래로 나눈다(재검증 R2 요구).
 
@@ -220,9 +238,18 @@ def maturity_note(entry_date, h, today):
     gap = (today - d).days
     if gap < h:                       # 달력일조차 h 를 못 채웠으면 확실히 미성숙
         return "NOT_MATURED"
+    # 🚨 [2-2 · 3차 재검증] 달력일만 보면 **확실히 조기인 값이 경계로 새어 나갔다.**
+    #    재현 — 기준일 9/8 · 진입 9/3 · T+5. 달력일 5 라 위 검사를 통과하고
+    #    margin 11 미만이라 '경계 유보(None)' 가 되어 순알파 +1.65% 가 N 에 들어갔다.
+    #    그런데 9/4·9/7·9/8 로 **평일이 3일뿐**이라 T+5 는 애초에 불가능하다.
+    #    평일 수는 거래일 수의 상한이므로 이 검사는 거짓 차단을 만들지 않는다.
+    if weekdays_between(d, today) < h:
+        return "NOT_MATURED"
     if gap >= calendar_margin(h):     # 넉넉히 지났으면 확실히 성숙 가능
         return "MATURED"
-    return None                       # 경계 — 판정 유보
+    # 경계 — 판정 유보. ⚠️ 평일 수가 충분해도 휴장일 때문에 성숙을 확정할 수 없다.
+    #    거래소 달력이 붙기 전까지 남는 한계다.
+    return None
 
 
 def validate_ledger(rows, today=None):
@@ -496,9 +523,15 @@ def collect(rows, today=None):
     horizons_in_use = set(HORIZON.values()) | {DEFAULT_HORIZON, 20}
     out, raw = {}, {}
     today = today or datetime.datetime.now(KST).date()
-    skipped = {"제외표식": 0, "채널없음": 0, "미성숙(호라이즌 미도달)": 0,
-               "조기값(성숙 전·집계 제외)": 0, "쌍결손(한쪽만 있음)": 0,
-               "성숙결측(둘 다 없음)": 0}
+    # 🚨 [2-1 · 3차 재검증] 예전에는 새 카운터를 올리고도 **미성숙까지 같이** 올렸다.
+    #    한 행이 '쌍결손 1 + 미성숙 1' 로 두 번 세어져 "미성숙과 분리했다"는 말이
+    #    사실이 아니었다. 평균은 안 바뀌지만 **누락 사유와 표본 수 설명이 틀려진다.**
+    #    → 행마다 **기본 기간의 상태를 하나만** 매긴다(상호배타).
+    skipped = {"제외표식": 0, "채널없음": 0, "집계됨": 0,
+               "미성숙(호라이즌 미도달)": 0, "조기값(성숙 전·집계 제외)": 0,
+               "쌍결손(한쪽만 있음)": 0, "성숙결측(둘 다 없음)": 0}
+    # 행×기간 단위 진단. 랜덤2 한 행은 여러 기간을 타므로 **행 수와 다르다.**
+    detail = {"조기값(행×기간)": 0, "쌍결손(행×기간)": 0, "성숙결측(행×기간)": 0}
     for row in rows[1:]:
         if len(row) <= C_CHANNEL:
             continue
@@ -512,42 +545,50 @@ def collect(rows, today=None):
         raw[ch] = raw.get(ch, 0) + 1
         h = HORIZON.get(ch, DEFAULT_HORIZON)
         d_raw = str(row[C_ENTRY_DATE]).strip()[:10] if len(row) > C_ENTRY_DATE else ""
-        # 대조군은 모든 호라이즌에서 모은다(①). 장기 채널은 §3-3 대로 T+20 도 같이.
         if ch == CONTROL:
             want = horizons_in_use
         elif ch == LONG_CHANNEL:
             want = {h, 20}
         else:
             want = {h}
-        matured = False
-        for hh in want:
+        primary = "미성숙(호라이즌 미도달)"   # 기본 기간의 상태. 하나만 남는다.
+        for hh in sorted(want):
             si, ii = STOCK_COL.get(hh), INDEX_COL.get(hh)
             if si is None or len(row) <= max(si, ii):
                 continue
             s_, i_ = _num(row[si]), _num(row[ii])
-            # ── B ① 성숙 판정을 집계에 **연결**한다 ──────────────────────
-            #    쓰이는 **모든 호라이즌**에 대해 따로 본다. 랜덤2 는 여러 기간에
-            #    쓰이므로 채널 기본 기간만 보면 나머지 기간이 검사되지 않는다.
             note = maturity_note(d_raw, hh, today) if d_raw else "INVALID"
+            state = None
             if note == "NOT_MATURED" and (s_ is not None or i_ is not None):
-                # 확실히 조기다. 경고만 하고 넣던 값 — 이제 뺀다.
-                skipped["조기값(성숙 전·집계 제외)"] += 1
-                continue
-            # ── B ② 종목·지수를 쌍으로 본다 ─────────────────────────────
-            if (s_ is None) != (i_ is None):
-                skipped["쌍결손(한쪽만 있음)"] += 1
-                continue
-            if s_ is None:
+                state = "조기값(성숙 전·집계 제외)"
+                detail["조기값(행×기간)"] += 1
+            elif (s_ is None) != (i_ is None):
+                state = "쌍결손(한쪽만 있음)"
+                detail["쌍결손(행×기간)"] += 1
+            elif s_ is None:
                 if note == "MATURED":
-                    skipped["성숙결측(둘 다 없음)"] += 1
-                continue
-            cost = 0.0 if ch.startswith("지수벤치") else COST_PCT
-            out.setdefault(ch, {}).setdefault(hh, []).append(s_ - i_ - cost)
-            if hh == h:
-                matured = True
-        if not matured:
-            skipped["미성숙(호라이즌 미도달)"] += 1
+                    state = "성숙결측(둘 다 없음)"
+                    detail["성숙결측(행×기간)"] += 1
+            else:
+                cost = 0.0 if ch.startswith("지수벤치") else COST_PCT
+                out.setdefault(ch, {}).setdefault(hh, []).append(s_ - i_ - cost)
+                state = "집계됨"
+            if hh == h and state is not None:
+                primary = state
+        skipped[primary] += 1
+    skipped.update(detail)
     return out, raw, skipped
+
+
+def reconcile(rows, skipped):
+    """행 수가 맞는지 센다. 상태가 상호배타라면 합계가 원시 행수와 같아야 한다.
+
+    [2-1] 이 검사가 없어서 '쌍결손 1 + 미성숙 1' 중복이 자기검증을 통과했다.
+    행×기간 진단 항목은 행 수가 아니므로 합계에서 뺀다.
+    """
+    data_rows = sum(1 for r in rows[1:] if len(r) > C_CHANNEL)
+    total = sum(v for k, v in skipped.items() if "행×기간" not in k)
+    return data_rows, total, data_rows == total
 
 
 def verdict_for(ch, n, t, mean):
@@ -675,10 +716,24 @@ def build_report(data, raw, skipped, today):
         A("**문턱을 낮추지 않는다.** 관찰 연장이라고 쓰고, 10/5 재판정으로 넘긴다.")
     A("")
 
-    A("## 표본 제외 (§4-2)")
+    A("## 표본 제외 (§4-2) · 행 상태")
+    A("")
+    A("행마다 **기본 기간의 상태 하나만** 매긴다(상호배타). 그래서 아래 합계는")
+    A("원시 행수와 같아야 한다 — 3차 재검증 2-1 이 지적한 중복 집계를 막는 장치다.")
     A("")
     for k, v in skipped.items():
-        A(f"- {k}: {v}행")
+        if "행×기간" not in k:
+            A(f"- {k}: {v}행")
+    A("")
+    A("행×기간 단위 진단(랜덤2 는 한 행이 여러 기간을 타므로 **행 수와 다르다**):")
+    A("")
+    for k, v in skipped.items():
+        if "행×기간" in k:
+            A(f"- {k}: {v}건")
+    A("")
+    A("> ⚠️ 성숙 판정은 **거래일 달력이 아니라 근사**다. 평일 수가 H 미만이면 확실히")
+    A("> 조기로 차단하지만(3차 재검증 2-2), 평일 수가 충분해도 휴장일 때문에 성숙을")
+    A("> 확정할 수는 없다. 그 구간은 판정을 유보하고 집계에는 넣는다.")
     A("")
     A("## 이 표를 읽을 때 조심할 것")
     A("")
@@ -825,8 +880,14 @@ def self_test():
         maturity_note("2026-09-01", 5, T0) == "MATURED")
     chk("maturity_note — 아직 h 달력일도 안 지났으면 NOT_MATURED",
         maturity_note("2026-09-28", 5, T0) == "NOT_MATURED")
+    # ⚠️ 2-2(평일 하한) 이후 9/24 는 경계가 아니라 조기다 — 9/25~9/30 평일이 4일뿐이다.
+    #    경계는 '평일은 충분한데 달력 여유만 미달'인 구간이어야 한다(진입 9/21, 평일 7일).
     chk("maturity_note — 경계에서는 판정 유보(None)",
-        maturity_note("2026-09-24", 5, T0) is None)
+        maturity_note("2026-09-21", 5, T0) is None,
+        f"평일={weekdays_between(datetime.date(2026, 9, 21), T0)} "
+        f"달력={(T0 - datetime.date(2026, 9, 21)).days}")
+    chk("maturity_note — 평일 수가 H 미만이면 달력일이 넘어도 조기(2-2)",
+        maturity_note("2026-09-24", 5, T0) == "NOT_MATURED")
     chk("maturity_note — 미래 진입일은 INVALID",
         maturity_note("2099-01-01", 5, T0) == "INVALID")
     chk("maturity_note — 공란도 INVALID", maturity_note("", 5, T0) == "INVALID")
@@ -930,22 +991,60 @@ def self_test():
     d, rw, sk = collect([hdrb, mkb("차트TOP2", 3.0, 1.0, "2026-09-08")], today=_T)
     chk("① 조기값은 이제 **집계에서 빠진다**(예전엔 순알파 +1.65% 로 포함)",
         d == {} and sk["조기값(성숙 전·집계 제외)"] == 1, f"data={d} skipped={sk}")
+    # [2-1] 상호배타 — 새 카운터를 올렸으면 미성숙은 **0** 이어야 한다.
+    #       예전에는 둘 다 1 이라 "미성숙과 분리했다"는 말이 사실이 아니었고,
+    #       자기검증이 새 카운터만 보고 통과시켰다.
+    chk("①-b 조기값이면 미성숙은 0 (중복 집계 금지)",
+        sk["미성숙(호라이즌 미도달)"] == 0, f"{sk}")
     # ② 종목값만 있고 지수값이 없다 → 예전엔 무경고로 '미성숙'에 섞였다
     d, rw, sk = collect([hdrb, mkb("차트TOP2", 3.0, None)], today=_T)
     chk("② 쌍결손을 '미성숙'과 따로 센다",
         sk["쌍결손(한쪽만 있음)"] == 1 and d == {}, f"skipped={sk}")
+    chk("②-b 쌍결손이면 미성숙은 0", sk["미성숙(호라이즌 미도달)"] == 0, f"{sk}")
     # ③ 둘 다 없는데 성숙했다 → '성숙결측'
     d, rw, sk = collect([hdrb, mkb("차트TOP2")], today=_T)
     chk("③ 성숙했는데 둘 다 없으면 '성숙결측'으로 센다",
         sk["성숙결측(둘 다 없음)"] == 1, f"skipped={sk}")
+    chk("③-b 성숙결측이면 미성숙은 0", sk["미성숙(호라이즌 미도달)"] == 0, f"{sk}")
+
+    # [2-1] 합계 검증 — 상태가 상호배타면 원시 행수와 딱 맞아야 한다
+    _mix = [hdrb,
+            mkb("차트TOP2", 3.0, 1.0),                       # 집계됨
+            mkb("차트TOP2", 3.0, None),                      # 쌍결손
+            mkb("차트TOP2"),                                 # 성숙결측
+            mkb("차트TOP2", 3.0, 1.0, "2026-09-08"),         # 조기값
+            mkb("수급TOP2", None, None, "2026-09-07")]       # 미성숙
+    _mix[3][C_EXCLUDE] = ""                                  # 제외표식 없음 확인
+    _d, _rw, _sk = collect(_mix, today=_T)
+    _rows, _tot, _ok = reconcile(_mix, _sk)
+    chk("합계 검증 — 원시 행수 = 상태 합계", _ok, f"행={_rows} 합계={_tot} {_sk}")
+    chk("행×기간 진단은 행 수와 별도 항목으로 표시", "조기값(행×기간)" in _sk)
+
+    # [2-2] 달력일은 통과하지만 평일 수로는 확실히 조기인 사례
+    #       기준 9/8 · 진입 9/3 · T+5 → 평일은 9/4·9/7·9/8 로 3일뿐이다.
+    chk("2-2 평일 3일뿐이면 T+5 는 NOT_MATURED",
+        maturity_note("2026-09-03", 5, _T) == "NOT_MATURED",
+        f"평일={weekdays_between(datetime.date(2026, 9, 3), _T)}")
+    _late = collect([hdrb, mkb("차트TOP2", 3.0, 1.0, "2026-09-03")], today=_T)
+    chk("2-2 그 값은 집계에 안 들어간다(예전엔 +1.65% 로 포함)",
+        _late[0] == {}, f"{_late[0]}")
+    chk("2-2 평일 수가 충분하면 종전대로 성숙 가능",
+        maturity_note("2026-08-01", 5, _T) == "MATURED")
     # 정상값은 종전대로 들어간다
     d, rw, sk = collect([hdrb, mkb("차트TOP2", 3.0, 1.0)], today=_T)
     chk("정상 성숙값은 그대로 집계된다",
         abs(d["차트TOP2"][5][0] - (3.0 - 1.0 - 0.35)) < 1e-9, f"{d}")
-    # 경계(달력일 근사가 유보)는 **버리지 않는다** — 근사로 진짜 값을 버리는 쪽이 더 나쁘다
-    d, rw, sk = collect([hdrb, mkb("차트TOP2", 3.0, 1.0, "2026-09-02")], today=_T)
+    # 경계(달력일 근사가 유보)는 **버리지 않는다** — 근사로 진짜 값을 버리는 쪽이 더 나쁘다.
+    # ⚠️ 처음엔 진입 9/2 를 경계 사례로 썼다가 2-2 수정 뒤 실패했다. 9/3~9/8 평일이
+    #    4일뿐이라 T+5 가 **확실히 불가능**하고, 경계가 아니라 조기가 맞다 — 시험이 틀렸다.
+    #    진짜 경계는 평일은 충분하지만 달력 여유(margin)를 못 채운 구간이다.
+    #    진입 8/31 → 평일 6일(9/1~9/8) ≥ 5, 달력 8일 < margin 11 → 유보.
+    chk("경계 사례 고르기 — 평일은 충분하고 달력 여유는 미달",
+        weekdays_between(datetime.date(2026, 8, 31), _T) >= 5
+        and (_T - datetime.date(2026, 8, 31)).days < calendar_margin(5))
+    d, rw, sk = collect([hdrb, mkb("차트TOP2", 3.0, 1.0, "2026-08-31")], today=_T)
     chk("경계 유보(None)는 집계에 넣는다", d.get("차트TOP2", {}).get(5) is not None,
-        f"note={maturity_note('2026-09-02', 5, _T)} data={d}")
+        f"note={maturity_note('2026-08-31', 5, _T)} data={d}")
     # 검증기도 모든 채널×기간을 본다 — 랜덤2 는 여러 기간에 쓰인다.
     # ⚠️ 처음엔 T+5 값만 넣고 "T+10 이 검사되는가"를 물었다가 실패했다.
     #    T+10 값이 없으면 T+10 에 경고할 것이 없는 게 **맞다** — 내 시험이 틀렸다.
@@ -1021,6 +1120,12 @@ def main():
     ledger_sha = ledger_fingerprint(rows)
     code_sha = sha256_of(io_read_self())
     data, raw, skipped = collect(rows)
+    _rows_n, _total_n, _bal = reconcile(rows, skipped)
+    if not _bal:
+        print(f"\n❌ 행 상태 합계가 원시 행수와 다르다 — {_total_n} vs {_rows_n}")
+        print("   상태가 상호배타가 아니거나 세는 곳이 빠졌다는 뜻이다(3차 재검증 2-1).")
+        return 2
+    print(f"🔢 행 상태 합계 검증 — 원시 {_rows_n}행 = 상태 합계 {_total_n} ✅")
     md, rows_out, conf, passed = build_report(data, raw, skipped, today)
 
     # ── F07 ② 근거를 판정표에 박아 넣는다 ────────────────────────────────

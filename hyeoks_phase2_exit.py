@@ -231,7 +231,7 @@ def simulate_exits(bars, entry_idx, base, target, stop, horizon, gap_model="open
     # "몇 건이 영향을 받았나"가 부풀려진다(자기검증에서 실제로 2로 나왔다).
     gapped = {"fixed": 0, "trailing": 0}
 
-    def resolve(b, tgt, stp, rule):
+    def resolve(b, tgt, stp, rule=None):
         """하루의 체결을 정한다. 반환 (체결가, 사유) 또는 None(그날은 미체결).
 
         🚨 [R4 · 2026-09-08 재검증] **시가를 먼저 본다.** 이게 어제 수정의 결함이었다.
@@ -247,14 +247,19 @@ def simulate_exits(bars, entry_idx, base, target, stop, horizon, gap_model="open
         """
         o = b["open"]
         # ① 시가 — 순서를 아는 값. 이미 선을 넘었으면 그 가격에 체결된 것으로 본다.
+        #
+        # 🚨 [3 · 3차 재검증] 갭 카운터를 **여기서 올리지 않는다.**
+        #    트레일링에서 '목표 시가 통과'는 **매도가 아니라 모드 전환**이다.
+        #    그런데 여기서 세는 바람에, 그날 팔지도 않고 만기까지 간 행이
+        #    '갭 체결 1건'으로 집계됐다(재현: O=115/H=120/L=111/C=119 → +19% 만기인데 갭 1).
+        #    A 사례처럼 같은 날 92 에 **선 가격 그대로** 손절된 행도 갭으로 세어졌다.
+        #    수익률은 맞지만 "갭 체결이 몇 건에 영향을 줬나"라는 해석이 왜곡된다.
+        #    → 체결가가 선과 달라졌는지(gapped)만 알려주고, **실제 청산일 때만**
+        #      호출자가 센다.
         if stp > 0 and o <= stp:
-            if abs(o - stp) > 1e-9:
-                gapped[rule] += 1
-            return o, "손절"
+            return o, "손절", abs(o - stp) > 1e-9
         if tgt > 0 and o >= tgt:
-            if abs(o - tgt) > 1e-9:
-                gapped[rule] += 1
-            return o, "익절"
+            return o, "익절", abs(o - tgt) > 1e-9
         # ② 장중 — 고가·저가의 순서를 모른다. 여기서만 보수적으로 손절을 우선한다.
         hit_stp = stp > 0 and b["low"] <= stp
         hit_tgt = tgt > 0 and b["high"] >= tgt
@@ -262,9 +267,9 @@ def simulate_exits(bars, entry_idx, base, target, stop, horizon, gap_model="open
             nonlocal ambiguous
             ambiguous = True
         if hit_stp:
-            return stp, "손절"          # 시가가 선 위였으므로 갭이 아니다 — 선 가격 체결
+            return stp, "손절", False   # 시가가 선 위였으므로 갭이 아니다 — 선 가격 체결
         if hit_tgt:
-            return tgt, "익절"
+            return tgt, "익절", False
         return None
 
     def resolve_legacy(b, tgt, stp):
@@ -275,16 +280,18 @@ def simulate_exits(bars, entry_idx, base, target, stop, horizon, gap_model="open
         if hit_stp and hit_tgt:
             ambiguous = True
         if hit_stp:
-            return stp, "손절"
+            return stp, "손절", False
         if hit_tgt:
-            return tgt, "익절"
+            return tgt, "익절", False
         return None
 
     # ① 고정 — 목표가/손절가 도달 시 청산
     fixed = None
     for d, b in enumerate(window, start=1):
-        r = resolve_legacy(b, target, stop) if legacy else resolve(b, target, stop, "fixed")
+        r = resolve_legacy(b, target, stop) if legacy else resolve(b, target, stop)
         if r:
+            if r[2]:
+                gapped["fixed"] += 1     # 실제 청산이 갭으로 보정됐다
             fixed = (pct(r[0]), r[1], d)
             break
     if fixed is None:
@@ -299,8 +306,10 @@ def simulate_exits(bars, entry_idx, base, target, stop, horizon, gap_model="open
         # 목표를 이미 친 뒤에는 '목표가 청산'이 없다 — 추적선만 본다.
         eff_tgt = 0.0 if hit_target else target
         r = (resolve_legacy(b, eff_tgt, active_stop) if legacy
-             else resolve(b, eff_tgt, active_stop, "trailing"))
+             else resolve(b, eff_tgt, active_stop))
         if r and r[1] == "손절":
+            if r[2]:
+                gapped["trailing"] += 1  # 실제 청산이 갭으로 보정됐다
             trailing = (pct(r[0]), "트레일링손절" if was_trailing else "손절", d)
             break
         if r and r[1] == "익절":
@@ -738,6 +747,33 @@ def self_test():
     lgA_ok = round(lgA['trailing'][0], 2) == -8.0
     ok = ok and lgA_ok
     print(f"  {'✅' if lgA_ok else '❌'} legacy 도 −8% — A 는 R4 가 만든 회귀임을 보여준다")
+
+    # ── 3: 갭 카운터는 **실제 청산**만 센다 (3차 재검증) ────────────────
+    print("\n🧪 3 — 목표 갭 통과는 '갭 체결'이 아니다(모드 전환일 뿐)")
+
+    def gcount(label, bars, want_fixed, want_trailing):
+        nonlocal ok
+        sim = simulate_exits([bar(100, 100, 100, 100)] + bars, 0,
+                             base, target, stop, len(bars))
+        got = (sim['gapped']["fixed"], sim['gapped']["trailing"])
+        hit = got == (want_fixed, want_trailing)
+        ok = ok and hit
+        print(f"  {'✅' if hit else '❌'} {label}\n      갭(고정,트레일링)={got}"
+              + ("" if hit else f"  기대=({want_fixed}, {want_trailing})"))
+
+    # 감사자 재현: 시가가 목표 위지만 트레일링은 팔지 않고 만기까지 간다.
+    # 고정은 시가 115 에 갭 익절 → 1건. 트레일링은 청산이 없었으므로 → 0건.
+    gcount("목표 갭 통과 후 만기 청산 → 트레일링 갭 0건", [bar(115, 120, 111, 119)], 1, 0)
+    _mt = simulate_exits([bar(100, 100, 100, 100), bar(115, 120, 111, 119)], 0,
+                         base, target, stop, 1)
+    _mt_ok = _mt['trailing'][1] == "만기" and round(_mt['trailing'][0], 2) == 19.0
+    ok = ok and _mt_ok
+    print(f"  {'✅' if _mt_ok else '❌'} 그때 트레일링 결과는 +19% 만기 (수익률은 종전대로)")
+
+    # A 사례 — 같은 날 92 에 손절되지만 **선 가격 그대로**라 갭이 아니다
+    gcount("목표 갭 통과 후 같은 날 선 가격 손절 → 갭 0건", [bar(115, 120, 90, 100)], 1, 0)
+    # 진짜 갭 청산은 종전대로 센다
+    gcount("시가가 손절선 아래로 갭 → 양쪽 다 갭 1건", [bar(80, 85, 75, 82)], 1, 1)
 
     # 손절을 안 건드리면 종전대로 추적 모드로 넘어가고 그날 청산하지 않는다
     trchk("시가가 목표 위 + 손절 미접촉 → 청산 없이 추적 전환(만기 0%)",
