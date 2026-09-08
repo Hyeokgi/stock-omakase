@@ -10,7 +10,8 @@
 """
 import sys
 from hyeoks_tajeom import (clean_tajeom, trend_phase, is_downtrend_risk,
-                           OVERSOLD_TAG, POLICY_ID)
+                           OVERSOLD_TAG, POLICY_ID,
+                           channel_funnel, funnel_line)
 
 FAIL = []
 
@@ -61,6 +62,46 @@ print("\n🧪 모순 재현 — 수정 전 로직이었다면 실패했을 검�
 before = "📉" in OVERSOLD_TAG
 chk("과매도 태그는 실제로 📉 를 포함한다(모순의 원인)", before, True)
 chk("그럼에도 지금은 위험이 아니다", is_downtrend_risk(OVERSOLD_TAG), False)
+
+print("\n🧪 단계별 후보 계측 (Q1 · 2026-09-08)")
+def mk(name, typ, tajeom):
+    return {"name": name, "type": typ, "tajeom_raw": tajeom}
+
+RISK = "📉 과매도 · 역배팅 ⚠️ 하락 전환"
+POOL = [
+    mk("A", "SEED",   OVERSOLD_TAG),          # 적격
+    mk("B", "SEED",   RISK),                  # 교집합이지만 위험문구로 거부
+    mk("C", "SEED",   "🌱 바닥 · 분할매수"),   # SEED 지만 과매도 아님
+    mk("D", "NORMAL", OVERSOLD_TAG),          # 과매도지만 NORMAL
+    mk("E", "NORMAL", "🚀 대장 · 당일단타"),   # 둘 다 아님
+]
+f = channel_funnel(POOL)
+chk("풀 전체", f["풀"], 5)
+chk("SEED 수", f["SEED"], 3)
+# ⚠️ 3 이다. B 의 타점("📉 과매도 · 역배팅 ⚠️ 하락 전환")도 과매도 태그를 **포함**한다.
+# 처음엔 2 로 적었다가 이 검사가 잡았다 — 구현이 아니라 내 기대값이 틀렸다.
+# '과매도태그' 는 위험문구 여부와 무관한 순수 태그 보유 수이고, 그래야
+# "태그는 붙었는데 전부 거부됐다"를 다음 줄에서 구분할 수 있다.
+chk("과매도 태그 수(위험문구 포함·유형 무관)", f["과매도태그"], 3)
+chk("교집합(SEED ∩ 과매도)", f["교집합"], 2)
+chk("위험문구로 거부", f["위험문구거부"], 1)
+chk("최종 적격", f["최종적격"], 1)
+chk("적격 종목명이 남는다", f["적격종목"], ["A"])
+chk("교집합 = 거부 + 적격", f["위험문구거부"] + f["최종적격"], f["교집합"])
+
+# 세 가지 '0개' 를 서로 다른 문장으로 구분하는 것이 이 계측의 목적이다
+chk("SEED 가 0 이면 상위 관문 문제라고 말한다",
+    "상위 관문" in funnel_line(channel_funnel([mk("X", "NORMAL", OVERSOLD_TAG)])), True)
+chk("SEED 는 있는데 과매도가 0 이면 스캐너 문턱이라고 말한다",
+    "문턱" in funnel_line(channel_funnel([mk("X", "SEED", "🌱 바닥 · 분할매수")])), True)
+chk("교집합이 전부 거부되면 F01 재발 신호라고 말한다",
+    "재발" in funnel_line(channel_funnel([mk("X", "SEED", RISK)])), True)
+chk("적격이 있으면 종목명을 찍는다",
+    "적격: A" in funnel_line(channel_funnel([mk("A", "SEED", OVERSOLD_TAG)])), True)
+# 9/8 실제 로그가 말한 상태 — 적격 0, 그런데 사유는 거부가 아니어야 한다
+_none = channel_funnel([mk("C", "SEED", "🌱 바닥 · 분할매수"), mk("E", "NORMAL", "🚀 대장")])
+chk("적격 0 이어도 거부 0 이면 모순이 아니다", (_none["최종적격"], _none["위험문구거부"]), (0, 0))
+chk("빈 풀도 죽지 않는다", channel_funnel([])["최종적격"], 0)
 
 print("\n" + ("❌ 실패 " + str(len(FAIL)) + "건: " + ", ".join(FAIL) if FAIL else "✅ 전부 통과"))
 sys.exit(1 if FAIL else 0)

@@ -10,7 +10,8 @@ import concurrent.futures
 # 🏷️ 타점 해석은 의존성 없는 별도 모듈로 뺐다(F01, 2026-09-07).
 #    이 파일은 gspread·pdfkit·genai 를 최상단에서 import 하므로 로직만 시험할 수 없었다.
 #    사본을 시험하면 원본이 맞다는 보장이 없어서, 원본을 옮기고 여기서 가져다 쓴다.
-from hyeoks_tajeom import clean_tajeom, trend_phase, POLICY_ID, POLICY_SINCE
+from hyeoks_tajeom import (clean_tajeom, trend_phase, POLICY_ID, POLICY_SINCE,
+                          channel_funnel, funnel_line)
  
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings("ignore")
@@ -817,7 +818,9 @@ try:
 
         cands_list.append({
             'name': name, 'code': code, 'score': combo_score, 'v1_score': v1_score, 'v2_score': v2_score, 'v3_score': v3_score,
-            'rs_grade': rs_grade, 'info': info, 'curr_p': curr_p_int, 'type': seed_tag, 'theme_name': theme_name
+            'rs_grade': rs_grade, 'info': info, 'curr_p': curr_p_int, 'type': seed_tag, 'theme_name': theme_name,
+            # 📊 계측용 원본 타점. clean 된 값은 위험 문구가 잘려 나가 판정에 쓸 수 없다.
+            'tajeom_raw': tajeom_raw,
         })
  
     high_score_cands = [c for c in cands_list if c['score'] >= 30]
@@ -847,6 +850,14 @@ try:
     validated_pool.sort(key=lambda x: x['score'], reverse=True)
     pool_150 = validated_pool[:150]
     pool_str = "\n".join([c['info'] for c in pool_150])
+
+    # 📊 [단계별 후보 계측] 재검증 Q1 권고. AI 호출 **전**에 찍는다 —
+    #    "파이썬이 아는 적격 후보 수"와 "AI 가 실제로 고른 수"를 갈라야
+    #    문턱 문제인지 모델 판단인지 구분할 수 있다.
+    _funnel = channel_funnel(pool_150)
+    print(funnel_line(_funnel))
+    print(f"   (상위관문: 원시 {len(cands_list)}종목 → 점수선별 {len(pre_pool)} → "
+          f"DNA검증 {len(validated_pool)} → 풀 {len(pool_150)})")
 
     def get_recent_performance_summary(doc):
         """🆕 [AI Memory] 모델을 재학습시키는 게 아니라, 최근 리포트 채널(단기/중기)의 실제 성과를

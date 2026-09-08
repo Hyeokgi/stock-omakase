@@ -75,3 +75,53 @@ def trend_phase(tajeom_raw):
     if "추세 유지" in raw:
         return "상승유지"
     return "중립"
+
+
+# ── 단계별 후보 계측 (재검증 Q1 권고 · 2026-09-08) ────────────────────────
+# 왜 필요한가 — 9/8 첫 신정책 실행에서 중기 픽 근거가 이렇게 나왔다:
+#   "유형:SEED 중 타점이 '과매도 · 역배팅'인 종목이 리스트에 존재하지 않아"
+# 모순은 사라졌지만(거부권에 걸린 게 아니다) **이 문장만으로는 어디서 막혔는지 모른다.**
+# SEED 가 없었나 · 과매도 태그가 없었나 · 둘의 교집합이 없었나가 전부 같은 문장이 된다.
+# 그래서 각 관문을 따로 센다. 문턱을 건드릴지 말지는 이 숫자를 보고 정할 문제다.
+FUNNEL_STAGES = ("풀", "SEED", "과매도태그", "교집합", "위험문구거부", "최종적격")
+
+
+def channel_funnel(pool, tajeom_key="tajeom_raw", type_key="type"):
+    """중기(과매도 역배팅) 채널의 관문별 잔존 수를 센다.
+
+    pool 은 {type, tajeom_raw} 를 가진 dict 들의 리스트다.
+    반환하는 '최종적격'은 **AI 에게 넘어가기 전 파이썬이 아는 적격 후보 수**다.
+    AI 가 그중 하나를 고르는지는 별개이고, 그 차이가 바로 '모델 판단' 몫이다.
+    """
+    def raw(c):
+        return c.get(tajeom_key) or ""
+
+    seed = [c for c in pool if str(c.get(type_key, "")).strip().upper() == "SEED"]
+    oversold = [c for c in pool if OVERSOLD_TAG in raw(c)]
+    both = [c for c in seed if OVERSOLD_TAG in raw(c)]
+    vetoed = [c for c in both if is_downtrend_risk(raw(c))]
+    eligible = [c for c in both if not is_downtrend_risk(raw(c))]
+    return {
+        "풀": len(pool),
+        "SEED": len(seed),
+        "과매도태그": len(oversold),
+        "교집합": len(both),
+        "위험문구거부": len(vetoed),
+        "최종적격": len(eligible),
+        "적격종목": [c.get("name") or c.get("code") or "?" for c in eligible][:5],
+    }
+
+
+def funnel_line(f):
+    """계측을 로그 한 줄로. 액션 로그는 90일 뒤 사라지므로 문서로 옮길 것."""
+    body = " → ".join(f"{s} {f[s]}" for s in FUNNEL_STAGES)
+    tail = ""
+    if f["최종적격"]:
+        tail = f"  [적격: {', '.join(f['적격종목'])}]"
+    elif f["교집합"] and f["위험문구거부"]:
+        tail = "  ⚠️ 교집합은 있었는데 전부 위험문구로 거부됐다 — F01 모순 재발 신호"
+    elif f["SEED"] and not f["과매도태그"]:
+        tail = "  → SEED 는 있는데 과매도 태그가 0. 스캐너 문턱(엔벨로프) 문제다"
+    elif not f["SEED"]:
+        tail = "  → SEED 자체가 0. 중기 채널의 상위 관문에서 막힌 것이다"
+    return f"📊 [중기 채널 깔때기] {body}{tail}"
