@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       input_file_id:
-        description: 'Private Drive account-input-v2 JSON file ID'
+        description: 'Private prepared v3 JSON with explicit theme policy and verification evidence'
         required: true
         type: string
       output_folder_id:
@@ -44,10 +44,18 @@ jobs:
         run: |
           umask 077
           python account_drive.py download --id "$INPUT_FILE_ID" --path account_input_private.json
+      - name: Validate prepared input and privately record quality
+        run: |
+          umask 077
+          python account_input_builder.py --source account_input_private.json --output-dir data/account_private
       - name: Calculate and locally verify evidence bundle
         run: |
           umask 077
-          python hyeoks_account.py --input account_input_private.json --output-dir data/account_private
+          set -euo pipefail
+          shopt -s nullglob
+          inputs=(data/account_private/input-*/input.json)
+          if [ "${#inputs[@]}" -ne 1 ]; then exit 1; fi
+          python hyeoks_account.py --input "${inputs[0]}" --output-dir data/account_private
       - name: Preserve and verify private evidence
         env:
           OUTPUT_FOLDER_ID: ${{ inputs.output_folder_id }}

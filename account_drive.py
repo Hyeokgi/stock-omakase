@@ -51,7 +51,7 @@ def download(service, file_id, path):
     if len(data) > 100_000_000:
         raise ValueError('input exceeds 100 MB')
     value = json.loads(data)
-    if value.get('schema') != 'account-input-v2':
+    if value.get('schema') not in ('account-input-v2','account-input-v3'):
         raise ValueError('unexpected input schema')
     path = Path(path); path.parent.mkdir(parents=True,exist_ok=True)
     with path.open('xb') as stream: stream.write(data)
