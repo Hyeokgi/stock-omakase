@@ -25,3 +25,4 @@ freeze_status.json
 # Account NAV: frozen ledger, daily prices and trade details are private.
 data/account_private/
 account_input_private.json
+data/priority_private/
