@@ -38,3 +38,7 @@ jobs:
           KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
           KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }} 
         run: python omakase.py
+
+      - name: 데이터 품질표 연결 검사 (원장 읽기 전용)
+        if: always()
+        run: python hyeoks_data_quality.py --check --spreadsheet-id 1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks

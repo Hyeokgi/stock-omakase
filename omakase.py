@@ -1133,7 +1133,7 @@ def compute_channel_comparison_dashboard(doc):
         # 🔧 [표기 교정] '평균수익률'과 '초과수익'이 이름만으로는 구분이 안 돼 사람이 계속 헷갈렸다.
         #    (지수가 크게 빠진 구간에서는 실수익이 마이너스인데 초과α만 크게 양수로 나온다)
         #    → 실제로 번 돈인지, 지수 대비 상대성과인지를 이름에서 바로 드러나게 한다.
-        header += [f"T+{h} 표본", f"T+{h} 실수익(%)", f"T+{h} 초과α(%p·vs지수)", f"T+{h} 승률(%)"]
+        header += [f"T+{h} 표본", f"T+{h} 비용전수익(%)", f"T+{h} 초과α(%p·vs지수)", f"T+{h} 비용전승률(%)"]
     out_rows = [header]
 
     for ch in channels:
@@ -1161,9 +1161,8 @@ def compute_channel_comparison_dashboard(doc):
         dash_sheet.update(range_name="A1", values=out_rows, value_input_option="RAW")
         dash_sheet.update(range_name=f"A{len(out_rows) + 2}", values=[
             [f"갱신: {now_str}"],
-            ["※ 실수익 = 실제 손익. 초과α = 지수 대비 상대성과(%p)."],
-            ["※ 지수가 크게 빠진 구간에서는 실수익이 마이너스여도 초과α는 크게 양수로 나온다."
-             " 즉 초과α가 양수라고 돈을 번 것이 아니다 — 판단은 '실수익'을 먼저 보고 할 것."],
+            ["※ 비용전수익 = T+1 시가 진입·고정기간 가격 관측치. 비용·슬리피지·실제 손절/트레일링·계좌 비중 미반영. 실제 계좌손익 아님."],
+            ["※ 초과α는 지수 대비 상대성과로, 양수여도 손실일 수 있음. 채널별 추천일/정책/표본수가 달라 전체 평균으로 AI 우월성을 판정하지 말 것. 데이터_품질표의 동일일 비교도 기술통계만 제공."],
             [f"※ 집계 제외 {excluded_n}행 (백테스트_로그 Z열 '제외' 표식). "
              f"위험종목 게이트가 열려 있던 동안 통과한 픽 등 — 행은 보존되어 있고 집계에서만 뺀다."],
         ], value_input_option="RAW")
@@ -1199,10 +1198,11 @@ def compute_channel_comparison_dashboard(doc):
 
 
 def compute_channel_kelly(doc):
-    """🆕 [하프켈리 베팅비중 참고자료] 채널별로 승률·손익비를 계산해서 켈리 공식으로 베팅비중을 추정.
-       표본이 통계적으로 의미 있는 최소치(30건) 미만이면 숫자를 내지 않고 '데이터 부족'으로 표시함.
-       추정 오차에 대한 안전마진으로 풀켈리가 아니라 절반(하프켈리)만 씀. 자동 매매 실행이 아니라
-       참고용 표시 목적 — 종목/테마 단위는 반복 표본이 근본적으로 부족해 채널 단위로만 계산."""
+    """Binary-payoff Kelly diagnostic only, NOT an account allocation.
+       Thirty observations is a display threshold, not statistical validation.
+       Variable returns, costs and correlated positions invalidate sizing from
+       p-(1-p)/b alone. Preserve diagnostics but never label them recommendations.
+    """
     MIN_SAMPLE = 30
     MAX_HALF_KELLY_CAP = 0.25  # 하프켈리라도 25%를 넘지 않도록 안전 상한
 
@@ -1238,13 +1238,13 @@ def compute_channel_kelly(doc):
         except Exception:
             continue
 
-    out_rows = [["채널", "기준호라이즌", "표본수", "승률(%)", "손익비", "풀켈리(%)", "하프켈리 추천(%)", "갱신일시"]]
+    out_rows = [["채널", "기준호라이즌", "표본수", "비용전승률(%)", "손익비", "이항켈리 지표(%)", "절반 지표(비중 아님)", "갱신일시"]]
     now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
     for ch, horizon in CHANNEL_HORIZON.items():
         returns = by_channel.get(ch, [])
         n = len(returns)
         if n < MIN_SAMPLE:
-            out_rows.append([ch, f"T+{horizon}", n, "", "", "", "데이터 부족(최소 30건 필요)", now_str])
+            out_rows.append([ch, f"T+{horizon}", n, "", "", "", "표시 보류(30건≠검증 기준)", now_str])
             continue
 
         wins = [x for x in returns if x > 0]
@@ -1254,7 +1254,7 @@ def compute_channel_kelly(doc):
         avg_loss = abs(sum(losses) / len(losses)) if losses else 0.0
 
         if avg_loss == 0 or win_rate <= 0:
-            out_rows.append([ch, f"T+{horizon}", n, round(win_rate * 100, 1), "", "", "권장 없음(손실 표본 없음 등)", now_str])
+            out_rows.append([ch, f"T+{horizon}", n, round(win_rate * 100, 1), "", "", "산출 보류(손실 표본 없음 등)", now_str])
             continue
 
         rr = avg_win / avg_loss  # 손익비
@@ -1272,6 +1272,11 @@ def compute_channel_kelly(doc):
             kelly_sheet = doc.add_worksheet(title="베팅비중_참고", rows="50", cols="8")
         kelly_sheet.clear()
         kelly_sheet.update(range_name="A1", values=out_rows, value_input_option="RAW")
+        kelly_sheet.update(range_name="A10", values=[
+            ["※ 연구 지표만 표시. p−(1−p)/b는 평균 이익/손실의 이항 근사이며 계좌 투자비중이 아님."],
+            ["※ 30건은 표시 하한일 뿐 유의성/안전성 보장이 아님. 비용·정책 변경·동일일/종목/테마 상관·동시보유 미반영."],
+            ["※ 자동 비중/실전 승인에 사용 금지. 데이터_품질표에서 미성숙·결손 및 동일일 비교를 함께 확인."],
+        ], value_input_option="RAW")
         print(f"✅ [베팅비중_참고] 채널 {len(out_rows) - 1}개 갱신 완료 (하프켈리 기준, 최소표본 {MIN_SAMPLE}건)")
     except Exception as e:
         print(f"⚠️ [베팅비중_참고 기록 실패] {e}")
