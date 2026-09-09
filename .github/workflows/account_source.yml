@@ -17,6 +17,11 @@ on:
         required: false
         default: '120'
         type: string
+      entry_model:
+        description: '자료 필요량 모형 (실제 매매 실행 아님)'
+        type: choice
+        options: [next_open, closing_1505]
+        default: next_open
 
 concurrency:
   group: hyeoks-sheet-lock
@@ -46,7 +51,9 @@ jobs:
 
     - name: 🧪 어댑터 자기검증
       # 파싱·캐시·TLS·자가인증 금지가 여기서 확인된다. 깨지면 수집할 이유가 없다.
-      run: python account_source_adapter.py --self-test
+      run: |
+        python account_source_adapter.py --self-test
+        python -m unittest discover -s tests -p 'test_source_adapter.py'
 
     - name: 🔑 비밀번호 파일(secret.json) 만들기
       env:
@@ -55,9 +62,12 @@ jobs:
 
     - name: 📋 자료 준비 상태 측정
       id: run
+      env:
+        SOURCE_DAYS: ${{ inputs.days }}
+        SOURCE_ENTRY_MODEL: ${{ inputs.entry_model }}
       run: |
         set +e
-        python account_source_adapter.py --gaps-only --days "${{ inputs.days }}" 2>&1 | tee source.txt
+        python account_source_adapter.py --gaps-only --days "$SOURCE_DAYS" --entry-model "$SOURCE_ENTRY_MODEL" 2>&1 | tee source.txt
         echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
         exit 0
 
