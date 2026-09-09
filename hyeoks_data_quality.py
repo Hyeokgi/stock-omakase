@@ -141,6 +141,10 @@ def sheet_requests(sheet_id, add=False):
                          "range": {"sheetId": sheet_id, "startRowIndex": 28, "endRowIndex": len(rows), "startColumnIndex": 0, "endColumnIndex": 15},
                          "rowsProperties": {"headerColorStyle": {"rgbColor": {"red": .93, "green": .93, "blue": .93}},
                                             "firstBandColorStyle": white, "secondBandColorStyle": white}}}})
+    # Native tables may default to white header text; keep contrast on gray.
+    requests.append({"repeatCell": {"range": {"sheetId": sheet_id, "startRowIndex": 28, "endRowIndex": 29},
+                     "cell": {"userEnteredFormat": {"textFormat": {"foregroundColorStyle": {"rgbColor": {"red": 0, "green": 0, "blue": 0}}}}},
+                     "fields": "userEnteredFormat.textFormat.foregroundColorStyle"}})
     return requests
 
 
