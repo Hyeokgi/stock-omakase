@@ -16,7 +16,7 @@ import tempfile
 import uuid
 from hyeoks_verdict import ABORT, HORIZON, DEFAULT_HORIZON, validate_ledger, is_excluded
 
-VERSION = 'account-nav-v2'
+VERSION = 'account-nav-v3'
 
 
 class InputError(ValueError):
@@ -87,9 +87,43 @@ def group(channel):
     return 'strategy'
 
 
+def theme_policy(bundle):
+    policy = bundle.get('theme_policy', 'legacy_declared')
+    if policy not in ('none', 'representative', 'complete', 'legacy_declared'):
+        raise InputError('unknown theme_policy')
+    if bundle.get('schema') == 'account-input-v3' and policy == 'legacy_declared':
+        raise InputError('v3 requires explicit none/representative/complete theme_policy')
+    return policy
+
+
+def themes_for(bundle, signal, code):
+    policy = theme_policy(bundle)
+    if policy == 'none':
+        return []
+    themes = bundle.get('theme_map', {}).get(signal, {}).get(code)
+    if not isinstance(themes, list) or not themes or any(not isinstance(t,str) or not t.strip() for t in themes):
+        raise InputError('missing point-in-time theme IDs')
+    if policy != 'legacy_declared':
+        meta = bundle.get('theme_quality', {}).get(signal, {}).get(code, {})
+        allowed = ('representative', 'complete') if policy == 'representative' else ('complete', 'verified_none')
+        if meta.get('status') not in allowed or not isinstance(meta.get('source'),str) or not meta['source'].strip():
+            raise InputError('theme coverage evidence insufficient for selected policy')
+        if policy == 'representative' and len(themes) != 1:
+            raise InputError('representative policy requires exactly one theme ID')
+        if meta.get('status') == 'verified_none' and themes != ['NO_THEME:'+code]:
+            raise InputError('verified-none requires explicit per-stock NO_THEME ID')
+    return sorted(set(themes))
+
+
 def validate_bundle(bundle):
-    if bundle.get('schema') != 'account-input-v2':
-        raise InputError('require account-input-v2 frozen input, not sparse marks')
+    if bundle.get('schema') not in ('account-input-v2', 'account-input-v3'):
+        raise InputError('require versioned frozen input, not sparse marks')
+    policy = theme_policy(bundle)
+    if bundle['schema'] == 'account-input-v3':
+        for key in ('calendar_verification', 'price_verification'):
+            evidence = bundle.get(key, {})
+            if evidence.get('status') != 'verified' or not isinstance(evidence.get('evidence'),str) or not evidence['evidence'].strip():
+                raise InputError(f'{key}: verified evidence reference required')
     for key in ('calendar_source', 'price_source', 'captured_at', 'price_basis'):
         if not isinstance(bundle.get(key), str) or not bundle[key].strip():
             raise InputError(f'missing provenance: {key}')
@@ -100,6 +134,11 @@ def validate_bundle(bundle):
         raise InputError('calendar sessions must be sorted, unique and nonempty')
     for d in sessions:
         date(d)
+    if bundle['schema'] == 'account-input-v3':
+        reference = bundle['calendar_verification'].get('sessions')
+        expected = [d for d in sessions if d <= as_of]
+        if reference != expected:
+            raise InputError('calendar does not match independently verified sessions through as_of')
     if as_of not in sessions:
         raise InputError('as_of must be a completed supplied trading session')
     try:
@@ -108,7 +147,7 @@ def validate_bundle(bundle):
             raise ValueError
     except ValueError:
         raise InputError('captured_at must have timezone and not precede as_of') from None
-    if not bundle.get('prices') or not bundle.get('theme_map'):
+    if not bundle.get('prices') or (policy != 'none' and not bundle.get('theme_map')):
         raise InputError('prices and point-in-time theme_map required')
     rows = bundle['rows']
     issues = validate_ledger(rows, today=dt.date.fromisoformat(as_of))
@@ -148,9 +187,7 @@ def orders_from_ledger(bundle, sessions, as_of):
         code = str(row[4]).strip().lstrip("'").zfill(6)
         if len(code) != 6 or not code.isdigit() or code == '000000':
             raise InputError(f'row {row_no}: invalid code')
-        themes = bundle['theme_map'].get(signal, {}).get(code)
-        if not isinstance(themes, list) or not themes or any(not isinstance(t,str) or not t for t in themes):
-            raise InputError(f'row {row_no}: missing point-in-time theme IDs')
+        themes = themes_for(bundle, signal, code)
         horizon = HORIZON.get(channel, DEFAULT_HORIZON)
         exit_date = sessions[idx+horizon] if idx+horizon < len(sessions) else None
         orders.append(dict(id=str(row[0]), channel=channel, group=g, code=code,
@@ -276,7 +313,18 @@ def calculate(bundle):
         order = dict(id='benchmark',channel=name,code=name,entry=dates[0],exit=None,
                      signal=dates[0],themes=[name],horizon=None)
         benchmarks[name] = simulate([order],dates,{name:prices},Config(cfg.initial_cash,cfg.initial_cash,1,1,0,0,0))
+    policy = theme_policy(bundle)
+    limitations = ['Adjusted-price whole-share virtual account; not broker cash-flow reconstruction.',
+                  'Evidence declarations are checked structurally, not independently certified.']
+    if policy == 'none': limitations.append('Theme cap disabled; theme exposure is unknown, not zero.')
+    elif policy == 'representative': limitations.append('Representative-theme cap only; all-theme concentration is unverified.')
+    elif policy == 'legacy_declared': limitations.append('Legacy theme/price/calendar provenance has no v3 evidence gate.')
+    if bundle['schema'] == 'account-input-v2':
+        limitations.append('Legacy v2 input: calendar and price verification evidence is not required; diagnostic only.')
+    if policy == 'none':
+        for account in accounts.values(): account['max_theme_weight'] = None
     return dict(version=VERSION,as_of=as_of,config=dataclasses.asdict(cfg),input_sha256=digest(bundle),
+                theme_policy=policy,limitations=limitations,
                 diagnostics=diagnostics,ledger_warnings=issues,accounts=accounts,benchmarks=benchmarks)
 
 
@@ -288,7 +336,9 @@ def report(result):
              '동기화한 일별 종가 MDD이며 장중 MDD·실체결은 미검증입니다. 비동기 마크 보간은 없습니다.',
              '동일 수정주가 기준 가상 수량 모형입니다. 실제 배당/권리처리 현금흐름 계좌와 다를 수 있습니다.',
              '비용·슬리피지는 고정 가정이며 실측값이 아닙니다. 상한은 신규 매수에 적용하며 이후 비중 변동으로 강제매도하지 않습니다.','',
-             f"입력 SHA256: `{result['input_sha256']}`",'',
+             f"테마 정책: `{result['theme_policy']}` — none은 테마 제한 미적용, representative는 대표 테마만 제한.",
+             '테마 정보 부족은 테마 소속 없음이 아닙니다. 모드별 수익률/MDD를 상한·하한으로 해석하지 않습니다.',
+             *result['limitations'],'',f"입력 SHA256: `{result['input_sha256']}`",'',
              '| 계좌 | 수익률 | 종가 MDD | 확정 거래 승률 | 종료/열린 포지션 | 거절 |',
              '|---|---:|---:|---:|---:|---:|']
     for name,r in {**result['accounts'],**{'index:'+k:v for k,v in result['benchmarks'].items()}}.items():
