@@ -171,7 +171,7 @@ def build_source(rows, sessions, prices, as_of, horizon_of,
     return source, gaps
 
 
-def gap_report(gaps, as_of):
+def gap_report(gaps, as_of, include_samples=False):
     L = [f"# 📋 계좌 입력 자료 준비 상태 — {as_of}", "",
          "> 어댑터는 **확인한 것만** 채운다. 아래가 0 이 아니면 v3 게이트가 막는다.",
          "> 막히는 것이 정상이다 — 무엇이 모자란지 알려주는 것이 이 표의 목적이다.", "",
@@ -189,7 +189,9 @@ def gap_report(gaps, as_of):
               "그 이전 진입분은 거래정지 여부를 확인할 방법이 없다.",
               "**양수 가격이나 거래량으로 추정하지 않는다** — 거래정지 종목이 정상",
               "매매된 것처럼 계산되면 수익률이 통째로 거짓이 된다.", "",
-              f"예: {', '.join(gaps['sample_tradable_missing'])}", "",
+              *([f"예: {', '.join(gaps['sample_tradable_missing'])}", ""]
+                if include_samples else
+                ["> 종목코드 예시는 뺐다 — 원장은 비공개이고 이 리포트는 커밋된다.", ""]),
               "### 선택지", "",
               "1. **창을 첫 스냅샷 이후로 좁힌다** — 표본은 줄지만 전 구간이 검증된다",
               "2. 거래정지 이력을 별도 공급자에서 받아 채운다",
@@ -393,6 +395,70 @@ def self_test():
     return 0 if ok else 1
 
 
+def main(argv=None):
+    import argparse
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--self-test", action="store_true")
+    ap.add_argument("--gaps-only", action="store_true",
+                    help="가격을 받지 않고 **거래상태 결손만** 잰다. 첫 실행은 이걸로.")
+    ap.add_argument("--days", type=int, default=120,
+                    help="거래일 달력을 몇 개 받을지. 기본값 없이 명시하는 것이 원칙이나 "
+                         "달력은 종목이 아니라 시장 단위라 넉넉히 받는다.")
+    ap.add_argument("--out", default=None)
+    a = ap.parse_args(argv)
+    if a.self_test:
+        return self_test()
+
+    import gspread
+    from oauth2client.service_account import ServiceAccountCredentials
+    scope = ["https://spreadsheets.google.com/feeds",
+             "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
+    doc = gspread.authorize(creds).open_by_url(
+        "https://docs.google.com/spreadsheets/d/"
+        "1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit")
+    rows = doc.worksheet("백테스트_로그").get_all_values()      # 읽기 전용
+    today = datetime.datetime.now(KST).strftime("%Y-%m-%d")
+
+    # 거래일 달력 — 지수 일봉에서. ⚠️ 이걸 **독립 검증 자료로 쓰지 않는다.**
+    sessions = sorted({b["date"] for b in fetch_bars("KOSPI", a.days)})
+    print(f"📅 거래일 {len(sessions)}일 ({sessions[0]} ~ {sessions[-1]})")
+
+    from hyeoks_verdict import HORIZON, DEFAULT_HORIZON
+    horizon_of = lambda ch: HORIZON.get(ch, DEFAULT_HORIZON)
+
+    need, unknown_entry = required_cells(rows, sessions, horizon_of)
+    snaps = [d for d in snapshot_dates() if d in set(sessions)]
+    known, missing, _have = coverage(need, snaps)
+    codes = {c for c, _ in need}
+    ent = sorted({d for _, d in need})
+    gaps = {
+        "required_cells": len(need), "tradable_known": len(known),
+        "tradable_missing": len(missing), "price_missing": 0,
+        "snapshot_dates_in_window": len(snaps),
+        "first_snapshot": snaps[0] if snaps else None,
+        "entry_not_in_calendar": len(unknown_entry),
+        "sample_tradable_missing": [f"{c}@{d}" for c, d in missing[:5]],
+        "sample_price_missing": [],
+    }
+    print(f"📒 원장 {len(rows) - 1}행 · 고유 종목 {len(codes)}개 · "
+          f"필요 칸 {len(need)} ({ent[0]} ~ {ent[-1]})")
+    print(f"🚧 거래상태 결손 {len(missing)} / {len(need)}")
+
+    md = gap_report(gaps, today)
+    if not a.gaps_only:
+        md += ("\n> ⚠️ `--gaps-only` 가 아니면 가격도 받아야 하는데 이번 실행은\n"
+               "> 결손 측정만 했다. 창을 정한 뒤 가격을 받는 것이 순서다.\n")
+    path = a.out or f"data/account/{today}_source_gaps.md"
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(md)
+    print(f"💾 저장: {path}")
+    print()
+    print(md)
+    return 0
+
+
 if __name__ == "__main__":
     import sys
-    sys.exit(self_test())
+    sys.exit(main())

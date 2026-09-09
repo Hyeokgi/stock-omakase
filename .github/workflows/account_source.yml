@@ -1,0 +1,91 @@
+name: 📋 HYEOKS 계좌 입력 자료 준비 상태
+
+# 목적: 계좌 재구성에 필요한 자료가 실제로 얼마나 있는지 **센다.**
+#       특히 거래상태(tradeStopYn)는 15:05 스냅샷에만 있고 스냅샷은 8/28 부터인데
+#       원장 진입일은 8/10 부터다. 그 간극이 몇 칸인지가 창을 좁힐지 판단의 근거다.
+#
+# ⚠️ 이 워크플로는 v3 입력을 만들지 않는다. 어댑터는 확인하지 못한 것에
+#    verified 를 넣지 않으므로 산출물은 대개 **빌더가 막는 입력**이고 그게 맞다.
+#
+# 읽기 전용: 시트를 읽기만 한다. 락은 메인 스캐너와 공유한다(찢어진 읽기 방지).
+
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: '거래일 달력을 몇 개 받을지'
+        required: false
+        default: '120'
+        type: string
+
+concurrency:
+  group: hyeoks-sheet-lock
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  source-gaps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - name: 📥 코드 가져오기
+      uses: actions/checkout@v4
+
+    - name: 🐍 파이썬 세팅
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: 📦 라이브러리 설치
+      run: |
+        python -m pip install --upgrade pip
+        pip install gspread oauth2client requests
+
+    - name: 🧪 어댑터 자기검증
+      # 파싱·캐시·TLS·자가인증 금지가 여기서 확인된다. 깨지면 수집할 이유가 없다.
+      run: python account_source_adapter.py --self-test
+
+    - name: 🔑 비밀번호 파일(secret.json) 만들기
+      env:
+        GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+      run: echo "$GCP_CREDENTIALS" > secret.json
+
+    - name: 📋 자료 준비 상태 측정
+      id: run
+      run: |
+        set +e
+        python account_source_adapter.py --gaps-only --days "${{ inputs.days }}" 2>&1 | tee source.txt
+        echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        exit 0
+
+    - name: 🧹 자격증명 삭제
+      if: always()
+      run: rm -f secret.json
+
+    - name: 📋 실행 로그 보관
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: source-gaps-log
+        path: source.txt
+        retention-days: 90
+
+    - name: 💾 리포트 커밋
+      # 리포트는 건수와 날짜 범위만 담는다(종목코드 예시는 기본으로 빠진다).
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add data/account/ || true
+        git diff --staged --quiet || git commit -m "data: 계좌 입력 자료 준비 상태 $(date -u +%Y-%m-%d) [skip ci]"
+        git push
+
+    - name: 🚦 실패 시 잡 실패 처리
+      run: |
+        if [ "${{ steps.run.outputs.exit_code }}" != "0" ]; then
+          echo "❌ 어댑터가 0이 아닌 코드로 종료했습니다"
+          exit 1
+        fi
+        echo "✅ 정상 종료"
