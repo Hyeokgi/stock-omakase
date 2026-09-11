@@ -737,6 +737,13 @@ def milestone_rows(data, raw, bydate, today):
             "ch_span": (min(a_days), max(a_days)) if a_days else None,
             "ct_span": (min(b_days), max(b_days)) if b_days else None,
             "outside": sorted(set(b_days) - set(a_days)),
+            # 채널 **자기 구간 안**에서 며칠을 빠뜨렸나. 구간 밖은 세지 않는다 —
+            # 그건 채널이 아직 시작 안 했거나 아직 성숙 안 한 날이다.
+            "inside_gap": (sorted(d for d in b_days
+                                  if min(a_days) <= d <= max(a_days) and d not in a_days)
+                           if a_days and b_days else []),
+            "span_days": (len([d for d in b_days if min(a_days) <= d <= max(a_days)])
+                          if a_days and b_days else 0),
         })
     return out
 
@@ -786,6 +793,29 @@ def milestone_report(rows, today, scheduled):
             A(f"- **{r['ch']}** 진입일 {r['ch_span'][0]}~{r['ch_span'][1]} · "
               f"대조군 {r['ct_span'][0]}~{r['ct_span'][1]} "
               f"(대조군 {r['ct_n']}행 / {r['ct_days']}일)")
+    A("")
+    A("## 채널이 자기 구간 안에서 며칠을 빠뜨렸나")
+    A("")
+    A("대조군은 매 거래일 2건을 낸다. 그래서 **대조군이 있는 날 중 채널이 없는 날**은")
+    A("그 채널이 그날 추천을 못 냈다는 뜻이다. ⚠️ **그 이유는 이 표로 알 수 없다** —")
+    A("정상 무신호일 수도, 게이트 모순으로 죽어 있었을 수도, 수집 실패일 수도 있다.")
+    A("실행 로그와 대조하지 않았으므로 **누락이라고 단정하지 않는다.**")
+    A("")
+    A("| 갈래 | 진입일 구간 | 구간 안 거래일 | 채널이 낸 날 | 빠뜨린 날 | 가동률 |")
+    A("|---|---|--:|--:|--:|--:|")
+    for r in rows:
+        if not r["ch_span"]:
+            A(f"| {r['ch']} | — | — | — | — | — |")
+            continue
+        ran = r["span_days"] - len(r["inside_gap"])
+        rate = (ran / r["span_days"] * 100) if r["span_days"] else None
+        A(f"| {r['ch']} | {r['ch_span'][0]}~{r['ch_span'][1]} | {r['span_days']} | "
+          f"{ran} | **{len(r['inside_gap'])}** | "
+          f"{('%.0f%%' % rate) if rate is not None else '—'} |")
+    A("")
+    A("가동률이 낮으면 **채널이 간헐적으로만 돌고 있다**는 뜻이다. 성숙 표본이 느리게")
+    A("쌓이는 원인이 문턱이 아니라 가동일 수 있으므로, 필요 N 까지의 기간 추정도 그만큼")
+    A("길어진다. 빠뜨린 날의 사유 구분은 §6-12 의 거래일 달력·실행 로그 대조가 필요하다.")
     A("")
     A("**날짜 불일치 몫**이 0 에서 멀면, Welch 의 차이 중 그만큼은 실력이 아니라")
     A("**두 표본이 다른 날짜를 보고 있었다는 사실**이다. 항등식은 이렇다.")
@@ -1513,6 +1543,22 @@ def self_test():
         _g["ct_all"] > _g["ct_pair"] + 5, f"전체={_g['ct_all']:.2f} 겹친={_g['ct_pair']:.2f}")
     chk("겹친 날 대조군 평균은 그 영향을 안 받는다",
         abs(_g["ct_pair"] - 0.65) < 1e-9, f"{_g['ct_pair']}")
+    # 구간 안 결손 — 구간 **밖**을 세면 안 된다. 밖은 아직 시작 안 했거나 미성숙이다.
+    _cov = [hdrb]
+    for dd in ("2026-07-01", "2026-07-03"):                  # 채널이 낸 날 (2일)
+        _cov += [mkb("리포트TOP2_단기", 3.0, 0.0, dd)]
+    for dd in ("2026-07-01", "2026-07-02", "2026-07-03"):    # 구간 안 대조군 (3일)
+        _cov += [mkb(CONTROL, 1.0, 0.0, dd)]
+    for dd in ("2026-06-20", "2026-08-01"):                  # 구간 **밖** 대조군
+        _cov += [mkb(CONTROL, 1.0, 0.0, dd)]
+    _cd, _cr, _cs, _cb = collect(_cov, today=_T)
+    _c = next(r for r in milestone_rows(_cd, _cr, _cb, "x") if r["ch"] == "리포트TOP2_단기")
+    chk("구간 안 거래일만 센다(밖 2일은 제외)", _c["span_days"] == 3, f"{_c['span_days']}")
+    chk("빠뜨린 날은 07-02 하나뿐", _c["inside_gap"] == ["2026-07-02"], f"{_c['inside_gap']}")
+    chk("가동률이 리포트에 찍힌다", "가동률" in milestone_report([_c], "x", False))
+    chk("사유를 단정하지 않는다고 밝힌다",
+        "누락이라고 단정하지 않는다" in milestone_report([_c], "x", False))
+
     # 부호 방향 — 처음에 리포트에 거꾸로 적었다. 항등식으로 못 박는다.
     #   짝 차이 = Welch 차이 − 불일치 몫
     # 여기서는 대조군이 바깥 날에 크게 벌어 전체 평균이 높으므로 몫이 **음수**이고,
