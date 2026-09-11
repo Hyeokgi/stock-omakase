@@ -716,8 +716,28 @@ def milestone_rows(data, raw, bydate, today):
             stat = "짝"
         hit = (n >= MIN_N and t is not None and t >= T_SURVIVE)
         need = n * (T_SURVIVE / t) ** 2 if (t and t > 0 and n) else None
-        out.append({"ch": ch, "h": h, "n": n, "raw": raw.get(ch, 0), "k": k,
-                    "t": t, "mean": mean, "stat": stat, "hit": hit, "need": need})
+
+        # ── 왜 Welch 와 짝 t 가 다른가를 분해한다 ──────────────────────────
+        # Welch 는 대조군의 **전체** 표본을 쓴다. 대조군이 채널보다 긴 기간에
+        # 걸쳐 있으면, 그 바깥 날짜의 성적이 비교에 섞여 들어온다.
+        cvals = ctrl.get(h, [])
+        a_days = bydate.get(ch, {}).get(h, {}) if bydate else {}
+        b_days = bydate.get(CONTROL, {}).get(h, {}) if bydate else {}
+        both = sorted(set(a_days) & set(b_days))
+        avg = lambda xs: (sum(xs) / len(xs)) if xs else None
+        ch_all = avg(vals)
+        ct_all = avg(cvals)
+        ch_pair = avg([v for d in both for v in a_days[d]])
+        ct_pair = avg([v for d in both for v in b_days[d]])
+        out.append({
+            "ch": ch, "h": h, "n": n, "raw": raw.get(ch, 0), "k": k,
+            "t": t, "mean": mean, "stat": stat, "hit": hit, "need": need,
+            "ch_all": ch_all, "ct_all": ct_all, "ch_pair": ch_pair, "ct_pair": ct_pair,
+            "ct_n": len(cvals), "ct_days": len(b_days),
+            "ch_span": (min(a_days), max(a_days)) if a_days else None,
+            "ct_span": (min(b_days), max(b_days)) if b_days else None,
+            "outside": sorted(set(b_days) - set(a_days)),
+        })
     return out
 
 
@@ -746,6 +766,30 @@ def milestone_report(rows, today, scheduled):
     A("")
     A(f"`N(행)` 은 §3-1 정의(행 수)이고 `짝 날짜` 는 §3-5-2 검정의 자유도 근거다. "
       f"문턱 `N≥{MIN_N}` 은 **행 수** 기준이다.")
+    A("")
+    A("## 왜 Welch 와 짝 t 가 다른가 — 분해")
+    A("")
+    A("Welch 는 대조군의 **전체** 표본을 쓴다. 대조군이 채널보다 긴 기간에 걸쳐 있으면")
+    A("**그 바깥 날짜의 성적이 비교에 섞인다.** 짝 검정은 겹치는 날만 쓰므로 그게 빠진다.")
+    A("")
+    A("| 갈래 | 채널 평균 | 대조군 전체 평균 | 대조군 **겹친 날** 평균 | 날짜 불일치 몫 | 겹치지 않는 대조군 날 |")
+    A("|---|--:|--:|--:|--:|--:|")
+    for r in rows:
+        f = lambda v: "{:+.2f}%".format(v) if v is not None else "—"
+        gap = (r["ct_pair"] - r["ct_all"]) if (r["ct_pair"] is not None
+                                              and r["ct_all"] is not None) else None
+        A(f"| {r['ch']} | {f(r['ch_pair'])} | {f(r['ct_all'])} | {f(r['ct_pair'])} | "
+          f"{f(gap)} | {len(r['outside'])}일 |")
+    A("")
+    for r in rows:
+        if r["ch_span"] and r["ct_span"]:
+            A(f"- **{r['ch']}** 진입일 {r['ch_span'][0]}~{r['ch_span'][1]} · "
+              f"대조군 {r['ct_span'][0]}~{r['ct_span'][1]} "
+              f"(대조군 {r['ct_n']}행 / {r['ct_days']}일)")
+    A("")
+    A("**날짜 불일치 몫**이 0 에서 멀면, Welch 의 차이 중 그만큼은 실력이 아니라")
+    A("**두 표본이 다른 날짜를 보고 있었다는 사실**이다. 부호가 양수면 Welch 가 채널을")
+    A("과소평가하고 있었고, 음수면 과대평가하고 있었다.")
     A("")
     if any(r["hit"] for r in rows):
         A("## 🎯 1차 문턱을 넘은 갈래가 있다")
@@ -1447,6 +1491,26 @@ def self_test():
     _f1 = next(r for r in milestone_rows(_fd, _fr, _fb, "x") if r["ch"] == "리포트TOP2_단기")
     chk("N<30 이면 t 가 커도 1차가 아니다", (not _f1["hit"]) and _f1["n"] == 6,
         f"N={_f1['n']} t={_f1['t']}")
+
+    # 날짜 불일치 분해 — 대조군이 채널보다 긴 기간에 걸쳐 있을 때가 핵심이다.
+    # 겹치는 3일은 대조군이 평범하고, 바깥 3일은 대조군이 크게 벌었다고 만든다.
+    # 그러면 Welch 는 대조군 전체 평균이 높아져 채널을 과소평가한다.
+    _gap = [hdrb]
+    for dd in ("2026-07-01", "2026-07-02", "2026-07-03"):        # 겹치는 날
+        _gap += [mkb("리포트TOP2_단기", 3.0, 0.0, dd), mkb(CONTROL, 1.0, 0.0, dd)]
+    for dd in ("2026-06-01", "2026-06-02", "2026-06-03"):        # 대조군만 있는 날
+        _gap += [mkb(CONTROL, 21.0, 0.0, dd)]
+    _gd, _gr, _gs, _gb = collect(_gap, today=_T)
+    _g = next(r for r in milestone_rows(_gd, _gr, _gb, "x") if r["ch"] == "리포트TOP2_단기")
+    chk("겹치지 않는 대조군 날을 센다", len(_g["outside"]) == 3, f"{_g['outside']}")
+    chk("대조군 전체 평균은 바깥 날에 끌려 올라간다",
+        _g["ct_all"] > _g["ct_pair"] + 5, f"전체={_g['ct_all']:.2f} 겹친={_g['ct_pair']:.2f}")
+    chk("겹친 날 대조군 평균은 그 영향을 안 받는다",
+        abs(_g["ct_pair"] - 0.65) < 1e-9, f"{_g['ct_pair']}")
+    chk("불일치 몫이 리포트에 찍힌다",
+        "날짜 불일치 몫" in milestone_report([_g], "x", False))
+    chk("표본 기간도 같이 찍는다",
+        "2026-06-01" in milestone_report([_g], "x", False))
 
     # 🔒 반복 관찰 방어 — 수동 실행은 1차를 확정하지 못한다고 본문에 적혀야 한다.
     _manual = milestone_report(_ms, "2026-01-01", False)
