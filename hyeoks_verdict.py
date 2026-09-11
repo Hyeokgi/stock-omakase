@@ -690,6 +690,80 @@ def holm(pairs, m=None):
 
 
 # ── 리포트 ────────────────────────────────────────────────────────────────
+# §3-5-5 — 주력(탐색) 갈래의 1차 문턱 감시 대상. §0-1 의 주력 정의를 따른다.
+EXPLORATORY = ("리포트TOP2_단기", "리포트TOP2_중기", "리포트TOP2_장기")
+
+
+def milestone_rows(data, raw, bydate, today):
+    """탐색 1차(§3-5 계층2) 도달 여부를 센다. **판정이 아니라 관측이다.**
+
+    1차 = `N ≥ 30` 이고 `t ≥ 2.0` (다중비교 보정 없음). t 는 §3-5-2 의 짝 t 다.
+    N 은 §3-1 정의 그대로 **행 수**이고, 짝 t 의 자유도는 날짜 수라 둘이 다르다.
+    둘을 섞지 않고 **나란히 적는다** — 같은 'N' 이라는 말이 두 가지를 뜻하면
+    언젠가 한쪽 숫자로 다른 쪽 문턱을 넘었다고 말하게 된다.
+    """
+    ctrl = data.get(CONTROL, {})
+    out = []
+    for ch in EXPLORATORY:
+        h = HORIZON.get(ch, DEFAULT_HORIZON)
+        vals = data.get(ch, {}).get(h, [])
+        n = len(vals)
+        t, df, k, mean = paired_by_date(bydate, ch, h) if bydate else (None, None, 0, None)
+        if t is None:                      # 짝이 안 서면 Welch 로 적되 그렇다고 밝힌다
+            t, df = welch(vals, ctrl.get(h, []))
+            stat = "Welch(짝 미성립)"
+        else:
+            stat = "짝"
+        hit = (n >= MIN_N and t is not None and t >= T_SURVIVE)
+        need = n * (T_SURVIVE / t) ** 2 if (t and t > 0 and n) else None
+        out.append({"ch": ch, "h": h, "n": n, "raw": raw.get(ch, 0), "k": k,
+                    "t": t, "mean": mean, "stat": stat, "hit": hit, "need": need})
+    return out
+
+
+def milestone_report(rows, today, scheduled):
+    L = [f"# 🎯 주력 1차 문턱 관측 — {today}", ""]
+    A = L.append
+    A("> **판정이 아니다.** §3-5 계층 2 의 1차 문턱(`N≥30` 이고 `t≥2.0`, **보정 없음**)에")
+    A("> 얼마나 왔는지만 센다. 1차를 넘어도 채택이 아니다 — 그다음 4주 새 표본에서")
+    A("> **재현**해야 한다(§3-5 계층 2).")
+    A("")
+    if scheduled:
+        A("✅ **정기 관측이다.** §3-5-5 에 따라 이 기록만 1차 달성일을 확정할 수 있다.")
+    else:
+        A("⚠️ **수동 실행이다. 참고용이며 1차를 확정하지 않는다**(§3-5-5).")
+        A("> 아무 때나 들여다보고 넘은 날을 1차로 잡으면 **날짜를 데이터가 고르게 된다.**")
+        A("> 1차 달성일은 4주 재현 창의 시작점이라 그 편향이 재현까지 오염시킨다.")
+    A("")
+    A("| 갈래 | H | 원시행 | N(행) | 짝 날짜 | 평균 차이 | t | 통계량 | 1차 | 1차까지 필요 N |")
+    A("|---|--:|--:|--:|--:|--:|--:|---|:--:|--:|")
+    for r in rows:
+        f = lambda v, s="{:+.2f}%": s.format(v) if v is not None else "—"
+        A(f"| {r['ch']} | T+{r['h']} | {r['raw']} | {r['n']} | {r['k'] or '—'} | "
+          f"{f(r['mean'])} | {('%.2f' % r['t']) if r['t'] is not None else '—'} | "
+          f"{r['stat']} | {'✅' if r['hit'] else '—'} | "
+          f"{('%.0f' % r['need']) if r['need'] else '—'} |")
+    A("")
+    A(f"`N(행)` 은 §3-1 정의(행 수)이고 `짝 날짜` 는 §3-5-2 검정의 자유도 근거다. "
+      f"문턱 `N≥{MIN_N}` 은 **행 수** 기준이다.")
+    A("")
+    if any(r["hit"] for r in rows):
+        A("## 🎯 1차 문턱을 넘은 갈래가 있다")
+        A("")
+        for r in rows:
+            if r["hit"]:
+                A(f"- **{r['ch']}** — N={r['n']} · t={r['t']:.2f}")
+        A("")
+        A("**아직 채택이 아니다.** 이 날짜부터 4주 뒤까지의 **새 표본**에서 같은 방향으로")
+        A(f"`t ≥ {T_SURVIVE}` 를 다시 넘어야 한다. 그전에는 §6-9 처럼 **방향만 기록**한다.")
+    else:
+        A("아직 1차를 넘은 갈래가 없다. **문턱을 낮추지 않는다.**")
+    A("")
+    A("⚠️ 표본이 작을수록 평균이 크게 튄다. **가장 큰 숫자가 가장 작은 칸에서 나왔다면**")
+    A("그것은 우연의 전형적인 모습이고, 재현 요구는 바로 그 경우를 거르라고 있는 것이다.")
+    return "\n".join(L) + "\n"
+
+
 def build_report(data, raw, skipped, today, bydate=None):
     ctrl = data.get(CONTROL, {})
     rows_out, conf = [], []
@@ -1348,6 +1422,44 @@ def self_test():
         "짝 검정이 하나도 성립하지 않았다" in _md2)
 
 
+    print("🧪 §3-5-5 주력 1차 문턱 관측 (2026-09-11)")
+    _ms_rows = [hdrb]
+    for i in range(16):
+        dd = "2026-07-%02d" % (1 + i)
+        _ms_rows += [mkb("리포트TOP2_단기", 4.0 + (i % 3), 0.0, dd),
+                     mkb("리포트TOP2_단기", 4.2 + (i % 3), 0.0, dd),
+                     mkb(CONTROL, 0.1 if i % 2 else -0.1, 0.0, dd)]
+    _md_, _mraw, _msk_, _mbd_ = collect(_ms_rows, today=_T)
+    _ms = milestone_rows(_md_, _mraw, _mbd_, "2026-01-01")
+    _sh = next(r for r in _ms if r["ch"] == "리포트TOP2_단기")
+    chk("N 은 행 수, 짝 날짜는 따로 센다 — 섞지 않는다",
+        _sh["n"] == 32 and _sh["k"] == 16, f"N={_sh['n']} 날짜={_sh['k']}")
+    chk("N≥30 이고 t≥2.0 이면 1차 표시", _sh["hit"], f"t={_sh['t']:.2f}")
+    chk("문턱 N 은 행 수 기준이라고 적는다",
+        "문턱 `N≥30` 은 **행 수** 기준" in milestone_report(_ms, "2026-01-01", True))
+
+    # 표본이 모자라면 t 가 아무리 커도 1차가 아니다.
+    _few = [hdrb]
+    for i in range(6):
+        dd = "2026-07-%02d" % (1 + i)
+        _few += [mkb("리포트TOP2_단기", 9.0 + i, 0.0, dd), mkb(CONTROL, 0.1 if i % 2 else -0.1, 0.0, dd)]
+    _fd, _fr, _fs, _fb = collect(_few, today=_T)
+    _f1 = next(r for r in milestone_rows(_fd, _fr, _fb, "x") if r["ch"] == "리포트TOP2_단기")
+    chk("N<30 이면 t 가 커도 1차가 아니다", (not _f1["hit"]) and _f1["n"] == 6,
+        f"N={_f1['n']} t={_f1['t']}")
+
+    # 🔒 반복 관찰 방어 — 수동 실행은 1차를 확정하지 못한다고 본문에 적혀야 한다.
+    _manual = milestone_report(_ms, "2026-01-01", False)
+    chk("수동 실행이면 1차를 확정하지 않는다고 밝힌다",
+        "1차를 확정하지 않는다" in _manual and "날짜를 데이터가 고르게" in _manual)
+    chk("정기 관측이면 확정 가능하다고 밝힌다",
+        "이 기록만 1차 달성일을 확정" in milestone_report(_ms, "2026-01-01", True))
+    chk("1차를 넘어도 재현이 남았다고 적는다", "아직 채택이 아니다" in _manual)
+    chk("아무도 못 넘으면 문턱을 낮추지 않는다고 적는다",
+        "문턱을 낮추지 않는다" in milestone_report(
+            [dict(r, hit=False) for r in _ms], "2026-01-01", True))
+
+
     print("\n" + ("✅ 전부 통과" if ok else "❌ 실패 있음 — 판정을 돌리지 말 것"))
     return 0 if ok else 1
 
@@ -1357,6 +1469,10 @@ def main():
     ap.add_argument("--self-test", action="store_true", help="통계·판정 로직만 검증(시트 접근 없음)")
     ap.add_argument("--out", default="", help="출력 파일 경로. 비우면 docs/판정_<오늘>.md")
     ap.add_argument("--stdout-only", action="store_true", help="파일로 쓰지 않고 화면에만")
+    ap.add_argument("--milestone", action="store_true",
+                    help="주력(탐색) 1차 문턱 관측만 한다. 판정 파일을 만들지 않는다")
+    ap.add_argument("--scheduled", action="store_true",
+                    help="정기 관측이다(§3-5-5). 이 표시가 있는 기록만 1차 달성일을 확정한다")
     ap.add_argument("--force", action="store_true",
                     help="같은 날짜 판정 파일이 있어도 덮어쓴다. 박제를 깨는 행위이므로 "
                          "정말 다시 만들어야 할 때만 쓴다")
@@ -1396,6 +1512,18 @@ def main():
         print("   상태가 상호배타가 아니거나 세는 곳이 빠졌다는 뜻이다(3차 재검증 2-1).")
         return 2
     print(f"🔢 행 상태 합계 검증 — 원시 {_rows_n}행 = 상태 합계 {_total_n} ✅")
+    if a.milestone:
+        ms = milestone_rows(data, raw, bydate, today)
+        text = milestone_report(ms, today, a.scheduled)
+        print(text)
+        if not a.stdout_only:
+            os.makedirs("data/milestone", exist_ok=True)
+            path = a.out or f"data/milestone/{today}.md"
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            print(f"저장: {path}")
+        return 0
+
     md, rows_out, conf, passed = build_report(data, raw, skipped, today, bydate)
 
     # ── F07 ② 근거를 판정표에 박아 넣는다 ────────────────────────────────

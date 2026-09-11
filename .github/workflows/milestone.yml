@@ -1,0 +1,83 @@
+name: 🎯 HYEOKS 주력 1차 문턱 관측
+
+# 목적: 주력(리포트 단기·중기·장기)이 §3-5 계층2 의 1차 문턱에 얼마나 왔는지 센다.
+#
+# ⚠️ **이건 판정이 아니라 관측이다.** 1차를 넘어도 채택이 아니고, 그다음 4주
+#    새 표본에서 재현해야 한다.
+#
+# 🔒 **왜 주 1회 고정인가** — 매일 들여다보다가 t 가 2.0 을 넘는 첫날을 1차로
+#    잡으면 그 날짜를 데이터가 고르게 된다. 1차 달성일은 4주 재현 창의
+#    시작점이라 그 편향이 재현까지 오염시킨다. 그래서 **보는 날을 미리 고정**한다.
+#    수동 실행도 가능하지만 --scheduled 가 안 붙어 1차를 확정하지 못한다(§3-5-5).
+#
+# 시트는 읽기만 한다. 원장 내용은 커밋하지 않는다 — 채널별 N·t 집계뿐이고,
+# 그건 docs/판정_*.md 가 이미 공개하는 것과 같은 종류다.
+
+on:
+  schedule:
+    - cron: '0 8 * * 1'      # 매주 월요일 17:00 KST (장 마감 후). UTC 08:00
+  workflow_dispatch:          # 참고용 수동 실행 — 1차 확정은 못 한다
+
+concurrency:
+  group: hyeoks-sheet-lock
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  milestone:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - name: 📥 코드 가져오기
+      uses: actions/checkout@v4
+
+    - name: 🐍 파이썬 세팅
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: 📦 라이브러리 설치
+      run: |
+        python -m pip install --upgrade pip
+        pip install gspread oauth2client
+
+    - name: 🧪 판정기 자기검증
+      # 깨진 판정기로 관측하면 틀린 숫자를 기록에 남긴다.
+      # 파이프를 쓰지 않는다 — 종료코드가 삼켜진다.
+      run: python hyeoks_verdict.py --self-test
+
+    - name: 🔑 비밀번호 파일(secret.json) 만들기
+      env:
+        GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+      run: echo "$GCP_CREDENTIALS" > secret.json
+
+    - name: 🎯 1차 문턱 관측
+      # schedule 로 돈 것만 --scheduled 가 붙는다. 수동 실행은 참고용이다.
+      run: |
+        python hyeoks_verdict.py --milestone \
+          ${{ github.event_name == 'schedule' && '--scheduled' || '' }}
+
+    - name: 🧹 자격증명 삭제
+      if: always()
+      run: rm -f secret.json
+
+    - name: 📌 기록 커밋
+      run: |
+        git config user.name  "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add data/milestone/
+        if git diff --staged --quiet; then
+          echo "바뀐 기록 없음"
+          exit 0
+        fi
+        git commit -m "data: 주력 1차 문턱 관측 $(date -u +%Y-%m-%d) [skip ci]"
+        for i in 2 4 8 16; do
+          git push && exit 0
+          echo "푸시 실패 — ${i}초 뒤 재시도"
+          sleep $i
+        done
+        echo "::error::푸시가 끝내 실패했다"
+        exit 1
