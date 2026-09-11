@@ -773,6 +773,21 @@ def milestone_rows(data, raw, bydate, today):
     for r in out:
         cal = sorted(d for d in bydate.get(CONTROL, {}).get(r["h"], {})) if bydate else []
         r["runs"] = gap_runs(cal, r["inside_gap"])
+        # 월별 결손률 — 특정 달에 몰려 있고 그 뒤 줄었으면 그 달에 뭔가 고쳐진 것이다.
+        months = {}
+        span = ((r["ch_span"][0], r["ch_span"][1]) if r["ch_span"] else None)
+        if span:
+            for d in cal:
+                if not (span[0] <= d <= span[1]):
+                    continue
+                months.setdefault(d[:7], {"cal": 0, "gap": 0, "big": 0})["cal"] += 1
+            for d in r["inside_gap"]:
+                if d[:7] in months:
+                    months[d[:7]]["gap"] += 1
+            for run in r["runs"]:
+                if len(run) >= 3 and run[0][:7] in months:
+                    months[run[0][:7]]["big"] += 1
+        r["months"] = months
     return out
 
 
@@ -866,6 +881,22 @@ def milestone_report(rows, today, scheduled):
             A(f"- **{r['ch']}** 3일 이상 덩어리 {len(big)}개:")
             for x in big[:6]:
                 A(f"  - {x[0]} ~ {x[-1]} ({len(x)}일)")
+    A("")
+    A("### 결손일의 월별 분포 — 고쳐졌나")
+    A("")
+    A("| 갈래 | 월 | 구간 안 거래일 | 빠뜨린 날 | 결손률 | 3일+ 덩어리 |")
+    A("|---|---|--:|--:|--:|--:|")
+    for r in rows:
+        if not r.get("months"):
+            continue
+        for mo in sorted(r["months"]):
+            m = r["months"][mo]
+            rate = (m["gap"] / m["cal"] * 100) if m["cal"] else None
+            A(f"| {r['ch']} | {mo} | {m['cal']} | {m['gap']} | "
+              f"{('%.0f%%' % rate) if rate is not None else '—'} | {m['big']} |")
+    A("")
+    A("**결손률이 특정 월에 몰려 있고 그 뒤로 줄었다면**, 그 달에 있던 무엇이 고쳐졌다는")
+    A("뜻이다. 고르게 퍼져 있다면 상시적인 무신호 쪽이다.")
     A("")
     A("⚠️ **모양은 증거지 증명이 아니다.** 무신호와 고장이 섞여 있을 수 있고, 긴 덩어리가")
     A("실제로 시장이 조용했던 구간일 수도 있다. 확정하려면 실행 로그 대조가 필요하다.")
@@ -1616,6 +1647,22 @@ def self_test():
     chk("입력 순서가 뒤섞여도 같은 결과",
         gap_runs(_cal, ["2026-07-06", "2026-07-02", "2026-07-03"]) ==
         [["2026-07-02", "2026-07-03", "2026-07-06"]])
+
+    # 월별 결손률 — 구간 밖 달은 세지 않아야 한다. 안 그러면 없는 달이 0% 로 찍혀
+    # "그 달엔 완벽했다"는 거짓 인상을 준다.
+    _mo = [hdrb]
+    for dd in ("2026-07-01", "2026-07-02", "2026-08-03", "2026-08-04"):
+        _mo += [mkb(CONTROL, 1.0, 0.0, dd)]
+    for dd in ("2026-07-01", "2026-08-03", "2026-08-04"):      # 7월 하루 빠짐
+        _mo += [mkb("리포트TOP2_단기", 3.0, 0.0, dd)]
+    _mod, _mor, _mos, _mob = collect(_mo, today=_T)
+    _m = next(r for r in milestone_rows(_mod, _mor, _mob, "x") if r["ch"] == "리포트TOP2_단기")
+    chk("구간 안의 달만 센다", sorted(_m["months"]) == ["2026-07", "2026-08"], f"{sorted(_m['months'])}")
+    chk("7월 결손 1일, 8월 0일",
+        _m["months"]["2026-07"]["gap"] == 1 and _m["months"]["2026-08"]["gap"] == 0,
+        f"{_m['months']}")
+    chk("월별 표가 리포트에 찍힌다",
+        "결손일의 월별 분포" in milestone_report([_m], "x", False))
 
     # 모양 판정 — 긴 덩어리가 있으면 고장 모양이라고 적는다.
     _base = {"ch": "리포트TOP2_단기", "h": 5, "n": 5, "raw": 5, "k": 5, "t": 1.0,
