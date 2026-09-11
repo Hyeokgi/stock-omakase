@@ -694,6 +694,30 @@ def holm(pairs, m=None):
 EXPLORATORY = ("리포트TOP2_단기", "리포트TOP2_중기", "리포트TOP2_장기")
 
 
+def gap_runs(calendar, missing):
+    """결손일을 **연속 덩어리**로 묶는다. 연속은 달력이 아니라 `calendar` 순서 기준이다.
+
+    왜 이걸 세나 — 사유를 원장만으로는 단정할 수 없지만 **모양은 말해 준다.**
+      · 하루씩 흩어져 있다        → 정상 무신호 모양 (그날 조건에 맞는 종목이 없었다)
+      · 긴 한 덩어리로 붙어 있다  → 고장 모양 (§3-2-0 의 F01 처럼 계속 못 냈다)
+    모양은 증거지 증명이 아니다. 둘이 섞여 있을 수도 있다.
+    """
+    idx = {d: i for i, d in enumerate(calendar)}
+    runs, cur = [], []
+    for d in sorted(missing, key=lambda x: idx.get(x, -1)):
+        if d not in idx:
+            continue
+        if cur and idx[d] == idx[cur[-1]] + 1:
+            cur.append(d)
+        else:
+            if cur:
+                runs.append(cur)
+            cur = [d]
+    if cur:
+        runs.append(cur)
+    return runs
+
+
 def milestone_rows(data, raw, bydate, today):
     """탐색 1차(§3-5 계층2) 도달 여부를 센다. **판정이 아니라 관측이다.**
 
@@ -745,6 +769,10 @@ def milestone_rows(data, raw, bydate, today):
             "span_days": (len([d for d in b_days if min(a_days) <= d <= max(a_days)])
                           if a_days and b_days else 0),
         })
+    # 결손 덩어리 — 대조군 날짜 순서를 거래일 달력 대신 쓴다.
+    for r in out:
+        cal = sorted(d for d in bydate.get(CONTROL, {}).get(r["h"], {})) if bydate else []
+        r["runs"] = gap_runs(cal, r["inside_gap"])
     return out
 
 
@@ -812,6 +840,38 @@ def milestone_report(rows, today, scheduled):
         A(f"| {r['ch']} | {r['ch_span'][0]}~{r['ch_span'][1]} | {r['span_days']} | "
           f"{ran} | **{len(r['inside_gap'])}** | "
           f"{('%.0f%%' % rate) if rate is not None else '—'} |")
+    A("")
+    A("### 결손일의 모양 — 흩어졌나, 붙었나")
+    A("")
+    A("사유는 원장만으로 단정할 수 없지만 **모양은 말해 준다.** 하루씩 흩어져 있으면")
+    A("정상 무신호 모양이고, 긴 한 덩어리면 고장 모양이다(§3-2-0 의 F01 처럼).")
+    A("")
+    A("| 갈래 | 결손 덩어리 수 | 가장 긴 덩어리 | 1일 덩어리 | 3일 이상 덩어리 | 모양 |")
+    A("|---|--:|--:|--:|--:|---|")
+    for r in rows:
+        rs = r.get("runs") or []
+        if not rs:
+            A(f"| {r['ch']} | 0 | — | — | — | 결손 없음 |")
+            continue
+        longest = max(len(x) for x in rs)
+        ones = sum(1 for x in rs if len(x) == 1)
+        threes = [x for x in rs if len(x) >= 3]
+        shape = ("**고장 모양** — 긴 덩어리가 있다" if longest >= 3
+                 else "무신호 모양 — 전부 1~2일" if longest <= 2 else "혼재")
+        A(f"| {r['ch']} | {len(rs)} | **{longest}일** | {ones} | {len(threes)} | {shape} |")
+    A("")
+    for r in rows:
+        big = [x for x in (r.get("runs") or []) if len(x) >= 3]
+        if big:
+            A(f"- **{r['ch']}** 3일 이상 덩어리 {len(big)}개:")
+            for x in big[:6]:
+                A(f"  - {x[0]} ~ {x[-1]} ({len(x)}일)")
+    A("")
+    A("⚠️ **모양은 증거지 증명이 아니다.** 무신호와 고장이 섞여 있을 수 있고, 긴 덩어리가")
+    A("실제로 시장이 조용했던 구간일 수도 있다. 확정하려면 실행 로그 대조가 필요하다.")
+    A("")
+    A("한 가지는 확실하다 — **수집 실패는 아니다.** 이 결손일은 모두 대조군 행이 있는 날로")
+    A("정의했고, 대조군 행이 있다는 것은 그날 스캐너가 돌고 원장에 썼다는 뜻이다.")
     A("")
     A("가동률이 낮으면 **채널이 간헐적으로만 돌고 있다**는 뜻이다. 성숙 표본이 느리게")
     A("쌓이는 원인이 문턱이 아니라 가동일 수 있으므로, 필요 N 까지의 기간 추정도 그만큼")
@@ -1543,6 +1603,35 @@ def self_test():
         _g["ct_all"] > _g["ct_pair"] + 5, f"전체={_g['ct_all']:.2f} 겹친={_g['ct_pair']:.2f}")
     chk("겹친 날 대조군 평균은 그 영향을 안 받는다",
         abs(_g["ct_pair"] - 0.65) < 1e-9, f"{_g['ct_pair']}")
+    # 결손 덩어리 — 연속은 **달력이 아니라 거래일 순서** 기준이어야 한다.
+    # 금요일과 다음 월요일은 달력으로 3일 떨어져 있지만 거래일로는 붙어 있다.
+    _cal = ["2026-07-01", "2026-07-02", "2026-07-03", "2026-07-06", "2026-07-07"]
+    chk("주말을 건너뛴 목·금·월은 한 덩어리",
+        gap_runs(_cal, ["2026-07-02", "2026-07-03", "2026-07-06"]) ==
+        [["2026-07-02", "2026-07-03", "2026-07-06"]])
+    chk("떨어진 날은 따로 묶인다",
+        [len(x) for x in gap_runs(_cal, ["2026-07-01", "2026-07-06"])] == [1, 1])
+    chk("달력에 없는 날은 무시한다",
+        gap_runs(_cal, ["2026-01-01"]) == [])
+    chk("입력 순서가 뒤섞여도 같은 결과",
+        gap_runs(_cal, ["2026-07-06", "2026-07-02", "2026-07-03"]) ==
+        [["2026-07-02", "2026-07-03", "2026-07-06"]])
+
+    # 모양 판정 — 긴 덩어리가 있으면 고장 모양이라고 적는다.
+    _base = {"ch": "리포트TOP2_단기", "h": 5, "n": 5, "raw": 5, "k": 5, "t": 1.0,
+             "mean": 1.0, "stat": "짝", "hit": False, "need": 20.0,
+             "ch_all": 1.0, "ct_all": 0.0, "ch_pair": 1.0, "ct_pair": 0.0,
+             "ct_n": 10, "ct_days": 5, "ch_span": ("2026-07-01", "2026-07-07"),
+             "ct_span": ("2026-07-01", "2026-07-07"), "outside": [],
+             "inside_gap": [], "span_days": 5, "runs": []}
+    _shape = dict(_base, runs=[["a", "b", "c", "d"], ["e"]])
+    _txt = milestone_report([_shape], "x", False)
+    chk("3일 이상 덩어리는 고장 모양으로 적는다", "고장 모양" in _txt)
+    chk("1~2일뿐이면 무신호 모양으로 적는다",
+        "무신호 모양" in milestone_report([dict(_base, runs=[["a"], ["b", "c"]])], "x", False))
+    chk("모양은 증명이 아니라고 밝힌다", "모양은 증거지 증명이 아니다" in _txt)
+    chk("수집 실패는 배제된다고 밝힌다", "수집 실패는 아니다" in _txt)
+
     # 구간 안 결손 — 구간 **밖**을 세면 안 된다. 밖은 아직 시작 안 했거나 미성숙이다.
     _cov = [hdrb]
     for dd in ("2026-07-01", "2026-07-03"):                  # 채널이 낸 날 (2일)
