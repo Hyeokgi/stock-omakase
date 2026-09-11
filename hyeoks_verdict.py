@@ -654,6 +654,25 @@ def paired_by_date(bydate, ch, h, ctrl=CONTROL):
     return mean / math.sqrt(var / k), k - 1, k, mean
 
 
+def t_one_sided_p(t, df):
+    """§3-5-4 — **우월성 단측** p. 방향은 '채널 > 대조군' 으로 고정이다.
+
+    두 질문을 섞지 않는다.
+      · 채널이 랜덤보다 **나은가** → 채택 판단. 이 검정이 답한다
+      · 채널이 랜덤보다 **나쁜가** → 폐기 판단. §3-1 의 `t<1.0` 이 따로 답하고
+        거기에는 애초에 보정을 걸지 않는다
+
+    양측은 우리가 절대 행동하지 않을 쪽(채널이 유의하게 나쁨 → 그래도 채택 안 함)에
+    α 의 절반을 쓴다. t 가 음수면 우월성 근거가 아니므로 p 는 1 쪽으로 간다.
+    """
+    if t is None or not df:
+        return None
+    two = t_two_sided_p(t, df)
+    if two is None:
+        return None
+    return two / 2.0 if t > 0 else 1.0 - two / 2.0
+
+
 def holm(pairs, m=None):
     """§3-5 계층1 — Holm–Bonferroni. pairs = [(채널, p)]. 통과 집합을 돌려준다.
 
@@ -688,7 +707,9 @@ def build_report(data, raw, skipped, today, bydate=None):
         pt, pdf, pk, pm = (paired_by_date(bydate, ch, h) if bydate is not None
                            and ch != CONTROL else (None, None, 0, None))
         t, df = (pt, pdf) if pt is not None else (wt, wdf)
-        p = t_two_sided_p(t, df) if (t is not None and df) else None
+        # §3-5-4 — Holm 에 넣는 p 는 단측이다. 양측 p 도 참고로 남긴다.
+        p2 = t_two_sided_p(t, df) if (t is not None and df) else None
+        p = t_one_sided_p(t, df)
         ann = mean * (TRADING_DAYS_YEAR / h) if mean is not None else None
         is_ctrl = ch.startswith(CONTROL_LIKE)
         v = "대조군(판정 대상 아님)" if is_ctrl else verdict_for(ch, n, t, mean)
@@ -701,7 +722,7 @@ def build_report(data, raw, skipped, today, bydate=None):
         rows_out.append({"ch": ch, "h": h, "n": n, "raw": raw.get(ch, 0),
                          "mean": mean, "ann": ann, "t": t, "p": p,
                          "v": v, "ctrl": is_ctrl,
-                         "wt": wt, "pt": pt, "pk": pk, "pm": pm,
+                         "wt": wt, "pt": pt, "pk": pk, "pm": pm, "p2": p2,
                          "paired": pt is not None})
 
     passed = holm(conf, HOLM_M) if conf else set()
@@ -736,6 +757,7 @@ def build_report(data, raw, skipped, today, bydate=None):
     A(f"| 폐기 | N≥{MIN_N} 이고 t < {T_DISCARD} — **보정 없음** | §3-1 · §3-5 |")
     A(f"| 판정 불가 | N < {MIN_N} → 관찰 연장 | §3-1 |")
     A(f"| 검정 통계량 | **같은 날 짝지은 1표본 t** (df = 날짜수−1) | §3-5-2 |")
+    A(f"| p 값 | **우월성 단측** (방향 고정: 채널 > 대조군) | §3-5-4 |")
     A(f"| 대조군 | `{CONTROL}` (같은 호라이즌) | §3-1 |")
     A("")
     A("⚠️ 슬리피지는 **미반영**이다(§3-4-2). §6-4 모의 집행 실측치가 확정되면 그때 더한다.")
@@ -783,8 +805,8 @@ def build_report(data, raw, skipped, today, bydate=None):
         m = HOLM_M
         A(f"확증 검정 대상 **m = {m}개 고정** (실제 검정 {len(conf)}개).")
         A("")
-        A("| 순위 | 채널 | p | Holm 문턱 `0.05/(m−i+1)` | 결과 |")
-        A("|--:|---|--:|--:|---|")
+        A("| 순위 | 채널 | 단측 p | (참고) 양측 p | Holm 문턱 `0.05/(m−i+1)` | 결과 |")
+        A("|--:|---|--:|--:|--:|---|")
         stop = False
         for i, (ch, p) in enumerate(sorted(conf, key=lambda x: x[1]), start=1):
             thr = 0.05 / (m - i + 1)
@@ -794,7 +816,9 @@ def build_report(data, raw, skipped, today, bydate=None):
                 res = "통과"
             else:
                 res, stop = "**여기서 멈춤**", True
-            A(f"| {i} | {ch} | {p:.4f} | {thr:.4f} | {res} |")
+            _p2 = next((r["p2"] for r in rows_out if r["ch"] == ch), None)
+            A(f"| {i} | {ch} | {p:.4f} | "
+              f"{('%.4f' % _p2) if _p2 is not None else '—'} | {thr:.4f} | {res} |")
     else:
         A(f"**확증 검정 대상이 0개다.** 확증 집합에서 N≥{MIN_N} 를 채운 채널이 없다.")
         A("")
@@ -881,6 +905,43 @@ def self_test():
         holm([("a", 0.0001), ("b", 0.0002)]) == {"a", "b"})
     chk("전부 유의하지 않으면 아무도 통과 못 함",
         holm([("a", 0.4), ("b", 0.5)]) == set())
+
+    print("🧪 §3-5-4 우월성 단측 p (2026-09-11)")
+    chk("양수 t 는 양측의 절반",
+        abs(t_one_sided_p(2.0, 60) - t_two_sided_p(2.0, 60) / 2) < 1e-12)
+    # 음수 t 는 '우월하다'는 근거가 아니다. 절반으로 깎으면 열등한 채널이 통과한다.
+    _neg = t_one_sided_p(-3.0, 60)
+    chk("음수 t 는 1 쪽으로 간다 (우월성 근거 아님)", _neg > 0.99, f"p={_neg:.4f}")
+    chk("음수 t 를 절반으로 깎지 않는다",
+        _neg > t_two_sided_p(-3.0, 60), f"단측={_neg:.4f} 양측={t_two_sided_p(-3.0, 60):.4f}")
+    chk("t=0 이면 단측 p=0.5", abs(t_one_sided_p(0.0, 60) - 0.5) < 1e-9)
+    chk("t·df 가 없으면 None", t_one_sided_p(None, 60) is None
+        and t_one_sided_p(2.0, 0) is None)
+
+    # 구속조건 — 처음에 "단측 임계 t 는 1.96" 으로 적었다가 이 검사가 틀렸다고
+    # 알려줬다. 1.96 은 df→∞ 근사고, 실제 자유도(짝 검정이면 날짜수−1 ≈ 43)에서는
+    # 2.0 언저리다. 그래서 단측으로 바꿔도 §3-1 의 t≥2.0 과 거의 겹친다 —
+    # "단측이면 문턱이 확 낮아진다"는 기대 자체가 틀렸다.
+    chk("현실 자유도에서 단측 Holm 임계 t 는 2.0 근처다",
+        t_one_sided_p(2.02, 43) < 0.025 < t_one_sided_p(1.98, 43),
+        f"t=1.98→{t_one_sided_p(1.98, 43):.4f} · t=2.02→{t_one_sided_p(2.02, 43):.4f}")
+    chk("양측이었다면 같은 자유도에서 t=2.2 도 못 넘었다",
+        t_two_sided_p(2.2, 43) > 0.025, f"양측p={t_two_sided_p(2.2, 43):.4f}")
+    chk("t=2.05 면 Holm 도 §3-1 도 넘는다",
+        t_one_sided_p(2.05, 43) < 0.025
+        and verdict_for("차트TOP2", 40, 2.05, 1.0).startswith("생존·강화"))
+    chk("t=1.9 면 §3-1 에서 막힌다(Holm 과 무관하게)",
+        verdict_for("차트TOP2", 40, 1.9, 1.0) == "관찰 연장")
+
+    # 리포트가 단측을 쓰는지 — 양측을 쓰면 여기서 걸린다.
+    _sd = {CONTROL: {5: [(-0.1 if i % 2 else 0.1) for i in range(40)]},
+           "차트TOP2": {5: [(2.0 if i % 2 else 2.6) for i in range(40)]}}
+    _sm, _sro, _scf, _sps = build_report(_sd, {"차트TOP2": 40}, {}, "2026-01-01")
+    _cp = dict(_scf).get("차트TOP2")
+    _row = next(r for r in _sro if r["ch"] == "차트TOP2")
+    chk("Holm 에 들어가는 p 가 단측이다",
+        abs(_cp - _row["p2"] / 2) < 1e-12, f"단측={_cp:.6f} 양측={_row['p2']:.6f}")
+    chk("양측 p 도 표에 남는다", "(참고) 양측 p" in _sm)
 
     print("🧪 §3-5-1 확증 집합 닫기 (2026-09-11)")
     # 핵심: 확증 채널이 하나만 남아도 m 은 2 다. 1 로 줄면 문턱이 0.05 로
