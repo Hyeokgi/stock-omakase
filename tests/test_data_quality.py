@@ -5,6 +5,15 @@ from unittest.mock import Mock
 import hyeoks_data_quality as q
 
 
+def _good_header():
+    h = [""] * 34
+    for i, v in {0: "trade_id", 1: "진입일", 2: "채널", 16: "진입가(T+1시가)",
+                 19: "종목T+5", 20: "종목T+10", 23: "지수T+5", 24: "지수T+10",
+                 25: "실제캡처거래일", 27: "종목T+60", 30: "지수T+60"}.items():
+        h[i] = v
+    return h
+
+
 class QualityTests(unittest.TestCase):
     def test_dimensions(self):
         rows = q.build_rows()
@@ -142,3 +151,58 @@ class ExistingTabOverwrite(unittest.TestCase):
             blob = json.dumps(req)
             self.assertNotIn('"sheetId": 0', blob)
             self.assertIn("4242", blob)
+
+
+class InstallGuards(unittest.TestCase):
+    """설치는 이름으로 탭을 찾는다. 사람이 gid 를 손으로 넣으면 언젠가 틀린 탭에 쓴다."""
+
+    def _doc(self, quality_id=77, source_id=0, missing=False):
+        source = Mock(id=source_id, title=q.SOURCE)
+        source.row_values.return_value = _good_header()
+        quality = Mock(id=quality_id)
+        quality.title = q.TITLE
+        doc = Mock()
+
+        def worksheet(name):
+            if name == q.SOURCE:
+                return source
+            if missing:
+                raise Exception("WorksheetNotFound")
+            return quality
+        doc.worksheet.side_effect = worksheet
+        return doc
+
+    def test_dry_run_writes_nothing(self):
+        doc = self._doc()
+        q.install(doc, dry_run=True)
+        doc.batch_update.assert_not_called()
+
+    def test_writes_to_the_tab_found_by_name(self):
+        doc = self._doc(quality_id=77)
+        doc.worksheet(q.TITLE).get_all_values.return_value = []
+        with self.assertRaises(Exception):
+            q.install(doc, dry_run=False)      # 이어지는 check_document 에서 멈춘다
+        body = doc.batch_update.call_args[0][0]
+        self.assertTrue(all('"sheetId": 77' in json.dumps(r) or r.get("updateCells", {})
+                            .get("start", {}).get("sheetId") == 77
+                            for r in body["requests"][:1]))
+        self.assertNotIn('"sheetId": 0', json.dumps(body))
+
+    def test_refuses_when_the_tab_resolves_to_the_ledger(self):
+        doc = self._doc(quality_id=5, source_id=5)
+        with self.assertRaises(ValueError) as cm:
+            q.install(doc, dry_run=False)
+        self.assertIn("원장", str(cm.exception))
+        doc.batch_update.assert_not_called()
+
+    def test_refuses_before_writing_when_header_moved(self):
+        doc = self._doc()
+        doc.worksheet(q.SOURCE).row_values.return_value = ["trade_id"] + [""] * 33
+        with self.assertRaises(ValueError):
+            q.install(doc, dry_run=False)
+        doc.batch_update.assert_not_called()
+
+    def test_dry_run_does_not_create_a_missing_tab(self):
+        doc = self._doc(missing=True)
+        self.assertIsNone(q.install(doc, dry_run=True))
+        doc.add_worksheet.assert_not_called()

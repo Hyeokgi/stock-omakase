@@ -112,7 +112,8 @@ def build_rows():
     return rows
 
 
-def sheet_requests(sheet_id, add=False):
+def sheet_requests(sheet_id, add=False, table=None):
+    table = add if table is None else table
     rows = build_rows()
     requests = []
     if add:
@@ -144,7 +145,7 @@ def sheet_requests(sheet_id, add=False):
     ]
     for r in range(1, 9):
         requests.append({"mergeCells": {"range": {"sheetId": sheet_id, "startRowIndex": r, "endRowIndex": r+1, "startColumnIndex": 8, "endColumnIndex": 15}, "mergeType": "MERGE_ALL"}})
-    if add:
+    if table:
         white = {"rgbColor": {"red": 1, "green": 1, "blue": 1}}
         requests.append({"addTable": {"table": {"name": "quality_daily_v1",
                          "range": {"sheetId": sheet_id, "startRowIndex": 28, "endRowIndex": len(rows), "startColumnIndex": 0, "endColumnIndex": 15},
@@ -155,6 +156,43 @@ def sheet_requests(sheet_id, add=False):
                      "cell": {"userEnteredFormat": {"textFormat": {"foregroundColorStyle": {"rgbColor": {"red": 0, "green": 0, "blue": 0}}}}},
                      "fields": "userEnteredFormat.textFormat.foregroundColorStyle"}})
     return requests
+
+
+def install(doc, dry_run=True):
+    """품질표를 시트에 설치/갱신한다. **원장 근처에는 절대 쓰지 않는다.**
+
+    sheetId 를 사람이 손으로 넣으면 언젠가 틀린 탭에 쓴다. 그래서 여기서는
+    **이름으로 찾아서 그 id 만** 쓴다. 그리고 쓰기 직전에 그 id 가 원장 id 와
+    다른지 한 번 더 확인한다 — 같으면 아무것도 하지 않고 예외를 던진다.
+    """
+    source_id = doc.worksheet(SOURCE).id          # 없으면 여기서 바로 죽는다
+    validate_header(doc.worksheet(SOURCE).row_values(1))
+    rows = build_rows()
+    try:
+        ws = doc.worksheet(TITLE)
+        created = False
+    except Exception:
+        if dry_run:
+            print(f"[모의] '{TITLE}' 탭이 없다. 실제 실행이면 새로 만든다.")
+            return None
+        ws = doc.add_worksheet(title=TITLE, rows=len(rows), cols=15)
+        created = True
+
+    if ws.id == source_id:
+        raise ValueError(f"거부: '{TITLE}' 이 원장('{SOURCE}')과 같은 탭을 가리킨다")
+    if ws.title != TITLE:
+        raise ValueError(f"거부: 해석된 탭 이름이 '{ws.title}' 이다")
+
+    reqs = sheet_requests(ws.id, add=False, table=created)
+    print(f"대상 탭 '{ws.title}' (sheetId={ws.id}) · 원장 sheetId={source_id} · "
+          f"{'새로 만듦' if created else '덮어쓰기'} · 요청 {len(reqs)}개 · {VERSION}")
+    if dry_run:
+        print("[모의] --yes 가 없어 아무것도 쓰지 않았다.")
+        return ws.id
+    doc.batch_update({"requests": reqs})
+    print(f"'{TITLE}' 갱신 완료. 이어서 연결 검사를 돌린다.")
+    check_document(doc)
+    return ws.id
 
 
 def check_document(doc):
@@ -186,6 +224,10 @@ def main():
                         help="이미 있는 탭을 덮어쓴다 — addSheet 를 빼고 셀만 갱신한다")
     parser.add_argument("--out", help="표준출력 대신 이 파일로 쓴다")
     parser.add_argument("--check", action="store_true", help="read-only live check using existing secret.json")
+    parser.add_argument("--install", action="store_true",
+                        help="품질표를 시트에 설치/갱신한다. 이름으로 탭을 찾고 원장은 건드리지 않는다")
+    parser.add_argument("--yes", action="store_true",
+                        help="--install 을 실제로 실행한다. 없으면 모의 실행만")
     parser.add_argument("--spreadsheet-id")
     args = parser.parse_args()
     if args.requests is not None:
@@ -201,14 +243,21 @@ def main():
                   f"{'덮어쓰기' if args.existing else '신규 설치'} · {VERSION}")
         else:
             print(body)
-    if args.check:
+    if args.check or args.install:
         if not args.spreadsheet_id:
-            parser.error("--check requires --spreadsheet-id")
+            parser.error("--check/--install requires --spreadsheet-id")
         import gspread
         from oauth2client.service_account import ServiceAccountCredentials
-        credentials = ServiceAccountCredentials.from_json_keyfile_name(
-            "secret.json", ["https://www.googleapis.com/auth/spreadsheets.readonly"])
-        check_document(gspread.authorize(credentials).open_by_key(args.spreadsheet_id))
+        # 읽기만 할 때는 읽기 권한만 요청한다. 쓰기 권한을 늘 들고 다니지 않는다.
+        scope = (["https://spreadsheets.google.com/feeds",
+                  "https://www.googleapis.com/auth/drive"] if args.install else
+                 ["https://www.googleapis.com/auth/spreadsheets.readonly"])
+        doc = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name(
+            "secret.json", scope)).open_by_key(args.spreadsheet_id)
+        if args.install:
+            install(doc, dry_run=not args.yes)
+        else:
+            check_document(doc)
 
 
 if __name__ == "__main__":
