@@ -135,6 +135,19 @@ jobs:
       #    "사람이 봐야 한다"를 남긴다. 오늘 후보 풀은 지금 못 남기면 영영 없다.
       if: always()
       run: |
-        test -f freeze_status.json || { echo "❌ freeze_status.json 이 없다 — 동결 코드가 아예 안 돌았다"; exit 1; }
+        # ai_report.yml 과 **같은 검사**를 쓴다. 이 잡은 항상 동결 대상이라
+        # required 는 늘 true 지만, 검사가 두 군데서 달라지면 언젠가 한쪽만 고친다.
+        test -f freeze_status.json || { echo "::error::freeze_status.json 이 없다 — 스크립트가 시작 직후 죽었다"; exit 1; }
         cat freeze_status.json; echo
-        python -c "import json,sys; st=json.load(open('freeze_status.json',encoding='utf-8')); ok=st.get('ok'); print(('✅ 동결 보존 확인 — '+str(st.get('file'))) if ok else ('::error::실행 입력 동결 실패 — '+str(st.get('detail')))); sys.exit(0 if ok else 1)"
+        python - <<'PY'
+        import json, sys
+        st = json.load(open("freeze_status.json", encoding="utf-8"))
+        if not st.get("required", True):
+            print("ℹ️ 이 회차는 동결 대상이 아니다 — " + str(st.get("detail")))
+            sys.exit(0)
+        if st.get("ok"):
+            print("✅ 동결 보존 확인 — " + str(st.get("file")))
+            sys.exit(0)
+        print("::error::실행 입력 동결 실패 — " + str(st.get("detail")))
+        sys.exit(1)
+        PY

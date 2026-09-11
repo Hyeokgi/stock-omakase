@@ -104,9 +104,15 @@ def bundle_name(bundle):
     return f"freeze_{bundle['trade_date']}_{t}_{bundle['kind']}_{digest}.json.gz"
 
 
-def write_status(ok, name=None, detail="", path=STATUS_FILE):
-    """보존 결과를 파일로 남긴다. 워크플로가 이걸 읽어 실패를 드러낸다."""
-    st = {"ok": bool(ok), "file": name, "detail": detail,
+def write_status(ok, name=None, detail="", path=STATUS_FILE, required=True):
+    """보존 결과를 파일로 남긴다. 워크플로가 이걸 읽어 실패를 드러낸다.
+
+    `required=False` 는 **이 회차가 동결 대상이 아니다**는 뜻이다. 리포트 픽을
+    만들지 않는 회차(예: 20시 시간외 브리핑)는 동결할 후보 풀이 없다.
+    그때도 파일은 남긴다 — 그래야 **파일이 없다 = 스크립트가 죽었다** 가 된다.
+    파일 자체가 없는 것을 '대상 아님'과 같이 취급하면 진짜 사고를 놓친다.
+    """
+    st = {"ok": bool(ok), "required": bool(required), "file": name, "detail": detail,
           "at": datetime.datetime.now(KST).isoformat()}
     with open(path, "w", encoding="utf-8") as f:
         json.dump(st, f, ensure_ascii=False)
@@ -255,6 +261,21 @@ def self_test():
         chk("그때 상태 파일도 ok=false", json.load(open(sp, encoding="utf-8"))["ok"] is False)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+    print("🧪 required — '대상 아님'과 '실패'를 섞지 않는다 (2026-09-11)")
+    import tempfile, os as _os
+    _d = tempfile.mkdtemp()
+    _p = _os.path.join(_d, "s.json")
+    st = write_status(True, None, "20시 브리핑 회차", path=_p, required=False)
+    chk("required=False 가 파일에 남는다", st["required"] is False)
+    chk("대상 아님도 ok=True 다 (실패가 아니다)", st["ok"] is True)
+    st2 = write_status(True, "b.tar.gz", "보존 완료", path=_p)
+    chk("기본값은 required=True — 기존 호출은 그대로", st2["required"] is True)
+    chk("나중 쓰기가 앞 상태를 덮어쓴다",
+        json.load(open(_p, encoding="utf-8"))["file"] == "b.tar.gz")
+    st3 = write_status(False, None, "업로드 실패", path=_p)
+    chk("실패는 ok=False · required=True 로 남는다",
+        st3["ok"] is False and st3["required"] is True)
 
     print("\n" + ("✅ 전부 통과" if ok else "❌ 실패 있음"))
     return 0 if ok else 1

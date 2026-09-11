@@ -35,6 +35,14 @@ now_kst = datetime.datetime.now(KST)
 current_hour = now_kst.hour
  
 print(f"🤖 [HYEOKS 리서치 센터] 3단계 세이프티 가드 엔진 가동 (현재 KST {now_kst.strftime('%H:%M:%S')})")
+
+# 🔧 [오탐 수정 2026-09-11] 이 스크립트는 회차에 따라 리포트 픽을 만들지 않고 끝난다
+#    (20시 시간외 브리핑 등). 그 경우 동결할 후보 풀이 없어 freeze_status.json 이
+#    안 생기는데, 워크플로의 동결 확인 단계가 그걸 실패로 처리해 **하루 3~4회씩
+#    빨간불**을 냈다. 빨간불이 일상이 되면 진짜 실패를 아무도 안 본다.
+#    → 시작 시 '대상 아님'을 미리 적어 두고, 실제 동결이 돌면 그때 덮어쓴다.
+#      파일이 **아예 없는 것**은 그대로 오류로 둔다 — 스크립트가 죽은 것이니까.
+write_status(True, None, "동결 대상 회차가 아직 아니다(리포트 픽 생성 전)", required=False)
  
 try:
     client = genai.Client(api_key=GEMINI_API_KEY)

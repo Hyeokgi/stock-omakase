@@ -73,7 +73,23 @@ jobs:
       #    리포트는 이미 나갔으므로 사용자는 PDF 를 받는다. 대신 잡을 빨갛게 만들어
       #    "사람이 봐야 한다"를 남긴다. 오늘 후보 풀은 지금 못 남기면 영영 없다.
       if: always()
+      # 🔧 [오탐 수정 2026-09-11] 이 워크플로는 하루 4~5회 돌지만 리포트 픽을 만드는
+      #    회차는 하나다(20시 시간외 브리핑 등은 픽을 안 만든다). 그 회차에는 동결할
+      #    후보 풀이 없어 required=false 로 찍힌다 — 그걸 실패로 세면 하루 3~4회
+      #    빨간불이 되고, 빨간불이 일상이 되면 진짜 실패를 아무도 안 본다.
+      #    파일이 **아예 없는 것**은 그대로 실패다 — 스크립트가 죽었다는 뜻이니까.
       run: |
-        test -f freeze_status.json || { echo "❌ freeze_status.json 이 없다 — 동결 코드가 아예 안 돌았다"; exit 1; }
+        test -f freeze_status.json || { echo "::error::freeze_status.json 이 없다 — 스크립트가 시작 직후 죽었다"; exit 1; }
         cat freeze_status.json; echo
-        python -c "import json,sys; st=json.load(open('freeze_status.json',encoding='utf-8')); ok=st.get('ok'); print(('✅ 동결 보존 확인 — '+str(st.get('file'))) if ok else ('::error::실행 입력 동결 실패 — '+str(st.get('detail')))); sys.exit(0 if ok else 1)"
+        python - <<'PY'
+        import json, sys
+        st = json.load(open("freeze_status.json", encoding="utf-8"))
+        if not st.get("required", True):
+            print("ℹ️ 이 회차는 동결 대상이 아니다 — " + str(st.get("detail")))
+            sys.exit(0)
+        if st.get("ok"):
+            print("✅ 동결 보존 확인 — " + str(st.get("file")))
+            sys.exit(0)
+        print("::error::실행 입력 동결 실패 — " + str(st.get("detail")))
+        sys.exit(1)
+        PY
