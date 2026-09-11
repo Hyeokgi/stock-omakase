@@ -70,6 +70,13 @@ CONTROL = "랜덤2"                    # 비교 기준 대조군
 CONTROL_LIKE = ("랜덤2", "랜덤2_배지", "지수벤치")   # 판정 대상에서 제외
 LONG_CHANNEL = "리포트TOP2_장기"     # §3-3 특칙
 
+# §3-5-1 (2026-09-11 사전등록) — 확증 집합은 **닫혀 있다.**
+# 편입 기준은 "9/7 판정 시점에 N≥30 이었는가"(수익률이 아니라 적재량)이고,
+# 나중에 30건을 넘긴 채널은 들어오지 않는다. m 도 고정이다 — 채널이 죽어도
+# 줄이지 않는다. 줄이면 문턱이 저절로 느슨해지기 때문이다.
+CONFIRMATORY = ("차트TOP2", "수급TOP2")
+HOLM_M = len(CONFIRMATORY)
+
 HORIZON = {                          # §3 채널 성격별 고정 호라이즌
     "차트TOP2": 5, "수급TOP2": 5, "랜덤2": 5, "랜덤2_배지": 5,
     "리포트TOP2_단기": 5, "리포트TOP2_중기": 10, "리포트TOP2_장기": 60,
@@ -609,11 +616,14 @@ def verdict_for(ch, n, t, mean):
     return "폐기"
 
 
-def holm(pairs):
+def holm(pairs, m=None):
     """§3-5 계층1 — Holm–Bonferroni. pairs = [(채널, p)]. 통과 집합을 돌려준다.
 
-    처음 실패하는 지점에서 멈추고 그 뒤는 전부 탈락(문서 절차 4번 그대로)."""
-    ok, m = set(), len(pairs)
+    처음 실패하는 지점에서 멈추고 그 뒤는 전부 탈락(문서 절차 4번 그대로).
+    `m` 은 §3-5-1 이 고정한 확증 집합 크기다. 생략하면 pairs 길이를 쓴다."""
+    if m is None:
+        m = len(pairs)
+    ok = set()
     for i, (ch, p) in enumerate(sorted(pairs, key=lambda x: x[1]), start=1):
         if p <= 0.05 / (m - i + 1):
             ok.add(ch)
@@ -640,7 +650,8 @@ def build_report(data, raw, skipped, today):
         ann = mean * (TRADING_DAYS_YEAR / h) if mean is not None else None
         is_ctrl = ch.startswith(CONTROL_LIKE)
         v = "대조군(판정 대상 아님)" if is_ctrl else verdict_for(ch, n, t, mean)
-        if (not is_ctrl) and ch != LONG_CHANNEL and n >= MIN_N and p is not None:
+        # §3-5-1 — 확증은 닫힌 집합뿐이다. 나머지는 N 이 아무리 쌓여도 들어오지 않는다.
+        if ch in CONFIRMATORY and n >= MIN_N and p is not None:
             conf.append((ch, p))
         if n == 0:
             v = (f"표본 0 — 원시 {raw.get(ch, 0)}행 전부 T+{h} 미도달"
@@ -649,11 +660,16 @@ def build_report(data, raw, skipped, today):
                          "mean": mean, "ann": ann, "t": t, "p": p,
                          "v": v, "ctrl": is_ctrl})
 
-    passed = holm(conf) if conf else set()
+    passed = holm(conf, HOLM_M) if conf else set()
     for r in rows_out:
-        if r["v"].startswith("생존·강화"):
+        if not r["v"].startswith("생존·강화"):
+            continue
+        if r["ch"] in CONFIRMATORY:
             r["v"] = ("생존·강화 ✅ (Holm 통과)" if r["ch"] in passed
                       else "관찰 연장 — t는 넘었으나 Holm 미통과(§3-5)")
+        else:
+            # §3-5-1 계층 2 — 문턱을 한 번 넘은 것은 채택이 아니다. 재현이 남았다.
+            r["v"] = "탐색 1차 통과 — 독립 재현 필요(§3-5-1)"
 
     L = []
     A = L.append
@@ -670,6 +686,8 @@ def build_report(data, raw, skipped, today):
     A(f"| 순알파 | (종목T+N − 지수T+N) − **{COST_PCT}%** · 지수벤치는 비용 면제 | §3-4-2 |")
     A(f"| 연율 환산 | 순알파 × (250 / 호라이즌) | §3-4-2 |")
     A(f"| 생존·강화 | N≥{MIN_N} 이고 t ≥ {T_SURVIVE} **그리고 Holm 통과** | §3-1 · §3-5 |")
+    A(f"| 확증 집합 | `{'` · `'.join(CONFIRMATORY)}` — **닫힘**. m={HOLM_M} 고정 | §3-5-1 |")
+    A(f"| 탐색 채널 | 확증 밖 채널은 Holm 면제, 대신 **독립 재현** 요구 | §3-5-1 |")
     A(f"| 관찰 연장 | N≥{MIN_N} 이고 {T_DISCARD} ≤ t < {T_SURVIVE} | §3-1 |")
     A(f"| 폐기 | N≥{MIN_N} 이고 t < {T_DISCARD} — **보정 없음** | §3-1 · §3-5 |")
     A(f"| 판정 불가 | N < {MIN_N} → 관찰 연장 | §3-1 |")
@@ -693,9 +711,12 @@ def build_report(data, raw, skipped, today):
 
     A("## 다중비교 보정 (§3-5 계층 1)")
     A("")
+    A(f"확증 집합은 §3-5-1 이 `{'` · `'.join(CONFIRMATORY)}` 로 **닫아** 두었다. "
+      f"나중에 N≥{MIN_N} 를 채운 채널은 여기 들어오지 않고 탐색으로 간다.")
+    A("")
     if conf:
-        m = len(conf)
-        A(f"확증 검정 대상 **m = {m}개** (N≥{MIN_N} 인 판정 대상 채널만).")
+        m = HOLM_M
+        A(f"확증 검정 대상 **m = {m}개 고정** (실제 검정 {len(conf)}개).")
         A("")
         A("| 순위 | 채널 | p | Holm 문턱 `0.05/(m−i+1)` | 결과 |")
         A("|--:|---|--:|--:|---|")
@@ -710,7 +731,7 @@ def build_report(data, raw, skipped, today):
                 res, stop = "**여기서 멈춤**", True
             A(f"| {i} | {ch} | {p:.4f} | {thr:.4f} | {res} |")
     else:
-        A(f"**확증 검정 대상이 0개다.** N≥{MIN_N} 를 채운 판정 대상 채널이 없다.")
+        A(f"**확증 검정 대상이 0개다.** 확증 집합에서 N≥{MIN_N} 를 채운 채널이 없다.")
         A("")
         A("§3-7 이 이 상황을 미리 인정해 뒀다 — *\"그날 대부분의 채널이 N<30 일 가능성이 높다\"*.")
         A("**문턱을 낮추지 않는다.** 관찰 연장이라고 쓰고, 10/5 재판정으로 넘긴다.")
@@ -795,6 +816,40 @@ def self_test():
         holm([("a", 0.0001), ("b", 0.0002)]) == {"a", "b"})
     chk("전부 유의하지 않으면 아무도 통과 못 함",
         holm([("a", 0.4), ("b", 0.5)]) == set())
+
+    print("🧪 §3-5-1 확증 집합 닫기 (2026-09-11)")
+    # 핵심: 확증 채널이 하나만 남아도 m 은 2 다. 1 로 줄면 문턱이 0.05 로
+    # 느슨해져서 "채널이 죽을수록 통과가 쉬워지는" 구멍이 생긴다.
+    chk("m 고정이 없으면 p=0.03 이 통과해 버린다",
+        holm([("a", 0.03)]) == {"a"})
+    chk("m=2 고정이면 같은 p=0.03 은 탈락한다(문턱 0.025)",
+        holm([("a", 0.03)], HOLM_M) == set())
+    chk("확증 집합은 차트·수급 둘뿐이고 m 도 2다",
+        CONFIRMATORY == ("차트TOP2", "수급TOP2") and HOLM_M == 2)
+
+    # 강한 신호를 만들어 둔다 — 문턱을 넘고도 확증에 못 들어가는지 보기 위해서다.
+    def strong(n=40, lo=4.9, hi=5.1):
+        return [lo if i % 2 else hi for i in range(n)]
+    def flat(n=40):
+        return [-0.1 if i % 2 else 0.1 for i in range(n)]
+    base = {CONTROL: {5: flat(), 10: flat()}}
+
+    d = dict(base); d["리포트TOP2_단기"] = {5: strong()}
+    md, ro, cf, ps = build_report(d, {"리포트TOP2_단기": 40}, {}, "2026-01-01")
+    chk("나중에 30건을 넘긴 리포트 단기는 확증에 못 들어간다",
+        [c for c, _ in cf] == [], f"conf={[c for c, _ in cf]}")
+    v = next(r["v"] for r in ro if r["ch"] == "리포트TOP2_단기")
+    chk("t를 넘겨도 '생존·강화'가 아니라 '탐색 1차 통과'다",
+        v == "탐색 1차 통과 — 독립 재현 필요(§3-5-1)", v)
+    chk("탐색 채널의 재현 요구가 리포트에 적힌다", "독립 재현" in md)
+
+    d = dict(base); d["차트TOP2"] = {5: strong()}
+    md, ro, cf, ps = build_report(d, {"차트TOP2": 40}, {}, "2026-01-01")
+    chk("차트TOP2 는 확증 집합이라 Holm 을 받는다",
+        [c for c, _ in cf] == ["차트TOP2"], f"conf={[c for c, _ in cf]}")
+    chk("확증 채널 1개여도 리포트는 m=2 고정이라고 쓴다",
+        "m = 2개 고정" in md)
+    chk("집합이 닫혀 있다는 사실이 리포트에 남는다", "닫아" in md)
 
     print("🧪 F07 — 원장 입력 검증 (2026-09-07 감사)")
     # ⚠️ today 를 **고정**해서 부른다. 성숙 판정은 오늘 날짜에 의존하므로
