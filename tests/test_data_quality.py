@@ -1,3 +1,4 @@
+import json
 import unittest
 from unittest.mock import Mock
 
@@ -112,3 +113,32 @@ class BenchmarkAdjustment(unittest.TestCase):
         head = q.build_rows()[q.DAILY_START - 2]
         self.assertIn("단기 초과T+5", head)
         self.assertIn("중기 초과T+10", head)
+
+
+class ExistingTabOverwrite(unittest.TestCase):
+    """이미 설치된 탭을 덮어쓸 때는 만들기 요청이 들어가면 안 된다."""
+
+    def _kinds(self, add):
+        return [k for req in q.sheet_requests(4242, add=add) for k in req]
+
+    def test_new_install_creates_sheet_and_table(self):
+        kinds = self._kinds(True)
+        self.assertEqual(kinds.count("addSheet"), 1)
+        self.assertEqual(kinds.count("addTable"), 1)
+
+    def test_overwrite_creates_nothing(self):
+        kinds = self._kinds(False)
+        self.assertNotIn("addSheet", kinds)
+        self.assertNotIn("addTable", kinds)
+
+    def test_overwrite_still_writes_every_cell(self):
+        cells = [r for r in q.sheet_requests(4242, add=False) if "updateCells" in r]
+        self.assertEqual(len(cells), 1)
+        rows = cells[0]["updateCells"]["rows"]
+        self.assertEqual(len(rows), q.DAILY_START + q.DAYS - 1)
+
+    def test_overwrite_targets_the_given_sheet_id(self):
+        for req in q.sheet_requests(4242, add=False):
+            blob = json.dumps(req)
+            self.assertNotIn('"sheetId": 0', blob)
+            self.assertIn("4242", blob)

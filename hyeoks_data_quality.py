@@ -182,11 +182,25 @@ def check_document(doc):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--requests", type=int, help="print installation requests; no credentials or source data")
+    parser.add_argument("--existing", action="store_true",
+                        help="이미 있는 탭을 덮어쓴다 — addSheet 를 빼고 셀만 갱신한다")
+    parser.add_argument("--out", help="표준출력 대신 이 파일로 쓴다")
     parser.add_argument("--check", action="store_true", help="read-only live check using existing secret.json")
     parser.add_argument("--spreadsheet-id")
     args = parser.parse_args()
     if args.requests is not None:
-        print(json.dumps(sheet_requests(args.requests, add=True), ensure_ascii=False))
+        # --existing 이면 addSheet 를 빼고 addTable 도 뺀다. 이미 있는 탭에 다시
+        # 만들려 들면 Sheets API 가 통째로 거절한다.
+        body = json.dumps({"requests": sheet_requests(args.requests,
+                                                      add=not args.existing)},
+                          ensure_ascii=False, indent=1)
+        if args.out:
+            with open(args.out, "w", encoding="utf-8") as f:
+                f.write(body + "\n")
+            print(f"{args.out}: {len(body)} bytes · sheetId={args.requests} · "
+                  f"{'덮어쓰기' if args.existing else '신규 설치'} · {VERSION}")
+        else:
+            print(body)
     if args.check:
         if not args.spreadsheet_id:
             parser.error("--check requires --spreadsheet-id")
