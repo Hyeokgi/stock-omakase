@@ -529,6 +529,9 @@ def collect(rows, today=None):
     """
     horizons_in_use = set(HORIZON.values()) | {DEFAULT_HORIZON, 20}
     out, raw = {}, {}
+    # §3-5-2 — 같은 날 짝짓기용. out 과 **같은 조건에서 같은 값**을 쌓는다.
+    # 별도 루프를 만들면 두 경로가 조용히 갈라지므로 여기서 같이 넣는다.
+    bydate = {}
     today = today or datetime.datetime.now(KST).date()
     # 🚨 [2-1 · 3차 재검증] 예전에는 새 카운터를 올리고도 **미성숙까지 같이** 올렸다.
     #    한 행이 '쌍결손 1 + 미성숙 1' 로 두 번 세어져 "미성숙과 분리했다"는 말이
@@ -578,13 +581,17 @@ def collect(rows, today=None):
                     detail["성숙결측(행×기간)"] += 1
             else:
                 cost = 0.0 if ch.startswith("지수벤치") else COST_PCT
-                out.setdefault(ch, {}).setdefault(hh, []).append(s_ - i_ - cost)
+                val = s_ - i_ - cost
+                out.setdefault(ch, {}).setdefault(hh, []).append(val)
+                if d_raw:
+                    bydate.setdefault(ch, {}).setdefault(hh, {}) \
+                          .setdefault(d_raw, []).append(val)
                 state = "집계됨"
             if hh == h and state is not None:
                 primary = state
         skipped[primary] += 1
     skipped.update(detail)
-    return out, raw, skipped
+    return out, raw, skipped, bydate
 
 
 def reconcile(rows, skipped):
@@ -616,6 +623,37 @@ def verdict_for(ch, n, t, mean):
     return "폐기"
 
 
+def paired_by_date(bydate, ch, h, ctrl=CONTROL):
+    """§3-5-2 — 같은 날 짝지어 재는 1표본 t.
+
+    두 채널은 **같은 날** 매매한다. 그날 시장이 통째로 오르내린 몫은 두 채널에
+    똑같이 실리므로 **차이에서 상쇄된다.** Welch 는 그 몫을 양쪽 분산에 그대로
+    넣고 재기 때문에 표준오차를 부풀린다 — 같은 효과를 작은 t 로 보고한다.
+
+    절차:
+      1. 두 채널 모두 값이 있는 날만 남긴다 (한쪽만 있는 날은 짝이 안 된다)
+      2. 그날의 채널 평균끼리 뺀다  → diff_d
+      3. diff 에 1표본 t 를 건다. **df = 날짜수 − 1** (행수가 아니다)
+
+    ⚠️ 이 검정은 자유도를 잃는다(77행 → 날짜 수). 분산이 줄어드는 이득과
+       자유도가 주는 손해 중 어느 쪽이 큰지는 **실원장을 돌려봐야 안다.**
+       더 좋다고 가정하지 않는다.
+
+    돌려주는 값: (t, df, 날짜수, 평균차) — 짝이 2일 미만이면 전부 None.
+    """
+    a, b = bydate.get(ch, {}).get(h, {}), bydate.get(ctrl, {}).get(h, {})
+    days = sorted(set(a) & set(b))
+    diffs = [sum(a[d]) / len(a[d]) - sum(b[d]) / len(b[d]) for d in days]
+    k = len(diffs)
+    if k < 2:
+        return None, None, k, None
+    mean = sum(diffs) / k
+    var = sum((x - mean) ** 2 for x in diffs) / (k - 1)
+    if var <= 0:
+        return None, None, k, mean
+    return mean / math.sqrt(var / k), k - 1, k, mean
+
+
 def holm(pairs, m=None):
     """§3-5 계층1 — Holm–Bonferroni. pairs = [(채널, p)]. 통과 집합을 돌려준다.
 
@@ -633,7 +671,7 @@ def holm(pairs, m=None):
 
 
 # ── 리포트 ────────────────────────────────────────────────────────────────
-def build_report(data, raw, skipped, today):
+def build_report(data, raw, skipped, today, bydate=None):
     ctrl = data.get(CONTROL, {})
     rows_out, conf = [], []
 
@@ -645,7 +683,11 @@ def build_report(data, raw, skipped, today):
         n = len(vals)
         mean = sum(vals) / n if n else None
         base = ctrl.get(h, [])
-        t, df = welch(vals, base) if ch != CONTROL else (None, None)
+        wt, wdf = welch(vals, base) if ch != CONTROL else (None, None)
+        # §3-5-2 — 판정에 쓰는 값은 **짝 t** 다. Welch 는 참고로 같이 싣는다.
+        pt, pdf, pk, pm = (paired_by_date(bydate, ch, h) if bydate is not None
+                           and ch != CONTROL else (None, None, 0, None))
+        t, df = (pt, pdf) if pt is not None else (wt, wdf)
         p = t_two_sided_p(t, df) if (t is not None and df) else None
         ann = mean * (TRADING_DAYS_YEAR / h) if mean is not None else None
         is_ctrl = ch.startswith(CONTROL_LIKE)
@@ -658,7 +700,9 @@ def build_report(data, raw, skipped, today):
                  if raw.get(ch) else "행 없음")
         rows_out.append({"ch": ch, "h": h, "n": n, "raw": raw.get(ch, 0),
                          "mean": mean, "ann": ann, "t": t, "p": p,
-                         "v": v, "ctrl": is_ctrl})
+                         "v": v, "ctrl": is_ctrl,
+                         "wt": wt, "pt": pt, "pk": pk, "pm": pm,
+                         "paired": pt is not None})
 
     passed = holm(conf, HOLM_M) if conf else set()
     for r in rows_out:
@@ -691,6 +735,7 @@ def build_report(data, raw, skipped, today):
     A(f"| 관찰 연장 | N≥{MIN_N} 이고 {T_DISCARD} ≤ t < {T_SURVIVE} | §3-1 |")
     A(f"| 폐기 | N≥{MIN_N} 이고 t < {T_DISCARD} — **보정 없음** | §3-1 · §3-5 |")
     A(f"| 판정 불가 | N < {MIN_N} → 관찰 연장 | §3-1 |")
+    A(f"| 검정 통계량 | **같은 날 짝지은 1표본 t** (df = 날짜수−1) | §3-5-2 |")
     A(f"| 대조군 | `{CONTROL}` (같은 호라이즌) | §3-1 |")
     A("")
     A("⚠️ 슬리피지는 **미반영**이다(§3-4-2). §6-4 모의 집행 실측치가 확정되면 그때 더한다.")
@@ -709,6 +754,26 @@ def build_report(data, raw, skipped, today):
     A("`*` = 대조군. 판정 대상이 아니며 §3-5 의 m 에도 포함되지 않는다.")
     A("")
 
+    A("## 같은 날 짝지어 비교 (§3-5-2)")
+    A("")
+    A("두 채널은 같은 날 매매하므로 **그날 시장이 통째로 움직인 몫은 차이에서 상쇄된다.**")
+    A("Welch 는 그 몫을 양쪽 분산에 넣고 재기 때문에 표준오차를 부풀린다. 대신 짝 검정은")
+    A("자유도를 잃는다(행 수 → 날짜 수). **어느 쪽이 큰지는 미리 알 수 없어서, 결과를 보기")
+    A("전에 짝 검정을 쓰기로 §3-5-2 에 고정했다.** 아래 두 열의 차이가 그 효과다.")
+    A("")
+    A("| 채널 | 짝 지은 날 | 평균 차이 | 짝 t (판정용) | Welch t (참고) |")
+    A("|---|--:|--:|--:|--:|")
+    for r in sorted(rows_out, key=lambda x: (x["ctrl"], -(x["t"] or -9))):
+        if r["ctrl"]:
+            continue
+        g = lambda v, s="{:+.2f}": s.format(v) if v is not None else "—"
+        A(f"| {r['ch']} | {r['pk'] or '—'} | {g(r['pm'], '{:+.2f}%')} | "
+          f"{g(r['pt'])} | {g(r['wt'])} |")
+    A("")
+    if not any(r["paired"] for r in rows_out):
+        A("⚠️ **짝 검정이 하나도 성립하지 않았다.** 두 채널 모두 값이 있는 날이 2일 미만이다.")
+        A("이 표의 t 는 Welch 로 되돌아간 값이며, §3-5-2 가 의도한 검정이 아니다.")
+        A("")
     A("## 다중비교 보정 (§3-5 계층 1)")
     A("")
     A(f"확증 집합은 §3-5-1 이 `{'` · `'.join(CONFIRMATORY)}` 로 **닫아** 두었다. "
@@ -1014,14 +1079,14 @@ def self_test():
         r[C_CHANNEL], r[C_EXCLUDE] = ch, memo
         r[STOCK_COL[5]], r[INDEX_COL[5]] = str(s), str(i)
         return r
-    d, rw, sk = collect([hdr, mk("차트TOP2", 3.0, 1.0)])
+    d, rw, sk, bd = collect([hdr, mk("차트TOP2", 3.0, 1.0)])
     chk("순알파 = 종목−지수−0.35", abs(d["차트TOP2"][5][0] - (3.0 - 1.0 - 0.35)) < 1e-9,
         f"={d['차트TOP2'][5][0]:.2f}")
-    d, rw, sk = collect([hdr, mk("지수벤치_KOSPI", 3.0, 1.0)])
+    d, rw, sk, bd = collect([hdr, mk("지수벤치_KOSPI", 3.0, 1.0)])
     chk("지수벤치는 비용 면제", abs(d["지수벤치_KOSPI"][5][0] - 2.0) < 1e-9)
-    d, rw, sk = collect([hdr, mk("차트TOP2", 3.0, 1.0, "거래정지 — 측정 제외")])
+    d, rw, sk, bd = collect([hdr, mk("차트TOP2", 3.0, 1.0, "거래정지 — 측정 제외")])
     chk("'제외' 표식 행은 빠진다", sk["제외표식"] == 1 and not d)
-    d, rw, sk = collect([hdr, mk("차트TOP2", 3.0, 1.0, "집계복귀 — 철회")])
+    d, rw, sk, bd = collect([hdr, mk("차트TOP2", 3.0, 1.0, "집계복귀 — 철회")])
     chk("'집계복귀'(제외 두 글자 없음) 는 살린다", sk["제외표식"] == 0 and bool(d))
     # 세 구현이 같은 판정을 하는지 — 단순 포함 검사와 일치해야 한다
     for memo, want in [("거래정지 — 측정 제외", True), ("제외:위험종목", True),
@@ -1043,7 +1108,7 @@ def self_test():
 
     hdrb = [""] * 34
     # ① 감사자 재현: 당일 진입인데 T+5 값이 있다 → 예전엔 WARN 만 뜨고 N 에 들어갔다
-    d, rw, sk = collect([hdrb, mkb("차트TOP2", 3.0, 1.0, "2026-09-08")], today=_T)
+    d, rw, sk, bd = collect([hdrb, mkb("차트TOP2", 3.0, 1.0, "2026-09-08")], today=_T)
     chk("① 조기값은 이제 **집계에서 빠진다**(예전엔 순알파 +1.65% 로 포함)",
         d == {} and sk["조기값(성숙 전·집계 제외)"] == 1, f"data={d} skipped={sk}")
     # [2-1] 상호배타 — 새 카운터를 올렸으면 미성숙은 **0** 이어야 한다.
@@ -1052,12 +1117,12 @@ def self_test():
     chk("①-b 조기값이면 미성숙은 0 (중복 집계 금지)",
         sk["미성숙(호라이즌 미도달)"] == 0, f"{sk}")
     # ② 종목값만 있고 지수값이 없다 → 예전엔 무경고로 '미성숙'에 섞였다
-    d, rw, sk = collect([hdrb, mkb("차트TOP2", 3.0, None)], today=_T)
+    d, rw, sk, bd = collect([hdrb, mkb("차트TOP2", 3.0, None)], today=_T)
     chk("② 쌍결손을 '미성숙'과 따로 센다",
         sk["쌍결손(한쪽만 있음)"] == 1 and d == {}, f"skipped={sk}")
     chk("②-b 쌍결손이면 미성숙은 0", sk["미성숙(호라이즌 미도달)"] == 0, f"{sk}")
     # ③ 둘 다 없는데 성숙했다 → '성숙결측'
-    d, rw, sk = collect([hdrb, mkb("차트TOP2")], today=_T)
+    d, rw, sk, bd = collect([hdrb, mkb("차트TOP2")], today=_T)
     chk("③ 성숙했는데 둘 다 없으면 '성숙결측'으로 센다",
         sk["성숙결측(둘 다 없음)"] == 1, f"skipped={sk}")
     chk("③-b 성숙결측이면 미성숙은 0", sk["미성숙(호라이즌 미도달)"] == 0, f"{sk}")
@@ -1070,7 +1135,7 @@ def self_test():
             mkb("차트TOP2", 3.0, 1.0, "2026-09-08"),         # 조기값
             mkb("수급TOP2", None, None, "2026-09-07")]       # 미성숙
     _mix[3][C_EXCLUDE] = ""                                  # 제외표식 없음 확인
-    _d, _rw, _sk = collect(_mix, today=_T)
+    _d, _rw, _sk, _bd = collect(_mix, today=_T)
     _rows, _tot, _ok = reconcile(_mix, _sk)
     chk("합계 검증 — 원시 행수 = 상태 합계", _ok, f"행={_rows} 합계={_tot} {_sk}")
     chk("행×기간 진단은 행 수와 별도 항목으로 표시", "조기값(행×기간)" in _sk)
@@ -1086,7 +1151,7 @@ def self_test():
     chk("2-2 평일 수가 충분하면 종전대로 성숙 가능",
         maturity_note("2026-08-01", 5, _T) == "MATURED")
     # 정상값은 종전대로 들어간다
-    d, rw, sk = collect([hdrb, mkb("차트TOP2", 3.0, 1.0)], today=_T)
+    d, rw, sk, bd = collect([hdrb, mkb("차트TOP2", 3.0, 1.0)], today=_T)
     chk("정상 성숙값은 그대로 집계된다",
         abs(d["차트TOP2"][5][0] - (3.0 - 1.0 - 0.35)) < 1e-9, f"{d}")
     # 경계(달력일 근사가 유보)는 **버리지 않는다** — 근사로 진짜 값을 버리는 쪽이 더 나쁘다.
@@ -1097,7 +1162,7 @@ def self_test():
     chk("경계 사례 고르기 — 평일은 충분하고 달력 여유는 미달",
         weekdays_between(datetime.date(2026, 8, 31), _T) >= 5
         and (_T - datetime.date(2026, 8, 31)).days < calendar_margin(5))
-    d, rw, sk = collect([hdrb, mkb("차트TOP2", 3.0, 1.0, "2026-08-31")], today=_T)
+    d, rw, sk, bd = collect([hdrb, mkb("차트TOP2", 3.0, 1.0, "2026-08-31")], today=_T)
     chk("경계 유보(None)는 집계에 넣는다", d.get("차트TOP2", {}).get(5) is not None,
         f"note={maturity_note('2026-08-31', 5, _T)} data={d}")
     # 검증기도 모든 채널×기간을 본다 — 랜덤2 는 여러 기간에 쓰인다.
@@ -1121,17 +1186,78 @@ def self_test():
         r[C_CHANNEL] = ch
         r[STOCK_COL[10]], r[INDEX_COL[10]] = str(s10), str(i10)
         return r
-    d, rw, sk = collect([hdr, mk10(CONTROL, 1.0, 0.0), mk10("리포트TOP2_중기", 2.0, 0.0)])
+    d, rw, sk, bd = collect([hdr, mk10(CONTROL, 1.0, 0.0), mk10("리포트TOP2_중기", 2.0, 0.0)])
     chk("대조군이 T+10 에서도 모인다(중기 검정용)",
         10 in d.get(CONTROL, {}), f"랜덤2 호라이즌={sorted(d.get(CONTROL, {}))}")
     # ② 호라이즌 미도달 채널이 표에서 사라지면 안 된다
-    d, rw, sk = collect([hdr, mk10("랜덤2_배지", 1.0, 0.0)])   # T+5 는 비어 있음
+    d, rw, sk, bd = collect([hdr, mk10("랜덤2_배지", 1.0, 0.0)])   # T+5 는 비어 있음
     chk("미성숙 채널도 원시행수로 남는다",
         rw.get("랜덤2_배지") == 1 and sk["미성숙(호라이즌 미도달)"] == 1,
         f"raw={rw.get('랜덤2_배지')} 미성숙={sk['미성숙(호라이즌 미도달)']}")
     md, ro, cf, ps = build_report(d, rw, sk, "2026-01-01")
     chk("N=0 이어도 표에 남고 사유가 적힌다",
         any(r["ch"] == "랜덤2_배지" and r["n"] == 0 for r in ro) and "T+5 미도달" in md)
+
+    print("🧪 §3-5-2 같은 날 짝지어 비교 (2026-09-11)")
+    # ① 드리프트 방지 — bydate 를 다 합치면 out 과 **같은 값 집합**이어야 한다.
+    #    두 구조를 다른 루프로 쌓았다면 이 검사가 언젠가 깨진다.
+    _rows = [hdrb]
+    for i, dd in enumerate(["2026-08-03", "2026-08-04", "2026-08-05"]):
+        _rows += [mkb("차트TOP2", 3.0 + i, 1.0, dd), mkb(CONTROL, 1.0, 1.0, dd)]
+    _d, _rw, _sk, _bd = collect(_rows, today=_T)
+    for _ch in ("차트TOP2", CONTROL):
+        flat = sorted(v for day in _bd[_ch][5].values() for v in day)
+        chk(f"{_ch}: 날짜별 합계가 집계 목록과 같다",
+            flat == sorted(_d[_ch][5]), f"{flat} vs {sorted(_d[_ch][5])}")
+
+    # ② 짝짓기 산수 — 차트 순알파는 3.0/4.0/5.0 에서 지수1.0·비용0.35 를 뺀 값,
+    #    대조군은 매일 1.0-1.0-0.35. 차이는 +2.0/+3.0/+4.0 이어야 한다.
+    t, df, k, m = paired_by_date(_bd, "차트TOP2", 5)
+    chk("짝지은 날은 3일, df=2", k == 3 and df == 2, f"k={k} df={df}")
+    chk("평균 차이는 +3.00%p", abs(m - 3.0) < 1e-9, f"{m}")
+
+    # ③ 한쪽만 있는 날은 짝이 안 된다 — 조용히 포함시키면 안 된다.
+    _solo = _rows + [mkb("차트TOP2", 9.0, 1.0, "2026-08-06")]
+    _bd2 = collect(_solo, today=_T)[3]
+    chk("대조군이 없는 날은 짝에서 빠진다",
+        paired_by_date(_bd2, "차트TOP2", 5)[2] == 3,
+        f"k={paired_by_date(_bd2, '차트TOP2', 5)[2]}")
+
+    # ④ 시장이 통째로 움직인 날 — 짝 t 가 Welch 보다 커야 한다. 이게 이 변경의 이유다.
+    _mkt = [hdrb]
+    for i in range(12):
+        dd = "2026-08-%02d" % (3 + i)
+        shock = 20.0 if i % 2 else -20.0        # 그날 시장 전체가 크게 움직임
+        edge = 2.0 + 0.4 * (i % 3)              # 우위는 작고 날마다 조금씩 다르다
+        _mkt += [mkb("차트TOP2", shock + edge, 0.0, dd), mkb(CONTROL, shock, 0.0, dd)]
+    _md, _mrw, _msk, _mbd = collect(_mkt, today=_T)
+    _wt, _wdf = welch(_md["차트TOP2"][5], _md[CONTROL][5])
+    _pt = paired_by_date(_mbd, "차트TOP2", 5)[0]
+    chk("공통 충격이 크면 Welch 는 효과를 못 본다", abs(_wt) < 1.0, f"welch t={_wt:.3f}")
+    chk("짝 검정은 같은 효과를 잡아낸다", _pt > 5.0, f"paired t={_pt:.2f}")
+
+    # ④-b 날마다 차이가 똑같으면 분산이 0 이라 t 가 정의되지 않는다.
+    #     그때는 Welch 로 돌아간다 — 실데이터에서 날 일은 없지만 동작을 적어 둔다.
+    _flatdiff = [hdrb]
+    for i in range(6):
+        dd = "2026-08-%02d" % (3 + i)
+        _flatdiff += [mkb("차트TOP2", 3.0, 0.0, dd), mkb(CONTROL, 1.0, 0.0, dd)]
+    _fbd = collect(_flatdiff, today=_T)[3]
+    chk("날짜별 차이가 완전히 같으면 짝 t 는 None (분산 0)",
+        paired_by_date(_fbd, "차트TOP2", 5)[0] is None)
+
+    # ⑤ 리포트가 판정에 짝 t 를 쓰는지 — Welch 를 쓰면 여기서 걸린다.
+    _rep = build_report(_md, _mrw, _msk, "2026-01-01", _mbd)
+    _r = next(r for r in _rep[1] if r["ch"] == "차트TOP2")
+    chk("판정 t 는 짝 t 다", abs(_r["t"] - _pt) < 1e-9, f"{_r['t']} vs {_pt}")
+    chk("Welch 도 참고로 같이 실린다", "Welch t (참고)" in _rep[0])
+
+    # ⑥ 짝이 성립 안 하면 경고를 남긴다 — 조용히 Welch 로 돌아가면 안 된다.
+    _one = collect([hdrb, mkb("차트TOP2", 3.0, 1.0), mkb(CONTROL, 1.0, 1.0)], today=_T)
+    _md2 = build_report(_one[0], _one[1], _one[2], "2026-01-01", _one[3])[0]
+    chk("짝이 2일 미만이면 리포트가 그 사실을 알린다",
+        "짝 검정이 하나도 성립하지 않았다" in _md2)
+
 
     print("\n" + ("✅ 전부 통과" if ok else "❌ 실패 있음 — 판정을 돌리지 말 것"))
     return 0 if ok else 1
@@ -1174,14 +1300,14 @@ def main():
 
     ledger_sha = ledger_fingerprint(rows)
     code_sha = sha256_of(io_read_self())
-    data, raw, skipped = collect(rows)
+    data, raw, skipped, bydate = collect(rows)
     _rows_n, _total_n, _bal = reconcile(rows, skipped)
     if not _bal:
         print(f"\n❌ 행 상태 합계가 원시 행수와 다르다 — {_total_n} vs {_rows_n}")
         print("   상태가 상호배타가 아니거나 세는 곳이 빠졌다는 뜻이다(3차 재검증 2-1).")
         return 2
     print(f"🔢 행 상태 합계 검증 — 원시 {_rows_n}행 = 상태 합계 {_total_n} ✅")
-    md, rows_out, conf, passed = build_report(data, raw, skipped, today)
+    md, rows_out, conf, passed = build_report(data, raw, skipped, today, bydate)
 
     # ── F07 ② 근거를 판정표에 박아 넣는다 ────────────────────────────────
     md += ("\n## 재현 정보 (F07)\n\n"
