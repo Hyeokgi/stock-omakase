@@ -895,6 +895,21 @@ def milestone_report(rows, today, scheduled):
             A(f"| {r['ch']} | {mo} | {m['cal']} | {m['gap']} | "
               f"{('%.0f%%' % rate) if rate is not None else '—'} | {m['big']} |")
     A("")
+    A("#### 결손일 목록 — 최근 2개월")
+    A("")
+    A("로그 대조로 사유를 가리려면 **어느 날인지** 알아야 한다. 원장 내용이 아니라")
+    A("\"그날 이 채널이 기록을 안 남겼다\"는 사실뿐이므로 여기 적는다.")
+    A("")
+    for r in rows:
+        if not r.get("inside_gap"):
+            continue
+        recent = sorted(r["months"])[-2:] if r.get("months") else []
+        for mo in recent:
+            days = [d for d in r["inside_gap"] if d.startswith(mo)]
+            if not days:
+                continue
+            A(f"- **{r['ch']}** {mo} ({len(days)}일): " + " · ".join(d[8:] for d in days))
+    A("")
     A("**결손률이 특정 월에 몰려 있고 그 뒤로 줄었다면**, 그 달에 있던 무엇이 고쳐졌다는")
     A("뜻이다. 고르게 퍼져 있다면 상시적인 무신호 쪽이다.")
     A("")
@@ -1663,6 +1678,12 @@ def self_test():
         f"{_m['months']}")
     chk("월별 표가 리포트에 찍힌다",
         "결손일의 월별 분포" in milestone_report([_m], "x", False))
+
+    chk("결손일 목록이 최근 2개월만 찍힌다",
+        "결손일 목록 — 최근 2개월" in milestone_report([_m], "x", False))
+    chk("목록에 날짜가 들어간다",
+        "2026-07 (1일): 02" in milestone_report([_m], "x", False),
+        milestone_report([_m], "x", False).split("결손일 목록")[1][:200])
 
     # 모양 판정 — 긴 덩어리가 있으면 고장 모양이라고 적는다.
     _base = {"ch": "리포트TOP2_단기", "h": 5, "n": 5, "raw": 5, "k": 5, "t": 1.0,
