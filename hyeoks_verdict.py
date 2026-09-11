@@ -31,7 +31,7 @@
 #   · 문턱을 조정하지 않는다. 판정을 해석하지 않는다. 표를 만들 뿐이다.
 #   · 대조군(랜덤2·랜덤2_배지·지수벤치)은 판정 대상에서 뺀다(§3-1).
 # ==========================================================================
-import os, sys, math, json, hashlib, argparse, datetime
+import os, sys, math, json, hashlib, argparse, datetime, random
 
 KST = datetime.timezone(datetime.timedelta(hours=9))
 # ⚠️ 문서 지정은 **URL 로** 한다. 처음에 open("HYEOKS_주식_자동화") 로 썼다가
@@ -1223,7 +1223,12 @@ def self_test():
         paired_by_date(_bd2, "차트TOP2", 5)[2] == 3,
         f"k={paired_by_date(_bd2, '차트TOP2', 5)[2]}")
 
-    # ④ 시장이 통째로 움직인 날 — 짝 t 가 Welch 보다 커야 한다. 이게 이 변경의 이유다.
+    # ④ 시장이 통째로 움직인 날 — 짝 t 가 Welch 보다 커야 한다.
+    #    ⚠️ 이건 **상한을 보여주는 인공 자료다.** 모든 행의 지수를 0 으로 둬서 시장
+    #       충격이 알파에 그대로 남아 있다. 실제 원장은 행마다 그 종목의 벤치로
+    #       지수를 이미 빼므로(omakase.py:3064) 지울 공통 몫이 거의 없다.
+    #       실제 이득은 ④-c 가 보여준다 — 사실상 0 이다. 처음에 이 검사만 보고
+    #       "짝 t 가 24까지 오른다"고 보고했던 것이 과장이었다.
     _mkt = [hdrb]
     for i in range(12):
         dd = "2026-08-%02d" % (3 + i)
@@ -1235,6 +1240,29 @@ def self_test():
     _pt = paired_by_date(_mbd, "차트TOP2", 5)[0]
     chk("공통 충격이 크면 Welch 는 효과를 못 본다", abs(_wt) < 1.0, f"welch t={_wt:.3f}")
     chk("짝 검정은 같은 효과를 잡아낸다", _pt > 5.0, f"paired t={_pt:.2f}")
+
+    # ④-c 실제 조건 — 지수를 행별로 빼고 나면 짝짓기가 가져오는 이득이 사라진다.
+    #      개별 종목 변동이 시장 변동보다 훨씬 커서 지울 공통 몫 자체가 작다.
+    #      이 검사가 §3-5-2 를 "빨라지는 변경"으로 오해하지 않게 막는다.
+    _rng = random.Random(11)
+    _real = [hdrb]
+    for i in range(30):
+        dd = "2026-07-%02d" % (1 + i)
+        M = _rng.gauss(0, 2.75)                 # 그날 시장
+        for ch, edge in (("차트TOP2", 2.2), (CONTROL, 0.0)):
+            for _ in range(2):
+                r = M + _rng.gauss(0, 9.6) + edge
+                # 지수 칸을 M 으로 채운다 = 실제 원장이 하는 일
+                _real.append(mkb(ch, round(r, 2), round(M, 2), dd))
+    _rd, _rrw, _rsk, _rbd = collect(_real, today=_T)
+    _rw_t, _ = welch(_rd["차트TOP2"][5], _rd[CONTROL][5])
+    _rp_t = paired_by_date(_rbd, "차트TOP2", 5)[0]
+    chk("지수를 행별로 빼면 짝 t 와 Welch t 가 사실상 같다",
+        abs(_rp_t - _rw_t) / abs(_rw_t) < 0.25,
+        f"welch={_rw_t:.2f} paired={_rp_t:.2f} 비율={_rp_t/_rw_t:.2f}배")
+    chk("그래도 짝 검정은 N 을 날짜로 센다(행으로 부풀리지 않는다)",
+        paired_by_date(_rbd, "차트TOP2", 5)[2] == 30 and len(_rd["차트TOP2"][5]) == 60,
+        f"날짜={paired_by_date(_rbd, '차트TOP2', 5)[2]} 행={len(_rd['차트TOP2'][5])}")
 
     # ④-b 날마다 차이가 똑같으면 분산이 0 이라 t 가 정의되지 않는다.
     #     그때는 Welch 로 돌아간다 — 실데이터에서 날 일은 없지만 동작을 적어 둔다.

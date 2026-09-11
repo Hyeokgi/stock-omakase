@@ -76,3 +76,39 @@ class QualityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BenchmarkAdjustment(unittest.TestCase):
+    """v2 — 채널 간 비교에서 시장 구성 차이를 빼낸다.
+
+    원장은 행마다 그 종목의 벤치(코스피/코스닥) 지수 수익률을 채운다. 그걸 안 빼면
+    코스닥을 많이 담은 채널과 코스피를 많이 담은 채널의 차이에 실력이 아닌 것이 섞인다.
+    """
+
+    def test_daily_mean_subtracts_the_rows_own_index(self):
+        for horizon in (5, 10):
+            stock, index = q.COLS[horizon]
+            f = q.pair_mean('"차트TOP2"', horizon, "$A30")
+            self.assertIn(q.ref(stock), f)
+            self.assertIn(q.ref(index), f, f"T+{horizon} 에서 지수 열이 빠졌다")
+            self.assertIn(f"-IFERROR({q.ref(index)}*1,0)", f)
+
+    def test_cost_is_not_subtracted_here(self):
+        # 상수라 채널 간 차이에서 정확히 상쇄된다. 빼면 '초과'가 '순알파'로 오인된다.
+        self.assertNotIn("0.35", q.pair_mean('"차트TOP2"', 5, "$A30"))
+
+    def test_version_bumped_so_stale_view_fails_loudly(self):
+        self.assertEqual(q.VERSION, "quality-v2")
+
+    def test_layout_unchanged_by_the_new_note(self):
+        rows = q.build_rows()
+        self.assertEqual(len(rows), q.DAILY_START + q.DAYS - 1)
+        self.assertEqual(rows[24][0], "원장 최근 추천일")
+        self.assertEqual(rows[18][0], "동일 추천일 비교")
+        self.assertEqual(rows[19][0], "단기 − 차트 T+5")
+        self.assertEqual(rows[q.DAILY_START - 2][0], "날짜(달력일)")
+
+    def test_daily_headers_say_excess_not_raw_return(self):
+        head = q.build_rows()[q.DAILY_START - 2]
+        self.assertIn("단기 초과T+5", head)
+        self.assertIn("중기 초과T+10", head)
