@@ -868,6 +868,21 @@ try:
     print(funnel_line(_funnel))
     print(f"   (상위관문: 원시 {len(cands_list)}종목 → 점수선별 {len(pre_pool)} → "
           f"DNA검증 {len(validated_pool)} → 풀 {len(pool_150)})")
+    # 📊 [2026-09-11] 상위 단계에서도 **같은 태그를 센다.**
+    #    풀에서만 세면 "태그 0" 이 시장에 없었던 것인지 상위 관문에서 떨어진
+    #    것인지 안 갈린다(funnel_line 의 주석이 그 한계를 스스로 적어 뒀다).
+    #    cands_list·pre_pool 항목도 type·tajeom_raw 를 들고 있으므로
+    #    같은 함수로 셀 수 있다 — 키가 없어 0 이 되는 거짓 계측이 아니다.
+    #    ⚠️ 세기만 한다. 선정 로직·프롬프트·풀 구성은 건드리지 않는다.
+    try:
+        _stages = [("원시", cands_list), ("점수선별", pre_pool),
+                   ("DNA검증", validated_pool), ("풀", pool_150)]
+        print("   (과매도태그 단계별: " + " → ".join(
+            f"{nm} {channel_funnel(st)['과매도태그']}/{len(st)}"
+            for nm, st in _stages) + ")")
+    except Exception as _fe:
+        # 계측 실패가 리포트를 막아서는 안 된다. 대신 조용히 넘기지도 않는다.
+        print(f"   ⚠️ [단계별 태그 계측 실패] {_fe} — 리포트는 계속한다")
 
     def get_recent_performance_summary(doc):
         """🆕 [AI Memory] 모델을 재학습시키는 게 아니라, 최근 리포트 채널(단기/중기)의 실제 성과를
