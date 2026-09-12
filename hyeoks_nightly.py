@@ -28,7 +28,43 @@ def send_telegram(msg):
             print(f"⚠️ 텔레그램 발송 실패: {e}")
 
 # ==========================================
-# KIS API: 시간외 단일가 조회 (FHKST01010100)
+# 🏛️ 2026-09-14 시장 제도 개편 — 이 파일의 전제가 바뀌었다
+# ==========================================
+#   폐지: KRX 시간외 단일가 (16:00~18:00, 10분 주기 단일가)
+#   신설: KRX 애프터마켓 "시간외접속매매" (16:00~20:00, 실시간 접속매매)
+#   NXT: 프리 08:00~08:50 · 정규 09:00~15:30 · 애프터 15:40~20:00 (종전과 같음)
+#   정규장 미체결 주문은 15:30 에 전량 자동 취소 (애프터마켓은 신규 주문 필요)
+#   애프터마켓 제외: ETF·ETN, 시장조치종목(이상급등·단기과열·투자경고·관리)
+#   정적 VI 가 NXT 에도 신규 도입 (KRX 와 발동가가 다를 수 있음)
+#
+# ⚠️ **이 파일의 Phase 1 은 "18:05 리셋 전에 단일가를 낚아챈다"는 전제였다.**
+#    그 시장이 없어졌으므로 전제가 사라진다. 17:50 샘플은 이제 애프터마켓
+#    **중간 시점 가격**이다 — 여전히 쓸모는 있지만 '단일가'가 아니다.
+#
+# 🚫 KIS `ovtm_untp_prpr` · 네이버 `timeExtraClosePrice` 가 9/14 이후 무엇을
+#    담을지 **추측하지 않는다.** 빈 값일 수도, 애프터마켓 실시간가일 수도 있다.
+#    그래서 수집 동작은 그대로 두고 **라벨을 사실대로 바꾸고, 0/빈 값이
+#    무엇을 뜻하는지 모른다는 것을 로그에 남긴다.** 실측 후 확정한다.
+#
+# ✅ 판정 경로에는 영향이 없다. 다음날 시초가 기준가격은 제도 개편 후에도
+#    **15:30 KRX 정규장 종가**이고, 순알파·지수·§3-1 은 그 값만 쓴다.
+#    시간외 값은 DB_스캐너·모닝 브리핑(정성 참고)에만 들어간다.
+REFORM_DATE = datetime.date(2026, 9, 14)   # 시간외 단일가 폐지 · 애프터마켓 개시
+
+
+def after_hours_regime(today=None):
+    """그날의 장 종료 후 제도. 라벨을 사실대로 붙이기 위한 것이다."""
+    d = today or datetime.datetime.now(KST).date()
+    if d < REFORM_DATE:
+        return {"label": "시간외단일가", "window": "16:00~18:00",
+                "kind": "10분 주기 단일가", "reset": True}
+    return {"label": "애프터마켓", "window": "16:00~20:00",
+            "kind": "실시간 접속매매", "reset": False}
+
+
+# ==========================================
+# KIS API: 장 종료 후 가격 조회 (FHKST01010100)
+#   9/14 전 = 시간외 단일가 / 9/14 이후 = 애프터마켓 (필드 의미 미확정)
 # ==========================================
 def get_after_hours_price(code, kis_headers, req):
     """
@@ -200,9 +236,12 @@ def main():
     #    20시 이후 = Phase 2 (NXT + 차트)
     #    그 외 = 수동 실행 (양쪽 다 시도)
     # ──────────────────────────────────────
+    _rg = after_hours_regime(now_obj.date())
     if current_hour == 17:
         phase       = 1
-        phase_name  = "[Phase 1] 17:50 시간외 단일가 스냅샷 (리셋 전 낚아채기)"
+        phase_name  = (f"[Phase 1] 17:50 {_rg['label']} 스냅샷 "
+                       + ("(18:05 리셋 전 낚아채기)" if _rg["reset"]
+                          else f"({_rg['window']} {_rg['kind']} 중간 시점 — 리셋 없음)"))
         run_phase1  = True
         run_phase2  = False
     elif current_hour >= 20:
@@ -217,6 +256,10 @@ def main():
         run_phase2  = True
 
     print(f"🌙 [HYEOKS 심야 정밀 배치] {phase_name} 가동 ({now_str})")
+    print(f"🏛️ [장 종료 후 제도] {_rg['label']} {_rg['window']} · {_rg['kind']}"
+          + ("" if _rg["reset"] else
+             "  ⚠️ 9/14 개편 후 KIS ovtm_untp_prpr · 네이버 timeExtraClosePrice 가"
+             " 무엇을 담는지 **미확정**이다. 0/빈 값을 '야간 초기화'로 단정하지 말 것"))
 
     # ── Google Sheets 연결 ──────────────────
     gcp_creds_str = os.environ.get("GCP_CREDENTIALS")
@@ -267,8 +310,11 @@ def main():
     header = all_data[0]
     while len(header) < 23:
         header.append("")
-    # U열(20) = 시간외단일가, V열(21) = 소속테마(기존유지), W열(22) = NXT야간거래
-    header[20] = "시간외단일가"
+    # U열(20) = 장 종료 후 가격, V열(21) = 소속테마(기존유지), W열(22) = NXT야간거래
+    # 🏛️ 9/14 부터 '시간외단일가'라는 시장이 없다. 라벨을 제도에 맞춘다 —
+    #    hyeoks_morning.py 는 이름이 아니라 **인덱스**(r[26]/r[27])로 읽으므로
+    #    라벨 변경이 읽는 쪽을 깨지 않는다(:135 확인).
+    header[20] = f"{_rg['label']}({_rg['window']})"
     header[22] = "NXT야간거래"
     all_data[0] = header
 
