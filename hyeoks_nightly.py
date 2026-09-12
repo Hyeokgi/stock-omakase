@@ -1,7 +1,8 @@
-import os, time, json, requests, datetime
+import os, time, json, requests, datetime, sys
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import urllib3
+from nightly_quotes import quote_label, naver_quote, after_hours_header
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -32,8 +33,9 @@ def send_telegram(msg):
 # ==========================================
 #   폐지: KRX 시간외 단일가 (16:00~18:00, 10분 주기 단일가)
 #   신설: KRX 애프터마켓 "시간외접속매매" (16:00~20:00, 실시간 접속매매)
-#   NXT: 프리 08:00~08:50 · 정규 09:00~15:30 · 애프터 15:40~20:00 (종전과 같음)
-#   정규장 미체결 주문은 15:30 에 전량 자동 취소 (애프터마켓은 신규 주문 필요)
+#   NXT: 프리 08:00~08:50 · 메인 09:00:30~15:20 · 애프터 15:40~20:00
+#   출처: https://nextrade.co.kr/main.do (2026-09-13 확인)
+#   미체결 주문의 세션 이월은 가정하지 않는다. 취소 시점은 증권사 안내를 확인한다.
 #   애프터마켓 제외: ETF·ETN, 시장조치종목(이상급등·단기과열·투자경고·관리)
 #   정적 VI 가 NXT 에도 신규 도입 (KRX 와 발동가가 다를 수 있음)
 #
@@ -46,9 +48,8 @@ def send_telegram(msg):
 #    그래서 수집 동작은 그대로 두고 **라벨을 사실대로 바꾸고, 0/빈 값이
 #    무엇을 뜻하는지 모른다는 것을 로그에 남긴다.** 실측 후 확정한다.
 #
-# ✅ 판정 경로에는 영향이 없다. 다음날 시초가 기준가격은 제도 개편 후에도
-#    **15:30 KRX 정규장 종가**이고, 순알파·지수·§3-1 은 그 값만 쓴다.
-#    시간외 값은 DB_스캐너·모닝 브리핑(정성 참고)에만 들어간다.
+# 시간외 관측값은 모닝 브리핑 참고 자료다. 기존 정규장 수익률 정의는 유지하지만
+# 제도 변경이 다음날 가격 형성/전략 성과에 영향을 주지 않는다는 뜻은 아니다.
 REFORM_DATE = datetime.date(2026, 9, 14)   # 시간외 단일가 폐지 · 애프터마켓 개시
 
 
@@ -69,7 +70,7 @@ def after_hours_regime(today=None):
 def get_after_hours_price(code, kis_headers, req):
     """
     시간외 단일가(ovtm_untp_prpr) 조회.
-    데이터가 0이면 야간초기화(0원) 반환.
+    데이터가 없거나 0이면 미확인. 리셋 원인을 추정하지 않는다.
     """
     try:
         h = dict(kis_headers)
@@ -83,18 +84,9 @@ def get_after_hours_price(code, kis_headers, req):
         )
         if res.status_code == 200 and res.json().get("rt_cd") == "0":
             out  = res.json().get("output", {})
-            prc  = out.get("ovtm_untp_prpr", "0")
-            rate = out.get("ovtm_untp_prdy_ctrt", "0")
-            if prc and int(prc) > 0:
-                r_val = float(rate)
-                if r_val > 0:
-                    return f"🔺+{r_val:.2f}% ({int(prc):,}원)"
-                elif r_val < 0:
-                    return f"🔵{r_val:.2f}% ({int(prc):,}원)"
-                else:
-                    return f"➖0.00% ({int(prc):,}원)"
-            else:
-                return "야간초기화(0원)"
+            return quote_label(out.get("ovtm_untp_prpr"),
+                               out.get("ovtm_untp_prdy_ctrt"),
+                               "KIS/ovtm_untp_prpr") or "미확인(가격·등락률 없음)"
         else:
             return f"API오류({res.status_code})"
     except Exception as e:
@@ -103,11 +95,11 @@ def get_after_hours_price(code, kis_headers, req):
 # ==========================================
 # 네이버 모바일 API: NXT 종가 + 시간외 보조
 # ==========================================
-def get_naver_after_price(code, req):
+def get_naver_after_price(code, req, venue="NXT"):
     """
     네이버 모바일 API에서 NXT 종가(nxtClosePrice)와
     시간외 단일가(timeExtraClosePrice)를 모두 시도.
-    가장 의미있는 값을 반환.
+    요청한 시장의 필드만 반환. 결손은 보합이 아니다.
     """
     try:
         res = req.get(
@@ -118,38 +110,7 @@ def get_naver_after_price(code, req):
         if res.status_code != 200:
             return None, None
 
-        data       = res.json()
-        reg_close  = float(str(data.get("closePrice") or "0").replace(",", ""))
-
-        # NXT 종가 우선 시도
-        nxt_price  = float(str(data.get("nxtClosePrice") or "0").replace(",", ""))
-        nxt_rate   = float(str(data.get("nxtFluctuationsRatio") or "0").replace(",", ""))
-
-        # 시간외 단일가 보조
-        ext_price  = float(str(data.get("timeExtraClosePrice") or "0").replace(",", ""))
-        ext_rate   = float(str(data.get("timeExtraFluctuationsRatio") or "0").replace(",", ""))
-
-        best_price, best_rate, trade_type = 0.0, 0.0, ""
-
-        if nxt_price > 0 and nxt_price != reg_close:
-            best_price = nxt_price
-            best_rate  = nxt_rate if nxt_rate != 0.0 else round(((nxt_price - reg_close) / reg_close) * 100, 2)
-            trade_type = "NXT"
-        elif ext_price > 0 and ext_price != reg_close:
-            best_price = ext_price
-            best_rate  = ext_rate if ext_rate != 0.0 else round(((ext_price - reg_close) / reg_close) * 100, 2)
-            trade_type = "시외"
-
-        if best_price > 0 and trade_type:
-            if best_rate > 0:
-                label = f"🔺+{best_rate:.2f}% ({int(best_price):,}원) [{trade_type}]"
-            elif best_rate < 0:
-                label = f"🔵{best_rate:.2f}% ({int(best_price):,}원) [{trade_type}]"
-            else:
-                label = f"➖0.00% ({int(best_price):,}원) [{trade_type}]"
-            return label, trade_type
-        else:
-            return "➖ 0.00% (보합)", ""
+        return naver_quote(res.json(), venue)
 
     except Exception as e:
         return f"조회실패({str(e)[:20]})", ""
@@ -174,16 +135,7 @@ def get_nxt_kis_price(code, kis_headers, req):
         )
         if res.status_code == 200 and res.json().get("rt_cd") == "0":
             out    = res.json().get("output", {})
-            n_prc  = out.get("stck_prpr", "0")
-            n_rate = out.get("prdy_ctrt", "0")
-            if n_prc and int(n_prc) > 0:
-                nr = float(n_rate)
-                if nr > 0:
-                    return f"🔺+{nr:.2f}% ({int(n_prc):,}원) [KIS-NXT]"
-                elif nr < 0:
-                    return f"🔵{nr:.2f}% ({int(n_prc):,}원) [KIS-NXT]"
-                else:
-                    return f"➖0.00% ({int(n_prc):,}원) [KIS-NXT]"
+            return quote_label(out.get("stck_prpr"), out.get("prdy_ctrt"), "KIS-NXT/stck_prpr")
         # 403 또는 데이터 없음 → None 반환
         return None
     except Exception:
@@ -232,16 +184,14 @@ def main():
 
     # ──────────────────────────────────────
     # ✅ 핵심 수정: Phase 분기를 명확하게
-    #    17시 = Phase 1 (18:05 리셋 전 낚아채기)
+    #    17시 = Phase 1 (실제 조회 시각은 값에 별도 기록)
     #    20시 이후 = Phase 2 (NXT + 차트)
     #    그 외 = 수동 실행 (양쪽 다 시도)
     # ──────────────────────────────────────
     _rg = after_hours_regime(now_obj.date())
     if current_hour == 17:
         phase       = 1
-        phase_name  = (f"[Phase 1] 17:50 {_rg['label']} 스냅샷 "
-                       + ("(18:05 리셋 전 낚아채기)" if _rg["reset"]
-                          else f"({_rg['window']} {_rg['kind']} 중간 시점 — 리셋 없음)"))
+        phase_name  = f"[Phase 1] {_rg['label']} 관측 ({_rg['window']} {_rg['kind']})"
         run_phase1  = True
         run_phase2  = False
     elif current_hour >= 20:
@@ -265,7 +215,7 @@ def main():
     gcp_creds_str = os.environ.get("GCP_CREDENTIALS")
     if not gcp_creds_str:
         print("❌ GCP_CREDENTIALS 환경변수 없음. 종료.")
-        return
+        return 1
 
     try:
         creds_dict = json.loads(gcp_creds_str)
@@ -276,7 +226,7 @@ def main():
     except Exception as e:
         print(f"❌ Google Sheets 연결 실패: {e}")
         send_telegram(f"🚨 [HYEOKS 배치 오류] Sheets 연결 실패\n{e}")
-        return
+        return 1
 
     # ── KIS 토큰 확보 ───────────────────────
     kis_token = ""
@@ -292,7 +242,7 @@ def main():
     if not kis_token:
         print("❌ KIS 토큰 없음. 종료.")
         send_telegram("🚨 [HYEOKS 배치 오류] KIS 토큰을 설정 시트에서 찾을 수 없습니다.")
-        return
+        return 1
 
     # ── 시트 데이터 로드 ────────────────────
     try:
@@ -300,23 +250,14 @@ def main():
         all_data     = target_sheet.get_all_values()
     except Exception as e:
         print(f"❌ 주가데이터_보조 시트 로드 실패: {e}")
-        return
+        return 1
 
     if len(all_data) < 2:
         print("⚠️ 시트 데이터가 비어있음.")
-        return
+        return 1
 
     # ── 헤더 보정 ───────────────────────────
-    header = all_data[0]
-    while len(header) < 23:
-        header.append("")
-    # U열(20) = 장 종료 후 가격, V열(21) = 소속테마(기존유지), W열(22) = NXT야간거래
-    # 🏛️ 9/14 부터 '시간외단일가'라는 시장이 없다. 라벨을 제도에 맞춘다 —
-    #    hyeoks_morning.py 는 이름이 아니라 **인덱스**(r[26]/r[27])로 읽으므로
-    #    라벨 변경이 읽는 쪽을 깨지 않는다(:135 확인).
-    header[20] = f"{_rg['label']}({_rg['window']})"
-    header[22] = "NXT야간거래"
-    all_data[0] = header
+    all_data[0] = after_hours_header(all_data[0], _rg)
 
     # ── KIS 공통 헤더 ───────────────────────
     req = requests.Session()
@@ -332,7 +273,7 @@ def main():
     today_str = now_obj.strftime("%Y%m%d")
 
     success_count = 0
-    phase1_fail   = 0   # 0원으로 초기화된 종목 수 추적
+    phase1_fail   = 0   # 가격 관측값 미확인·조회 오류
     nxt_kis_ok    = 0   # KIS NXT 성공 카운트
     nxt_naver_ok  = 0   # 네이버 NXT 폴백 성공 카운트
 
@@ -361,17 +302,19 @@ def main():
             # KIS API 1차 시도
             kis_single = get_after_hours_price(code, kis_headers, req)
 
-            if "야간초기화(0원)" in kis_single:
-                # KIS가 이미 0으로 초기화 → 네이버로 보조 시도
-                naver_val, _ = get_naver_after_price(code, req)
-                if naver_val and "조회실패" not in naver_val and "0.00%" not in naver_val:
+            if kis_single.startswith(("미확인", "API오류", "조회실패")):
+                naver_val, trade_type = get_naver_after_price(code, req, venue="시외")
+                if naver_val and trade_type == "시외":
                     single_val = naver_val + " (네이버보조)"
-                    print(f"  [보조] {name}: KIS 0원 → 네이버 {naver_val}")
+                    print(f"  [보조] {name}: {kis_single} → 네이버 {naver_val}")
                 else:
-                    single_val = "야간초기화(0원)"
+                    single_val = "미확인(가격 없음 또는 조회 오류)"
                     phase1_fail += 1
             else:
                 single_val = kis_single
+            if now_obj.date() >= REFORM_DATE:
+                single_val += " [개편 후 필드 의미 미검증]"
+            single_val += f" [조회 {datetime.datetime.now(KST).isoformat(timespec='seconds')}; 체결시각 미확인]"
 
         # ── Phase 2: NXT + 차트 ─────────────
         if run_phase2:
@@ -383,12 +326,13 @@ def main():
                 nxt_kis_ok += 1
             else:
                 # KIS NXT 실패(403 등) → 네이버 폴백
-                naver_nxt, trade_type = get_naver_after_price(code, req)
-                if naver_nxt and "조회실패" not in naver_nxt:
+                naver_nxt, trade_type = get_naver_after_price(code, req, venue="NXT")
+                if naver_nxt and trade_type == "NXT":
                     nxt_val      = naver_nxt
                     nxt_naver_ok += 1
                 else:
-                    nxt_val = "오픈API 미지원"
+                    nxt_val = "미확인(NXT 가격 없음 또는 조회 오류)"
+            nxt_val += f" [조회 {datetime.datetime.now(KST).isoformat(timespec='seconds')}; 체결시각 미확인]"
 
             # 차트 데이터 (MA20, 60일 최고가)
             new_ma20, new_high60 = get_chart_data(code, kis_headers, req, date_100, today_str)
@@ -412,30 +356,36 @@ def main():
 
     # ── Google Sheets 저장 ──────────────────
     try:
-        target_sheet.update(
-            range_name=f"A1:AB{len(all_data)}",  # 🔧 26/27번 칸(AA/AB열)까지 쓰도록 범위 확장 (기존 W열까지라 실제로 저장 자체가 안 됐음)
-            values=all_data,
-            value_input_option="USER_ENTERED"
-        )
+        # Only write owned columns. Never rewrite scores/theme/program fields,
+        # or send 32-wide rows into a 28-column range.
+        updates = [{"range": "AA1:AB1", "values": [all_data[0][26:28]]}]
+        if run_phase1:
+            updates.append({"range": f"AA2:AA{len(all_data)}", "values": [[r[26]] for r in all_data[1:]]})
+        if run_phase2:
+            updates.extend([
+                {"range": f"AB2:AB{len(all_data)}", "values": [[r[27]] for r in all_data[1:]]},
+                {"range": f"F2:F{len(all_data)}", "values": [[r[5]] for r in all_data[1:]]},
+                {"range": f"M2:M{len(all_data)}", "values": [[r[12]] for r in all_data[1:]]},
+            ])
+        target_sheet.batch_update(updates, value_input_option="RAW")
         print(f"\n✅ 저장 완료! ({success_count}종목)")
     except Exception as e:
         print(f"❌ 저장 실패: {e}")
         send_telegram(f"🚨 [HYEOKS 배치] 저장 실패\n{e}")
-        return
+        return 1
 
     # ── 텔레그램 결과 리포트 ────────────────
     if phase == 1:
         result_detail = (
-            f"✅ 정상 수집: {success_count - phase1_fail}종목\n"
-            f"⚠️ 야간초기화(0원): {phase1_fail}종목\n\n"
+            f"✅ 수치 관측: {success_count - phase1_fail}종목 (세션 유효성 별도)\n"
+            f"⚠️ 미확인·조회 오류: {phase1_fail}종목\n\n"
         )
         if phase1_fail > 0:
             result_detail += (
-                "💡 [진단] KIS 서버가 이미 데이터를 지운 상태입니다.\n"
-                "GAS 트리거 시간을 17:40으로 더 당기는 것을 권장합니다."
+                "조회 실패·미지원·무거래·필드 변경 등 원인은 추가 확인이 필요합니다."
             )
         else:
-            result_detail += "🎉 리셋 전 데이터 낚아채기 성공!"
+            result_detail += "수치 수집 완료. 당일 해당 세션의 체결값인지는 별도 검증이 필요합니다."
     elif phase == 2:
         result_detail = (
             f"✅ 처리 종목: {success_count}종목\n"
@@ -445,7 +395,7 @@ def main():
     else:
         result_detail = (
             f"✅ 처리 종목: {success_count}종목\n"
-            f"⚠️ 야간초기화(0원): {phase1_fail}종목\n"
+            f"⚠️ 미확인·조회 오류: {phase1_fail}종목\n"
             f"📡 KIS-NXT 성공: {nxt_kis_ok}종목\n"
             f"🌐 네이버 폴백: {nxt_naver_ok}종목"
         )
@@ -460,4 +410,4 @@ def main():
     print(f"\n📲 텔레그램 발송 완료")
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)

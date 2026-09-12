@@ -30,6 +30,9 @@ jobs:
         python -m pip install --upgrade pip
         pip install requests gspread oauth2client urllib3
 
+    - name: 🧪 시간외·판정 회귀 검사 (외부 호출 없음)
+      run: python -m unittest discover -s tests -p 'test_review_regressions.py'
+
     - name: 🌙 심야 데이터 수집기 실행
       env:
         GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}

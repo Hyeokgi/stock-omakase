@@ -49,7 +49,9 @@ jobs:
     - name: 🧪 통계·판정 로직 자기검증
       # 시트를 건드리기 전에 t분포·Welch·Holm·문턱을 검증한다.
       # 여기서 깨지면 판정을 신뢰할 수 없으므로 돌릴 이유가 없다.
-      run: python hyeoks_verdict.py --self-test
+      run: |
+        python hyeoks_verdict.py --self-test
+        python -m unittest discover -s tests -p 'test_review_regressions.py'
 
     - name: 🔑 비밀번호 파일(secret.json) 만들기
       env:

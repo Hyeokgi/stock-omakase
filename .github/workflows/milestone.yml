@@ -47,7 +47,9 @@ jobs:
     - name: 🧪 판정기 자기검증
       # 깨진 판정기로 관측하면 틀린 숫자를 기록에 남긴다.
       # 파이프를 쓰지 않는다 — 종료코드가 삼켜진다.
-      run: python hyeoks_verdict.py --self-test
+      run: |
+        python hyeoks_verdict.py --self-test
+        python -m unittest discover -s tests -p 'test_review_regressions.py'
 
     - name: 🔑 비밀번호 파일(secret.json) 만들기
       env:

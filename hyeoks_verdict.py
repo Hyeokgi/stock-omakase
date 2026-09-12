@@ -498,7 +498,7 @@ def is_excluded(row):
     return "제외" in (str(row[C_EXCLUDE]) if len(row) > C_EXCLUDE else "")
 
 
-def collect(rows, today=None):
+def collect(rows, today=None, current_policy=False):
     """채널 → {horizon: [순알파...]}. 비용은 §3-4-2 대로 여기서 뺀다.
 
     ⚠️ 리허설(2026-09-04)에서 두 가지 결함이 드러나 고친 버전이다.
@@ -542,6 +542,9 @@ def collect(rows, today=None):
                "쌍결손(한쪽만 있음)": 0, "성숙결측(둘 다 없음)": 0}
     # 행×기간 단위 진단. 랜덤2 한 행은 여러 기간을 타므로 **행 수와 다르다.**
     detail = {"조기값(행×기간)": 0, "쌍결손(행×기간)": 0, "성숙결측(행×기간)": 0}
+    if current_policy:
+        from hyeoks_tajeom import POLICY_SINCE
+        skipped["구정책·정책일미상(판정 제외)"] = 0
     for row in rows[1:]:
         if len(row) <= C_CHANNEL:
             continue
@@ -552,9 +555,17 @@ def collect(rows, today=None):
         if not ch:
             skipped["채널없음"] += 1
             continue
-        raw[ch] = raw.get(ch, 0) + 1
         h = HORIZON.get(ch, DEFAULT_HORIZON)
         d_raw = str(row[C_ENTRY_DATE]).strip()[:10] if len(row) > C_ENTRY_DATE else ""
+        if current_policy and ch in EXPLORATORY:
+            try:
+                policy_date = datetime.date.fromisoformat(d_raw).isoformat()
+            except ValueError:
+                policy_date = ""
+            if policy_date < POLICY_SINCE:
+                skipped["구정책·정책일미상(판정 제외)"] += 1
+                continue
+        raw[ch] = raw.get(ch, 0) + 1
         if ch == CONTROL:
             want = horizons_in_use
         elif ch == LONG_CHANNEL:
@@ -718,6 +729,39 @@ def gap_runs(calendar, missing):
     return runs
 
 
+INFERENCE_HOLD = "판정 보류 — 기간중첩·반복검정 계획 미확정"
+REGIME_SINCE = "2026-09-14"
+
+
+def regime_summary(bydate, ch, h):
+    """Fixed signal-date strata, descriptive only; never choose strata by p."""
+    a = (bydate or {}).get(ch, {}).get(h, {})
+    b = (bydate or {}).get(CONTROL, {}).get(h, {})
+    buckets = {"개편 전": [], "개편 후": []}
+    for day in sorted(set(a) & set(b)):
+        datetime.date.fromisoformat(day)  # malformed provenance must not be silently pooled
+        if a[day] and b[day]:
+            diff = sum(a[day]) / len(a[day]) - sum(b[day]) / len(b[day])
+            buckets["개편 후" if day >= REGIME_SINCE else "개편 전"].append(diff)
+    return {name: {"days": len(vals), "mean": sum(vals) / len(vals) if vals else None}
+            for name, vals in buckets.items()}
+
+
+def regime_table(rows):
+    lines = ["## 시장 제도 전후 참고값 (신호일 기준)", "",
+             "2026-09-14를 고정 경계로 함께 표시한다. 유리한 구간만 골라 채택하지 않는다.",
+             "실제 보유기간이 경계를 걸친 거래는 별도 분리하지 못한 신호일 대용 구분이다.",
+             "이 표의 수익률 차이는 당일 짝 평균 차이이며 제도 변경의 인과효과나 유의성 검정이 아니다.", "",
+             "| 채널 | 구간 | 짝 날짜 | 평균 차이 |", "|---|---|---:|---:|"]
+    for row in rows:
+        if row.get("ctrl"):
+            continue
+        for name, values in row.get("regimes", {}).items():
+            mean = "—" if values["mean"] is None else f"{values['mean']:+.2f}%"
+            lines.append(f"| {row['ch']} | {name} | {values['days']} | {mean} |")
+    return "\n".join(lines)
+
+
 def milestone_rows(data, raw, bydate, today):
     """탐색 1차(§3-5 계층2) 도달 여부를 센다. **판정이 아니라 관측이다.**
 
@@ -733,13 +777,12 @@ def milestone_rows(data, raw, bydate, today):
         vals = data.get(ch, {}).get(h, [])
         n = len(vals)
         t, df, k, mean = paired_by_date(bydate, ch, h) if bydate else (None, None, 0, None)
-        if t is None:                      # 짝이 안 서면 Welch 로 적되 그렇다고 밝힌다
-            t, df = welch(vals, ctrl.get(h, []))
-            stat = "Welch(짝 미성립)"
-        else:
-            stat = "짝"
-        hit = (n >= MIN_N and t is not None and t >= T_SURVIVE)
-        need = n * (T_SURVIVE / t) ** 2 if (t and t > 0 and n) else None
+        stat = "짝(참고)" if t is not None else "짝 미성립(보류)"
+        threshold_met = (n >= MIN_N and t is not None and t >= T_SURVIVE)
+        # Weekly monitoring is not sequential error control. Do not start the
+        # replication clock until a prospective inference plan is approved.
+        hit = False
+        need = max(MIN_N, n * (T_SURVIVE / t) ** 2) if (t and t > 0 and n) else None
 
         # ── 왜 Welch 와 짝 t 가 다른가를 분해한다 ──────────────────────────
         # Welch 는 대조군의 **전체** 표본을 쓴다. 대조군이 채널보다 긴 기간에
@@ -756,6 +799,8 @@ def milestone_rows(data, raw, bydate, today):
         out.append({
             "ch": ch, "h": h, "n": n, "raw": raw.get(ch, 0), "k": k,
             "t": t, "mean": mean, "stat": stat, "hit": hit, "need": need,
+            "threshold_met": threshold_met, "hold": INFERENCE_HOLD,
+            "regimes": regime_summary(bydate, ch, h),
             "ch_all": ch_all, "ct_all": ct_all, "ch_pair": ch_pair, "ct_pair": ct_pair,
             "ct_n": len(cvals), "ct_days": len(b_days),
             "ch_span": (min(a_days), max(a_days)) if a_days else None,
@@ -791,38 +836,42 @@ def milestone_rows(data, raw, bydate, today):
     return out
 
 
-def milestone_report(rows, today, scheduled):
+def milestone_report(rows, today, scheduled, policy_scoped=False):
     L = [f"# 🎯 주력 1차 문턱 관측 — {today}", ""]
     A = L.append
     A("> **판정이 아니다.** §3-5 계층 2 의 1차 문턱(`N≥30` 이고 `t≥2.0`, **보정 없음**)에")
-    A("> 얼마나 왔는지만 센다. 1차를 넘어도 채택이 아니다 — 그다음 4주 새 표본에서")
-    A("> **재현**해야 한다(§3-5 계층 2).")
+    A(f"> {INFERENCE_HOLD}. 참고 통계만 갱신하며 1차 달성일·4주 재현 시작일을 확정하지 않는다.")
+    A("> 아직 채택이 아니다. 독립 재현 설계 확정 전에는 자동 승인하지 않는다.")
+    A("> 필요 N은 단순 외삽 참고치이며 표본설계·검정력 계산이나 완료일 예측이 아니다.")
+    A(f"> 정책 범위: {'리포트 채널 2026-09-07 이후(신호일 기반 임시 구분)' if policy_scoped else '역사 전체/호출자 제공 자료 — 현 정책 검증 아님'}")
     A("")
     if scheduled:
-        A("✅ **정기 관측이다.** §3-5-5 에 따라 이 기록만 1차 달성일을 확정할 수 있다.")
+        A("정기 관측이다. 정기 실행도 반복검정 오류율을 자동 통제하지 않으므로 확정하지 않는다.")
     else:
         A("⚠️ **수동 실행이다. 참고용이며 1차를 확정하지 않는다**(§3-5-5).")
         A("> 아무 때나 들여다보고 넘은 날을 1차로 잡으면 **날짜를 데이터가 고르게 된다.**")
         A("> 1차 달성일은 4주 재현 창의 시작점이라 그 편향이 재현까지 오염시킨다.")
     A("")
-    A("| 갈래 | H | 원시행 | N(행) | 짝 날짜 | 평균 차이 | t | 통계량 | 1차 | 1차까지 필요 N |")
-    A("|---|--:|--:|--:|--:|--:|--:|---|:--:|--:|")
+    A("| 갈래 | H | 원시행 | N(행) | 짝 날짜 | 평균 차이 | t | 통계량 | 명목 문턱 | 1차 확정 | 필요 N(단순 참고) |")
+    A("|---|--:|--:|--:|--:|--:|--:|---|---|:--:|--:|")
     for r in rows:
         f = lambda v, s="{:+.2f}%": s.format(v) if v is not None else "—"
         A(f"| {r['ch']} | T+{r['h']} | {r['raw']} | {r['n']} | {r['k'] or '—'} | "
           f"{f(r['mean'])} | {('%.2f' % r['t']) if r['t'] is not None else '—'} | "
-          f"{r['stat']} | {'✅' if r['hit'] else '—'} | "
+          f"{r['stat']} | {'충족(참고)' if r.get('threshold_met') else '미충족/산출불가'} | {'✅' if r['hit'] else '보류'} | "
           f"{('%.0f' % r['need']) if r['need'] else '—'} |")
     A("")
     A(f"`N(행)` 은 §3-1 정의(행 수)이고 `짝 날짜` 는 §3-5-2 검정의 자유도 근거다. "
       f"문턱 `N≥{MIN_N}` 은 **행 수** 기준이다.")
+    A("")
+    A(regime_table(rows))
     A("")
     A("## 왜 Welch 와 짝 t 가 다른가 — 분해")
     A("")
     A("Welch 는 대조군의 **전체** 표본을 쓴다. 대조군이 채널보다 긴 기간에 걸쳐 있으면")
     A("**그 바깥 날짜의 성적이 비교에 섞인다.** 짝 검정은 겹치는 날만 쓰므로 그게 빠진다.")
     A("")
-    A("| 갈래 | 채널 평균 | 대조군 전체 평균 | 대조군 **겹친 날** 평균 | 날짜 불일치 몫 | 겹치지 않는 대조군 날 |")
+    A("| 갈래 | 채널 겹친 날 행 평균 | 대조군 전체 행 평균 | 대조군 겹친 날 행 평균 | 대조군 날짜 불일치 몫 | 겹치지 않는 대조군 날 |")
     A("|---|--:|--:|--:|--:|--:|")
     for r in rows:
         f = lambda v: "{:+.2f}%".format(v) if v is not None else "—"
@@ -839,12 +888,12 @@ def milestone_report(rows, today, scheduled):
     A("")
     A("## 채널이 자기 구간 안에서 며칠을 빠뜨렸나")
     A("")
-    A("대조군은 매 거래일 2건을 낸다. 그래서 **대조군이 있는 날 중 채널이 없는 날**은")
-    A("그 채널이 그날 추천을 못 냈다는 뜻이다. ⚠️ **그 이유는 이 표로 알 수 없다** —")
-    A("정상 무신호일 수도, 게이트 모순으로 죽어 있었을 수도, 수집 실패일 수도 있다.")
+    A("대조군의 성숙값이 있는 날을 대용 달력으로 삼아 대상 채널의 성숙값 부재를 센다.")
+    A("추천 자체가 없었다는 뜻은 아니다. 무신호·선정·기록·후속 가격 수집을 분리해야 한다.")
+    A("대조군에도 결손이 있을 수 있으므로 이 표는 독립 거래일 달력의 대체물이 아니다.")
     A("실행 로그와 대조하지 않았으므로 **누락이라고 단정하지 않는다.**")
     A("")
-    A("| 갈래 | 진입일 구간 | 구간 안 거래일 | 채널이 낸 날 | 빠뜨린 날 | 가동률 |")
+    A("| 갈래 | 신호일 구간 | 대조군 관측일 | 채널 성숙값 있는 날 | 성숙값 없는 날 | 값 존재율 |")
     A("|---|---|--:|--:|--:|--:|")
     for r in rows:
         if not r["ch_span"]:
@@ -858,8 +907,7 @@ def milestone_report(rows, today, scheduled):
     A("")
     A("### 결손일의 모양 — 흩어졌나, 붙었나")
     A("")
-    A("사유는 원장만으로 단정할 수 없지만 **모양은 말해 준다.** 하루씩 흩어져 있으면")
-    A("정상 무신호 모양이고, 긴 한 덩어리면 고장 모양이다(§3-2-0 의 F01 처럼).")
+    A("결손의 길이는 로그 대조 우선순위일 뿐이다. 짧다고 정상, 길다고 고장으로 분류하지 않는다.")
     A("")
     A("| 갈래 | 결손 덩어리 수 | 가장 긴 덩어리 | 1일 덩어리 | 3일 이상 덩어리 | 모양 |")
     A("|---|--:|--:|--:|--:|---|")
@@ -871,8 +919,7 @@ def milestone_report(rows, today, scheduled):
         longest = max(len(x) for x in rs)
         ones = sum(1 for x in rs if len(x) == 1)
         threes = [x for x in rs if len(x) >= 3]
-        shape = ("**고장 모양** — 긴 덩어리가 있다" if longest >= 3
-                 else "무신호 모양 — 전부 1~2일" if longest <= 2 else "혼재")
+        shape = "장기 공백 — 원인 미확인" if longest >= 3 else "단기 공백 — 원인 미확인"
         A(f"| {r['ch']} | {len(rs)} | **{longest}일** | {ones} | {len(threes)} | {shape} |")
     A("")
     for r in rows:
@@ -882,7 +929,7 @@ def milestone_report(rows, today, scheduled):
             for x in big[:6]:
                 A(f"  - {x[0]} ~ {x[-1]} ({len(x)}일)")
     A("")
-    A("### 결손일의 월별 분포 — 고쳐졌나")
+    A("### 결손일의 월별 분포 — 개선 여부는 실행 로그로 확인")
     A("")
     A("| 갈래 | 월 | 구간 안 거래일 | 빠뜨린 날 | 결손률 | 3일+ 덩어리 |")
     A("|---|---|--:|--:|--:|--:|")
@@ -898,7 +945,7 @@ def milestone_report(rows, today, scheduled):
     A("#### 결손일 목록 — 최근 2개월")
     A("")
     A("로그 대조로 사유를 가리려면 **어느 날인지** 알아야 한다. 원장 내용이 아니라")
-    A("\"그날 이 채널이 기록을 안 남겼다\"는 사실뿐이므로 여기 적는다.")
+    A("\"그 신호일의 성숙 수익률 쌍이 없다\"는 사실만 표시한다. 추천 기록 부재와는 다르다.")
     A("")
     for r in rows:
         if not r.get("inside_gap"):
@@ -910,28 +957,21 @@ def milestone_report(rows, today, scheduled):
                 continue
             A(f"- **{r['ch']}** {mo} ({len(days)}일): " + " · ".join(d[8:] for d in days))
     A("")
-    A("**결손률이 특정 월에 몰려 있고 그 뒤로 줄었다면**, 그 달에 있던 무엇이 고쳐졌다는")
-    A("뜻이다. 고르게 퍼져 있다면 상시적인 무신호 쪽이다.")
+    A("결손률 감소만으로 버그 수정 효과를 입증할 수 없다. 시장 환경·표본 성숙도·정책 변화도")
+    A("영향을 줄 수 있으므로 월별 분포는 로그 대조의 단서로만 사용한다.")
     A("")
     A("⚠️ **모양은 증거지 증명이 아니다.** 무신호와 고장이 섞여 있을 수 있고, 긴 덩어리가")
     A("실제로 시장이 조용했던 구간일 수도 있다. 확정하려면 실행 로그 대조가 필요하다.")
     A("")
-    A("한 가지는 확실하다 — **수집 실패는 아니다.** 이 결손일은 모두 대조군 행이 있는 날로")
-    A("정의했고, 대조군 행이 있다는 것은 그날 스캐너가 돌고 원장에 썼다는 뜻이다.")
+    A("대조군 행의 존재만으로 **대상 채널의 수집 실패를 배제할 수 없다.**")
+    A("성숙값 부재에는 무신호·선정 실패·기록 실패·후속 가격 결손이 모두 포함될 수 있다.")
     A("")
-    A("가동률이 낮으면 **채널이 간헐적으로만 돌고 있다**는 뜻이다. 성숙 표본이 느리게")
-    A("쌓이는 원인이 문턱이 아니라 가동일 수 있으므로, 필요 N 까지의 기간 추정도 그만큼")
-    A("길어진다. 빠뜨린 날의 사유 구분은 §6-12 의 거래일 달력·실행 로그 대조가 필요하다.")
+    A("여기서 가동률은 자기 성숙표본 구간의 값 존재율이지 실행 성공률이 아니다.")
+    A("마지막 성숙값 이후의 공백도 이 비율에 포함되지 않는다. 사유는 실행 로그와 대조해야 한다.")
     A("")
-    A("**날짜 불일치 몫**이 0 에서 멀면, Welch 의 차이 중 그만큼은 실력이 아니라")
-    A("**두 표본이 다른 날짜를 보고 있었다는 사실**이다. 항등식은 이렇다.")
-    A("")
-    A("```")
-    A("짝 차이  =  Welch 차이  −  날짜 불일치 몫")
-    A("```")
-    A("")
-    A("- **몫이 양수** → 대조군이 겹친 날에 더 잘 벌었다 → Welch 가 채널을 **과대평가**")
-    A("- **몫이 음수** → 대조군이 겹친 날에 더 못 벌었다 → Welch 가 채널을 **과소평가**")
+    A("**날짜 불일치 몫**은 대조군의 겹친 날 행 평균 − 전체 행 평균만 뜻한다.")
+    A("채널 쪽 날짜 불일치와 날짜별 행수 가중치도 달라질 수 있어, 이를 Welch 차이에서")
+    A("빼면 항상 날짜별 짝 평균 차이가 된다는 항등식은 성립하지 않는다.")
     A("")
     if any(r["hit"] for r in rows):
         A("## 🎯 1차 문턱을 넘은 갈래가 있다")
@@ -943,7 +983,7 @@ def milestone_report(rows, today, scheduled):
         A("**아직 채택이 아니다.** 이 날짜부터 4주 뒤까지의 **새 표본**에서 같은 방향으로")
         A(f"`t ≥ {T_SURVIVE}` 를 다시 넘어야 한다. 그전에는 §6-9 처럼 **방향만 기록**한다.")
     else:
-        A("아직 1차를 넘은 갈래가 없다. **문턱을 낮추지 않는다.**")
+        A("1차 확정은 보류 중이다. **문턱을 낮추지 않는다.**")
     A("")
     A("⚠️ 표본이 작을수록 평균이 크게 튄다. **가장 큰 숫자가 가장 작은 칸에서 나왔다면**")
     A("그것은 우연의 전형적인 모습이고, 재현 요구는 바로 그 경우를 거르라고 있는 것이다.")
@@ -966,7 +1006,7 @@ def build_report(data, raw, skipped, today, bydate=None):
         # §3-5-2 — 판정에 쓰는 값은 **짝 t** 다. Welch 는 참고로 같이 싣는다.
         pt, pdf, pk, pm = (paired_by_date(bydate, ch, h) if bydate is not None
                            and ch != CONTROL else (None, None, 0, None))
-        t, df = (pt, pdf) if pt is not None else (wt, wdf)
+        t, df = pt, pdf  # No fallback: different dates cannot establish a paired result.
         # §3-5-4 — Holm 에 넣는 p 는 단측이다. 양측 p 도 참고로 남긴다.
         p2 = t_two_sided_p(t, df) if (t is not None and df) else None
         p = t_one_sided_p(t, df)
@@ -977,24 +1017,22 @@ def build_report(data, raw, skipped, today, bydate=None):
         if ch in CONFIRMATORY and n >= MIN_N and p is not None:
             conf.append((ch, p))
         if n == 0:
-            v = (f"표본 0 — 원시 {raw.get(ch, 0)}행 전부 T+{h} 미도달"
+            v = (f"표본 0 — 원시 {raw.get(ch, 0)}행; 미성숙·결손 등 상태표 확인"
                  if raw.get(ch) else "행 없음")
         rows_out.append({"ch": ch, "h": h, "n": n, "raw": raw.get(ch, 0),
                          "mean": mean, "ann": ann, "t": t, "p": p,
                          "v": v, "ctrl": is_ctrl,
                          "wt": wt, "pt": pt, "pk": pk, "pm": pm, "p2": p2,
                          "paired": pt is not None})
+        rows_out[-1]["regimes"] = regime_summary(bydate, ch, h)
 
-    passed = holm(conf, HOLM_M) if conf else set()
+    nominal_passed = holm(conf, HOLM_M) if conf else set()
+    passed = set()  # No operative approvals from nominal, serially dependent p-values.
     for r in rows_out:
-        if not r["v"].startswith("생존·강화"):
-            continue
-        if r["ch"] in CONFIRMATORY:
-            r["v"] = ("생존·강화 ✅ (Holm 통과)" if r["ch"] in passed
-                      else "관찰 연장 — t는 넘었으나 Holm 미통과(§3-5)")
-        else:
-            # §3-5-1 계층 2 — 문턱을 한 번 넘은 것은 채택이 아니다. 재현이 남았다.
-            r["v"] = "탐색 1차 통과 — 독립 재현 필요(§3-5-1)"
+        r["nominal_holm_pass"] = r["ch"] in nominal_passed
+        if not r["ctrl"] and r["n"]:
+            r["v"] = ("판정 보류 — 짝 검정 미성립(날짜 부족 또는 차이 분산 0)"
+                      if r["pt"] is None else INFERENCE_HOLD)
 
     L = []
     A = L.append
@@ -1003,7 +1041,11 @@ def build_report(data, raw, skipped, today, bydate=None):
     A("> **이 표는 박제다.** §3-7 이 \"그날 값 그대로, 이후 수정 금지\"로 정해 둔 산출물이다.")
     A("> 숫자가 마음에 들지 않아도 고치지 않는다. 다시 계산하고 싶으면 새 날짜로 새 파일을 만든다.")
     A("")
-    A("## 판정 기준 (전부 사전등록분)")
+    A("## 참고 계산 기준 — 현시점 수정 규칙이며 과거 사전등록으로 소급하지 않음")
+    A(f"> **{INFERENCE_HOLD}**. 아래 p/Holm은 명목 참고값이며 생존·폐기·실전 승인에 사용하지 않는다.")
+    A("> t<1은 열등성 증명이 아니다. 리포트 채널의 독립 재현 계획도 별도 확정이 필요하다.")
+    A("> 정책 범위: " + ("리포트 채널 2026-09-07 이후(신호일 기반 임시 구분)"
+      if "구정책·정책일미상(판정 제외)" in skipped else "역사 전체/호출자 제공 자료 — 현 정책 검증 아님"))
     A("")
     A("| 항목 | 값 | 출처 |")
     A("|---|---|---|")
@@ -1024,7 +1066,7 @@ def build_report(data, raw, skipped, today, bydate=None):
     A("")
     A("## 채널별 결과")
     A("")
-    A("| 채널 | H | 원시행 | N(성숙) | 평균 순알파 | 연율 환산 | Welch t | p | 판정 |")
+    A("| 채널 | H | 원시행 | N(성숙) | 평균 순알파 | 연율 환산 | 짝 t(참고) | 명목 p | 판정 |")
     A("|---|--:|--:|--:|--:|--:|--:|--:|---|")
     for r in sorted(rows_out, key=lambda x: (x["ctrl"], -(x["t"] or -9))):
         f = lambda v, s="{:+.2f}%": s.format(v) if v is not None else "—"
@@ -1036,14 +1078,15 @@ def build_report(data, raw, skipped, today, bydate=None):
     A("`*` = 대조군. 판정 대상이 아니며 §3-5 의 m 에도 포함되지 않는다.")
     A("")
 
+    A(regime_table(rows_out))
+    A("")
     A("## 같은 날 짝지어 비교 (§3-5-2)")
     A("")
-    A("두 채널은 같은 날 매매하므로 **그날 시장이 통째로 움직인 몫은 차이에서 상쇄된다.**")
-    A("Welch 는 그 몫을 양쪽 분산에 넣고 재기 때문에 표준오차를 부풀린다. 대신 짝 검정은")
-    A("자유도를 잃는다(행 수 → 날짜 수). **어느 쪽이 큰지는 미리 알 수 없어서, 결과를 보기")
-    A("전에 짝 검정을 쓰기로 §3-5-2 에 고정했다.** 아래 두 열의 차이가 그 효과다.")
+    A("순알파는 이미 지수를 차감했다. 날짜 짝짓기는 비교 날짜와 날짜별 가중치를 맞춘다.")
+    A("짝 검정과 Welch 중 어느 표준오차가 더 큰지는 일반적으로 단정할 수 없다.")
+    A("보유기간 중첩·종목 반복에 따른 날짜 간 의존성은 이 단순 짝 t로 해결되지 않는다.")
     A("")
-    A("| 채널 | 짝 지은 날 | 평균 차이 | 짝 t (판정용) | Welch t (참고) |")
+    A("| 채널 | 짝 지은 날 | 평균 차이 | 짝 t (참고) | Welch t (참고) |")
     A("|---|--:|--:|--:|--:|")
     for r in sorted(rows_out, key=lambda x: (x["ctrl"], -(x["t"] or -9))):
         if r["ctrl"]:
@@ -1053,8 +1096,8 @@ def build_report(data, raw, skipped, today, bydate=None):
           f"{g(r['pt'])} | {g(r['wt'])} |")
     A("")
     if not any(r["paired"] for r in rows_out):
-        A("⚠️ **짝 검정이 하나도 성립하지 않았다.** 두 채널 모두 값이 있는 날이 2일 미만이다.")
-        A("이 표의 t 는 Welch 로 되돌아간 값이며, §3-5-2 가 의도한 검정이 아니다.")
+        A("⚠️ **짝 검정이 하나도 성립하지 않았다.** 짝 날짜 부족 또는 차이 분산 0이다.")
+        A("Welch는 참고 열에만 남기며 판정용으로 대체하지 않는다.")
         A("")
     A("## 다중비교 보정 (§3-5 계층 1)")
     A("")
@@ -1073,17 +1116,15 @@ def build_report(data, raw, skipped, today, bydate=None):
             if stop:
                 res = "— (앞에서 멈춤)"
             elif p <= thr:
-                res = "통과"
+                res = "명목 문턱 충족(판정 보류)"
             else:
                 res, stop = "**여기서 멈춤**", True
             _p2 = next((r["p2"] for r in rows_out if r["ch"] == ch), None)
             A(f"| {i} | {ch} | {p:.4f} | "
               f"{('%.4f' % _p2) if _p2 is not None else '—'} | {thr:.4f} | {res} |")
     else:
-        A(f"**확증 검정 대상이 0개다.** 확증 집합에서 N≥{MIN_N} 를 채운 채널이 없다.")
-        A("")
-        A("§3-7 이 이 상황을 미리 인정해 뒀다 — *\"그날 대부분의 채널이 N<30 일 가능성이 높다\"*.")
-        A("**문턱을 낮추지 않는다.** 관찰 연장이라고 쓰고, 10/5 재판정으로 넘긴다.")
+        A(f"**명목 비교 대상이 0개다.** N<{MIN_N} 또는 짝 검정 미성립일 수 있다.")
+        A("**문턱을 낮추지 않는다.** 다음 관측일이 와도 추론 계획 없이 자동 승인하지 않는다.")
     A("")
 
     A("## 표본 제외 (§4-2) · 행 상태")
@@ -1196,7 +1237,11 @@ def self_test():
     # 리포트가 단측을 쓰는지 — 양측을 쓰면 여기서 걸린다.
     _sd = {CONTROL: {5: [(-0.1 if i % 2 else 0.1) for i in range(40)]},
            "차트TOP2": {5: [(2.0 if i % 2 else 2.6) for i in range(40)]}}
-    _sm, _sro, _scf, _sps = build_report(_sd, {"차트TOP2": 40}, {}, "2026-01-01")
+    def synthetic_dates(data):
+        return {ch: {h: {(datetime.date(2026, 1, 1) + datetime.timedelta(days=i)).isoformat(): [v]
+                         for i, v in enumerate(vals)} for h, vals in periods.items()}
+                for ch, periods in data.items()}
+    _sm, _sro, _scf, _sps = build_report(_sd, {"차트TOP2": 40}, {}, "2026-01-01", synthetic_dates(_sd))
     _cp = dict(_scf).get("차트TOP2")
     _row = next(r for r in _sro if r["ch"] == "차트TOP2")
     chk("Holm 에 들어가는 p 가 단측이다",
@@ -1214,23 +1259,23 @@ def self_test():
         CONFIRMATORY == ("차트TOP2", "수급TOP2") and HOLM_M == 2)
 
     # 강한 신호를 만들어 둔다 — 문턱을 넘고도 확증에 못 들어가는지 보기 위해서다.
-    def strong(n=40, lo=4.9, hi=5.1):
+    def strong(n=40, lo=4.9, hi=5.2):
         return [lo if i % 2 else hi for i in range(n)]
     def flat(n=40):
         return [-0.1 if i % 2 else 0.1 for i in range(n)]
     base = {CONTROL: {5: flat(), 10: flat()}}
 
     d = dict(base); d["리포트TOP2_단기"] = {5: strong()}
-    md, ro, cf, ps = build_report(d, {"리포트TOP2_단기": 40}, {}, "2026-01-01")
+    md, ro, cf, ps = build_report(d, {"리포트TOP2_단기": 40}, {}, "2026-01-01", synthetic_dates(d))
     chk("나중에 30건을 넘긴 리포트 단기는 확증에 못 들어간다",
         [c for c, _ in cf] == [], f"conf={[c for c, _ in cf]}")
     v = next(r["v"] for r in ro if r["ch"] == "리포트TOP2_단기")
-    chk("t를 넘겨도 '생존·강화'가 아니라 '탐색 1차 통과'다",
-        v == "탐색 1차 통과 — 독립 재현 필요(§3-5-1)", v)
+    chk("t를 넘겨도 추론 계획 미확정이면 판정 보류다",
+        v == INFERENCE_HOLD and not ps, v)
     chk("탐색 채널의 재현 요구가 리포트에 적힌다", "독립 재현" in md)
 
     d = dict(base); d["차트TOP2"] = {5: strong()}
-    md, ro, cf, ps = build_report(d, {"차트TOP2": 40}, {}, "2026-01-01")
+    md, ro, cf, ps = build_report(d, {"차트TOP2": 40}, {}, "2026-01-01", synthetic_dates(d))
     chk("차트TOP2 는 확증 집합이라 Holm 을 받는다",
         [c for c, _ in cf] == ["차트TOP2"], f"conf={[c for c, _ in cf]}")
     chk("확증 채널 1개여도 리포트는 m=2 고정이라고 쓴다",
@@ -1517,7 +1562,7 @@ def self_test():
         f"raw={rw.get('랜덤2_배지')} 미성숙={sk['미성숙(호라이즌 미도달)']}")
     md, ro, cf, ps = build_report(d, rw, sk, "2026-01-01")
     chk("N=0 이어도 표에 남고 사유가 적힌다",
-        any(r["ch"] == "랜덤2_배지" and r["n"] == 0 for r in ro) and "T+5 미도달" in md)
+        any(r["ch"] == "랜덤2_배지" and r["n"] == 0 for r in ro) and "미성숙·결손" in md)
 
     print("🧪 §3-5-2 같은 날 짝지어 비교 (2026-09-11)")
     # ① 드리프트 방지 — bydate 를 다 합치면 out 과 **같은 값 집합**이어야 한다.
@@ -1586,7 +1631,7 @@ def self_test():
         f"날짜={paired_by_date(_rbd, '차트TOP2', 5)[2]} 행={len(_rd['차트TOP2'][5])}")
 
     # ④-b 날마다 차이가 똑같으면 분산이 0 이라 t 가 정의되지 않는다.
-    #     그때는 Welch 로 돌아간다 — 실데이터에서 날 일은 없지만 동작을 적어 둔다.
+    #     Welch로 돌아가지 않고 판정을 보류한다.
     _flatdiff = [hdrb]
     for i in range(6):
         dd = "2026-08-%02d" % (3 + i)
@@ -1620,7 +1665,7 @@ def self_test():
     _sh = next(r for r in _ms if r["ch"] == "리포트TOP2_단기")
     chk("N 은 행 수, 짝 날짜는 따로 센다 — 섞지 않는다",
         _sh["n"] == 32 and _sh["k"] == 16, f"N={_sh['n']} 날짜={_sh['k']}")
-    chk("N≥30 이고 t≥2.0 이면 1차 표시", _sh["hit"], f"t={_sh['t']:.2f}")
+    chk("N≥30·t≥2.0 참고 충족도 확정과 구분", _sh["threshold_met"] and not _sh["hit"], f"t={_sh['t']:.2f}")
     chk("문턱 N 은 행 수 기준이라고 적는다",
         "문턱 `N≥30` 은 **행 수** 기준" in milestone_report(_ms, "2026-01-01", True))
 
@@ -1694,11 +1739,11 @@ def self_test():
              "inside_gap": [], "span_days": 5, "runs": []}
     _shape = dict(_base, runs=[["a", "b", "c", "d"], ["e"]])
     _txt = milestone_report([_shape], "x", False)
-    chk("3일 이상 덩어리는 고장 모양으로 적는다", "고장 모양" in _txt)
-    chk("1~2일뿐이면 무신호 모양으로 적는다",
-        "무신호 모양" in milestone_report([dict(_base, runs=[["a"], ["b", "c"]])], "x", False))
+    chk("3일 이상 공백도 고장으로 단정하지 않는다", "장기 공백 — 원인 미확인" in _txt)
+    chk("1~2일 공백도 정상으로 단정하지 않는다",
+        "단기 공백 — 원인 미확인" in milestone_report([dict(_base, runs=[["a"], ["b", "c"]])], "x", False))
     chk("모양은 증명이 아니라고 밝힌다", "모양은 증거지 증명이 아니다" in _txt)
-    chk("수집 실패는 배제된다고 밝힌다", "수집 실패는 아니다" in _txt)
+    chk("대상 채널 수집 실패를 배제하지 않는다", "수집 실패를 배제할 수 없다" in _txt)
 
     # 구간 안 결손 — 구간 **밖**을 세면 안 된다. 밖은 아직 시작 안 했거나 미성숙이다.
     _cov = [hdrb]
@@ -1726,9 +1771,8 @@ def self_test():
     chk("항등식: 짝 차이 = Welch 차이 − 불일치 몫",
         abs((_g["ch_pair"] - _g["ct_pair"])
             - ((_g["ch_pair"] - _g["ct_all"]) - _gapv)) < 1e-9)
-    chk("양수 몫은 과대평가라고 적는다",
-        "몫이 양수** → 대조군이 겹친 날에 더 잘 벌었다 → Welch 가 채널을 **과대평가"
-        in milestone_report([_g], "x", False))
+    chk("날짜 가중치가 다른 일반 경우 항등식으로 단정하지 않는다",
+        "항등식은 성립하지 않는다" in milestone_report([_g], "x", False))
     chk("불일치 몫이 리포트에 찍힌다",
         "날짜 불일치 몫" in milestone_report([_g], "x", False))
     chk("표본 기간도 같이 찍는다",
@@ -1738,8 +1782,8 @@ def self_test():
     _manual = milestone_report(_ms, "2026-01-01", False)
     chk("수동 실행이면 1차를 확정하지 않는다고 밝힌다",
         "1차를 확정하지 않는다" in _manual and "날짜를 데이터가 고르게" in _manual)
-    chk("정기 관측이면 확정 가능하다고 밝힌다",
-        "이 기록만 1차 달성일을 확정" in milestone_report(_ms, "2026-01-01", True))
+    chk("정기 관측도 자동 확정하지 않는다",
+        "정기 실행도 반복검정" in milestone_report(_ms, "2026-01-01", True))
     chk("1차를 넘어도 재현이 남았다고 적는다", "아직 채택이 아니다" in _manual)
     chk("아무도 못 넘으면 문턱을 낮추지 않는다고 적는다",
         "문턱을 낮추지 않는다" in milestone_report(
@@ -1791,7 +1835,7 @@ def main():
 
     ledger_sha = ledger_fingerprint(rows)
     code_sha = sha256_of(io_read_self())
-    data, raw, skipped, bydate = collect(rows)
+    data, raw, skipped, bydate = collect(rows, current_policy=True)
     _rows_n, _total_n, _bal = reconcile(rows, skipped)
     if not _bal:
         print(f"\n❌ 행 상태 합계가 원시 행수와 다르다 — {_total_n} vs {_rows_n}")
@@ -1800,7 +1844,7 @@ def main():
     print(f"🔢 행 상태 합계 검증 — 원시 {_rows_n}행 = 상태 합계 {_total_n} ✅")
     if a.milestone:
         ms = milestone_rows(data, raw, bydate, today)
-        text = milestone_report(ms, today, a.scheduled)
+        text = milestone_report(ms, today, a.scheduled, policy_scoped=True)
         print(text)
         if not a.stdout_only:
             os.makedirs("data/milestone", exist_ok=True)
