@@ -18,10 +18,10 @@ jobs:
                          #    (스크립트에 자체 시간 예산이 없으므로 이 값이 유일한 상한)
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: '3.11'   # 💡 3.10에서 3.11로 변경 (버전 경고 메시지 해결)
 
