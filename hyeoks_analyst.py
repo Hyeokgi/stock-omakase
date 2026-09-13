@@ -14,6 +14,7 @@ from hyeoks_tajeom import (clean_tajeom, trend_phase, POLICY_ID, POLICY_SINCE,
                           channel_funnel, funnel_line)
 from hyeoks_run_freeze import (build_bundle, freeze, write_status,
                                sha8_of_file)
+from hyeoks_performance_memory import performance_summary, MEMORY_VERSION
  
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 warnings.filterwarnings("ignore")
@@ -885,40 +886,10 @@ try:
         print(f"   ⚠️ [단계별 태그 계측 실패] {_fe} — 리포트는 계속한다")
 
     def get_recent_performance_summary(doc):
-        """🆕 [AI Memory] 모델을 재학습시키는 게 아니라, 최근 리포트 채널(단기/중기)의 실제 성과를
-           매번 프롬프트에 참고자료로 띄워주는 가벼운 방식. 표본이 적으면 그 사실도 같이 명시해서
-           Gemini가 노이즈를 신호로 오인하지 않도록 함(자동 가중치 조정은 아직 표본이 부족해 보류)."""
+        """Fixed-horizon context; invalid schema omits memory, never guesses columns."""
         try:
             bt_data = doc.worksheet("백테스트_로그").get_all_values()
-            if len(bt_data) < 2:
-                return ""
-            rows = bt_data[1:]
-
-            def summarize_channel(channel_name):
-                matched = [r for r in rows if len(r) > 18 and str(r[2]).strip() == channel_name]
-                matched = matched[-20:] if len(matched) > 20 else matched  # 최근 20건만 — 오래된 표본 과의존 방지
-                returns = []
-                for r in matched:
-                    for idx in (18, 17, 16):  # T+5 우선, 없으면 T+3, T+1 순으로 대체
-                        val = str(r[idx]).strip() if len(r) > idx else ""
-                        if val:
-                            try:
-                                returns.append(float(val.replace('%', '')))
-                            except Exception:
-                                pass
-                            break
-                if not returns:
-                    return None
-                n = len(returns)
-                return {"n": n, "avg": sum(returns) / n, "win_rate": sum(1 for x in returns if x > 0) / n * 100}
-
-            lines = []
-            for ch, label in [("리포트TOP2_단기", "단기"), ("리포트TOP2_중기", "중기")]:
-                stat = summarize_channel(ch)
-                if stat:
-                    note = "" if stat["n"] >= 15 else " (표본 적어 참고만)"
-                    lines.append(f"- {label} 픽 최근 {stat['n']}건: 평균수익률 {stat['avg']:+.1f}%, 승률 {stat['win_rate']:.0f}%{note}")
-            return "\n".join(lines)
+            return performance_summary(bt_data)
         except Exception as e:
             print(f"⚠️ [AI Memory 성과 요약 실패, 참고자료 없이 진행] {e}")
             return ""
@@ -1099,6 +1070,7 @@ try:
             picks=picks_json,
             extra={"market_stage": market_stage,
                    "policy_id": POLICY_ID, "policy_since": POLICY_SINCE,
+                   "performance_memory_version": MEMORY_VERSION,
                    "funnel": _funnel,
                    "upstream": {"원시": len(cands_list), "점수선별": len(pre_pool),
                                 "DNA검증": len(validated_pool), "풀": len(pool_150)}},

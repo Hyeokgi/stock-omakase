@@ -3,6 +3,8 @@ name: Audit regressions (offline)
 on:
   push:
     paths:
+      - 'hyeoks_analyst.py'
+      - 'hyeoks_performance_memory.py'
       - 'hyeoks_verdict.py'
       - 'hyeoks_nightly.py'
       - 'nightly_quotes.py'
@@ -11,6 +13,8 @@ on:
       - '.github/workflows/review_regressions.yml'
   pull_request:
     paths:
+      - 'hyeoks_analyst.py'
+      - 'hyeoks_performance_memory.py'
       - 'hyeoks_verdict.py'
       - 'hyeoks_nightly.py'
       - 'nightly_quotes.py'
