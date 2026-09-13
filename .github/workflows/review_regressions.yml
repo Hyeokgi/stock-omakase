@@ -6,6 +6,7 @@ on:
       - 'hyeoks_analyst.py'
       - 'hyeoks_performance_memory.py'
       - 'hyeoks_verdict.py'
+      - 'hyeoks_closing_bet.py'
       - 'hyeoks_nightly.py'
       - 'nightly_quotes.py'
       - 'account_source_adapter.py'
@@ -16,6 +17,7 @@ on:
       - 'hyeoks_analyst.py'
       - 'hyeoks_performance_memory.py'
       - 'hyeoks_verdict.py'
+      - 'hyeoks_closing_bet.py'
       - 'hyeoks_nightly.py'
       - 'nightly_quotes.py'
       - 'account_source_adapter.py'
@@ -39,6 +41,7 @@ jobs:
         run: |
           python -m unittest discover -s tests
           python hyeoks_verdict.py --self-test
+          python hyeoks_closing_bet.py --self-test
           python account_source_adapter.py --self-test
           python hyeoks_run_freeze.py --self-test
           python test_tajeom.py
