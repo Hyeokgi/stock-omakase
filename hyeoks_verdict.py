@@ -684,6 +684,54 @@ def t_one_sided_p(t, df):
     return two / 2.0 if t > 0 else 1.0 - two / 2.0
 
 
+def block_bootstrap_p(diffs, block, resamples=10000, seed=20260913, alt="greater"):
+    """§3-5-6 — 겹친 보유기간 때문에 생긴 날짜 간 의존성을 정면으로 다룬다.
+
+    왜 t 검정을 그대로 쓸 수 없나 — 보유가 H일이면 신호일 d 의 수익은
+    d+1 … d+H−1 의 수익과 **같은 장을 공유한다.** 그래서 날짜별 차이
+    `d_t` 가 서로 독립이 아니고, 독립을 가정한 표준오차는 **작게 나온다.**
+    작은 표준오차는 큰 t 를 만들고, 큰 t 는 없는 효과를 있다고 말한다.
+
+    왜 HAC 가 아니라 부트스트랩인가 — HAC(Newey–West)는 큰 표본 근사다.
+    지금 날짜 수는 수십 개이고 lag 도 H−1 로 커서 근사가 잘 안 듣는다.
+    이동블록 부트스트랩은 **근사 없이** 의존 구조를 표본에서 그대로 가져온다.
+
+    블록 길이는 **고르는 값이 아니라 설계가 정하는 값**이다 — `block = H`.
+    겹침 길이가 H−1 이므로 길이 H 블록이면 블록 안에 의존이 갇힌다.
+    조정 가능한 손잡이가 아니라는 점이 중요하다. 손잡이가 있으면 돌리게 된다.
+
+    절차:
+      1. `d` 를 중심화한다 (`d_i − mean(d)`) → 귀무(평균 0) 세계를 만든다
+      2. 순환 이동블록으로 같은 길이의 표본을 재구성, `resamples` 회
+      3. 단측 p = 재표본 평균이 **관측 평균 이상**으로 나온 비율
+
+    시드를 고정한다. 같은 입력이면 같은 p 가 나와야 재현이 성립한다.
+    돌려주는 값: (p, 사용한 블록 길이, 유효 재표본 수) — 못 하면 (None, ...).
+    """
+    n = len(diffs)
+    if n < 2 or block < 1:
+        return None, block, 0
+    block = min(int(block), n)                 # 날짜보다 긴 블록은 의미가 없다
+    obs = sum(diffs) / n
+    centered = [x - obs for x in diffs]
+    if all(abs(x) < 1e-12 for x in centered):  # 분산 0 — p 가 정의되지 않는다
+        return None, block, 0
+    rng = random.Random(seed)
+    nb = -(-n // block)                        # 올림: 필요한 블록 수
+    hits = 0
+    for _ in range(resamples):
+        tot = 0.0
+        for _ in range(nb):
+            st = rng.randrange(n)
+            for k in range(block):
+                tot += centered[(st + k) % n]  # 순환 — 끝과 처음을 잇는다
+        m = tot / (nb * block)
+        if (m >= obs) if alt == "greater" else (m <= obs):
+            hits += 1
+    # +1 보정 — 0/N 을 p=0 으로 보고하지 않는다. 부트스트랩은 0 을 증명 못 한다.
+    return (hits + 1) / (resamples + 1), block, resamples
+
+
 def holm(pairs, m=None):
     """§3-5 계층1 — Holm–Bonferroni. pairs = [(채널, p)]. 통과 집합을 돌려준다.
 
@@ -1206,6 +1254,66 @@ def self_test():
         holm([("a", 0.0001), ("b", 0.0002)]) == {"a", "b"})
     chk("전부 유의하지 않으면 아무도 통과 못 함",
         holm([("a", 0.4), ("b", 0.5)]) == set())
+
+    print("🧪 §3-5-6 블록 부트스트랩 (2026-09-13)")
+    chk("표본이 모자라면 None", block_bootstrap_p([1.0], 5)[0] is None)
+    chk("분산 0 이면 None (p 가 정의 안 됨)",
+        block_bootstrap_p([2.0] * 12, 5)[0] is None)
+    chk("블록이 날짜보다 길면 날짜 수로 줄인다",
+        block_bootstrap_p([0.1, -0.2, 0.3, 0.05], 99)[1] == 4)
+
+    # 같은 시드면 같은 p — 재현이 안 되면 사전등록이 무의미하다.
+    _d = [0.4, -0.2, 0.9, -0.1, 0.6, 0.2, -0.5, 0.8, 0.1, 0.3, -0.3, 0.7]
+    _a = block_bootstrap_p(_d, 5, resamples=2000)[0]
+    _b = block_bootstrap_p(_d, 5, resamples=2000)[0]
+    chk("시드 고정 — 같은 입력이면 같은 p", _a == _b, f"{_a} vs {_b}")
+    chk("p 는 0 이 될 수 없다 (+1 보정)", _a > 0)
+    chk("p 는 1 이하", _a <= 1.0)
+
+    # 효과가 뚜렷하면 p 가 작아야 한다.
+    _strong = [1.5 + 0.1 * (i % 3) for i in range(20)]
+    _ps = block_bootstrap_p(_strong, 5, resamples=2000)[0]
+    chk("꾸준히 양수면 p 가 작다", _ps < 0.05, f"p={_ps:.4f}")
+
+    # 효과가 없으면 p 가 크다 — 대칭 잡음.
+    _null = [(-1) ** i * 1.0 for i in range(20)]
+    _pn = block_bootstrap_p(_null, 5, resamples=2000)[0]
+    chk("평균 0 잡음이면 p 가 크다", _pn > 0.2, f"p={_pn:.4f}")
+
+    # 🔑 핵심 — 의존성이 있으면 부트스트랩이 t 검정보다 **보수적**이어야 한다.
+    #    아래는 5일씩 같은 값이 이어지는(겹침을 흉내 낸) 계열이다. 독립을 가정한
+    #    t 는 표본을 5배로 착각해 p 를 과소평가한다. 블록 부트스트랩은 안 속는다.
+    _dep = []
+    for v in (0.9, -0.4, 0.8, -0.3, 0.7, -0.2):
+        _dep += [v] * 5                       # 5일 연속 같은 값 = 완전 겹침
+    _t, _df = welch(_dep, [0.0] * len(_dep))
+    _pt = t_one_sided_p(_t, _df)
+    _pb = block_bootstrap_p(_dep, 5, resamples=4000)[0]
+    chk("겹친 계열에서 t 검정은 p 를 작게 본다", _pt < 0.05, f"t p={_pt:.4f}")
+    # ⚠️ 처음에 "3배 이상"으로 썼다가 이 검사가 틀렸다고 알려줬다(2.6배였다).
+    #    배수는 내가 임의로 정한 값이고, **실제 주장은 방향**이다 — 의존이 있으면
+    #    부트스트랩이 더 보수적이어야 한다. 배수는 자료가 정하지 내가 정하지 않는다.
+    chk("블록 부트스트랩은 같은 자료에서 더 보수적이다",
+        _pb > _pt, f"부트스트랩 p={_pb:.4f} · t p={_pt:.4f} · {_pb/_pt:.1f}배")
+
+    # ⚠️ 여기에 "독립 블록이 적을수록 격차가 커진다"를 넣었다가 뺐다. 2.0배 vs 2.6배로
+    #    **반대로** 나왔다. 자료가 바뀌면 t 쪽 분산도 같이 바뀌므로 비율이 단조가 아니다.
+    #    내가 유도하지 않고 가정한 관계였다. 문턱을 낮춰 통과시키는 대신 검사를 버린다.
+    #
+    #    대신 **유도되는 성질**을 검사한다 — 같은 정보를 잘게 쪼개 행 수만 늘리면
+    #    t 는 표본이 늘었다고 착각해 p 가 작아지지만, 블록 길이를 같이 늘린
+    #    부트스트랩은 속지 않는다. 이게 '가짜 N 에 안 속는다'의 정의다.
+    _base = (0.9, -0.4, 0.8, -0.3, 0.7, -0.2)
+    _x5 = [v for v in _base for _ in range(5)]
+    _x10 = [v for v in _base for _ in range(10)]
+    _pt5 = t_one_sided_p(*welch(_x5, [0.0] * len(_x5)))
+    _pt10 = t_one_sided_p(*welch(_x10, [0.0] * len(_x10)))
+    _pb5 = block_bootstrap_p(_x5, 5, resamples=6000)[0]
+    _pb10 = block_bootstrap_p(_x10, 10, resamples=6000)[0]
+    chk("행만 2배로 늘리면 t 는 더 유의해진다(가짜 N)",
+        _pt10 < _pt5, f"5배={_pt5:.4f} → 10배={_pt10:.4f}")
+    chk("부트스트랩은 같은 정보에 같은 답을 준다",
+        abs(_pb10 - _pb5) < 0.03, f"5배={_pb5:.4f} · 10배={_pb10:.4f}")
 
     print("🧪 §3-5-4 우월성 단측 p (2026-09-11)")
     chk("양수 t 는 양측의 절반",
