@@ -16,7 +16,7 @@ from hyeoks_run_freeze import (build_bundle, freeze, write_status,
                                sha8_of_file)
 from hyeoks_performance_memory import performance_summary, MEMORY_VERSION
  
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+# Keep HTTPS certificate verification enabled, including authenticated KIS calls.
 warnings.filterwarnings("ignore")
  
 # ==========================================
@@ -131,7 +131,7 @@ def fetch_stock_news_json(code, limit=3):
                          params={'itemCode': code, 'page': 1, 'pageSize': 15},
                          headers={'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json',
                                   'Referer': 'https://stock.naver.com/'},
-                         verify=False, timeout=5)
+                         timeout=5)
         if r.status_code != 200:
             return []
         titles = []
@@ -156,7 +156,7 @@ def get_target_stock_news(code):
         #    → AI 리포트가 종목별 뉴스 없이 작성돼 왔다. 실측: Referer 추가 시 0건 → 3건.
         res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0',
                                          'Referer': 'https://finance.naver.com/'},
-                           verify=False, timeout=3)
+                           timeout=3)
         soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
         news_list = [f"- {a.text.strip()}" for a in soup.select('.title a')[:3]]
         if not news_list:
@@ -172,7 +172,7 @@ def get_vip_deep_dive_data(code, kis_token):
     try:
         headers = {"authorization": f"Bearer {kis_token}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "custtype": "P", "tr_id": "FHKST01010100"}
         res = requests.get("https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price", 
-                          headers=headers, params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}, verify=False, timeout=3).json()
+                          headers=headers, params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}, timeout=3).json()
         out = res.get("output", {})
         return f"PER: {out.get('per', 'N/A')} / PBR: {out.get('pbr', 'N/A')}"
     except Exception as e:
@@ -212,7 +212,7 @@ def validate_stock_historical_dna(cand, raw_theme_daily_map):
     local_session = requests.Session()
     try:
         url = f"https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count=250&requestType=0"
-        res = local_session.get(url, verify=False, timeout=3)
+        res = local_session.get(url, timeout=3)
         root = ET.fromstring(res.text)
         items = root.findall(".//item")
         
@@ -338,7 +338,7 @@ def generate_deep_report(st_type, best_cand, is_warning_market=False, KIS_TOKEN=
 
     img_path = f"temp_{best_cand['code']}.png"
     try:
-        res = requests.get(f"https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{best_cand['code']}.png", headers={'User-Agent': 'Mozilla/5.0'}, verify=False)
+        res = requests.get(f"https://ssl.pstatic.net/imgfinance/chart/item/candle/day/{best_cand['code']}.png", headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
         with open(img_path, 'wb') as f: 
             f.write(res.content)
         
@@ -412,13 +412,13 @@ try:
     kospi_rate_fallback, kosdaq_rate_fallback = 0.0, 0.0
     kospi_fetch_ok, kosdaq_fetch_ok = False, False
     try:
-        _k = requests.get(f"https://m.stock.naver.com/api/index/KOSPI/basic?_={int(time.time()*1000)}", headers={'User-Agent': 'Mozilla/5.0'}, verify=False, timeout=3).json()
+        _k = requests.get(f"https://m.stock.naver.com/api/index/KOSPI/basic?_={int(time.time()*1000)}", headers={'User-Agent': 'Mozilla/5.0'}, timeout=3).json()
         kospi_rate_fallback = float(str(_k.get("fluctuationsRatio", "0")).replace(',', ''))
         kospi_fetch_ok = True
     except Exception as _e:
         print(f"⚠️ 코스피 등락률 실시간 조회 실패: {_e}")
     try:
-        _q = requests.get(f"https://m.stock.naver.com/api/index/KOSDAQ/basic?_={int(time.time()*1000)}", headers={'User-Agent': 'Mozilla/5.0'}, verify=False, timeout=3).json()
+        _q = requests.get(f"https://m.stock.naver.com/api/index/KOSDAQ/basic?_={int(time.time()*1000)}", headers={'User-Agent': 'Mozilla/5.0'}, timeout=3).json()
         kosdaq_rate_fallback = float(str(_q.get("fluctuationsRatio", "0")).replace(',', ''))
         kosdaq_fetch_ok = True
     except Exception as _e:
@@ -1309,7 +1309,7 @@ try:
             if len(r) < 10 or not r[0]: continue
             name, code = r[0], r[1].replace("'", "").strip().zfill(6)
             buy_p, amt, t_p, s_p = int(float(r[2].replace(',',''))), int(float(r[3].replace(',',''))), int(float(r[7].replace(',',''))), int(float(r[8].replace(',','')))
-            try: curr_p = int(requests.get(f"https://m.stock.naver.com/api/stock/{code}/basic", verify=False, timeout=3).json()['closePrice'].replace(',',''))
+            try: curr_p = int(requests.get(f"https://m.stock.naver.com/api/stock/{code}/basic", timeout=3).json()['closePrice'].replace(',',''))
             except Exception as e:
                 print(f"⚠️ [보유종목 현재가 조회 실패 {code} — 매입가로 대체] {e}")
                 curr_p = buy_p
@@ -1424,7 +1424,7 @@ try:
             def _idx_close(name):
                 try:
                     sym = "KOSDAQ" if str(name).upper() == "KOSDAQ" else "KOSPI"
-                    root = ET.fromstring(requests.get(f"https://fchart.stock.naver.com/sise.nhn?symbol={sym}&timeframe=day&count=3&requestType=0", verify=False, timeout=4).text)
+                    root = ET.fromstring(requests.get(f"https://fchart.stock.naver.com/sise.nhn?symbol={sym}&timeframe=day&count=3&requestType=0", timeout=4).text)
                     its = root.findall(".//item")
                     if its: return float(its[-1].get("data").split("|")[4])
                 except Exception: pass
@@ -1432,7 +1432,7 @@ try:
 
             def _market(code):
                 try:
-                    j = requests.get(f"https://m.stock.naver.com/api/stock/{code}/basic", headers={'User-Agent': 'Mozilla/5.0'}, verify=False, timeout=3).json()
+                    j = requests.get(f"https://m.stock.naver.com/api/stock/{code}/basic", headers={'User-Agent': 'Mozilla/5.0'}, timeout=3).json()
                     nm = str(j.get("stockExchangeName", "")).upper()
                     return nm if nm in ("KOSPI", "KOSDAQ") else "KOSPI"
                 except Exception:

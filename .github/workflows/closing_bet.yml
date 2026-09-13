@@ -23,6 +23,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: closing-bet-study-v2
+  cancel-in-progress: false
+
 jobs:
   closing-bet:
     runs-on: ubuntu-latest
@@ -52,7 +56,9 @@ jobs:
       run: |
         git config user.name  "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add docs/종베관측_현황.md docs/종베판정_*.md 2>/dev/null || true
+        git add -- docs/종베관측_현황.md
+        if [ -d data/closing_bet ]; then git add -- data/closing_bet; fi
+        if [ -f docs/종베판정_closing-window-v2.md ]; then git add -- docs/종베판정_closing-window-v2.md; fi
         if git diff --staged --quiet; then
           echo "바뀐 기록 없음"
           exit 0
@@ -62,6 +68,8 @@ jobs:
           git push && exit 0
           echo "푸시 실패 — ${i}초 뒤 재시도"
           sleep $i
+          git fetch origin main
+          git rebase origin/main
         done
         echo "::error::푸시가 끝내 실패했다"
         exit 1

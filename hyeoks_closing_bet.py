@@ -24,7 +24,9 @@
 # 판정은 HAC(지연 5거래일) 하나가 한다(§6-12-3). 일반 t·블록 부트스트랩은
 # 참고이며, HAC 와 크게 엇갈리면 유리한 쪽을 고르지 않고 '불안정'으로 보고한다.
 # ==========================================================================
-import os, sys, csv, gzip, math, argparse, datetime, statistics
+import os, sys, csv, gzip, math, argparse, datetime, statistics, json, tempfile
+from closing_study import split_windows, VERSION as STUDY_VERSION
+from hyeoks_trading_calendar import load_nontrading, next_trading_day
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hyeoks_verdict import t_two_sided_p, block_bootstrap_p   # 이미 자기검증된 통계만 빌린다
@@ -61,7 +63,8 @@ DROP_REASONS = ["거래대금미달", "거래정지", "관리종목류", "진입
 # ══════════════════════════════════════════════════════════════════════
 def _f(v, default=0.0):
     try:
-        return float(str(v).replace(",", "").strip() or default)
+        result = float(str(v).replace(",", "").strip() or default)
+        return result if math.isfinite(result) else default
     except Exception:
         return default
 
@@ -100,34 +103,6 @@ def scan_dates(snap_dir=SNAP_DIR):
         if fn.endswith("_1505.csv.gz"):
             days.append(fn[:10])
     return sorted(set(days))
-
-
-def load_nontrading(snap_dir=SNAP_DIR):
-    """사람이 적어 넣는 휴장일 목록. 없으면 빈 집합.
-
-    네트워크를 쓰지 않겠다고 했으므로 임시공휴일을 스스로 알 방법이 없다.
-    모르면 **붙이지 않는다**(아래 next_trading_day 참조). 이 파일은 그 보수적
-    기본값을 사람이 사후에 완화해 주는 통로이며, 없다고 결과가 틀리지는 않는다.
-    """
-    path = os.path.join(snap_dir, "nontrading.txt")
-    out = set()
-    if os.path.exists(path):
-        for line in open(path, encoding="utf-8"):
-            s = line.split("#")[0].strip()
-            if len(s) == 10:
-                out.add(s)
-    return out
-
-
-def next_trading_day(date, nontrading):
-    """달력상 다음 거래일. 주말과 `nontrading` 만 건너뛴다."""
-    d = datetime.date.fromisoformat(date)
-    for _ in range(12):
-        d += datetime.timedelta(days=1)
-        if d.weekday() >= 5 or d.isoformat() in nontrading:
-            continue
-        return d.isoformat()
-    return None
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -226,7 +201,7 @@ def exit_open(code, nxt_slots):
     return o, prev_close, None, seen
 
 
-def day_returns(items, nxt_slots, drop):
+def day_returns(items, nxt_slots, drop, with_returns=True):
     """분위 배정이 끝난 종목들의 익일 시가 수익률. 제외 사유는 drop 에 누적한다."""
     kept, open_mismatch = [], 0
     for it in items:
@@ -248,7 +223,8 @@ def day_returns(items, nxt_slots, drop):
             drop["기업행사조정의심"] += 1
             continue
         it = dict(it)
-        it["ret"] = o / it["P"] - 1.0      # ← §6-12-5. close_drift 를 빼지 않는다
+        if with_returns:
+            it["ret"] = o / it["P"] - 1.0  # no return calculation in quality-only mode
         kept.append(it)
     return kept, open_mismatch
 
@@ -284,6 +260,9 @@ def day_stats(kept):
 def build_day(date, snap_dir, nontrading, dates, with_returns):
     """하루치 결과 dict. `with_returns=False` 면 **수익률을 계산하지 않는다.**"""
     out = {"date": date, "ok": False, "why": "", "drop": {k: 0 for k in DROP_REASONS}}
+    if date in nontrading or datetime.date.fromisoformat(date).weekday() >= 5:
+        out['why'] = '휴장일파일'
+        return out
     p1505 = os.path.join(snap_dir, f"{date}_1505.csv.gz")
     p1300 = os.path.join(snap_dir, f"{date}_1300.csv.gz")
     if not (os.path.exists(p1505) and os.path.exists(p1300)):
@@ -307,27 +286,22 @@ def build_day(date, snap_dir, nontrading, dates, with_returns):
     if nd is None or nd not in dates:
         out["why"] = "익일미성숙" if (nd and nd > (dates[-1] if dates else "")) else "익일달력결측"
         return out
-    if not with_returns:
-        out["ok"] = True                 # 성숙 후보로만 센다. 수익률은 건드리지 않았다
-        out["matured"] = True
-        return out
-
     nxt = {}
     for slot in ("1300", "1505"):
         pp = os.path.join(snap_dir, f"{nd}_{slot}.csv.gz")
         if os.path.exists(pp):
             nxt[slot] = read_snapshot(pp)[1]
-    kept, mismatch = day_returns(items, nxt, out["drop"])
+    kept, mismatch = day_returns(items, nxt, out["drop"], with_returns=with_returns)
     out["open_mismatch"] = mismatch
     out["kept"] = len(kept)
-    st = day_stats(kept)
-    if st is None:
+    if not kept:
         out["why"] = "익일 가격을 붙일 수 있는 종목이 없다"
         return out
     if min(sum(1 for x in kept if x["q"] == q) for q in range(QUINTILES)) < MIN_PER_Q:
         out["why"] = f"익일 결측 후 어떤 분위가 {MIN_PER_Q}종목 미만"
         return out
-    out.update(st)
+    if with_returns:
+        out.update(day_stats(kept))
     out["ok"] = True
     out["matured"] = True
     return out
@@ -441,10 +415,9 @@ def collection_block(days, dates):
     caps = [d.get("captured", "") for d in days if d.get("captured")]
     late = [c for c in caps if _backup_fired(c)]
     L.append("")
-    L.append(f"- `capturedAt` — 정시분 {len(caps) - len(late)}일 / **백업 cron 발사분 {len(late)}일**"
+    L.append(f"- `capturedAt` 수집 시작 시각 — 15:06 이전 {len(caps) - len(late)}일 / **15:06 이후 {len(late)}일**"
              + (f" ({', '.join(c[11:16] for c in late)})" if late else ""))
-    if late:
-        L.append("  > 백업분은 동시호가에 더 가까운 값이다(§6-12). 결론이 이 날들에 좌우되면 명시할 것.")
+    L.append("  > 수집 시작 시각은 시세 관측/체결 시각이나 cron 발사 원인의 증거가 아니다.")
     tot = {k: sum(d["drop"].get(k, 0) for d in days) for k in DROP_REASONS}
     L.append("")
     L.append("| 유니버스 탈락 사유 | 합계 |")
@@ -461,7 +434,8 @@ def collection_block(days, dates):
     return L
 
 
-def report(snap_dir=SNAP_DIR, today=None):
+def report(snap_dir=SNAP_DIR, today=None, state=None):
+    state = {} if state is None else state
     today = today or datetime.datetime.now(KST).strftime("%Y-%m-%d")
     days, dates = collect(snap_dir, with_returns=False)
     n_mat = matured_count(days)
@@ -470,6 +444,8 @@ def report(snap_dir=SNAP_DIR, today=None):
          "진입 15:05 슬롯 `nowPrice` → **익일 시가 전량 청산**. 표본 단위는 거래일이다.", ""]
 
     if n_mat < PILOT_DAYS:
+        if 'pilot' in state:
+            raise ValueError('frozen pilot inputs disappeared')
         L += ["## 단계 0 — 파일럿 미완", "",
               f"성숙 거래일 **{n_mat}일 / {PILOT_DAYS}일**. "
               "§6-12-3 이 실성과 계산을 파일럿 종료일까지 막았다.", "",
@@ -479,16 +455,30 @@ def report(snap_dir=SNAP_DIR, today=None):
         L += collection_block(days, dates)
         L += ["", "### 남은 일", "",
               f"- 성숙일 {PILOT_DAYS - n_mat}일 더 쌓이면 단계 1(σ·자기상관)로 자동 전환된다.",
-              "- 그 전에 이 파일의 상수·정의를 고치지 않는다. 고치면 그것이 사후 맞춤이다."]
+              "- 성과를 보고 기준을 맞추지 않는다. 오류 수정은 근거·버전을 남기며, 동결 후 변경은 별도 검토한다."]
         return "\n".join(L), 0
 
     # ── 여기서부터만 수익률을 만든다 ────────────────────────────────
     days, dates = collect(snap_dir, with_returns=True)
     series = [d for d in days if d.get("ok") and "rel" in d]
-    rel = [d["rel"] for d in series]
-    t_h, mean_h, sd_h, lag_used, df_h = hac(rel)
-    need, win, over = main_window(sd_h)
-    n_main = len(series) - PILOT_DAYS
+    def calibrate(values):
+        sd = hac(values)[2]
+        need, window, over = main_window(sd)
+        return {'sigma': sd, 'need': need, 'window': window, 'over': over}
+    calibration, pilot, main_rows = split_windows(
+        series, state, PILOT_DAYS, calibrate,
+        {'pilot_days': PILOT_DAYS, 'effect': TARGET_EFFECT, 'lag': HAC_LAG,
+         'floor': MAIN_FLOOR, 'cap': MAIN_CAP, 'cost': COST,
+         'block': BLOCK, 'resamples': RESAMPLES, 'turnover': MIN_TURNOVER,
+         'min_per_q': MIN_PER_Q, 'quintiles': QUINTILES, 'price_limit': PRICE_LIMIT,
+         'limit_tol': LIMIT_TOL, 'adj_tol': ADJ_TOL, 'reversal_tol': REVERSAL_TOL,
+         'z_alpha': Z_ALPHA, 'z_beta': Z_BETA})
+    if calibration is None:
+        return '\n'.join(L + ['가격 검증 후 유효 파일럿 20일 미달. 판정 보류.']), 0
+    sd_h, need, win, over = (calibration[k] for k in ('sigma', 'need', 'window', 'over'))
+    rel = [d['rel'] for d in pilot]
+    lag_used = HAC_LAG
+    n_main = len(main_rows)
 
     if win is None or n_main < win:
         L += ["## 단계 1 — 파일럿 완료, 본 구간 진행 중", "",
@@ -498,7 +488,7 @@ def report(snap_dir=SNAP_DIR, today=None):
               "> 이미 결과를 아는 구간이 된다.", "",
               "### σ 추정 (§6-12-6 — HAC 장기표준편차를 쓴다)", "",
               f"- 일별 표준편차(단순) — {pct(statistics.stdev(rel) if len(rel) > 1 else None)}",
-              f"- **HAC 장기표준편차 σ̂ (지연 {lag_used}) — {pct(sd_h)}**  ← 본 구간 길이는 이걸로 정한다",
+              f"- **HAC 장기표준편차 σ̂ (지연 {lag_used}) — {pct(sd_h)}**  ← 최초 파일럿 20일로 고정",
               ""]
         L.append("| 자기상관 | " + " | ".join(f"ρ{k}" for k in range(1, HAC_LAG + 1)) + " |")
         L.append("|---|" + "---:|" * HAC_LAG)
@@ -513,6 +503,9 @@ def report(snap_dir=SNAP_DIR, today=None):
                   "> 돌리면 '유의하지 않음' 이 '효과 없음' 으로 오독된다. 그건 검정이 아니라 알리바이다.", "",
                   "택할 것 — ① 현재 설계 보류 ② 관찰 연장(다음 심사일 지정) ③ 종료.",
                   "**사람이 사유와 함께 고른다. 이 스크립트가 고르지 않는다.**"]
+        elif win is None:
+            L += ['파일럿 분산 추정 불가/0: 본 구간 길이를 정하지 않고 보류한다.',
+                  '새 자료로 자동 재추정하지 않는다. 원인 확인과 별도 설계 검토가 필요하다.']
         else:
             L += [f"- 필요 N = ceil(((1.96+0.84)/(0.10%p/σ̂))²) = **{need}거래일**",
                   f"- 본 구간 = min(max({need}, {MAIN_FLOOR}), {MAIN_CAP}) = **{win}거래일**",
@@ -523,6 +516,13 @@ def report(snap_dir=SNAP_DIR, today=None):
         return "\n".join(L), 1
 
     # ── 단계 2 — 본 구간 완료. 판정 1회 ────────────────────────────
+    # Validate frozen inputs before replaying; never incorporate subsequent dates.
+    if 'final_report' in state:
+        return state['final_report'], 2
+    series = main_rows
+    rel = [d['rel'] for d in series]
+    t_h, mean_h, sd_h, lag_used, df_h = hac(rel)
+    L[0] = f"# 🌇 종가베팅 고정 본 구간 판정 — {series[-1]['date']}"
     t_p, df_p = plain_t(rel)
     p_h = t_two_sided_p(t_h, df_h) if t_h is not None else None
     p_p = t_two_sided_p(t_p, df_p) if t_p is not None else None
@@ -535,7 +535,7 @@ def report(snap_dir=SNAP_DIR, today=None):
                  (max(p_h, p_b) > 3 * min(p_h, p_b) and min(p_h, p_b) < 0.2)))
 
     L += ["## 단계 2 — 본 구간 완료 · 판정", "",
-          f"성숙 거래일 **{len(series)}일** (파일럿 {PILOT_DAYS} + 본 구간 {n_main}).", "",
+          f"검정 표본 **본 구간 {len(series)}일**. 파일럿 {PILOT_DAYS}일 제외. 이후 자료도 제외.", "",
           "### ① 상대 선정 능력 — Q5 평균 − 유니버스 평균 (비용 미적용)", "",
           f"- 일평균 **{pct(mean_h)}/일**",
           f"- **HAC(지연 {lag_used}) t = {t_h:.3f} · p = {p_h:.4f}** ← 채택 여부는 이것 하나가 정한다"
@@ -567,8 +567,10 @@ def report(snap_dir=SNAP_DIR, today=None):
           "### 채택 여부", "",
           "§6-12 정의 8 — 이 항목은 **탐색적**이다. ①이 유의해도 **독립 재현(별도 60거래일)**",
           "전에는 채택하지 않는다. 이 보고서는 재현 구간의 시작을 알리는 문서이지 채택 통보가 아니다.",
-          "", "### 수집 현황", ""] + collection_block(days, dates)
-    return "\n".join(L), 2
+          "", f"고정 구간: {series[0]['date']} ~ {series[-1]['date']} · {STUDY_VERSION}",
+          "후속 실행은 이 판정을 재표시한다. 새 누적 검정이나 독립 재현 판정이 아니다."]
+    state['final_report'] = "\n".join(L)
+    return state['final_report'], 2
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -885,25 +887,45 @@ def main():
     ap.add_argument("--dir", default=SNAP_DIR, help="스냅샷 폴더")
     ap.add_argument("--out", default="", help="출력 경로. 비우면 docs/종베관측_<오늘>.md")
     ap.add_argument("--stdout-only", action="store_true", help="파일로 쓰지 않고 화면에만")
-    ap.add_argument("--force", action="store_true", help="같은 날짜 파일이 있어도 덮어쓴다")
+    ap.add_argument("--force", action="store_true", help="호환용 인수. 고정 판정을 덮어쓰지는 않는다")
+    ap.add_argument('--state', default='data/closing_bet/study_v2.json',
+                    help='고정 파일럿/본 구간 상태. 삭제하여 재검정하지 말 것')
     a = ap.parse_args()
 
     if a.self_test:
         return self_test()
 
     today = datetime.datetime.now(KST).strftime("%Y-%m-%d")
-    txt, stage = report(a.dir, today)
+    state = {}
+    if os.path.exists(a.state):
+        with open(a.state, encoding='utf-8') as fp:
+            state = json.load(fp)
+    txt, stage = report(a.dir, today, state)
     print(txt)
     if a.stdout_only:
+        print('\n미저장 미리보기: 상태 동결/공식 판정 기록을 완료한 실행이 아닙니다.')
         return 0
+    if state:
+        os.makedirs(os.path.dirname(a.state) or '.', exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(a.state) or '.', suffix='.tmp')
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as fp:
+                json.dump(state, fp, ensure_ascii=False, indent=2, allow_nan=False)
+            os.replace(tmp, a.state)
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
     # 단계 0·1 은 매번 갱신되는 현황이라 한 파일을 덮어쓴다.
     # 단계 2 는 **판정**이라 날짜가 박힌 파일로 남기고 덮어쓰지 않는다 — 박제다.
     if stage < 2:
         path = a.out or os.path.join("docs", "종베관측_현황.md")
     else:
-        path = a.out or os.path.join("docs", f"종베판정_{today}.md")
-        if os.path.exists(path) and not a.force:
-            print(f"\n⚠️ 판정 박제가 이미 있다 — {path} (정말 다시 만들려면 --force)")
+        path = a.out or os.path.join("docs", f"종베판정_{STUDY_VERSION}.md")
+        if os.path.exists(path):
+            with open(path, encoding='utf-8') as fp:
+                if fp.read() != txt + '\n':
+                    raise ValueError('기존 고정 판정과 불일치: 덮어쓰기 금지')
+            print(f"\n기존 고정 판정과 동일 — {path}")
             return 0
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     open(path, "w", encoding="utf-8").write(txt + "\n")

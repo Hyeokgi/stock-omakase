@@ -1,0 +1,12 @@
+{
+  "version": "krx-scheduled-2026h2-v1",
+  "start": "2026-08-01",
+  "end": "2026-12-31",
+  "checked_at": "2026-09-13",
+  "status": "scheduled_closures_only_not_actual_session_certification",
+  "sources": [
+    "https://www.kasi.re.kr/kor/post/newsMaterial/32031",
+    "https://regulation.krx.co.kr/contents/RGL/03/03020401/RGL03020401.jsp"
+  ],
+  "note": "9/28 is not a substitute holiday. Update for extraordinary closures; never infer holidays from collector failure. Extend coverage from authoritative sources before 2027."
+}

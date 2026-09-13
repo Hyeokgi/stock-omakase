@@ -228,19 +228,25 @@ SECTOR_COLS = ["upjongNos", "upjongNames", "groupNos", "groupNames"]
 def is_trading_day(today_str):
     """지수 일봉에 오늘 날짜가 있는지로 개장 여부를 판정한다.
     (omakase 의 휴장일 가드와 같은 방식 — 임시공휴일에도 GAS/cron 은 그대로 돌기 때문)"""
+    from hyeoks_trading_calendar import scheduled_session
+    if not scheduled_session(today_str):
+        return False
     try:
         r = SESSION.get("https://fchart.stock.naver.com/sise.nhn"
                         "?symbol=KOSPI&timeframe=day&count=5&requestType=0",
-                        verify=False, timeout=10)
+                        timeout=10)
+        r.raise_for_status()
         days = set()
         for it in ET.fromstring(r.text).findall(".//item"):
             raw = (it.get("data") or "").split("|")[0]
             if len(raw) == 8:
                 days.add(f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}")
-        return today_str in days
+        if today_str not in days:
+            raise ValueError('예정 거래일인데 오늘 지수 봉이 없음: 수집 지연/임시휴장 확인 필요')
+        return True
     except Exception as e:
         print(f"⚠️ 개장 여부 판정 실패: {e}")
-        return False
+        raise RuntimeError('개장 확인 실패를 정상 휴장으로 처리하지 않습니다') from e
 
 
 def index_snapshot():

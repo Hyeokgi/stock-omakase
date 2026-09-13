@@ -103,14 +103,12 @@ jobs:
     - name: 📸 스냅샷 수집
       id: snap
       run: |
-        set +e
+        set -e
         FORCE=""
         if [ "${{ inputs.force }}" = "true" ]; then FORCE="--force"; fi
         # 시간 창 밖이거나 휴장일이면 스크립트가 스스로 저장을 거부하고 0으로 끝난다.
         # 백업 cron 이 늦게 도착한 경우가 바로 여기서 걸러진다 — 빈손이 오염보다 낫다.
         python hyeoks_market_snapshot.py --slot "${{ steps.slot.outputs.slot }}" $FORCE
-        echo "exit_code=$?" >> "$GITHUB_OUTPUT"
-        exit 0
 
     - name: 💾 저장소에 커밋
       run: |
