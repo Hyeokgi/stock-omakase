@@ -218,78 +218,11 @@ def get_recent_quarters(corp_code, num_years=2):
 
 
 def fetch_consensus_estimates(code, debug=False):
-    """네이버금융 종목 페이지의 '기업실적분석' 표에서 애널리스트 컨센서스(추정치) 분기 실적을 가져옴.
-       🔒 [개인용 한정] 이 데이터는 금융정보업체가 집계한 상업적 컨센서스 데이터라, 개인·가족 소수 인원
-       참고용으로만 쓰고 외부 배포·공개하지 않는 것을 전제로 함. DART 기반 V3와는 완전히 분리해서 저장.
-       ⚠️ 네이버 페이지 실제 HTML 구조를 직접 확인 못 하고 작성한 코드라 셀렉터가 안 맞을 수 있음 —
-       debug=True인 종목은 각 단계에서 뭘 찾았는지 로그로 남겨서, 다음 실행에서 원인을 바로 알 수 있게 함."""
-    try:
-        url = f"https://finance.naver.com/item/main.naver?code={code}"
-        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=7)
-        if debug:
-            print(f"🔎 [컨센서스 진단 {code}] HTTP 상태: {res.status_code}, 응답 길이: {len(res.text)}자")
-        res.encoding = 'utf-8'  # 🔧 [수정] 'euc-kr'로 강제했더니 실제로는 UTF-8 페이지라 한글이 깨져서
-        #    "매출액"/"영업이익" 라벨 매칭이 전부 실패하고 있었음(숫자·괄호는 아스키라 안 깨져서 헤더의
-        #    "(E)" 표시는 멀쩡히 보였지만, 정작 행 라벨이 깨져서 아무 것도 못 찾았던 것).
-        soup = BeautifulSoup(res.text, 'html.parser')
-
-        table = None
-        matched_sel = None
-        for sel in ["div.cop_analysis table.gHead01", "table.tb_type1_ifrs", "div.section.cop_analysis table"]:
-            table = soup.select_one(sel)
-            if table:
-                matched_sel = sel
-                break
-        if debug:
-            all_tables = soup.select("table")
-            print(f"🔎 [컨센서스 진단 {code}] 페이지 내 전체 <table> 개수: {len(all_tables)}개, 매칭된 셀렉터: {matched_sel}")
-            for t in all_tables[:10]:
-                cls = t.get("class")
-                print(f"      - table class={cls} id={t.get('id')}")
-        if not table:
-            if debug:
-                print(f"⚠️ [컨센서스 진단 {code}] 실적분석 표를 못 찾음 — 셀렉터 조정 필요")
-            return None
-
-        headers = [th.get_text(strip=True) for th in table.select("thead th")]
-        if debug:
-            print(f"🔎 [컨센서스 진단 {code}] 헤더: {headers}")
-
-        # 🔧 [수정] "주요재무정보"·"최근 연간 실적" 같은 그룹 라벨이 헤더 앞에 섞여 있어서, 예전처럼
-        #    "th 하나만큼 밀림"으로 단순 계산하면 실제 데이터 칸과 어긋남(연간(E) 자리에 분기 실제값이
-        #    들어가는 사고 있었음). 실제 "YYYY.MM" 형태의 날짜 헤더만 정규식으로 골라내서, 그 순번이
-        #    tbody의 td 순번과 정확히 1:1 대응하도록 다시 짬(그룹 라벨은 데이터 칸이 아니라 자동 제외됨).
-        date_pattern = re.compile(r'^\d{4}\.\d{2}(\(E\))?$')
-        date_headers = [h for h in headers if date_pattern.match(h)]  # 실제 데이터 컬럼만, 순서 그대로
-        estimate_slots = [(i, h) for i, h in enumerate(date_headers) if "(E)" in h]  # (실제 td 인덱스, 헤더명)
-        if not estimate_slots:
-            if debug:
-                print(f"⚠️ [컨센서스 진단 {code}] 날짜 헤더는 {len(date_headers)}개 찾았는데 '(E)' 표시가 있는 칸이 없음")
-            return None
-
-        result = {}
-        for row in table.select("tbody tr"):
-            th = row.select_one("th")
-            if not th:
-                continue
-            label = th.get_text(strip=True)
-            if label not in ("매출액", "영업이익", "당기순이익"):
-                continue
-            tds = row.select("td")
-            for td_idx, h in estimate_slots:
-                if 0 <= td_idx < len(tds):
-                    val_str = tds[td_idx].get_text(strip=True).replace(",", "")
-                    try:
-                        val = float(val_str)
-                    except Exception:
-                        continue
-                    result.setdefault(h, {})[label] = val
-        if debug:
-            print(f"🔎 [컨센서스 진단 {code}] 최종 파싱 결과: {result}")
-        return result if result else None
-    except Exception as e:
-        print(f"⚠️ [컨센서스 조회 실패 {code}] {e}")
-        return None
+    """Verified provider JSON: quarterly IFRS consolidated, estimates only, KRW 100M.
+    Errors propagate to the caller; empty coverage is distinct from source failure.
+    """
+    from naver_sources import consensus_estimates
+    return consensus_estimates(code)
 
 
 def find_same_quarter_last_year(quarters, latest):
@@ -445,6 +378,7 @@ if __name__ == "__main__":
     rows_out = [header]
     consensus_header = ["종목코드", "종목명", "추정분기", "추정매출액", "추정영업이익", "추정당기순이익", "갱신일시"]
     consensus_rows_out = [consensus_header]
+    consensus_failures = []
     now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
     target_codes = list(target_map.keys())
     fs_div_counter = {"CFS": 0, "OFS": 0}
@@ -487,7 +421,12 @@ if __name__ == "__main__":
             ])
 
             # 🆕 [개인용 참고자료] 애널리스트 컨센서스 — DART 확정치(V3)와는 완전히 분리해서 별도 시트에 기록
-            consensus = fetch_consensus_estimates(code, debug=(code in DEBUG_STOCKS))
+            try:
+                consensus = fetch_consensus_estimates(code, debug=(code in DEBUG_STOCKS))
+            except Exception as error:
+                consensus_failures.append(code)
+                print(f"::warning::컨센서스 원천 실패 {code}: {error}")
+                consensus = None
             if consensus:
                 for q_label, vals in consensus.items():
                     consensus_rows_out.append([
@@ -515,13 +454,21 @@ if __name__ == "__main__":
     else:
         print("⚠️ 수집된 실적 데이터가 없습니다.")
 
+    if consensus_failures:
+        print(f"::error::컨센서스 {len(consensus_failures)}종목 수집 실패. 기존 시트와 갱신시각 보존.")
+        raise SystemExit(1)
     if len(consensus_rows_out) > 1:
         try:
             consensus_sheet = doc.worksheet("DB_컨센서스")
         except Exception:
             consensus_sheet = doc.add_worksheet(title="DB_컨센서스", rows="1000", cols="8")
-        consensus_sheet.clear()
-        consensus_sheet.update(range_name="A1", values=consensus_rows_out, value_input_option="RAW")
+        from naver_sources import merge_consensus_rows
+        old_rows = consensus_sheet.get("A:G")
+        merged = merge_consensus_rows(old_rows, consensus_rows_out)
+        # Keep unprocessed stocks and their original timestamps; never clear the whole sheet.
+        consensus_sheet.update(range_name="A1", values=merged, value_input_option="RAW")
+        if len(old_rows) > len(merged):
+            consensus_sheet.batch_clear([f"A{len(merged) + 1}:G{len(old_rows)}"])
         print(f"✅ [DB_컨센서스 · 개인 참고용] {len(consensus_rows_out) - 1}행 기록 완료{partial_note}")
     else:
-        print("⚠️ 컨센서스 데이터가 하나도 안 잡혔습니다 — 네이버 페이지 셀렉터 조정이 필요할 수 있습니다.")
+        print("::warning::분기 연결 컨센서스 신규 추정치 없음. 기존 자료/갱신시각 보존; 정상 갱신 아님.")

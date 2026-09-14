@@ -50,14 +50,12 @@ def get_global_liquidity_data():
     return "\n".join(liquidity_report) if liquidity_report else "유동성 데이터 수집 실패"
 
 def search_code_from_naver(stock_name):
+    from naver_sources import search_code, SourceError
     try:
-        url = "https://m.stock.naver.com/api/search/all"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        res = requests.get(url, headers=headers, params={'keyword': stock_name}, verify=False, timeout=3).json()
-        if res.get('result') and res['result'].get('stocks'):
-            return res['result']['stocks'][0]['itemCode']
-    except: pass
-    return None
+        return search_code(stock_name)
+    except SourceError as error:
+        print(f"⚠️ 종목 검색 실패: {error}")
+        return None
 
 def get_vip_deep_dive_data(code, kis_token):
     vip = {"펀더멘털": "N/A"}
@@ -75,18 +73,12 @@ def get_vip_deep_dive_data(code, kis_token):
     return f"📊 {vip['펀더멘털']}"
 
 def get_us_market_summary():
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    from naver_sources import main_news, SourceError
     try:
-        print("📰 네이버 주요 뉴스 수집 중...")
-        res = requests.get("https://finance.naver.com/news/mainnews.naver", headers=headers, verify=False, timeout=5)
-        soup = BeautifulSoup(res.content, 'html.parser', from_encoding='cp949')
-        news_items = []
-        for dl in soup.find_all('dl'):
-            subject = dl.find(['dt', 'dd'], {'class': 'articleSubject'})
-            if subject and subject.find('a'): news_items.append(f"- {subject.find('a').text.strip()}")
-            if len(news_items) >= 15: break
-        return "글로벌 및 국내 주요 금융 뉴스 헤드라인", "\n".join(news_items)
-    except Exception as e: return f"뉴스 수집 에러: {e}", ""
+        return "글로벌 및 국내 주요 금융 뉴스 헤드라인", "\n".join("- " + title for title in main_news())
+    except SourceError as error:
+        print(f"::warning::모닝 뉴스 수집 실패: {error}")
+        return "⚠️ 뉴스 수집 실패", "뉴스 원천 미확보: 뉴스가 없다는 뜻이 아니며 관련 사실을 추측하지 마십시오."
 
 def get_yesterday_korean_context():
     print("🇰🇷 어제 한국장 퀀트 타겟 종목 및 심층 데이터 수집 중...")

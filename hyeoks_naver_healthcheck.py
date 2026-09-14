@@ -321,7 +321,28 @@ def chk_group_json():
     return _chk_sector_list("group", 30, 5)
 
 
+def chk_morning_news_current():
+    from naver_sources import main_news
+    titles = main_news()
+    return bool(titles), f"{len(titles)} headlines"
+
+
+def chk_morning_search_current():
+    from naver_sources import search_code
+    code = search_code("삼성전자")
+    return code == "005930", str(code)
+
+
+def chk_consensus_current():
+    from naver_sources import consensus_estimates
+    data = consensus_estimates("005930")
+    return bool(data), f"{len(data)} quarterly estimates (IFRS consolidated, KRW 100M)"
+
+
 CHECKS = [
+    ("morning_news_v2", MAJOR, "모닝 뉴스 신규 원천", chk_morning_news_current, "모닝 브리핑"),
+    ("morning_search_v2", MAJOR, "모닝 정확 종목 검색", chk_morning_search_current, "모닝 브리핑"),
+    ("consensus_v2", MAJOR, "분기 컨센서스 신규 원천", chk_consensus_current, "DB_컨센서스"),
     # (키, 심각도, 설명, 함수, 담당 기능)
     ("frgn_html",     FATAL, "외국인·기관 수급 HTML",   chk_frgn,          "V2 수급점수 / 수급TOP2"),
     ("risk_pages",    FATAL, "위험종목 3종 HTML",       chk_risk_pages,    "관리·정지·경고 필터"),
