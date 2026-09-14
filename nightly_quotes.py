@@ -4,6 +4,7 @@ These helpers validate numeric observations, not exchange-session freshness.
 No timestamp or trade availability is inferred from a positive price.
 """
 import math
+from after_market_quotes import AFTER_HEADER, NXT_HEADER
 
 
 def number(value):
@@ -22,7 +23,7 @@ def quote_label(price, rate, source):
         return None
     icon = '🔺' if rate > 0 else '🔵' if rate < 0 else '➖'
     rate_text = '0.00' if rate == 0 else f'{rate:+.2f}'
-    return f'{icon}{rate_text}% ({price:,.0f}원) [{source}]'
+    return f'{icon}{rate_text}% ({price:,.0f}원) [제공처 등락률·기준 미검증 / {source}]'
 
 
 def naver_quote(data, venue):
@@ -34,9 +35,6 @@ def naver_quote(data, venue):
     prefix = 'nxt' if venue == 'NXT' else 'timeExtra'
     price = number(data.get(prefix + 'ClosePrice'))
     rate = number(data.get(prefix + 'FluctuationsRatio'))
-    regular = number(data.get('closePrice'))
-    if rate is None and price is not None and regular is not None and regular > 0:
-        rate = (price / regular - 1) * 100
     label = quote_label(price, rate, '네이버/' + prefix + 'ClosePrice')
     return (label, venue) if label else (None, None)
 
@@ -45,6 +43,6 @@ def after_hours_header(header, regime):
     """AA/AB are the consumer contract; preserve all unrelated headers."""
     result = list(header)
     result.extend([''] * max(0, 28 - len(result)))
-    result[26] = f"{regime['label']}({regime['window']}) 관측값"
-    result[27] = 'NXT야간거래 관측값'
+    result[26] = AFTER_HEADER
+    result[27] = NXT_HEADER
     return result

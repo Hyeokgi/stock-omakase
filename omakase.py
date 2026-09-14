@@ -9,6 +9,7 @@ import urllib3
 import pandas as pd
 import random
 import json
+from after_market_quotes import scanner_after_quote, AFTER_HEADER, NXT_HEADER
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -915,59 +916,8 @@ def find_key(data, key):
     return None
 
 def fetch_extra_closing_prices_from_kis(code, session_obj=None):
-    if not KIS_TOKEN or not KIS_APP_KEY or not KIS_APP_SECRET:
-        return 0, 0
-    req = session_obj if session_obj else GLOBAL_SESSION
-    headers = {
-        "Content-Type": "application/json",
-        "authorization": f"Bearer {KIS_TOKEN}",
-        "appkey": KIS_APP_KEY,
-        "appsecret": KIS_APP_SECRET,
-        "custtype": "P"
-    }
-    krx_close = 0
-    nxt_close = 0
-    try:
-        headers["tr_id"] = "FHPST02320000"
-        params = {"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}
-        res = req.get(f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-daily-overtimeprice", headers=headers, params=params, timeout=5)
-        if res.status_code == 200:
-            data = res.json()
-            output_list = data.get("output", [])
-            if isinstance(output_list, list) and len(output_list) > 0:
-                for row in output_list:
-                    price = safe_int(row.get("ovtm_untp_prpr"))
-                    if price > 0:
-                        krx_close = price
-                        break
-            else:
-                overtime_price = safe_int(find_key(data, "ovtm_untp_prpr"))
-                if overtime_price > 0: krx_close = overtime_price
-    except Exception as e:
-        print(f"⚠️ [fetch_extra_closing_prices_from_kis KRX Error for {code}] {e}")
-
-    try:
-        r = req.get(f"https://m.stock.naver.com/api/stock/{code}/basic", timeout=3, verify=False)
-        if r.status_code == 200:
-            j = r.json()
-            night_info = j.get("nightMarketPriceInfo") or j.get("overMarketPriceInfo") or {}
-            nxt_price = safe_int(night_info.get("closePrice") or night_info.get("price") or night_info.get("overPrice"))
-            if nxt_price > 0: nxt_close = nxt_price
-    except Exception as e:
-        print(f"⚠️ [fetch_extra_closing_prices_from_kis NXT Error for {code}] {e}")
-
-    if krx_close == 0:
-        try:
-            r = req.get(f"https://m.stock.naver.com/api/stock/{code}/basic", timeout=3, verify=False)
-            if r.status_code == 200:
-                j = r.json()
-                ot_info = j.get("overTimePriceInfo") or j.get("overMarketPriceInfo") or {}
-                ot_price = safe_int(ot_info.get("closePrice") or ot_info.get("price") or ot_info.get("overPrice"))
-                if ot_price > 0: krx_close = ot_price
-        except Exception as e:
-            print(f"⚠️ [fetch_extra_closing_prices_from_kis Fallback Error for {code}] {e}")
-
-    return krx_close, nxt_close
+    """Removed unsafe venue cross-fill. Use scanner_after_quote instead."""
+    raise RuntimeError('Deprecated: prices without venue/date provenance are not usable')
 
 def get_current_price_for_backtest(code):
     try:
@@ -1643,9 +1593,12 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
 
         # ── [레이어 2] 네이버 실시간 주가 API 동기화 ──
         live_success = False
+        rt_json = {}
         try:
             rt_url = f"https://m.stock.naver.com/api/stock/{code}/basic"
-            rt_json = GLOBAL_SESSION.get(rt_url, headers=desktop_headers, verify=False, timeout=2).json()
+            rt_response = GLOBAL_SESSION.get(rt_url, headers=desktop_headers, timeout=2)
+            rt_response.raise_for_status()
+            rt_json = rt_response.json()
             if rt_json and rt_json.get('closePrice'):
                 live_p = int(str(rt_json['closePrice']).replace(',', '').strip())
                 if live_p > 0:
@@ -1678,22 +1631,12 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             
         is_fatal_drop = is_junk or is_financial_risk
 
-        krx_close, nxt_close = 0, 0
         now_kst_api = datetime.datetime.now(KST)
         is_regular_market = (9 <= now_kst_api.hour < 15) or (now_kst_api.hour == 15 and now_kst_api.minute <= 40)
         market_type = "정규장 진행중" if is_regular_market else "정규장"
-
+        krx_str, nxt_str = '', ''
         if not is_regular_market:
-            try: krx_close, nxt_close = fetch_extra_closing_prices_from_kis(code, session_obj=GLOBAL_SESSION)
-            except Exception as e: print(f"⚠️ [analyze_single_stock fetch_extra_closing_prices Exception for {name}] {e}")
-            if nxt_close > 0:
-                krx_close = 0
-                market_type = "NXT"
-            elif krx_close > 0:
-                market_type = "KRX"
-
-        krx_rate = ((krx_close - current_price) / current_price * 100) if krx_close > 0 and current_price > 0 else 0.0
-        nxt_rate = ((nxt_close - current_price) / current_price * 100) if nxt_close > 0 and current_price > 0 else 0.0
+            krx_str, nxt_str, market_type = scanner_after_quote(rt_json, now_kst_api)
 
         # ── [레이어 3] 기술적 보조 지표 및 수렴 필터 연산 ──
         is_upper_limit = change_rate >= 0.295
@@ -2390,8 +2333,6 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         frgn_label = " 🌎💎(외인대량)" if acc_f_buy_eok >= 50 else (" 🌎(외인집중)" if acc_f_buy_eok >= 20 else (" 🌎🔵(외인이탈)" if acc_f_buy_eok <= -20 else ""))
         supply_status_col = f"🏦기(5일):{i_sign}{acc_i_buy_eok:.1f}억 / 🌎외(5일):{f_sign}{acc_f_buy_eok:.1f}억{frgn_label}"
         
-        krx_str = f"'+{krx_rate:.2f}% ({krx_close:,}원)" if krx_close > 0 and krx_rate > 0 else (f"'{krx_rate:.2f}% ({krx_close:,}원)" if krx_close > 0 else "")
-        nxt_str = f"'+{nxt_rate:.2f}% ({nxt_close:,}원)" if nxt_close > 0 and nxt_rate > 0 else (f"'{nxt_rate:.2f}% ({nxt_close:,}원)" if nxt_close > 0 else "")
 
         result_row = [
             name, f"'{code}", current_price, f"{change_rate * 100:.2f}%",
@@ -2741,7 +2682,7 @@ def update_technical_data(df_theme, all_theme_map):
             "종목명", "종목코드", "현재가", "등락률", "5일평균", "20일평균", "거래량비율", "AI신호",
             "마스터타점", "브리핑상태", "당일고가", "당일저가", "60일고가", "시가총액", "캔들상태",
             "전고거리", "20일이격", "대장구분", "거래과열", "테마명", "프로그램", "52주고가",
-            "기관/외인 누적(5일)", "목표가(AI)", "손절가(AI)", "종목쿼터", "장마감후가격(17:50)", "NXT야간종가(20시)", "장구분",
+            "기관/외인 누적(5일)", "목표가(AI)", "손절가(AI)", "종목쿼터", AFTER_HEADER, NXT_HEADER, "장구분",
             "V1 차트점수", "V1 표시", "V2 수급점수", "V2 표시", "RS등급"
         ]
         def _row_for_helper_sheet(r):
@@ -2900,9 +2841,10 @@ def update_technical_data(df_theme, all_theme_map):
                         is_reg_now = (9 <= now_mk.hour < 15) or (now_mk.hour == 15 and now_mk.minute <= 40)
                         if not is_reg_now:
                             while len(clean_row) <= 18: clean_row.append("")
+                            clean_row[16] = '미확인(이번 스캔 시세 없음)'
+                            clean_row[17] = ''
                             for idx in (1, 18):
-                                if str(clean_row[idx]).strip() == "정규장 진행중":
-                                    clean_row[idx] = "장마감"
+                                clean_row[idx] = '시간외 미확인'
 
                     while len(clean_row) <= 22: clean_row.append("")
                     clean_row[21] = str(new_grace)  # 🆕 이번에 구제됐다면 갱신된 유예 카운터를 기록
@@ -2931,6 +2873,7 @@ def update_technical_data(df_theme, all_theme_map):
 
         if top_20_results:
             try:
+                db_scanner_sheet.update(range_name="Q1:R1", values=[[AFTER_HEADER, NXT_HEADER]])
                 db_scanner_sheet.update(range_name="A2", values=top_20_results, value_input_option="USER_ENTERED")
                 db_scanner_sheet.batch_clear([f"A{len(top_20_results) + 2}:AC"])
                 apply_change_rate_formatting(doc, db_scanner_sheet, len(top_20_results) + 1, col_index=4,

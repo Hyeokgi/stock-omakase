@@ -121,7 +121,7 @@ class QuoteRegressions(unittest.TestCase):
         self.assertIn('0.00%', label)
 
     def test_venues_never_cross_fill(self):
-        ext = {'closePrice': '100', 'timeExtraClosePrice': '110'}
+        ext = {'closePrice': '100', 'timeExtraClosePrice': '110', 'timeExtraFluctuationsRatio': '10'}
         self.assertEqual(naver_quote(ext, 'NXT'), (None, None))
         self.assertEqual(naver_quote(ext, '시외')[1], '시외')
         self.assertEqual(naver_quote({'nxtClosePrice': 100, 'nxtFluctuationsRatio': 1}, '시외'), (None, None))
@@ -169,7 +169,7 @@ class NightlyIntegration(unittest.TestCase):
         self.assertIsNone(self.env['get_nxt_kis_price']('000001', {}, self.req({'rt_cd': '0', 'output': {'stck_prpr': 100}})))
 
     def test_actual_naver_wrapper_respects_venue(self):
-        body = {'closePrice': 100, 'timeExtraClosePrice': 110}
+        body = {'closePrice': 100, 'timeExtraClosePrice': 110, 'timeExtraFluctuationsRatio': 10}
         call = self.env['get_naver_after_price']
         self.assertEqual(call('000001', self.req(body), 'NXT'), (None, None))
         self.assertEqual(call('000001', self.req(body), '시외')[1], '시외')
