@@ -10,6 +10,7 @@ import pandas as pd
 import random
 import json
 from after_market_quotes import scanner_after_quote, AFTER_HEADER, NXT_HEADER
+import scanner_census
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -2564,6 +2565,15 @@ def update_technical_data(df_theme, all_theme_map):
                 print("   ↳ 밴드는 통과했는데 반등 확인 게이트에서 전멸했다 → 문턱이 아니라 관문②가 병목")
             elif _env == 0:
                 print("   ↳ -20% 이탈 종목 자체가 0 → ENVELOPE_BAND 완화의 표적이 바로 이 경우")
+
+            # 📌 이 숫자는 지금까지 로그에만 있었고 로그는 만료된다. 하루 한 줄 남긴다.
+            #    §3-2-1 의 ENVELOPE_BAND 를 켜면 이 값이 바뀌므로, **켜기 전 기준선**이
+            #    없으면 전/후 비교가 성립하지 않는다. 기록 실패가 스캔을 죽이지 않는다.
+            _rec_ok, _rec_msg = scanner_census.record(
+                scanned=len(TAJEOM_CENSUS), envelope_pass=_env,
+                oversold=_over, knife_wait=_knife,
+                warning_market=bool(is_warning_market), kospi_rate=kospi_rate)
+            print(f"   {'🗂️ 인구조사 보존 — ' + _rec_msg if _rec_ok else '· 보존 생략 — ' + _rec_msg}")
             TAJEOM_CENSUS.clear()
 
         # 📉 등락률 폴백 요약 — 실시간 API 실패율이 곧 표본 오염 위험도다.
