@@ -1708,7 +1708,14 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         min_nulim_tv = 10_000_000_000 if is_warning_market else 5_000_000_000
         min_breakout_tv = 10_000_000_000  
         min_danta_rate = 0.03            
-        is_envelope_over_under = (current_price <= envelope_lower_20 and trading_value >= min_nulim_tv and not is_upper_limit and change_rate <= 0.10)
+        # ⚠️ 이것은 **복합 조건**이다. 통과 수가 0이어도 "이격 -20% 이탈 종목이 0"이라는
+        #    뜻이 아니다 — 거래대금·상한가·등락률 중 어디서 막혔는지 이 하나로는 안 갈린다.
+        #    그래서 하위 조건을 따로 들고 다니며 인구조사에서 단계별로 센다.
+        _env_price_ok = current_price <= envelope_lower_20
+        _env_tv_ok    = trading_value >= min_nulim_tv
+        _env_notup_ok = not is_upper_limit
+        _env_rate_ok  = change_rate <= 0.10
+        is_envelope_over_under = (_env_price_ok and _env_tv_ok and _env_notup_ok and _env_rate_ok)
 
         high_60d_calc = max(high_prices[-60:-1]) if len(high_prices) >= 60 else today_high
         high_250d_calc = max(high_prices[:-1]) if len(high_prices) > 1 else today_high
@@ -2121,7 +2128,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             tajeom_multiplier = 0.6
 
         master_tajeom = master_tajeom_base + master_tajeom_suffix
-        TAJEOM_CENSUS.append((master_tajeom_base, bool(is_envelope_over_under)))
+        TAJEOM_CENSUS.append((master_tajeom_base, bool(is_envelope_over_under),
+                              bool(_env_price_ok), bool(_env_tv_ok),
+                              bool(_env_notup_ok), bool(_env_rate_ok)))
 
         if is_warning_market and track_type == "돌파":
             tajeom_multiplier = 0.0
@@ -2555,25 +2564,45 @@ def update_technical_data(df_theme, all_theme_map):
         print(f"⏱️ 스캔 소요시간: {time.time() - scan_start:.1f}초 ({len(results)}/{len(target_dict)}개 종목 처리 완료)")
 
         # 📊 타점 인구조사 — 과매도 태그가 '시장에 없었나' 대 '상위 20에 못 들었나'를 가른다.
+        #
+        # 🚨 [2026-09-14 정정] 예전엔 복합 조건 통과 수 하나만 세고
+        #    "-20% 이탈 종목 자체가 0" 이라고 찍었다. **그건 과잉 진단이었다.**
+        #    관문①은 `이격 AND 거래대금 AND 상한가아님 AND 등락률` 네 개의 곱이라
+        #    통과 0이어도 어디서 막혔는지 알 수 없다. 이제 단계별로 센다.
         if TAJEOM_CENSUS:
-            _env = sum(1 for _, e in TAJEOM_CENSUS if e)
-            _over = sum(1 for b, _ in TAJEOM_CENSUS if b == "📉 과매도 · 역배팅")
-            _knife = sum(1 for b, _ in TAJEOM_CENSUS if b.startswith("⏸ 관망 · 과매도"))
-            print(f"📊 [타점 인구조사] 스캔 {len(TAJEOM_CENSUS)}종목 · "
-                  f"엔벨로프(-20%) 통과 {_env}종목 → 과매도·역배팅 {_over}건 · 반등미확인 {_knife}건")
-            if _over == 0 and _env > 0:
-                print("   ↳ 밴드는 통과했는데 반등 확인 게이트에서 전멸했다 → 문턱이 아니라 관문②가 병목")
+            _scanned = len(TAJEOM_CENSUS)
+            _price = sum(1 for r in TAJEOM_CENSUS if r[2])                       # 이격만
+            _price_tv = sum(1 for r in TAJEOM_CENSUS if r[2] and r[3])           # + 거래대금
+            _env = sum(1 for r in TAJEOM_CENSUS if r[1])                         # 복합 전체
+            _over = sum(1 for r in TAJEOM_CENSUS if r[0] == "📉 과매도 · 역배팅")
+            _knife = sum(1 for r in TAJEOM_CENSUS if r[0].startswith("⏸ 관망 · 과매도"))
+            _tv_floor = 10_000_000_000 if is_warning_market else 5_000_000_000
+            print(f"📊 [타점 인구조사] 스캔 {_scanned}종목 · 관문① 단계별: "
+                  f"이격 {_price} → +거래대금({_tv_floor//100_000_000}억) {_price_tv} → +상한가·등락률 {_env}"
+                  f" → 과매도·역배팅 {_over}건 · 반등미확인 {_knife}건")
+            if _price == 0:
+                print("   ↳ 이격 조건 자체를 통과한 종목이 0 (거래대금 이전 단계)")
+            elif _price_tv == 0:
+                print(f"   ↳ 이격은 {_price}종목 통과했으나 거래대금 문턱에서 전멸")
             elif _env == 0:
-                print("   ↳ -20% 이탈 종목 자체가 0 → ENVELOPE_BAND 완화의 표적이 바로 이 경우")
+                print("   ↳ 이격·거래대금은 통과했으나 상한가/등락률 조건에서 전멸")
+            elif _over == 0:
+                print("   ↳ 관문①은 통과했는데 반등 확인 게이트(관문②)에서 전멸")
 
             # 📌 이 숫자는 지금까지 로그에만 있었고 로그는 만료된다. 하루 한 줄 남긴다.
             #    §3-2-1 의 ENVELOPE_BAND 를 켜면 이 값이 바뀌므로, **켜기 전 기준선**이
             #    없으면 전/후 비교가 성립하지 않는다. 기록 실패가 스캔을 죽이지 않는다.
             _rec_ok, _rec_msg = scanner_census.record(
-                scanned=len(TAJEOM_CENSUS), envelope_pass=_env,
-                oversold=_over, knife_wait=_knife,
+                scanned=_scanned, price_pass=_price, price_tv_pass=_price_tv,
+                envelope_pass=_env, oversold=_over, knife_wait=_knife,
                 warning_market=bool(is_warning_market), kospi_rate=kospi_rate)
-            print(f"   {'🗂️ 인구조사 보존 — ' + _rec_msg if _rec_ok else '· 보존 생략 — ' + _rec_msg}")
+            if _rec_ok:
+                print(f"   🗂️ 인구조사 보존 — {_rec_msg}")
+            elif _rec_msg.startswith("기록 실패"):
+                # 조용히 넘어가면 결측을 아무도 모른다. 눈에 띄게 남긴다.
+                print(f"   ❌ [인구조사 보존 실패] {_rec_msg} — 오늘 기준선 한 줄이 비었다")
+            else:
+                print(f"   · 보존 생략 — {_rec_msg}")
             TAJEOM_CENSUS.clear()
 
         # 📉 등락률 폴백 요약 — 실시간 API 실패율이 곧 표본 오염 위험도다.

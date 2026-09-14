@@ -36,8 +36,17 @@ CENSUS_PATH   = os.path.join("data", "scanner_census", "envelope_census.csv")
 NONTRADING    = os.path.join("data", "market_snapshot", "nontrading.txt")
 WINDOW_OPEN   = (14, 40)      # KST. 15:00 리포트가 쓰는 풀을 만든 회차 부근
 WINDOW_CLOSE  = (15, 10)
-HEADER = ["date", "captured_at", "scanned", "envelope_pass", "oversold", "knife_wait",
-          "band_mode", "band_pct", "min_turnover", "warning_market", "kospi_rate", "source"]
+HEADER = ["date", "captured_at", "scanned",
+          # 관문① 을 **단계별**로 센다. 복합 조건 통과 수 하나로는 어디서 막혔는지 모른다.
+          "price_pass",       # 이격만 (current_price <= ma20 × (1-band_pct))
+          "price_tv_pass",    # + 거래대금 문턱
+          "envelope_pass",    # + 상한가 아님 + 등락률 ≤10% (= 복합 전체)
+          "oversold", "knife_wait",
+          # 이 줄이 **어떤 설정·어떤 코드·어떤 실행**에서 나왔는지 묶는다.
+          # 날짜 상수 하나만으로는 "이 표본이 어느 정책에서 나왔나"를 인증하지 못한다.
+          "band_mode", "band_pct", "min_turnover", "warning_market", "kospi_rate",
+          "policy_id", "policy_since", "code_sha", "run_id",
+          "calendar_ok", "source"]
 
 # `source` 는 이 줄이 **어떻게 들어왔는지**다. 스캐너가 직접 쓴 줄은 "scanner",
 # 만료 전에 워크플로 로그에서 옮겨 적은 줄은 "log:<run id>" 로 둔다.
@@ -67,6 +76,25 @@ def band_settings(warning_market, env=None):
     return "on", (warn if warning_market else normal)
 
 
+def load_nontrading_checked(path=NONTRADING):
+    """(휴장일 집합, 읽기 성공 여부).
+
+    ⚠️ 파일을 못 읽으면 주말만 걸러진다. 그 상태를 **정상 관측처럼 취급하지 않는다** —
+    행에 `calendar_ok=N` 을 박아 나중에 그 줄을 의심할 수 있게 한다.
+    비어 있는 파일도 실패로 본다(달력이 있는데 비어 있을 이유가 없다).
+    """
+    out = set()
+    try:
+        with open(path, encoding="utf-8") as fp:
+            for line in fp:
+                s = line.split("#")[0].strip()
+                if len(s) == 10:
+                    out.add(s)
+    except OSError:
+        return set(), False
+    return out, bool(out)
+
+
 def load_nontrading(path=NONTRADING):
     """휴장일 목록. 없으면 빈 집합 — 그러면 주말만 걸러진다.
 
@@ -84,6 +112,25 @@ def load_nontrading(path=NONTRADING):
     except OSError:
         pass
     return out
+
+
+def code_sha(path="omakase.py"):
+    """스캐너 코드의 내용 해시 8자. 커밋 없이 바뀐 실행도 구분된다."""
+    try:
+        import hashlib
+        with open(path, "rb") as fp:
+            return hashlib.sha256(fp.read()).hexdigest()[:8]
+    except OSError:
+        return ""
+
+
+def policy_fields():
+    """선정 정책 식별자. 스위치를 켜고 이걸 안 올리면 조용한 정책 변경이 된다."""
+    try:
+        from hyeoks_tajeom import POLICY_ID, POLICY_SINCE
+        return str(POLICY_ID), str(POLICY_SINCE)
+    except Exception:
+        return "", ""
 
 
 def in_window(now):
@@ -114,7 +161,7 @@ def read_dates(path=CENSUS_PATH):
 
 def should_record(now, path=CENSUS_PATH, nontrading=None):
     """(기록할까, 사유). 사유는 안 적을 때도 로그에 남겨 침묵하지 않게 한다."""
-    nt = load_nontrading() if nontrading is None else nontrading
+    nt = load_nontrading_checked()[0] if nontrading is None else nontrading
     date_str = now.strftime("%Y-%m-%d")
     if not is_trading_day(date_str, nt):
         return False, "휴장일"
@@ -126,21 +173,35 @@ def should_record(now, path=CENSUS_PATH, nontrading=None):
     return True, ""
 
 
-def build_row(now, scanned, envelope_pass, oversold, knife_wait,
-              warning_market, kospi_rate, env=None):
+def build_row(now, scanned, price_pass, price_tv_pass, envelope_pass,
+              oversold, knife_wait, warning_market, kospi_rate,
+              env=None, calendar_ok=True):
+    env = os.environ if env is None else env
     mode, pct = band_settings(warning_market, env)
+    pid, psince = policy_fields()
+
+    def _n(v):
+        return "" if v is None else str(int(v))
+
     return {
         "date": now.strftime("%Y-%m-%d"),
         "captured_at": now.isoformat(timespec="seconds"),
-        "scanned": int(scanned),
-        "envelope_pass": int(envelope_pass),
-        "oversold": int(oversold),
-        "knife_wait": int(knife_wait),
+        "scanned": _n(scanned),
+        "price_pass": _n(price_pass),
+        "price_tv_pass": _n(price_tv_pass),
+        "envelope_pass": _n(envelope_pass),
+        "oversold": _n(oversold),
+        "knife_wait": _n(knife_wait),
         "band_mode": mode,
         "band_pct": f"{pct:.1f}",
         "min_turnover": 10_000_000_000 if warning_market else 5_000_000_000,
         "warning_market": "Y" if warning_market else "N",
         "kospi_rate": "" if kospi_rate is None else f"{float(kospi_rate):.2f}",
+        "policy_id": pid,
+        "policy_since": psince,
+        "code_sha": code_sha(),
+        "run_id": str(env.get("GITHUB_RUN_ID", "")),
+        "calendar_ok": "Y" if calendar_ok else "N",
         "source": SOURCE_LIVE,
     }
 
@@ -156,20 +217,47 @@ def append_row(row, path=CENSUS_PATH):
         w.writerow(row)
 
 
-def record(scanned, envelope_pass, oversold, knife_wait, warning_market,
-           kospi_rate=None, now=None, path=CENSUS_PATH, env=None, nontrading=None):
+def record(scanned, price_pass, price_tv_pass, envelope_pass, oversold, knife_wait,
+           warning_market, kospi_rate=None, now=None, path=CENSUS_PATH,
+           env=None, nontrading=None):
     """스캐너가 부르는 입구. (기록됨, 메시지).
 
     **절대 예외를 밖으로 내보내지 않는다.** 이 기록 때문에 스캐너가 죽으면
-    관측을 지키려다 수집을 잃는다. 실패는 메시지로만 돌려준다.
+    관측을 지키려다 수집을 잃는다. 실패는 "기록 실패: ..." 메시지로만 돌려주고,
+    부르는 쪽이 그 접두사를 보고 눈에 띄게 남긴다.
     """
     try:
         now = now or datetime.datetime.now(KST)
-        ok, why = should_record(now, path, nontrading)
+        if nontrading is None:
+            nt, cal_ok = load_nontrading_checked()
+        else:
+            nt, cal_ok = nontrading, True
+        ok, why = should_record(now, path, nt)
         if not ok:
             return False, why
-        append_row(build_row(now, scanned, envelope_pass, oversold, knife_wait,
-                             warning_market, kospi_rate, env), path)
-        return True, path
+        append_row(build_row(now, scanned, price_pass, price_tv_pass, envelope_pass,
+                             oversold, knife_wait, warning_market, kospi_rate,
+                             env, cal_ok), path)
+        return True, path + ("" if cal_ok else "  ⚠️ 휴장 달력을 못 읽었다(calendar_ok=N)")
     except Exception as e:                     # noqa: BLE001 — 스캐너를 죽이지 않는다
         return False, f"기록 실패: {e}"
+
+
+def gaps(path=CENSUS_PATH, nontrading=None, today=None):
+    """기록돼야 했는데 비어 있는 거래일. 결측을 사람이 볼 수 있게 한다.
+
+    보존이 조용히 실패하면 파일은 그냥 짧아질 뿐 아무도 모른다. 그래서 센다.
+    """
+    dates = read_dates(path)
+    if not dates:
+        return []
+    nt = load_nontrading_checked()[0] if nontrading is None else nontrading
+    start = datetime.date.fromisoformat(min(dates))
+    end = today or datetime.datetime.now(KST).date()
+    out, d = [], start
+    while d <= end:
+        iso = d.isoformat()
+        if is_trading_day(iso, nt) and iso not in dates:
+            out.append(iso)
+        d += datetime.timedelta(days=1)
+    return out

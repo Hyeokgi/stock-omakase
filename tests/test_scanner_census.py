@@ -80,7 +80,8 @@ class Recording(unittest.TestCase):
 
     def rec(self, now, **kw):
         env = kw.pop("env", {})
-        args = dict(scanned=710, envelope_pass=0, oversold=0, knife_wait=0,
+        args = dict(scanned=710, price_pass=0, price_tv_pass=0, envelope_pass=0,
+                    oversold=0, knife_wait=0,
                     warning_market=False, kospi_rate=-3.37)
         args.update(kw)
         return sc.record(now=now, path=self.path, nontrading=self.nt,
@@ -147,8 +148,9 @@ class Recording(unittest.TestCase):
         self.assertEqual(r["warning_market"], "Y")
 
     def test_failure_never_escapes_to_the_scanner(self):
-        """관측을 지키려다 수집을 잃지 않는다."""
-        ok, why = sc.record(scanned=1, envelope_pass=0, oversold=0, knife_wait=0,
+        """관측을 지키려다 수집을 잃지 않는다. 대신 접두사로 눈에 띄게 만든다."""
+        ok, why = sc.record(scanned=1, price_pass=0, price_tv_pass=0, envelope_pass=0,
+                            oversold=0, knife_wait=0,
                             warning_market=False, now=at(14, 51),
                             path=os.devnull + "/x/y.csv", nontrading=set())
         self.assertFalse(ok)
@@ -159,8 +161,15 @@ class Provenance(unittest.TestCase):
     """옮겨 적은 줄과 직접 관측한 줄을 섞지 않는다."""
 
     def test_live_rows_are_always_marked_scanner(self):
-        row = sc.build_row(at(14, 51), 710, 0, 0, 0, False, None, {})
+        row = sc.build_row(at(14, 51), 710, 0, 0, 0, 0, 0, False, None, {})
         self.assertEqual(row["source"], sc.SOURCE_LIVE)
+
+    def test_seeded_row_leaves_unsplittable_stages_blank(self):
+        """옛 로그는 복합 조건 통과 수 하나뿐이다. 쪼갤 수 없으면 비워 둔다."""
+        path = Path(__file__).resolve().parents[1] / sc.CENSUS_PATH
+        r = list(csv.DictReader(path.open(encoding="utf-8")))[0]
+        self.assertEqual(r["envelope_pass"], "0")
+        self.assertEqual((r["price_pass"], r["price_tv_pass"]), ("", ""))
 
     def test_seeded_row_declares_the_log_it_came_from(self):
         path = Path(__file__).resolve().parents[1] / sc.CENSUS_PATH
@@ -174,12 +183,111 @@ class Provenance(unittest.TestCase):
         self.assertEqual(r["band_mode"], "off")
         # 로그에 없던 값을 지어내지 않았는지
         self.assertEqual((r["warning_market"], r["kospi_rate"]), ("", ""))
+        self.assertEqual(r["run_id"], "34811150549")
 
     def test_baseline_file_has_no_row_written_while_the_band_was_on(self):
         """기준선 구간에 켜진 줄이 섞이면 '켜기 전'이 아니게 된다."""
         path = Path(__file__).resolve().parents[1] / sc.CENSUS_PATH
         rows = list(csv.DictReader(path.open(encoding="utf-8")))
         self.assertTrue(all(r["band_mode"] in ("off", "on") for r in rows))
+
+
+class CompoundGate(unittest.TestCase):
+    """관문①은 곱이다. 통과 0을 '이격 이탈 0' 으로 읽지 않는다."""
+
+    def test_stages_are_recorded_separately(self):
+        row = sc.build_row(at(14, 51), scanned=710, price_pass=9,
+                           price_tv_pass=2, envelope_pass=0, oversold=0,
+                           knife_wait=0, warning_market=False, kospi_rate=None, env={})
+        self.assertEqual((row["price_pass"], row["price_tv_pass"],
+                          row["envelope_pass"]), ("9", "2", "0"))
+
+    def test_scanner_no_longer_claims_price_stage_from_the_compound_count(self):
+        src = (Path(__file__).resolve().parents[1] / "omakase.py").read_text(encoding="utf-8")
+        self.assertNotIn("-20% 이탈 종목 자체가 0 → ENVELOPE_BAND", src)
+        self.assertIn("이격 조건 자체를 통과한 종목이 0", src)
+        self.assertIn("거래대금 문턱에서 전멸", src)
+
+    def test_scanner_carries_sub_conditions_into_the_census(self):
+        src = (Path(__file__).resolve().parents[1] / "omakase.py").read_text(encoding="utf-8")
+        for flag in ("_env_price_ok", "_env_tv_ok", "_env_notup_ok", "_env_rate_ok"):
+            self.assertIn(flag, src)
+
+
+class ExecutionBinding(unittest.TestCase):
+    """날짜 상수 하나로는 '이 표본이 어느 정책에서 나왔나' 를 인증하지 못한다."""
+
+    def test_row_binds_policy_code_and_run(self):
+        row = sc.build_row(at(14, 51), 710, 0, 0, 0, 0, 0, False, None,
+                           {"GITHUB_RUN_ID": "12345"})
+        self.assertEqual(row["policy_id"], "oversold-veto-v2")
+        self.assertEqual(row["policy_since"], "2026-09-07")
+        self.assertEqual(row["run_id"], "12345")
+        self.assertRegex(row["code_sha"], r"^[0-9a-f]{8}$")
+
+    def test_code_sha_tracks_file_content_not_the_commit(self):
+        import tempfile
+        a = tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8")
+        a.write("x = 1\n"); a.close()
+        first = sc.code_sha(a.name)
+        with open(a.name, "a", encoding="utf-8") as fp:
+            fp.write("y = 2\n")
+        self.assertNotEqual(first, sc.code_sha(a.name))
+
+    def test_missing_file_gives_empty_sha_not_a_crash(self):
+        self.assertEqual(sc.code_sha("nope/none.py"), "")
+
+
+class CalendarFailure(unittest.TestCase):
+    """달력을 못 읽은 관측을 정상 관측처럼 두지 않는다."""
+
+    def test_checked_loader_reports_failure(self):
+        self.assertEqual(sc.load_nontrading_checked("nope/none.txt"), (set(), False))
+        got, ok = sc.load_nontrading_checked()
+        self.assertTrue(ok)
+        self.assertIn("2026-09-25", got)
+
+    def test_empty_calendar_counts_as_failure(self):
+        import tempfile
+        f = tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8")
+        f.write("# 주석만 있다\n"); f.close()
+        self.assertEqual(sc.load_nontrading_checked(f.name), (set(), False))
+
+    def test_row_marks_calendar_state(self):
+        bad = sc.build_row(at(14, 51), 710, 0, 0, 0, 0, 0, False, None, {},
+                           calendar_ok=False)
+        self.assertEqual(bad["calendar_ok"], "N")
+
+
+class Gaps(unittest.TestCase):
+    """보존이 조용히 실패하면 파일은 그냥 짧아질 뿐이다. 그래서 센다."""
+
+    def setUp(self):
+        import tempfile
+        self.path = os.path.join(tempfile.mkdtemp(prefix="gaps_"), "c.csv")
+
+    def write(self, dates):
+        with open(self.path, "w", encoding="utf-8", newline="") as fp:
+            w = csv.DictWriter(fp, fieldnames=sc.HEADER)
+            w.writeheader()
+            for d in dates:
+                row = {k: "" for k in sc.HEADER}
+                row["date"] = d
+                w.writerow(row)
+
+    def test_finds_missing_trading_days(self):
+        self.write(["2026-09-14", "2026-09-16"])          # 9/15(화)가 빈다
+        self.assertEqual(sc.gaps(self.path, set(), datetime.date(2026, 9, 16)),
+                         ["2026-09-15"])
+
+    def test_weekends_and_holidays_are_not_gaps(self):
+        self.write(["2026-09-17", "2026-09-21"])          # 18(금)은 빠졌고 19·20은 주말
+        got = sc.gaps(self.path, {"2026-09-18"}, datetime.date(2026, 9, 21))
+        self.assertEqual(got, [])
+
+    def test_empty_file_has_no_gaps(self):
+        self.write([])
+        self.assertEqual(sc.gaps(self.path, set(), datetime.date(2026, 9, 21)), [])
 
 
 class ScannerWiring(unittest.TestCase):
@@ -194,6 +302,10 @@ class ScannerWiring(unittest.TestCase):
               / ".github/workflows/main.yml").read_text(encoding="utf-8")
         self.assertIn("data/scanner_census", wf)
         self.assertIn("contents: write", wf)
+
+    def test_scanner_surfaces_a_recording_failure_loudly(self):
+        src = (Path(__file__).resolve().parents[1] / "omakase.py").read_text(encoding="utf-8")
+        self.assertIn("인구조사 보존 실패", src)
 
 
 if __name__ == "__main__":
