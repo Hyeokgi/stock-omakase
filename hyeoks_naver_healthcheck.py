@@ -9,9 +9,9 @@
 #   python hyeoks_naver_healthcheck.py                 → 진단 실행 후 결과 출력
 #   python hyeoks_naver_healthcheck.py --save-baseline → 현재 상태를 정상 기준선으로 저장
 #   python hyeoks_naver_healthcheck.py --compare       → 저장된 기준선과 비교(개편 후 회귀 탐지)
-# 종료코드: 치명적 항목이 하나라도 깨지면 1, 아니면 0 (CI/워크플로에서 활용 가능)
+# 종료코드: 기능 단위 장애/품질 실패 1, 원천 통과 0. 구 HTML 단독 실패는 대체 성공 시 정보.
 # ==========================================================================
-import sys, io, json, time, argparse, datetime
+import sys, io, json, time, argparse, datetime, os
 import requests
 from bs4 import BeautifulSoup
 import xml.etree.ElementTree as ET
@@ -40,7 +40,7 @@ MINOR = "보통"      # 표시·부가정보가 비는 수준
 # ── 개별 점검 함수: (성공여부, 측정치 문자열) 을 반환 ──────────────────────
 
 def _get(url, encoding=None, timeout=10):
-    r = SESSION.get(url, verify=False, timeout=timeout)
+    r = SESSION.get(url, timeout=timeout)
     r.raise_for_status()
     if encoding:
         return BeautifulSoup(r.content, 'html.parser', from_encoding=encoding)
@@ -254,6 +254,10 @@ def chk_risk_json():
              "?tradeType=KRX&marketType=ALL&orderType=priceTop&startIdx=0&pageSize=3000").json()
     if not isinstance(d, list) or len(d) < 1500:
         return False, f"스캔 {len(d) if isinstance(d, list) else '?'}건(임계 1500)"
+    required = {"manageStatusGb", "tradeStopYn", "marketAlertType"}
+    if any(not isinstance(x, dict) or not required.issubset(x) or
+           any(x[k] is None for k in required) for x in d):
+        return False, "위험종목 필수 필드 누락/null"
     risk = [x for x in d if (str(x.get('manageStatusGb') or '0') != '0'
                              or x.get('tradeStopYn') == 'Y'
                              or str(x.get('marketAlertType') or '00') != '00')]
@@ -339,7 +343,38 @@ def chk_consensus_current():
     return bool(data), f"{len(data)} quarterly estimates (IFRS consolidated, KRW 100M)"
 
 
+def chk_price_fresh():
+    from naver_sources import get_json
+    from naver_health_policy import price_fresh
+    from hyeoks_trading_calendar import scheduled_session
+    data = get_json("https://m.stock.naver.com/api/stock/005930/basic")
+    return price_fresh(data["localTradedAt"], datetime.datetime.now(KST), scheduled_session)
+
+
+def chk_flow_fresh():
+    from naver_sources import get_json
+    from naver_health_policy import flow_fresh
+    from hyeoks_trading_calendar import scheduled_session
+    errors = []
+    for url in (
+        "https://stock.naver.com/api/domestic/detail/005930/trend?tradeType=KRX&startIdx=0&pageSize=20",
+        "https://m.stock.naver.com/api/stock/005930/trend",
+    ):
+        try:
+            rows = get_json(url)
+            dates = [str(r["bizdate"]) for r in rows]
+            ok, detail = flow_fresh(dates, datetime.datetime.now(KST), scheduled_session)
+            if ok:
+                return ok, detail
+            errors.append(detail)
+        except Exception as error:
+            errors.append(type(error).__name__)
+    return False, "; ".join(errors)
+
+
 CHECKS = [
+    ("price_fresh", FATAL, "장중 시세 신선도", chk_price_fresh, "대표종목 날짜/시각"),
+    ("flow_fresh", MAJOR, "수급 일자 신선도", chk_flow_fresh, "대표종목 직전 거래일"),
     ("morning_news_v2", MAJOR, "모닝 뉴스 신규 원천", chk_morning_news_current, "모닝 브리핑"),
     ("morning_search_v2", MAJOR, "모닝 정확 종목 검색", chk_morning_search_current, "모닝 브리핑"),
     ("consensus_v2", MAJOR, "분기 컨센서스 신규 원천", chk_consensus_current, "DB_컨센서스"),
@@ -403,22 +438,16 @@ def run():
 
 
 def summarize(results):
-    fatal_bad = [k for k, v in results.items() if not v["ok"] and v["severity"] == FATAL]
-    major_bad = [k for k, v in results.items() if not v["ok"] and v["severity"] == MAJOR]
-    minor_bad = [k for k, v in results.items() if not v["ok"] and v["severity"] == MINOR]
-    print("\n" + "=" * 78)
-    total_bad = len(fatal_bad) + len(major_bad) + len(minor_bad)
-    if total_bad == 0:
-        print("🟢 전 항목 정상")
-    else:
-        if fatal_bad:
-            print(f"🔴 치명적 파손 {len(fatal_bad)}건: {', '.join(results[k]['desc'] for k in fatal_bad)}")
-        if major_bad:
-            print(f"🟠 중요 파손 {len(major_bad)}건: {', '.join(results[k]['desc'] for k in major_bad)}")
-        if minor_bad:
-            print(f"🟡 보통 파손 {len(minor_bad)}건: {', '.join(results[k]['desc'] for k in minor_bad)}")
-    print("=" * 78)
-    return len(fatal_bad)
+    from naver_health_policy import evaluate
+    report = evaluate(results)
+    print("\n[기능 단위 판정]")
+    for transition in report["transitions"]:
+        print(f"ℹ️ {transition['name']}: 일부 원천 중단, 대체 원천 통과")
+    for alert in report["alerts"]:
+        print(f"🚨 {alert['name']}: {alert['detail']}")
+    if not report["alerts"]:
+        print("원천 검사 통과 — 시트 갱신/종단간 품질은 미검증")
+    return len(report["alerts"])
 
 
 def main():
@@ -428,7 +457,13 @@ def main():
     a = ap.parse_args()
 
     results = run()
-    fatal_count = summarize(results)
+    from naver_health_policy import evaluate
+    report = evaluate(results)
+    report.update(results=results, run_id=os.environ.get("GITHUB_RUN_ID", ""),
+                  checked_at=datetime.datetime.now(KST).isoformat())
+    with open("health_report.json", "w", encoding="utf-8") as target:
+        json.dump(report, target, ensure_ascii=False, indent=2)
+    issue_count = summarize(results)
 
     if a.save_baseline:
         payload = {"savedAt": datetime.datetime.now(KST).isoformat(), "results": results}
@@ -440,7 +475,7 @@ def main():
             base = json.loads(io.open(BASELINE_PATH, encoding="utf-8").read())
         except Exception as e:
             print(f"\n⚠️ 기준선을 읽지 못했습니다({e}). 먼저 --save-baseline 으로 저장하세요.")
-            return fatal_count and 1 or 0
+            return 1 if issue_count else 0
         print(f"\n📊 기준선({base['savedAt'][:19]}) 대비 회귀 비교")
         regressed = []
         for k, v in results.items():
@@ -453,7 +488,7 @@ def main():
         if not regressed:
             print("  변화 없음 — 기준선 대비 새로 깨진 항목 없음")
 
-    return 1 if fatal_count else 0
+    return 1 if issue_count else 0
 
 
 if __name__ == "__main__":

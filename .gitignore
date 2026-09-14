@@ -26,3 +26,4 @@ freeze_status.json
 data/account_private/
 account_input_private.json
 data/research_private/
+health_report.json
