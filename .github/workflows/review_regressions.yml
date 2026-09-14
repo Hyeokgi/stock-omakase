@@ -10,6 +10,7 @@ on:
       - 'hyeoks_verdict.py'
       - 'hyeoks_closing_bet.py'
       - 'scanner_census.py'
+      - 'hyeoks_sheet_probe.py'
       - 'omakase.py'
       - 'closing_study.py'
       - 'hyeoks_trading_calendar.py'
@@ -30,6 +31,7 @@ on:
       - 'hyeoks_verdict.py'
       - 'hyeoks_closing_bet.py'
       - 'scanner_census.py'
+      - 'hyeoks_sheet_probe.py'
       - 'omakase.py'
       - 'closing_study.py'
       - 'hyeoks_trading_calendar.py'
@@ -60,6 +62,7 @@ jobs:
           python -m unittest discover -s tests
           python hyeoks_verdict.py --self-test
           python hyeoks_closing_bet.py --self-test
+          python hyeoks_sheet_probe.py --self-test
           python account_source_adapter.py --self-test
           python hyeoks_run_freeze.py --self-test
           python test_tajeom.py

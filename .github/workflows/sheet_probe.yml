@@ -1,0 +1,60 @@
+name: 🔍 HYEOKS 시트 반영 확인
+
+# 목적: "코드가 바뀌었다"와 "시트에 실제로 닿았다"를 구분한다.
+#       ChatGPT 가 반복해서 지적한 것이고, 지금까지 확인할 수단이 없었다 —
+#       로그만 보고 "반영됐을 것"이라 추정해 왔다. 추정은 증거가 아니다.
+#
+# 읽기 전용: 시트를 **읽기만** 한다. update·clear·format 호출이 코드에 없고,
+#            자기검증이 소스에 그 호출이 없다는 것까지 확인한다.
+#            그래도 락 그룹은 공유한다 — 스캐너가 쓰는 도중에 읽으면
+#            절반만 갱신된 상태를 볼 수 있다(찢어진 읽기 방지).
+#
+# 수동 전용: cron 이 없다. 배포 확인은 배포했을 때 하는 것이지 매일 돌 일이 아니다.
+#
+# ⚠️ 장중(09:00~15:40)에는 시간외 값이 비어 있는 것이 정상이다.
+#    omakase.py:2685 가 정규장에는 그 칸을 비운다. 제목은 매 회차 갱신되므로
+#    장중에도 확인된다. **값을 보려면 15:41 이후에 돌릴 것.**
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: hyeoks-sheet-lock
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - name: 📥 코드 가져오기
+      uses: actions/checkout@v7
+
+    - name: 🐍 파이썬 세팅
+      uses: actions/setup-python@v7
+      with:
+        python-version: '3.10'
+
+    - name: 📦 라이브러리 설치
+      run: |
+        python -m pip install --upgrade pip
+        pip install gspread oauth2client
+
+    - name: 🧪 자기검증 (시트 접근 없음)
+      run: python hyeoks_sheet_probe.py --self-test
+
+    - name: 🔑 비밀번호 파일(secret.json) 만들기
+      env:
+        GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+      run: echo "$GCP_CREDENTIALS" > secret.json
+
+    - name: 🔍 시트 확인 (읽기 전용)
+      run: python hyeoks_sheet_probe.py
+
+    - name: 🧹 자격증명 삭제
+      if: always()
+      run: rm -f secret.json
