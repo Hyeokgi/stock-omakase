@@ -1,2 +1,3 @@
 date,captured_at,scanned,price_pass,price_tv_pass,envelope_pass,oversold,knife_wait,band_mode,band_pct,min_turnover,warning_market,kospi_rate,policy_id,policy_since,code_sha,run_id,calendar_ok,source
 2026-09-14,2026-09-14T14:55:09+09:00,710,,,0,0,0,off,20.0,,,,oversold-veto-v2,2026-09-07,,34811150549,Y,log:34811150549
+2026-09-15,2026-09-15T14:44:59+09:00,715,3,0,0,0,0,off,20.0,10000000000,Y,-0.85,oversold-veto-v2,2026-09-07,054db88a,34933764256,Y,scanner
