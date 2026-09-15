@@ -95,6 +95,26 @@ def scan_source(window_days, now, pages=6):
     return due, pending, pages
 
 
+def manifest_ids(payload):
+    """수집 manifest → (아는 source_id 전부, 중복분, 커버리지).
+
+    🔑 왜 필요한가 — **파일명만 보면 중복 게시를 '미수집' 으로 오판한다.**
+    2026-09-15 첫 실행에서 실제로 났다. 하나증권이 같은 리포트를 20:28·20:39 에
+    두 번 올렸고(`2220_1288679_1` · `2220_1288680_1`), SHA256 이 같아 Drive 에는
+    하나만 보관됐다. manifest 의 `duplicate_of` 가 그 연결을 갖고 있다.
+    그걸 안 읽으면 감시가 **정상 동작을 실패로 부른다.**
+
+    중복분은 대조에서 **빼는** 것이 맞다 — 원본이 이미 수집·분석됐으므로
+    미수집도 미분석도 아니다.
+    """
+    reports = (payload or {}).get("reports") or []
+    allids = {r.get("source_id") for r in reports if r.get("source_id")}
+    dups = {r["source_id"] for r in reports
+            if r.get("source_id") and r.get("duplicate_of")}
+    cov = ((payload or {}).get("coverage_start"), (payload or {}).get("coverage_end"))
+    return allids, dups, cov
+
+
 def verdict(due, drive_ids, sheet_ids):
     """(상태, 미수집, 미분석). **원천에 없는 것을 문제로 만들지 않는다.**"""
     d = set(due) - drive_ids
@@ -106,8 +126,12 @@ def verdict(due, drive_ids, sheet_ids):
     return OK, d, a
 
 
-def render(now, due, pending, drive_ids, sheet_ids, pages, newest_drive, errs):
+def render(now, due, pending, drive_ids, sheet_ids, pages, newest_drive, errs,
+           dups=frozenset(), coverage=(None, None)):
     slot = last_scheduled_collection(now)
+    #  중복 게시분은 원본이 이미 수집·분석됐다. 대조에서 뺀다 — 안 빼면 오탐이 난다.
+    dup_hit = set(due) & set(dups)
+    due = {k: v for k, v in due.items() if k not in dups}
     state, miss_c, miss_a = verdict(due, drive_ids, sheet_ids)
     L = [f"# 🫀 리포트 파이프라인 가동 감시 — {now.strftime('%Y-%m-%d %H:%M')} KST", ""]
     L.append(f"직전 예정 수집: **{slot.strftime('%Y-%m-%d %H:%M') if slot else '산출 불가'}** "
@@ -143,11 +167,16 @@ def render(now, due, pending, drive_ids, sheet_ids, pages, newest_drive, errs):
           f"| 원천 발간 — 대기중(그 이후, 아직 차례 아님) | {len(pending)} |",
           f"| Drive 보관(규약 파일명) | {len(drive_ids)} |",
           f"| 시트 적재 `{TREND_SHEET}` | {len(sheet_ids)} |",
+          f"| 중복 게시로 대조 제외 | {len(dup_hit)} |",
           f"| 🔴 미수집 | {len(miss_c)} |",
           f"| 🟡 미분석 | {len(miss_a)} |"]
     if newest_drive:
         L.append(f"| Drive 최신 보관 시각 | {newest_drive} |")
+    if coverage[0]:
+        L.append(f"| manifest 보증 구간 | {coverage[0]} ~ {coverage[1]} |")
     L += ["", f"> 원천 {pages}페이지를 훑었다. 최근 {DEFAULT_WINDOW}일 범위.",
+          "> 중복 게시(같은 PDF 재게시)는 manifest 의 `duplicate_of` 로 가려 대조에서 뺀다. "
+          "**manifest 를 못 읽으면 그만큼 오탐이 늘어난다.**",
           "> 대조 키는 `source_id`(하나증권 `pid_bbsSeq_attachFileSeq`)다. "
           "파일 내용이 같은지까지 인증한 것은 아니다.",
           "> 규약(`" + MARKER + "`)에 안 맞는 옛 파일명은 이 대조에서 빠진다 — "
@@ -226,6 +255,32 @@ def self_test():
     print("🧪 구 규약 제외를 누락으로 오해하지 않게 적는가")
     chk("대조 대상이 아니라고 밝힌다", "대조 대상이 아니지 누락이 아니다" in txt)
 
+    print("🧪 manifest — 중복 게시를 미수집으로 오판하지 않는다 (9/15 첫 실행 오탐)")
+    payload = {"coverage_start": "2026-08-26", "coverage_end": "2026-09-13", "reports": [
+        {"source_id": "2220_1288679_1", "duplicate_of": None},
+        {"source_id": "2220_1288680_1", "duplicate_of": "2220_1288679_1"},
+        {"source_id": "2220_1288690_1", "duplicate_of": None}]}
+    mids, mdups, mcov = manifest_ids(payload)
+    chk("manifest 가 아는 source_id 전부", len(mids) == 3)
+    chk("duplicate_of 가 있는 것만 중복으로", mdups == {"2220_1288680_1"})
+    chk("커버리지를 돌려준다", mcov == ("2026-08-26", "2026-09-13"))
+    chk("빈 payload 도 견딘다", manifest_ids({}) == (set(), set(), (None, None)))
+    chk("None 도 견딘다", manifest_ids(None)[0] == set())
+    chk("source_id 없는 항목은 무시", manifest_ids({"reports": [{"x": 1}]})[0] == set())
+
+    #  실제로 났던 오탐을 재현해 막혔는지 본다.
+    due_real = {"2220_1288679_1": 1, "2220_1288680_1": 1}
+    drive_real = {"2220_1288679_1"}          # Drive 엔 원본 하나뿐
+    sheet_real = {"2220_1288679_1"}
+    bad, _ = render(at(9, 15, 23), due_real, {}, drive_real, sheet_real, 1, None, {})
+    chk("manifest 없이는 수집지연으로 오판한다 (문제 재현)", "수집지연" in bad)
+    good, gst = render(at(9, 15, 23), due_real, {}, drive_real, sheet_real, 1, None, {},
+                       dups=mdups, coverage=mcov)
+    chk("manifest 를 주면 정상이 된다", gst == OK, gst)
+    chk("제외 건수를 숨기지 않고 표에 찍는다", "| 중복 게시로 대조 제외 | 1 |" in good)
+    chk("manifest 보증 구간을 찍는다", "| manifest 보증 구간 | 2026-08-26 ~ 2026-09-13 |" in good)
+    chk("manifest 를 못 읽으면 오탐이 는다고 밝힌다", "오탐이 늘어난다" in good)
+
     print("🧪 쓰기 호출이 없는가 (읽기 전용 보장)")
     src = open(__file__, encoding="utf-8").read()
     body = src.split("def self_test")[0]
@@ -254,6 +309,7 @@ def main():
         due, pending, pages = {}, {}, 0
 
     drive_ids, sheet_ids, newest = set(), set(), None
+    dups, coverage = set(), (None, None)
     try:
         from oauth2client.service_account import ServiceAccountCredentials
         from googleapiclient.discovery import build
@@ -275,6 +331,29 @@ def main():
                 break
         drive_ids = source_ids(names)
         newest = max(times) if times else None
+
+        # manifest — 중복 게시 연결을 여기서만 알 수 있다. 없으면 오탐이 는다.
+        try:
+            import io as _io
+            import json as _json
+            from googleapiclient.http import MediaIoBaseDownload
+            man = svc.files().list(
+                q=(f"'{DRIVE_FOLDER_ID}' in parents and trashed=false "
+                   "and name contains 'hana_archive'"),
+                orderBy="name desc", pageSize=1, fields="files(id,name)").execute()
+            files = man.get("files", [])
+            if not files:
+                errs["manifest"] = "hana_archive_*.json 을 찾지 못했다"
+            else:
+                buf = _io.BytesIO()
+                dl = MediaIoBaseDownload(buf, svc.files().get_media(fileId=files[0]["id"]))
+                done = False
+                while not done:
+                    _, done = dl.next_chunk()
+                mids, dups, coverage = manifest_ids(_json.loads(buf.getvalue().decode("utf-8")))
+                drive_ids |= mids          # manifest 가 아는 것은 수집된 것이다
+        except Exception as e:                          # noqa: BLE001
+            errs["manifest"] = f"{type(e).__name__}: {e}"
     except Exception as e:                              # noqa: BLE001
         errs["Drive"] = f"{type(e).__name__}: {e}"
 
@@ -289,7 +368,8 @@ def main():
     except Exception as e:                              # noqa: BLE001
         errs["시트"] = f"{type(e).__name__}: {e}"
 
-    text, state = render(now, due, pending, drive_ids, sheet_ids, pages, newest, errs)
+    text, state = render(now, due, pending, drive_ids, sheet_ids, pages, newest, errs,
+                         dups, coverage)
     print(text)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
