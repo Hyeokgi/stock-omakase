@@ -1,0 +1,63 @@
+name: 🫀 리포트 파이프라인 가동 감시
+
+# 목적: `docs/리포트수집_설계_2026-09-15.md` D4.
+#   수집이 GitHub 밖(사용자 PC + Codex 앱)에 있어 주말에 PC 가 꺼지면 조용히 건너뛴다.
+#   분석기는 새 파일이 없으면 그냥 끝나므로 **'수집 실패'와 '이번 주 발간 없음'이
+#   구분되지 않는다.** 그 구분이 이 워크플로의 목적이다.
+#
+#   9/15 실측에서 하나 더 붙었다 — trend.yml 의 8건 상한은 아직 한 번도 실전에서
+#   안 돌았다(마지막 실행 코드가 상한 커밋보다 27분 빠르다). 9/19 가 첫 실전이고,
+#   그 결과를 놓치지 않으려면 지금 감시가 있어야 한다.
+#
+# 언제: 월요일 09:10 KST (일 00:10 UTC).
+#   토 21:00 수집 → 토·일 22:00 분석 이 **전부 끝난 뒤** 한 번만 본다.
+#   주중에 돌리면 '아직 수집할 차례가 아닌 것'을 실패로 부를 위험이 있는데,
+#   그건 스크립트의 유예 로직이 막는다. 그래도 **의미 있는 시점은 주말 직후**다.
+#
+# 읽기 전용: 하나증권 목록(공개) · Drive(조회) · 시트(조회)만 본다.
+#            수집하지 않고, 분석하지 않고, 아무것도 쓰지 않는다.
+#
+# 종료 코드: 🔴 수집지연이면 2(실패로 띄운다). 🟡 분석적체는 8건 상한의 **의도된
+#   동작**일 수 있어 경보로 올리지 않는다 — 표에 건수가 남으므로 추이는 보인다.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '10 0 * * 1'      # 월 09:10 KST
+
+permissions:
+  contents: read
+
+jobs:
+  liveness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - name: 📥 코드 가져오기
+      uses: actions/checkout@v7
+
+    - name: 🐍 파이썬 세팅
+      uses: actions/setup-python@v7
+      with:
+        python-version: '3.10'
+
+    - name: 🧪 자체검증 (네트워크·자격증명 없음)
+      run: python hyeoks_report_liveness.py --self-test
+
+    - name: 📦 라이브러리 설치
+      run: |
+        python -m pip install --upgrade pip
+        pip install gspread oauth2client google-api-python-client
+
+    - name: 🔑 비밀번호 파일(secret.json) 만들기
+      env:
+        GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+      run: echo "$GCP_CREDENTIALS" > secret.json
+
+    - name: 🫀 가동 감시 (읽기 전용)
+      run: python hyeoks_report_liveness.py
+
+    - name: 🧹 자격증명 삭제
+      if: always()
+      run: rm -f secret.json
