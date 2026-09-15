@@ -39,12 +39,16 @@ import os
 import sys
 
 from hyeoks_closing_bet import (SNAP_DIR, KST, MIN_TURNOVER, PILOT_DAYS, COST,
+                                PRICE_LIMIT, LIMIT_TOL, ADJ_TOL,
                                 read_snapshot, scan_dates, exit_open, _f)
 
 # ── 사전등록 정의 — 데이터를 보고 바꾸지 않는다 ─────────────────────────
 LEADER_POOL     = 5      # B: 테마 내 거래대금 상위 N — omakase.py:604 `[:5]`
 MARKET_TOP_N    = 5      # B_시장: 시장 전체 거래대금 상위 N (§6-8 조건 1)
-MIN_THEME_SIZE  = 3      # 테마 안에 A 종목이 이만큼은 있어야 '대장' 이 의미를 갖는다
+# 🔴 2026-09-15 정정 — 이전 값 3 은 **내가 만든 문턱**이었다(ChatGPT 지적).
+#    생산 코드는 `omakase.py:556·584` 에서 `len(stocks_val) >= 2` 다. 거기 맞춘다.
+#    "내가 고른 문턱이 하나도 없다" 는 주장과 충돌했던 유일한 값이다.
+MIN_THEME_SIZE  = 2      # omakase.py:556·584 `if len(stocks_val) >= 2`
 DOMINANCE_MULT  = 5.0    # omakase.py:607 — 1등이 2등의 5배 넘으면 그 테마를 통째로 배제
 
 # ── C 의 문턱 — **내가 고른 값이 하나도 없다** ──────────────────────────
@@ -148,13 +152,32 @@ def build_C(leaders):
     return both, {"B": len(leaders), "+거래대금100억": len(tv_ok), "+단타레인지": len(both)}
 
 
-def build_B_market(items):
-    """B_시장 — 시장 전체 거래대금 상위 `MARKET_TOP_N`. §6-8 조건 1.
+def market_top_proxy(rows1505):
+    """시장 거래대금 상위 `MARKET_TOP_N` **proxy**. ⚠️ `A` 이전 raw 에서 뽑는다.
 
-    '조 단위가 나오는 날은 조 단위 종목만. 순위 5위 밖이면 주도주 아님.'
-    테마와 무관하게 뽑는다. B_현행 과 비교하기 위한 **사전 선언된 대안**이고,
-    둘 중 어느 쪽이 옳은지 이 파일은 말하지 않는다.
+    🔴 **2026-09-15 정정 — 여기가 순환논리였다.**
+    이전 구현은 `A` 에서 뽑아 놓고 다시 "이 종목들이 `A` 안에 있는가" 를 셌다.
+    `A` 에서 뽑았으니 **항상 100%** 다. 그 100% 를 근거로 "유니버스 문제가 아니다"
+    라고 결론지었는데, **항등식을 증거로 쓴 것**이었다(ChatGPT 9/15 지적).
+
+    유니버스 포착력을 재려면 **A 를 통과하기 전 모집단**에서 뽑아야 한다.
+    그래서 `rows1505`(15:05 스냅샷 원본)를 받는다.
+
+    ⚠️ 이것은 **proxy 이지 '진짜 주도주' 가 아니다.**
+    로드맵 §6-8 은 거래대금 **그리고** 등락률을 함께 요구하는데
+    이 구현은 **거래대금만** 본다. 이름에 proxy 를 박아 두는 이유다.
     """
+    items = []
+    for code, r in rows1505.items():
+        amt = _f(r.get("tradeAmount"))
+        if amt <= 0:                      # 거래가 없으면 '거래대금 상위' 자체가 성립 안 한다
+            continue
+        #  `c_values` 가 쓰는 키를 전부 채운다. A 를 안 거치므로 여기서 직접 담아야 한다.
+        items.append({"code": code, "name": r.get("itemname", ""), "amt": amt,
+                      "rate": _f(r.get("prevChangeRate")),
+                      "P": _f(r.get("nowPrice")), "high": _f(r.get("highPrice")),
+                      "theme": theme_of(r), "has_theme": bool(theme_of(r)),
+                      "alert": (r.get("marketAlertType") or "").strip()})
     return sorted(items, key=lambda x: (-x["amt"], x["code"]))[:MARKET_TOP_N]
 
 
@@ -171,13 +194,16 @@ def agreement(b1, b2):
 def market_capture(Bm, A, Bc, C):
     """§6-7 질문 1 — 그날의 **진짜 주도주를 우리가 후보에 넣었는가.**
 
-    자카드(일치율)만 보면 오해한다. B 가 30여 개, B_시장이 5개면 자카드 최댓값이
+    자카드(일치율)만 보면 오해한다. B 가 30여 개, proxy 가 5개면 자카드 최댓값이
     5/30 ≈ 17% 라서, 낮게 나오는 것이 **정의상 당연**하다.
     묻고 싶은 것은 그게 아니라 **'시장 상위 5가 우리 단계마다 몇 개 살아남는가'** 다.
-    그래서 분모를 `B_시장` 으로 두고 각 단계의 **포함률**을 센다.
+    그래서 분모를 proxy 로 두고 각 단계의 **포함률**을 센다.
 
     §6-7 이 적어 둔 해석까지 그대로 옮긴다 — A 에서 이미 빠지면
     선정 기준이 아니라 **유니버스**의 문제다.
+
+    🔴 **이 함수가 의미를 가지려면 `Bm` 이 `A` 밖에서 와야 한다.**
+    `A` 에서 뽑은 것을 넣으면 `inA` 가 항상 100% 인 항등식이 된다(2026-09-15 정정).
     """
     m = {x["code"] for x in Bm}
     if not m:
@@ -200,6 +226,76 @@ def c_values(item, rows1300):
     }
 
 
+# ══════════════════════════════════════════════════════════════════════
+# Stage 1 수익률 — **사전등록** (2026-09-15, 수익률을 보기 전에 못 박는다)
+# ══════════════════════════════════════════════════════════════════════
+# 🔴 왜 지금 쓰나 — ChatGPT 9/15 지적: "Stage 1 에 도달해도 수익률을 계산하는
+#    코드가 없다." 사실이었다. `build_day` 에 `with_returns=True` 분기 자체가 없었고
+#    `exit_open` 을 import 만 하고 호출하지 않았다.
+#    **아직 수익률을 하나도 보지 않은 지금이 사양을 정할 마지막 깨끗한 시점**이다.
+#
+# 무엇을 계산하나 — 운영대전제 §4
+#   · 진입 = 진입일 15:05 현재가(`P`)  ·  청산 = **익일 시가**(`exit_open`)
+#   · 기본 수익률 = `익일시가 / 15:05가 − 1`. 비용 차감 전/후를 **둘 다** 낸다
+#   · 계층별 **동일가중 평균**을 내고, 그 차이를 분리한다:
+#       **B − A** = 대장을 고른 효과      (테마 소속 + 대장 판정)
+#       **C − B** = 추가 조건의 효과      (거래대금 100억 + 단타 레인지)
+#   · 날짜별로 먼저 평균을 내고 **날짜 단위로 집계**한다. 종목 단위로 뭉치면
+#     종목 수가 많은 날이 결과를 지배한다.
+#
+# 제외 규칙 — `hyeoks_closing_bet.day_returns` 와 **같은 가드를 그대로 쓴다**
+#   · 익일 시가 없음 / 익일 소멸
+#   · 익일 시가가 전일종가 ±30%(+여유) 밖 → 거래소 규칙 위반, 관측 오류
+#   · 전일종가와 우리 진입가 축이 35% 넘게 다름 → 기업행사 조정 의심
+#   여기서 새 가드를 만들지 않는다. 다른 가드를 쓰면 종베 결과와 비교가 안 된다.
+#
+# 이 사양이 하지 않는 것
+#   · 판정하지 않는다. 문턱·채택·폐기를 말하지 않는다. 20일은 파일럿이다
+#   · 익일 시가는 **연구 대용값**이다(운영대전제 §3). 체결 가능성 인증이 아니다
+#   · 계층 간 차이에 유의성 검정을 붙이지 않는다 — 검정은 별도 사전등록이 필요하다
+RET_LAYERS = ("A", "B", "C")
+
+
+def layer_returns(items, nxt_slots):
+    """한 계층의 익일 시가 수익률. (수익률 목록, 제외사유). 가드는 종베와 동일."""
+    rets, drop = [], {"익일시가없음": 0, "익일소멸": 0,
+                      "익일제한폭이탈": 0, "기업행사조정의심": 0}
+    for it in items:
+        o, prev_close, why, _seen = exit_open(it["code"], nxt_slots)
+        if why:
+            drop[why] = drop.get(why, 0) + 1
+            continue
+        if prev_close is None:
+            drop["익일시가없음"] += 1          # 검사할 수 없으면 쓰지 않는다
+            continue
+        if abs(o / prev_close - 1.0) > PRICE_LIMIT + LIMIT_TOL:
+            drop["익일제한폭이탈"] += 1
+            continue
+        if abs(prev_close / it["P"] - 1.0) > ADJ_TOL:
+            drop["기업행사조정의심"] += 1
+            continue
+        rets.append(o / it["P"] - 1.0)
+    return rets, drop
+
+
+def mean(xs):
+    return (sum(xs) / len(xs)) if xs else None
+
+
+def layer_diffs(daily):
+    """날짜별 계층 평균 목록 → B−A, C−B 의 **날짜 평균**.
+
+    같은 날짜 안에서 뺀 뒤 날짜로 평균낸다. 계층별 전체 평균을 먼저 내고 빼면
+    종목 수가 많은 날이 결과를 지배한다.
+    """
+    out = {}
+    for hi, lo in (("B", "A"), ("C", "B")):
+        d = [row[hi] - row[lo] for row in daily
+             if row.get(hi) is not None and row.get(lo) is not None]
+        out[f"{hi}-{lo}"] = {"n일": len(d), "평균": mean(d)}
+    return out
+
+
 def build_day(date, snap_dir, with_returns):
     """하루치 A/B/C 분해. `with_returns=False` 면 **수익률을 계산하지 않는다.**"""
     p15 = os.path.join(snap_dir, f"{date}_1505.csv.gz")
@@ -211,7 +307,7 @@ def build_day(date, snap_dir, with_returns):
 
     A, drop = build_A(rows1505)
     Bc, dom_excl = build_B_current(A)
-    Bm = build_B_market(A)
+    Bm = market_top_proxy(rows1505)   # ⚠️ A 이전 raw 에서. 순환 제거
     C, funnel = build_C(Bc)
     jac, inter, n1, n2 = agreement(Bc, Bm)
     cap = market_capture(Bm, A, Bc, C)
@@ -231,7 +327,44 @@ def build_day(date, snap_dir, with_returns):
                      "C":         [c_values(x, rows1300) for x in C]}
     if not with_returns:
         day["returns"] = None      # 🔒 단계 잠금 — 여기서 끝난다
+        return day
+
+    # ── Stage 1 — 익일 시가 수익률 (위 사전등록 사양 그대로) ──────────
+    nxt = next_trading_snapshots(date, snap_dir)
+    if not nxt:
+        day["returns"] = None
+        day["returns_note"] = "익일 스냅샷 없음"
+        return day
+    res, drops = {}, {}
+    for name, items in (("A", A), ("B", Bc), ("C", C)):
+        r, d = layer_returns(items, nxt)
+        res[name] = {"n": len(r), "평균": mean(r),
+                     "평균_비용후": (mean(r) - COST) if r else None}
+        drops[name] = d
+    day["returns"] = res
+    day["ret_drop"] = drops
     return day
+
+
+def next_trading_snapshots(date, snap_dir):
+    """`date` **다음** 관측 거래일의 슬롯들. 없으면 빈 dict.
+
+    관측된 스냅샷 달력을 그대로 쓴다 — 휴장 달력을 여기서 새로 해석하지 않는다.
+    `scan_dates` 가 곧 '우리가 실제로 관측한 거래일' 이다.
+    """
+    dates = scan_dates(snap_dir)
+    if date not in dates:
+        return {}
+    i = dates.index(date)
+    if i + 1 >= len(dates):
+        return {}
+    nxt = dates[i + 1]
+    out = {}
+    for slot in ("1300", "1505"):
+        path = os.path.join(snap_dir, f"{nxt}_{slot}.csv.gz")
+        if os.path.exists(path):
+            out[slot] = read_snapshot(path)[1]
+    return out
 
 
 def collect(snap_dir=SNAP_DIR, with_returns=False):
@@ -244,6 +377,10 @@ def stage_of(dates):
     """성숙 거래일 수로 단계를 정한다. 진입일은 **다음 거래일이 있어야** 성숙한다."""
     matured = max(0, len(dates) - 1)
     return (STAGE1 if matured >= PILOT_DAYS else STAGE0), matured
+
+
+def pct(v, nd=3):
+    return "—" if v is None else f"{v * 100:+.{nd}f}%"
 
 
 def stage1_eta(dates, nontrading=None):
@@ -274,8 +411,10 @@ def stage1_eta(dates, nontrading=None):
 
 
 def report(snap_dir=SNAP_DIR, today=None):
-    days, dates = collect(snap_dir, with_returns=False)
-    stage, matured = stage_of(dates)
+    stage, matured = stage_of(scan_dates(snap_dir))
+    #  🔒 Stage 가 수익률 계산 여부를 정한다. 하드코딩하지 않는다.
+    #     이전 판은 `with_returns=False` 가 박혀 있어 Stage 1 이 돼도 구조만 냈다.
+    days, dates = collect(snap_dir, with_returns=(stage == STAGE1))
     today = today or datetime.datetime.now(KST).strftime("%Y-%m-%d")
     L = [f"# 🏴 테마 대장 A/B/C 분해 — {today}", ""]
     L.append(f"관측 거래일 **{len(dates)}일** · 성숙(익일 존재) **{matured}일** / "
@@ -296,6 +435,29 @@ def report(snap_dir=SNAP_DIR, today=None):
         L.append("> ⚠️ 예정일은 **수집이 매일 성공했을 때**의 날짜다. 결측일이 생기면 뒤로 밀린다.")
         L.append("")
 
+    if stage == STAGE1:
+        daily = [{"date": d["date"],
+                  **{k: (d["returns"][k]["평균"] if d.get("returns") else None)
+                     for k in RET_LAYERS}}
+                 for d in days if not d.get("skip")]
+        diffs = layer_diffs(daily)
+        L += ["## 📈 Stage 1 — 익일 시가 수익률 (사전등록 사양)", "",
+              "| 계층 | 날짜 수 | 평균(비용 전) | 평균(비용 후) |", "|---|--:|--:|--:|"]
+        for k in RET_LAYERS:
+            vals = [r[k] for r in daily if r[k] is not None]
+            m = mean(vals)
+            L.append(f"| {k} | {len(vals)} | {pct(m)} | {pct(m - COST) if m is not None else '—'} |")
+        L += ["", "| 분리 | 날짜 수 | 평균 차 |", "|---|--:|--:|"]
+        for key in ("B-A", "C-B"):
+            d = diffs[key]
+            label = "**B−A** 대장을 고른 효과" if key == "B-A" else "**C−B** 추가 조건의 효과"
+            L.append(f"| {label} | {d['n일']} | {pct(d['평균'])} |")
+        L += ["",
+              "> 익일 시가는 **연구 대용값**이다(운영대전제 §3). 체결 가능성 인증이 아니다.",
+              "> 비용 0.35%는 §3-4-2 값이며 계층 평균에서 일괄 차감한 참고값이다.",
+              "> **판정이 아니다.** 20일은 파일럿이고 유의성 검정은 별도 사전등록이 필요하다.",
+              ""]
+
     L += ["## A → B → C 퍼널 (단계별로 센다)", "",
           "| 날짜 | A | 테마소속 | 테마 | **B** 대장 | 5배배제 | +거래대금100억 | **C** +단타 | B_시장 | 일치 |",
           "|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|"]
@@ -314,8 +476,15 @@ def report(snap_dir=SNAP_DIR, today=None):
     L.append("")
 
     # §6-7 질문 1 — 자카드보다 이쪽이 묻는 것에 가깝다
-    L += [f"## §6-7 질문 1 — 시장 거래대금 상위 {MARKET_TOP_N} 가 우리 단계마다 몇 개 남나", "",
-          f"| 날짜 | 시장 상위 | A 안 | **B**(대장) 안 | **C**(조건통과) 안 |",
+    L += [f"## §6-7 질문 1 — 시장 거래대금 상위 {MARKET_TOP_N} **proxy** 가 단계마다 몇 개 남나",
+          "",
+          "> 🔴 **2026-09-15 정정.** 이전 판에서는 이 proxy 를 `A` 에서 뽑아 놓고 "
+          "`A` 포함률을 셌다 — **항상 100% 인 항등식**이었고, 그걸 근거로 "
+          "\"유니버스 문제가 아니다\" 라고 결론지었다. 지금은 **`A` 이전 15:05 원본**에서 뽑는다.",
+          "> ⚠️ 이것은 **proxy 다.** §6-8 은 거래대금 **그리고** 등락률을 요구하는데 "
+          "이 구현은 거래대금만 본다. '진짜 주도주' 와 동일시하지 않는다.",
+          "",
+          f"| 날짜 | proxy | A 안 | **B**(대장) 안 | **C**(조건통과) 안 |",
           "|---|--:|--:|--:|--:|"]
     tot = {"n": 0, "inA": 0, "inB": 0, "inC": 0}
     for d in days:
@@ -333,8 +502,7 @@ def report(snap_dir=SNAP_DIR, today=None):
     L += ["",
           "> §6-7 의 해석을 그대로 옮긴다 — **A 에서 이미 빠지면 선정 기준이 아니라 "
           "유니버스의 문제**다. A 는 통과하는데 B 에서 빠지면 대장 판정의 문제다.",
-          "> ⚠️ 이것은 '시장 상위 5 = 진짜 주도주' 라고 **가정**한 값이다. "
-          "그 가정 자체는 §6-8 자막에서 온 것이고 이 데이터로 검증되지 않았다.",
+          "> ⚠️ '시장 상위 5 = 진짜 주도주' 는 §6-8 자막에서 온 **미검증 가정**이다.",
           ""]
 
     nosig = [d["date"] for d in days if not d.get("skip") and not d["signal"]]
@@ -349,8 +517,10 @@ def report(snap_dir=SNAP_DIR, today=None):
           f"- **C** B 중 거래대금 ≥ {MIN_BREAKOUT_TV//100_000_000}억 **그리고** "
           f"등락률 {DANTA_LO*100:g}~{DANTA_HI*100:g}% (`omakase.py:1709·1710·2013~2015`) — "
           "**내가 고른 문턱이 하나도 없다. 전부 시스템에 이미 있던 값이다**",
-          f"- **B_시장** 시장 전체 거래대금 상위 {MARKET_TOP_N} (§6-8 조건 1). "
-          "B 와 어느 쪽이 옳은지 말하지 않는다 — §6-8 항목 8 이 등록한 것은 '일치율' 이다",
+          f"- **시장 상위 proxy** 거래대금 상위 {MARKET_TOP_N} — **`A` 이전 15:05 원본**에서 뽑는다. "
+          "§6-8 조건 1 은 등락률도 요구하지만 이 구현은 거래대금만 본다(그래서 proxy)",
+          "- ⚠️ **B 는 현행의 근사(proxy)다.** 생산은 같은 대장 코드를 공유하는 테마를 "
+          "합친 뒤 상위 5 를 다시 만드는데(`omakase.py:597~612`), 여기서는 `topThemeNo` 로 묶는다",
           "- ⚠️ C 는 시스템보다 **약간 느슨하다** — `is_junk`·`is_financial_risk` 는 "
           "스냅샷에 입력이 없어 뺐다",
           f"- **C** 후보 변수 {' · '.join(C_VARS)} 는 **계산해서 기록만** 한다. "
@@ -407,30 +577,59 @@ def self_test():
         [x["code"] for x in Bc] == ["e"], str([x["code"] for x in Bc]))
     chk("테마당 최대 1종목", len(Bc) == 1)
 
-    print("🧪 B_현행 — 작은 테마는 건너뛴다")
-    small = mk([_row("x", "x", B*3, rate=9.0, theme="T9"),
-                _row("y", "y", B*2, rate=1.0, theme="T9")])
-    chk(f"테마 안 A 종목이 {MIN_THEME_SIZE} 미만이면 대장을 안 뽑는다",
-        build_B_current(build_A(small)[0])[0] == [])
+    print("🧪 B_현행 — 최소 테마 크기는 **생산 코드와 같아야** 한다")
+    chk("MIN_THEME_SIZE 가 omakase.py:556·584 의 2 와 같다 — 내가 고른 값이 아니다",
+        MIN_THEME_SIZE == 2)
+    one = mk([_row("x", "x", B*3, rate=9.0, theme="T9")])
+    chk("1종목 테마는 대장을 안 뽑는다", build_B_current(build_A(one)[0])[0] == [])
+    two = mk([_row("x", "x", B*3, rate=1.0, theme="T9"),
+              _row("y", "y", B*2, rate=9.0, theme="T9")])
+    chk("2종목 테마는 뽑는다 (생산과 동일)",
+        [z["code"] for z in build_B_current(build_A(two)[0])[0]] == ["y"])
 
     print("🧪 B_현행 — 테마가 여럿이면 테마마다 하나씩")
     two = mk([_row(f"p{i}", f"p{i}", B*(10-i), rate=float(i), theme="T1") for i in range(3)] +
              [_row(f"q{i}", f"q{i}", B*(10-i), rate=float(i), theme="T2") for i in range(3)])
     chk("테마 2개면 대장 2종목", len(build_B_current(build_A(two)[0])[0]) == 2)
 
-    print("🧪 B_시장 — 시장 전체 거래대금 상위 N")
+    print("🧪 시장 상위 proxy — A **이전** raw 에서 뽑는다 (순환 제거)")
     many = mk([_row(f"m{i:02d}", f"m{i}", B*(50-i), rate=0.0) for i in range(12)])
-    Bm = build_B_market(build_A(many)[0])
+    Bm = market_top_proxy(many)
     chk(f"상위 {MARKET_TOP_N}개", len(Bm) == MARKET_TOP_N)
     chk("거래대금 내림차순 상위가 맞다",
         [x["code"] for x in Bm] == [f"m{i:02d}" for i in range(MARKET_TOP_N)])
-    chk("테마가 없어도 뽑힌다 — B_시장 은 테마와 무관하다",
-        all(not x["theme"] for x in Bm))
+
+    # 🔴 순환논리 회귀 테스트 — 이것이 이번 수정의 핵심이다.
+    #    A 가 거르는 종목이 시장 거래대금 1위면, proxy 는 그것을 잡고 inA 는 100% 가 아니어야 한다.
+    trap = mk([_row("halt", "거래정지 1위", B * 999, stop="Y"),      # A 탈락, 거래대금 1위
+               _row("mng",  "관리종목 2위", B * 998, manage="1"),    # A 탈락
+               _row("ok1",  "정상", B * 10, rate=5.0, theme="T1"),
+               _row("ok2",  "정상", B * 9,  rate=4.0, theme="T1")])
+    A_trap, _ = build_A(trap)
+    Bm_trap = market_top_proxy(trap)
+    cap = market_capture(Bm_trap, A_trap, [], [])
+    chk("proxy 가 A 탈락 종목도 잡는다", {"halt", "mng"} <= {x["code"] for x in Bm_trap})
+    chk("🔑 inA 가 100% 가 아니다 — 항등식이 깨졌다", cap["inA"] < cap["n"],
+        f"inA={cap['inA']} / n={cap['n']}")
+    chk("A 를 통과한 것만 inA 로 센다", cap["inA"] == 2)
+    #    반대로 A 에서 뽑아 넣으면 항등식이 된다는 것도 같이 박아 둔다(무엇이 틀렸었는지 남긴다).
+    from_A = sorted(A_trap, key=lambda x: -x["amt"])[:MARKET_TOP_N]
+    chk("(참고) A 에서 뽑으면 inA 는 항상 100% — 이전 판의 오류",
+        market_capture(from_A, A_trap, [], [])["inA"] == len(from_A))
+    chk("거래대금 0 은 proxy 에서 뺀다",
+        market_top_proxy(mk([_row("z", "z", 0)])) == [])
+    #  proxy 항목이 c_values 가 요구하는 키를 전부 갖는가 — 첫 실행에서 KeyError 로 터졌다.
+    #  자체검증은 통과하는데 실제 경로가 죽는 종류라 명시적으로 건다.
+    _pr = market_top_proxy(mk([_row("k", "k", B*5, price=900, high=1000, rate=3.0)]))[0]
+    chk("proxy 항목이 c_values 키를 전부 갖는다 (P·high·rate·amt)",
+        all(k in _pr for k in ("P", "high", "rate", "amt", "code")), str(sorted(_pr)))
+    chk("proxy 로도 c_values 가 돈다",
+        c_values(_pr, {"k": {"tradeAmount": "1"}})["고가유지율"] == 0.9)
 
     print("🧪 동률은 종목코드로 깬다 — 실행할 때마다 달라지면 재현이 안 된다")
     tie = mk([_row("zz", "zz", B*5, rate=1.0), _row("aa", "aa", B*5, rate=1.0)])
     chk("거래대금 동률이면 코드 오름차순",
-        build_B_market(build_A(tie)[0])[0]["code"] == "aa")
+        market_top_proxy(tie)[0]["code"] == "aa")
     tie2 = mk([_row(f"t{i}", f"t{i}", B*(9-i), rate=7.0, theme="T1") for i in range(3)])
     chk("등락률 동률이면 코드 오름차순",
         build_B_current(build_A(tie2)[0])[0][0]["code"] == "t0")
@@ -516,6 +715,61 @@ def self_test():
     _far, _, _w = stage1_eta(["2026-12-30"], _nt)   # 2027 달력 미검증 구간으로 넘어간다
     chk("달력 범위를 넘으면 None 이고 사유를 말한다 (평일 추정 금지)",
         _far is None and "미검증" in _w, _w[:40])
+
+    print("🧪 🔴 Stage 1 이 되면 **정말로** 수익률이 계산되는가 (9/15 결함 회귀)")
+    #  ChatGPT 지적 — Stage 1 에 도달해도 계산 경로가 없었다. 합성 스냅샷으로 직접 건다.
+    import gzip, shutil, tempfile
+    tmp = tempfile.mkdtemp()
+    try:
+        hdr = ("itemcode,itemname,tradeAmount,nowPrice,openPrice,highPrice,"
+               "prevChangeRate,topThemeNo,themeNos,tradeStopYn,manageStatusGb,marketAlertType")
+        def write(day, slot, rows):
+            with gzip.open(os.path.join(tmp, f"{day}_{slot}.csv.gz"), "wt", encoding="utf-8") as f:
+                f.write("#meta,slot=%s\n%s\n" % (slot, hdr))
+                for r in rows:
+                    f.write(",".join(str(x) for x in r) + "\n")
+        #  21 거래일 → 성숙 20일 → Stage 1. 매일 같은 3종목(한 테마), 익일 시가 +10%.
+        days = [f"2026-1{m}-{d:02d}" for m in (0, 1) for d in range(1, 12)][:21]
+        for i, day in enumerate(days):
+            #  1505: 진입가 1000 / 1300: 절반 거래대금 / 익일 시가는 1100(= +10%)
+            rows15 = [[f"s{j}", f"s{j}", MIN_TURNOVER * (30 - j), 1000, 1100, 1000,
+                       5.0, "T1", "T1", "N", "0", "00"] for j in range(3)]
+            write(day, "1505", rows15)
+            write(day, "1300", [[r[0], r[1], MIN_TURNOVER * 10, 1000, 1100, 1000,
+                                 5.0, "T1", "T1", "N", "0", "00"] for r in rows15])
+        st, matured = stage_of(scan_dates(tmp))
+        chk("합성 21일이면 Stage 1", st == STAGE1, f"성숙 {matured}일")
+        got, _ = collect(tmp, with_returns=True)
+        rets = [d for d in got if d.get("returns")]
+        chk("🔑 Stage 1 에서 수익률이 실제로 계산된다", len(rets) > 0, f"{len(rets)}일")
+        a = rets[0]["returns"]["A"]
+        chk("익일 시가 +10% 를 그대로 잡는다", abs(a["평균"] - 0.10) < 1e-9, str(a["평균"]))
+        chk("비용 후는 COST 만큼 낮다",
+            abs(a["평균_비용후"] - (0.10 - COST)) < 1e-9)
+        chk("계층별로 따로 낸다", set(rets[0]["returns"]) == set(RET_LAYERS))
+        txt = report(tmp, today="2026-11-30")
+        chk("리포트가 Stage 1 구간을 찍는다", "Stage 1 — 익일 시가 수익률" in txt)
+        chk("B−A 와 C−B 를 분리해 찍는다",
+            "대장을 고른 효과" in txt and "추가 조건의 효과" in txt)
+        chk("연구 대용값임을 밝힌다", "연구 대용값" in txt)
+        chk("판정이 아니라고 밝힌다", "판정이 아니다" in txt)
+        #  Stage 0 이면 여전히 계산하지 않는다(잠금이 살아 있는가)
+        for day in days[5:]:
+            for slot in ("1300", "1505"):
+                os.remove(os.path.join(tmp, f"{day}_{slot}.csv.gz"))
+        chk("거래일이 줄면 다시 Stage 0", stage_of(scan_dates(tmp))[0] == STAGE0)
+        chk("🔒 Stage 0 이면 리포트가 수익률을 안 낸다",
+            "Stage 1 — 익일 시가 수익률" not in report(tmp, today="2026-11-30"))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    print("🧪 계층 차이 — 날짜 안에서 빼고 날짜로 평균낸다")
+    dd = [{"A": 0.01, "B": 0.03, "C": 0.06}, {"A": 0.02, "B": 0.02, "C": 0.05}]
+    df = layer_diffs(dd)
+    chk("B−A 는 날짜별 차의 평균", abs(df["B-A"]["평균"] - 0.01) < 1e-12, str(df["B-A"]))
+    chk("C−B 도 같은 방식", abs(df["C-B"]["평균"] - 0.03) < 1e-12)
+    chk("한쪽이 None 인 날은 뺀다",
+        layer_diffs([{"A": 0.01, "B": None, "C": 0.05}])["B-A"]["n일"] == 0)
 
     print("🧪 선정에 익일 데이터를 쓰지 않는다 (운영대전제 §4)")
     body = src.split("def build_day")[0]

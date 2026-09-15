@@ -92,7 +92,13 @@ def scan_source(window_days, now, pages=6):
             bucket[r["source_id"]] = r
         if min(r["published_at"][:10] for r in rows) < cutoff:
             return due, pending, page
-    return due, pending, pages
+    # 🔴 2026-09-15 정정 — 이전에는 여기서 조용히 `return` 했다.
+    #    cutoff 에 못 닿았는데 정상처럼 돌려주면, 발간량이 늘었을 때 오래된 due 가
+    #    조회 대상에서 **조용히 빠진다** — false negative 다.
+    #    원 수집기 `hana_research.collect` 는 같은 상황에서 예외를 던진다. 맞춘다.
+    raise ValueError(
+        f"원천 {pages}페이지를 다 읽어도 {cutoff} 에 도달하지 못했다 — "
+        "조회 범위가 모자라 판정할 수 없다(pages 를 늘리거나 --days 를 줄일 것)")
 
 
 def manifest_ids(payload):
@@ -113,6 +119,16 @@ def manifest_ids(payload):
             if r.get("source_id") and r.get("duplicate_of")}
     cov = ((payload or {}).get("coverage_start"), (payload or {}).get("coverage_end"))
     return allids, dups, cov
+
+
+def manifest_gap(mids, dups, drive_ids):
+    """manifest 에는 있는데 **현재 Drive 에 파일이 없는** source_id.
+
+    🔴 이것을 '있음' 으로 치면 안 된다 — 삭제·이동된 PDF 를 수집 완료로 보게 된다
+    (**false negative**, ChatGPT 9/15 지적). manifest 는 **중복 관계를 설명하는 증거**이지
+    현재 존재 증명이 아니다. 중복분은 원본이 Drive 에 있으므로 여기서 뺀다.
+    """
+    return set(mids) - set(drive_ids) - set(dups)
 
 
 def verdict(due, drive_ids, sheet_ids):
@@ -281,6 +297,32 @@ def self_test():
     chk("manifest 보증 구간을 찍는다", "| manifest 보증 구간 | 2026-08-26 ~ 2026-09-13 |" in good)
     chk("manifest 를 못 읽으면 오탐이 는다고 밝힌다", "오탐이 늘어난다" in good)
 
+    print("🧪 🔴 false negative 두 경로 (9/15 ChatGPT 지적)")
+    #  ⓐ manifest 과신 — manifest 에만 있고 Drive 에 없는 건은 '있음' 으로 치면 안 된다.
+    #  동작으로 건다 — 소스 문자열 검사는 자기참조가 되기 쉽다(9/14·9/15 에 두 번 겪었다).
+    chk("manifest 에만 있고 Drive 에 없으면 gap 으로 잡는다",
+        manifest_gap({"a", "b"}, set(), {"a"}) == {"b"})
+    chk("중복분은 gap 이 아니다 — 원본이 Drive 에 있다",
+        manifest_gap({"a", "b"}, {"b"}, {"a"}) == set())
+    chk("전부 Drive 에 있으면 gap 없음", manifest_gap({"a"}, set(), {"a"}) == set())
+    chk("빈 manifest 는 gap 없음", manifest_gap(set(), set(), {"a"}) == set())
+    #  실제 판정에서도 — manifest 에만 있는 건은 미수집으로 남아야 한다.
+    v_state, v_miss, _ = verdict({"only_in_manifest": 1}, set(), set())
+    chk("Drive 에 없으면 manifest 에 있어도 수집지연", v_state == LATE_COLLECT)
+    chk("그 건을 누락으로 지목한다", v_miss == {"only_in_manifest"})
+
+    #  ⓑ 페이지 상한 — cutoff 에 못 닿으면 조용히 반환하지 않고 멈춘다.
+    import unittest.mock as _mock
+    with _mock.patch(__name__ + ".fetch", return_value=b"x"), \
+         _mock.patch(__name__ + ".parse_listing",
+                     return_value=[{"source_id": "s", "published_at": "2026-09-15T10:00:00+09:00"}]):
+        try:
+            scan_source(14, at(9, 15, 23), pages=2)
+            chk("cutoff 미도달이면 예외를 던진다 (조용히 정상 반환 금지)", False, "예외 없음")
+        except ValueError as e:
+            chk("cutoff 미도달이면 예외를 던진다 (조용히 정상 반환 금지)",
+                "도달하지 못했다" in str(e))
+
     print("🧪 쓰기 호출이 없는가 (읽기 전용 보장)")
     src = open(__file__, encoding="utf-8").read()
     body = src.split("def self_test")[0]
@@ -351,7 +393,16 @@ def main():
                 while not done:
                     _, done = dl.next_chunk()
                 mids, dups, coverage = manifest_ids(_json.loads(buf.getvalue().decode("utf-8")))
-                drive_ids |= mids          # manifest 가 아는 것은 수집된 것이다
+                # 🔴 2026-09-15 정정 — 이전에는 `drive_ids |= mids` 로 manifest 가 아는 것을
+                #    **현재 Drive 에 있는 것처럼** 취급했다. manifest 에는 있는데 PDF 가
+                #    삭제·이동됐다면 감시기가 "있음" 으로 판단한다 — **false negative** 다.
+                #    manifest 는 **중복 관계를 설명하는 증거**로만 쓰고, 존재 여부는
+                #    현재 Drive 목록(`drive_ids`)으로만 판단한다. (ChatGPT 9/15 지적)
+                manifest_only = manifest_gap(mids, dups, drive_ids)
+                if manifest_only:
+                    errs["manifest불일치"] = (
+                        f"manifest 에는 있으나 Drive 파일이 없는 건 {len(manifest_only)}건 "
+                        f"— 삭제·이동 의심: {', '.join(sorted(manifest_only)[:5])}")
         except Exception as e:                          # noqa: BLE001
             errs["manifest"] = f"{type(e).__name__}: {e}"
     except Exception as e:                              # noqa: BLE001
