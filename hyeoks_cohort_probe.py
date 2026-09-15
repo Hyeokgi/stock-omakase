@@ -182,6 +182,93 @@ def gate_flag_coverage(rows, floor=GIT_FLOOR):
     return out
 
 
+def gate_value_breakdown(rows, floor=GIT_FLOOR):
+    """🔑🔑 플래그의 **값**을 본다. 이것이 선정 정의를 직접 시험한다.
+
+    `omakase.py:3133·3159` — `supply_top2` 는 `gate_passed`(= `GATE_PASS` 인 행)
+    에서만 뽑는다. 그러므로 **수급TOP2 행은 전부 `GATE_PASS` 여야 한다.**
+    기준선 이전 수급TOP2 행에 `GATE_FAIL` 이 섞여 있다면, 그때의 선정 규칙이
+    지금과 **달랐다**는 직접 증거다.
+
+    반대로 `chart_top2` 는 `candidate_pool` 에서 뽑으므로(3132행) 게이트와 무관하다.
+    차트TOP2 행에는 PASS 와 FAIL 이 **둘 다 있어야 정상**이다. 한쪽만 나오면
+    그것도 규칙이 달랐다는 신호다. 두 채널이 서로의 대조군 노릇을 한다.
+
+    돌려주는 값: 채널별 {before: {PASS, FAIL, 없음}, after: {...}}.
+    """
+    out = {}
+    for row in rows[1:] if rows else []:
+        if len(row) <= C_CHANNEL:
+            continue
+        ch = str(row[C_CHANNEL]).strip()
+        if not ch:
+            continue
+        d = str(row[C_ENTRY_DATE]).strip()[:10] if len(row) > C_ENTRY_DATE else ""
+        try:
+            d = datetime.date.fromisoformat(d).isoformat()
+        except ValueError:
+            continue
+        side = "before" if d < floor else "after"
+        joined = " ".join(str(c) for c in row)
+        key = ("GATE_PASS" if "GATE_PASS" in joined
+               else "GATE_FAIL" if "GATE_FAIL" in joined else "없음")
+        b = out.setdefault(ch, {"before": {"GATE_PASS": 0, "GATE_FAIL": 0, "없음": 0},
+                                "after": {"GATE_PASS": 0, "GATE_FAIL": 0, "없음": 0}})
+        b[side][key] += 1
+    return out
+
+
+def render_breakdown(bd, floor=GIT_FLOOR):
+    """결론을 먼저 말한다. 이 표가 이 프로브에서 가장 결정적이다."""
+    L = ["", "## 🔑🔑 게이트 플래그의 **값** — 선정 규칙이 같았는가", ""]
+    if not bd:
+        return "\n".join(L + ["행이 없다."])
+
+    sup = bd.get("수급TOP2")
+    if sup:
+        bf = sup["before"]["GATE_FAIL"]
+        bp = sup["before"]["GATE_PASS"]
+        bn = sup["before"]["없음"]
+        L.append("**수급TOP2 — `supply_top2` 는 `gate_passed` 에서만 뽑는다"
+                 "(`omakase.py:3133·3159`). 전부 `GATE_PASS` 여야 한다.**")
+        if bp + bf + bn == 0:
+            L.append(f"· 기준선 `{floor}` 이전 행이 없다 — 시험할 것이 없다.")
+        elif bf == 0 and bn == 0:
+            L.append(f"· 이전 {bp}행이 **전부 `GATE_PASS`**. "
+                     f"지금과 **같은 선정 규칙과 모순되지 않는다.**")
+        else:
+            L.append(f"· 이전 행에 `GATE_FAIL` **{bf}건** · 플래그 없음 **{bn}건**. "
+                     f"**그때의 선정 규칙은 지금과 달랐다.**")
+        L.append("")
+
+    cht = bd.get("차트TOP2")
+    if cht:
+        b = cht["before"]
+        L.append("**차트TOP2 — `chart_top2` 는 `candidate_pool` 에서 뽑는다"
+                 "(`omakase.py:3132`). 게이트와 무관하므로 PASS·FAIL 이 섞여야 정상이다.**")
+        if b["GATE_PASS"] and b["GATE_FAIL"]:
+            L.append(f"· 이전 구간에 PASS {b['GATE_PASS']} · FAIL {b['GATE_FAIL']} — "
+                     f"**섞여 있다. 정상이고, 수급TOP2 쪽 결과가 우연이 아님을 받쳐 준다.**")
+        elif b["GATE_PASS"] + b["GATE_FAIL"]:
+            L.append(f"· 이전 구간이 한쪽으로 쏠렸다 (PASS {b['GATE_PASS']} · "
+                     f"FAIL {b['GATE_FAIL']}) — **규칙이 달랐다는 신호일 수 있다.**")
+        L.append("")
+
+    L += ["| 채널 | 이전 PASS | 이전 FAIL | 이전 없음 | 이후 PASS | 이후 FAIL | 이후 없음 |",
+          "|---|--:|--:|--:|--:|--:|--:|"]
+    for ch in sorted(bd):
+        b, a = bd[ch]["before"], bd[ch]["after"]
+        L.append(f"| {ch} | {b['GATE_PASS']} | {b['GATE_FAIL']} | {b['없음']} | "
+                 f"{a['GATE_PASS']} | {a['GATE_FAIL']} | {a['없음']} |")
+    L += ["",
+          "> ⚠️ **이 시험이 통과해도 게이트의 *정의* 가 같았다는 증명은 아니다.** "
+          "증명하려면 거래대금·전일비 거래량·250일 고가를 재계산해야 하는데 "
+          "**원장에 그 열이 없고** freeze 파일은 2026-09-08 부터다.",
+          "> 이 시험이 가리는 것은 **선정 규칙(무엇에서 뽑는가)** 이지 "
+          "**게이트 조건(무엇을 통과시키는가)** 이 아니다. 둘을 섞지 않는다."]
+    return "\n".join(L)
+
+
 def render(stats, now, floor=GIT_FLOOR):
     L = [f"# 🧬 채널별 정책 코호트 경계 — {now.strftime('%Y-%m-%d %H:%M KST')}", ""]
     L.append(f"기준선 `{floor}` (최초 커밋 `{GIT_FLOOR_COMMIT}`) — "
@@ -349,6 +436,49 @@ def self_test():
     chk("이전 행이 없으면 질문이 성립 안 함을 밝힌다",
         "성립하지 않는다" in render_gate(_mk(0, 0)))
 
+    print("🧪 플래그 값 분해 — 선정 규칙 시험")
+    B = ["trade_id", "진입일", "채널", "v2게이트"]
+    bk = lambda *r: [B] + [list(x) for x in r]
+    bd = gate_value_breakdown(bk(("t1", "2026-07-01", "수급TOP2", "GATE_PASS"),
+                                 ("t2", "2026-07-02", "수급TOP2", "GATE_FAIL"),
+                                 ("t3", "2026-09-01", "수급TOP2", "GATE_PASS"),
+                                 ("t4", "2026-07-03", "차트TOP2", "")))
+    chk("PASS·FAIL·없음을 따로 센다",
+        bd["수급TOP2"]["before"] == {"GATE_PASS": 1, "GATE_FAIL": 1, "없음": 0})
+    chk("기준선 이후도 따로", bd["수급TOP2"]["after"]["GATE_PASS"] == 1)
+    chk("플래그 없는 행은 '없음'", bd["차트TOP2"]["before"]["없음"] == 1)
+
+    print("🧪 결론 문장 — 수급TOP2 는 전부 PASS 여야 한다")
+    _clean = bk(("t1", "2026-07-01", "수급TOP2", "GATE_PASS"),
+                ("t2", "2026-07-02", "수급TOP2", "GATE_PASS"))
+    chk("전부 PASS 면 '모순되지 않는다'",
+        "모순되지 않는다" in render_breakdown(gate_value_breakdown(_clean)))
+    _dirty = bk(("t1", "2026-07-01", "수급TOP2", "GATE_PASS"),
+                ("t2", "2026-07-02", "수급TOP2", "GATE_FAIL"))
+    chk("FAIL 이 섞이면 '달랐다' 고 단정",
+        "달랐다" in render_breakdown(gate_value_breakdown(_dirty)))
+    _none = bk(("t1", "2026-07-01", "수급TOP2", ""))
+    chk("플래그 없는 행도 '달랐다' 로 잡는다 — 조용히 통과시키지 않는다",
+        "달랐다" in render_breakdown(gate_value_breakdown(_none)))
+    chk("이전 행이 없으면 시험할 것이 없다고 밝힌다",
+        "시험할 것이 없다" in render_breakdown(gate_value_breakdown(
+            bk(("t", "2026-09-01", "수급TOP2", "GATE_PASS")))))
+
+    print("🧪 차트TOP2 는 반대 — 섞여야 정상이다")
+    _mix = bk(("a", "2026-07-01", "차트TOP2", "GATE_PASS"),
+              ("b", "2026-07-02", "차트TOP2", "GATE_FAIL"))
+    chk("섞여 있으면 정상이라고 말한다",
+        "정상이고" in render_breakdown(gate_value_breakdown(_mix)))
+    _skew = bk(("a", "2026-07-01", "차트TOP2", "GATE_PASS"),
+               ("b", "2026-07-02", "차트TOP2", "GATE_PASS"))
+    chk("한쪽으로 쏠리면 신호일 수 있다고 말한다",
+        "쏠렸다" in render_breakdown(gate_value_breakdown(_skew)))
+
+    print("🧪 과대주장 방지 — 정의와 규칙을 구분해 적는가")
+    _txt = render_breakdown(gate_value_breakdown(_clean))
+    chk("게이트 '정의' 증명이 아님을 밝힌다", "증명은 아니다" in _txt)
+    chk("원장에 재계산 입력이 없음을 밝힌다", "원장에 그 열이 없고" in _txt)
+
     print("🧪 열 구조 덤프")
     dump = header_dump(gk(("t", "2026-09-01", "수급TOP2", "GATE_PASS")))
     chk("열 수만큼 나온다", len(dump) == 4)
@@ -402,6 +532,7 @@ def main():
 
     print(render(classify(rows), datetime.datetime.now(KST)))
     print(render_gate(gate_flag_coverage(rows)))
+    print(render_breakdown(gate_value_breakdown(rows)))
     print(render_header(header_dump(rows), unmapped_examples(rows)))
     return 0
 
