@@ -702,7 +702,11 @@ def block_bootstrap_p(diffs, block, resamples=10000, seed=20260913, alt="greater
 
     절차:
       1. `d` 를 중심화한다 (`d_i − mean(d)`) → 귀무(평균 0) 세계를 만든다
-      2. 순환 이동블록으로 같은 길이의 표본을 재구성, `resamples` 회
+      2. 순환 이동블록으로 **정확히 n 개짜리** 표본을 재구성, `resamples` 회
+         — `n` 이 `block` 의 배수가 아니면 **마지막 블록을 잘라서** 길이를 맞춘다.
+         길이를 안 맞추고 `nb*block` 개를 평균내면 귀무분포가 좁아져 **p 가
+         과소평가**된다. 승인이 쉬워지는 방향의 오류라 크기와 무관하게 고친다.
+         (2026-09-15 수정. 그 전에는 `tot/(nb*block)` 이었다.)
       3. 단측 p = 재표본 평균이 **관측 평균 이상**으로 나온 비율
 
     시드를 고정한다. 같은 입력이면 같은 p 가 나와야 재현이 성립한다.
@@ -718,30 +722,39 @@ def block_bootstrap_p(diffs, block, resamples=10000, seed=20260913, alt="greater
         return None, block, 0
     rng = random.Random(seed)
     nb = -(-n // block)                        # 올림: 필요한 블록 수
+    tail = n - (nb - 1) * block                # 마지막 블록에서 실제로 쓸 길이 (1..block)
     hits = 0
     for _ in range(resamples):
         tot = 0.0
-        for _ in range(nb):
+        for b in range(nb):
             st = rng.randrange(n)
-            for k in range(block):
+            take = block if b < nb - 1 else tail   # 마지막 블록만 잘라 **정확히 n 개**
+            for k in range(take):
                 tot += centered[(st + k) % n]  # 순환 — 끝과 처음을 잇는다
-        m = tot / (nb * block)
+        m = tot / n                            # ← n 개의 평균. nb*block 이 아니다
         if (m >= obs) if alt == "greater" else (m <= obs):
             hits += 1
     # +1 보정 — 0/N 을 p=0 으로 보고하지 않는다. 부트스트랩은 0 을 증명 못 한다.
     return (hits + 1) / (resamples + 1), block, resamples
 
 
-def holm(pairs, m=None):
+def holm(pairs, m=None, alpha=0.05):
     """§3-5 계층1 — Holm–Bonferroni. pairs = [(채널, p)]. 통과 집합을 돌려준다.
 
     처음 실패하는 지점에서 멈추고 그 뒤는 전부 탈락(문서 절차 4번 그대로).
-    `m` 은 §3-5-1 이 고정한 확증 집합 크기다. 생략하면 pairs 길이를 쓴다."""
+    `m` 은 §3-5-1 이 고정한 확증 집합 크기다. 생략하면 pairs 길이를 쓴다.
+
+    `alpha` 는 **호출자가 넣는다.** 트랙마다 값이 다르기 때문이다 —
+    트랙 C 확증은 §3-5-6 의 결정일 4회 보정으로 0.05/4 = 0.0125 이고,
+    트랙 E 탐색은 사전등록이 **보정 없는 0.05** 로 못박았다. 함수가 0.05 를
+    숨겨 갖고 있으면 트랙 C 를 4배 느슨하게 돌려도 아무도 못 본다.
+    기본값 0.05 는 **기존 호출 동작 보존용**이지 트랙 C 의 정답이 아니다.
+    실제 트랙별 α 배선은 승인 게이트 작업(U1~U5 합의 후)에서 한다."""
     if m is None:
         m = len(pairs)
     ok = set()
     for i, (ch, p) in enumerate(sorted(pairs, key=lambda x: x[1]), start=1):
-        if p <= 0.05 / (m - i + 1):
+        if p <= alpha / (m - i + 1):
             ok.add(ch)
         else:
             break
@@ -1074,6 +1087,10 @@ def build_report(data, raw, skipped, today, bydate=None):
                          "paired": pt is not None})
         rows_out[-1]["regimes"] = regime_summary(bydate, ch, h)
 
+    # ⚠️ α 는 아직 트랙별로 나뉘지 않았다. 여기 들어가는 값은 `holm` 의 기본값 0.05 이고,
+    #    §3-5-6 이 트랙 C 에 지정한 0.0125 가 아니다. 이 이름이 `nominal_` 인 이유가 그것이다.
+    #    바로 아래에서 `passed` 를 비우므로 운영상 승인으로 새지는 않는다.
+    #    트랙별 α 배선은 승인 게이트 작업(U1~U5 합의 후)에서 한다.
     nominal_passed = holm(conf, HOLM_M) if conf else set()
     passed = set()  # No operative approvals from nominal, serially dependent p-values.
     for r in rows_out:
@@ -1255,12 +1272,75 @@ def self_test():
     chk("전부 유의하지 않으면 아무도 통과 못 함",
         holm([("a", 0.4), ("b", 0.5)]) == set())
 
+    # P0-3 (2026-09-15) — α 가 함수 안에 숨어 있으면 트랙별 문턱을 못 쓴다.
+    chk("α 기본값은 0.05 — 기존 호출 동작이 그대로다",
+        holm([("a", 0.03)], 1) == {"a"})
+    chk("α 를 0.0125 로 낮추면 같은 p 가 탈락한다",
+        holm([("a", 0.03)], 1, alpha=0.0125) == set())
+    chk("트랙 C(α=0.0125·m=2) 1위 문턱은 0.00625 — 0.006 은 통과",
+        holm([("a", 0.006), ("b", 0.4)], 2, alpha=0.0125) == {"a"})
+    chk("같은 설정에서 0.007 은 1위도 탈락",
+        holm([("a", 0.007), ("b", 0.4)], 2, alpha=0.0125) == set())
+
     print("🧪 §3-5-6 블록 부트스트랩 (2026-09-13)")
     chk("표본이 모자라면 None", block_bootstrap_p([1.0], 5)[0] is None)
     chk("분산 0 이면 None (p 가 정의 안 됨)",
         block_bootstrap_p([2.0] * 12, 5)[0] is None)
     chk("블록이 날짜보다 길면 날짜 수로 줄인다",
         block_bootstrap_p([0.1, -0.2, 0.3, 0.05], 99)[1] == 4)
+
+    # P0-1 (2026-09-15) — 재표본 길이는 **정확히 n** 이어야 한다.
+    # 아래는 사양을 테스트에서 독립적으로 다시 써서 대조한 것이다.
+    # n=3, block=2 → 블록 2개(2개+1개) = 3개를 3으로 나눈다. 옛 코드는 4개를 4로 나눴다.
+    _ex  = [0.5, -0.2, 0.9]
+    _eo  = sum(_ex) / 3
+    _ec  = [x - _eo for x in _ex]
+    _erg = random.Random(20260913)
+    _eh  = 0
+    for _ in range(500):
+        _s1 = _erg.randrange(3)
+        _s2 = _erg.randrange(3)
+        _em = (_ec[_s1] + _ec[(_s1 + 1) % 3] + _ec[_s2]) / 3   # 2개 + 1개, 3으로 나눈다
+        if _em >= _eo:
+            _eh += 1
+    _ewant = (_eh + 1) / 501
+    _egot  = block_bootstrap_p(_ex, 2, resamples=500)[0]
+    chk("재표본 길이가 정확히 n — 마지막 블록을 잘라 맞춘다",
+        abs(_egot - _ewant) < 1e-12, f"got={_egot} want={_ewant}")
+
+    # n 이 block 의 배수면 자를 것이 없다 — 같은 사양이 그대로 성립해야 한다.
+    _ex4 = [0.5, -0.2, 0.9, 0.1]
+    _eo4 = sum(_ex4) / 4
+    _ec4 = [x - _eo4 for x in _ex4]
+    _erg = random.Random(20260913)
+    _eh4 = 0
+    for _ in range(500):
+        _s1 = _erg.randrange(4)
+        _s2 = _erg.randrange(4)
+        _em = (_ec4[_s1] + _ec4[(_s1 + 1) % 4]
+               + _ec4[_s2] + _ec4[(_s2 + 1) % 4]) / 4
+        if _em >= _eo4:
+            _eh4 += 1
+    chk("배수일 때는 절단이 없다 — 기존 관측이 안 흔들린다",
+        abs(block_bootstrap_p(_ex4, 2, resamples=500)[0] - (_eh4 + 1) / 501) < 1e-12)
+
+    # 왜 고쳤나 — 길게 평균내면 귀무분포가 **좁아지고** p 가 과소평가된다.
+    # 같은 블록 추출에서 40개 평균과 31개 평균의 산포를 직접 비교한다.
+    _nr = random.Random(7)
+    _n31 = [_nr.gauss(0, 1) for _ in range(31)]
+    _c31 = [x - sum(_n31) / 31 for x in _n31]
+    _brg = random.Random(20260913)
+    _mn, _mb = [], []
+    for _ in range(2000):
+        _flat = []
+        for _ in range(4):                       # nb = ceil(31/10) = 4
+            _st = _brg.randrange(31)
+            _flat += [_c31[(_st + k) % 31] for k in range(10)]
+        _mb.append(sum(_flat) / 40)              # 옛 방식 — 40개
+        _mn.append(sum(_flat[:31]) / 31)         # 고친 방식 — 정확히 31개
+    _sd = lambda v: (sum((x - sum(v) / len(v)) ** 2 for x in v) / len(v)) ** 0.5
+    chk("옛 방식은 귀무분포가 더 좁다 = p 과소평가 = 승인이 쉬워지는 방향",
+        _sd(_mb) < _sd(_mn), f"sd(40개)={_sd(_mb):.4f} < sd(31개)={_sd(_mn):.4f}")
 
     # 같은 시드면 같은 p — 재현이 안 되면 사전등록이 무의미하다.
     _d = [0.4, -0.2, 0.9, -0.1, 0.6, 0.2, -0.5, 0.8, 0.1, 0.3, -0.3, 0.7]
