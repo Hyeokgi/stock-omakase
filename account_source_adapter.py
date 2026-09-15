@@ -37,6 +37,30 @@ import re
 import math
 
 KST = datetime.timezone(datetime.timedelta(hours=9))
+
+# ── 종목코드 형식 ────────────────────────────────────────────────────
+# 🔴 2026-09-15 — 이 모듈은 `\d{6}` 를 썼다. **KRX 단축코드는 전부 숫자가 아니다.**
+#    `0155E0`(해치텍)·`0220W0`(한화머시너리앤서비스홀딩스) 처럼 영문이 섞인 코드가
+#    2026-09-15 15:05 스냅샷 2,873종목 중 **85개(3.0%)** 있고 전부 tradeStopYn=N 인
+#    정상 거래 종목이다.
+#    같은 결함을 이미 2026-08-28 에 `hyeoks_market_snapshot._is_code` 에서 고쳤는데
+#    (당시 실측 2,877 중 84개), 9/09 에 만든 계좌 쪽 모듈들이 옛 가정을 그대로 받았다.
+#    그래서 계좌 재구성이 첫 실행에서 `invalid/duplicate snapshot code` 로 죽었다.
+#
+#    수집기의 `len(c)==6 and c.isalnum()` 보다 좁게 간다 — 파이썬 `isalnum()` 은
+#    한글 음절도 참이라('가나다라마바'.isalnum() is True) 깨진 값을 통과시킨다.
+#    여기서는 ASCII 대문자·숫자 6자리로 못박는다.
+KRX_CODE = re.compile(r'[0-9A-Z]{6}')
+
+
+def normalize_code(raw):
+    """원장/스냅샷의 종목코드 표기를 하나로 맞춘다. 형식이 아니면 ''."""
+    c = str(raw or "").replace("'", "").strip().upper()
+    if len(c) < 6 and c.isdigit():
+        c = c.zfill(6)                       # 앞자리 0 이 잘려 들어온 숫자코드
+    if not KRX_CODE.fullmatch(c) or c == '000000':
+        return ""
+    return c
 ADAPTER_VERSION = "account-source-adapter-v2"
 SNAPSHOT_GLOB = "data/market_snapshot/{date}_1505.csv.gz"
 
@@ -76,9 +100,11 @@ def tradable_map(date, root="data/market_snapshot"):
             raise ValueError('snapshot date/window mismatch')
         seen = set()
         for row in csv.DictReader(f):
-            code = (row.get("itemcode") or "").strip().zfill(6)
-            if not re.fullmatch(r'\d{6}',code) or code == '000000' or code in seen:
-                raise ValueError('invalid/duplicate snapshot code')
+            code = normalize_code(row.get("itemcode"))
+            if not code or code in seen:
+                raise ValueError(
+                    f"{os.path.basename(path)}: 종목코드 형식 오류 또는 중복 — "
+                    f"{(row.get('itemcode') or '')!r} ({row.get('itemname','') or '이름없음'})")
             seen.add(code)
             flag = (row.get("tradeStopYn") or "").strip().upper()
             if not code or flag not in ("Y", "N"):
@@ -119,16 +145,17 @@ def required_cells(rows, sessions, horizon_of, as_of=None, entry_model='next_ope
             invalid.append({"행": n, "사유": "행이 짧다(종목코드 열 없음)",
                             "코드": "", "채널": ""})
             continue
-        code = str(row[C_CODE]).replace("'", "").strip().zfill(6)
+        raw_code = str(row[C_CODE]).replace("'", "").strip()
+        code = normalize_code(raw_code)
         entry = str(row[C_ENTRY]).strip()[:10]
         ch = str(row[C_CHANNEL]).strip()
         if ch.startswith('지수벤치'):
             continue
-        if not re.fullmatch(r'\d{6}', code) or code == '000000' or not ch:
+        if not code or not ch:
             why = ("채널 비어 있음" if not ch else
-                   "종목코드 비어 있음" if code == '000000' else
-                   "종목코드가 6자리 숫자가 아님")
-            invalid.append({"행": n, "사유": why, "코드": code, "채널": ch})
+                   "종목코드 비어 있음" if not raw_code else
+                   "종목코드가 6자리 영숫자(KRX 단축코드) 형식이 아님")
+            invalid.append({"행": n, "사유": why, "코드": raw_code, "채널": ch})
             continue
         if entry not in idx or entry > as_of:
             unknown_entry.append((code, entry))
@@ -373,8 +400,10 @@ def self_test():
 
         # 🔴 2026-09-15 — 잘못된 행 하나에 raise 로 멈추면 **어느 행인지 알 수 없다.**
         #    실제로 9/15 실행이 traceback 만 남기고 죽었다. 모아서 보고하고 계속 센다.
+        # ⚠️ "12A456" 은 **유효한** KRX 단축코드 형식이다(0155E0 와 같은 꼴).
+        #    형식 위반 예시는 자릿수가 틀린 것을 쓴다.
         bad = [hdr, mkrow("000001", "2026-09-01"), mkrow("", "2026-09-01"),
-               mkrow("12A456", "2026-09-01")]
+               mkrow("1234567", "2026-09-01")]
         bad[2][C_CHANNEL] = ""                      # 채널 비어 있음
         need_b, _u, inv = required_cells(bad, sessions, lambda c: 1)
         chk("잘못된 행에서 raise 하지 않는다", True)
@@ -382,9 +411,16 @@ def self_test():
         chk("행번호는 시트 행번호(제목=1)", [b["행"] for b in inv] == [3, 4], f"{inv}")
         chk("사유를 구분한다",
             inv[0]["사유"] == "채널 비어 있음"
-            and inv[1]["사유"] == "종목코드가 6자리 숫자가 아님", f"{inv}")
+            and inv[1]["사유"] == "종목코드가 6자리 영숫자(KRX 단축코드) 형식이 아님",
+            f"{inv}")
         chk("잘못된 행은 필요 칸에 포함되지 않는다",
             need_b == {("000001", "2026-09-02")}, f"{sorted(need_b)}")
+        # 🔴 영문 섞인 실제 단축코드는 **통과해야 한다**(9/15 스냅샷 3.0%)
+        ok_alnum = required_cells([hdr, mkrow("0155E0", "2026-09-01")],
+                                  sessions, lambda c: 1)
+        chk("영숫자 단축코드(0155E0)를 거부하지 않는다",
+            ok_alnum[0] == {("0155E0", "2026-09-02")} and ok_alnum[2] == [],
+            f"{ok_alnum}")
 
         g = {"required_cells": 1, "invalid_rows": 2, "sample_invalid": inv,
              "tradable_known": 0, "tradable_missing": 0, "price_missing": None,
@@ -394,9 +430,9 @@ def self_test():
         chk("리포트에 거부된 행 표가 나온다",
             "## 🔴 거부된 원장 행" in md_bad and "| 3 |" in md_bad)
         chk("커밋되는 리포트에서 종목코드는 가린다",
-            "12A456" not in md_bad and "(비공개)" in md_bad)
+            "1234567" not in md_bad and "(비공개)" in md_bad)
         chk("예시 허용 시에는 코드를 보여준다",
-            "12A456" in gap_report(g, "2026-09-15", include_samples=True))
+            "1234567" in gap_report(g, "2026-09-15", include_samples=True))
         # 요약표의 `거부된 원장 행 | 0` 줄은 남는다(0건도 보고한다). 없어지는 건 상세 표다.
         md_ok = gap_report(dict(g, invalid_rows=0, sample_invalid=[]), "2026-09-15")
         chk("거부 행이 없으면 상세 표는 없다",

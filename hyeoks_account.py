@@ -11,12 +11,33 @@ import hashlib
 import json
 import math
 import os
+import re
 from pathlib import Path
 import tempfile
 import uuid
 from hyeoks_verdict import ABORT, HORIZON, DEFAULT_HORIZON, validate_ledger, is_excluded
 
 VERSION = 'account-nav-v3'
+
+# 🔴 2026-09-15 — 여기도 `code.isdigit()` 이었다. KRX 단축코드는 전부 숫자가 아니다
+#    (`0155E0`·`0220W0` 등, 2026-09-15 15:05 스냅샷 2,873 중 85개 = 3.0%).
+#    `hyeoks_market_snapshot._is_code` 가 2026-08-28 에 이미 고친 결함인데
+#    9/09 에 만든 계좌 쪽 모듈이 옛 가정을 받았다.
+#    `account_source_adapter.normalize_code` 와 **같은 규칙**이어야 한다 —
+#    한쪽만 받고 다른 쪽이 거부하면 입력과 계산이 어긋난다.
+#    두 정의가 어긋나면 `tests/test_krx_code.py` 가 깨진다.
+#    (이 파일은 무네트워크가 원칙이라 어댑터를 import 하지 않고 같은 규칙을 다시 쓴다.)
+KRX_CODE = re.compile(r'[0-9A-Z]{6}')
+
+
+def normalize_code(raw):
+    """원장 종목코드 표기를 하나로 맞춘다. 형식이 아니면 ''."""
+    c = str(raw or "").replace("'", "").strip().upper()
+    if len(c) < 6 and c.isdigit():
+        c = c.zfill(6)
+    if not KRX_CODE.fullmatch(c) or c == '000000':
+        return ""
+    return c
 
 
 class InputError(ValueError):
@@ -184,9 +205,9 @@ def orders_from_ledger(bundle, sessions, as_of):
         if idx+1 >= len(sessions) or sessions[idx+1] > as_of:
             diagnostics.append(dict(row=row_no, status='pending_entry'))
             continue
-        code = str(row[4]).strip().lstrip("'").zfill(6)
-        if len(code) != 6 or not code.isdigit() or code == '000000':
-            raise InputError(f'row {row_no}: invalid code')
+        code = normalize_code(row[4])
+        if not code:
+            raise InputError(f'row {row_no}: invalid code {str(row[4])!r}')
         themes = themes_for(bundle, signal, code)
         horizon = HORIZON.get(channel, DEFAULT_HORIZON)
         exit_date = sessions[idx+horizon] if idx+horizon < len(sessions) else None
