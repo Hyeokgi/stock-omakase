@@ -83,7 +83,7 @@ def bounded_workers(item_count):
 #    list.append 는 GIL 하에서 원자적이라 스레드에서 그냥 써도 된다(락 불필요).
 LIVE_FALLBACK_LOG = []   # (종목명, 사유)
 
-# 📊 [타점 인구조사] 스캔한 전 종목의 타점유형 분포를 회차마다 센다.
+# 📊 [타점 전수조사] 스캔한 전 종목의 타점유형 분포를 회차마다 센다.
 #    왜 필요한가 — 2026-08-31 에 리포트 중기 채널이 또 000000 을 반환했고 사유가
 #    "'유형:SEED' + '타점:과매도 · 역배팅' 을 동시에 만족하는 종목이 **리스트에** 없다" 였다.
 #    그런데 여기서 '리스트'는 DB_스캐너 20행이다. 즉 이 로그만으로는
@@ -1710,7 +1710,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         min_danta_rate = 0.03            
         # ⚠️ 이것은 **복합 조건**이다. 통과 수가 0이어도 "이격 -20% 이탈 종목이 0"이라는
         #    뜻이 아니다 — 거래대금·상한가·등락률 중 어디서 막혔는지 이 하나로는 안 갈린다.
-        #    그래서 하위 조건을 따로 들고 다니며 인구조사에서 단계별로 센다.
+        #    그래서 하위 조건을 따로 들고 다니며 전수조사에서 단계별로 센다.
         _env_price_ok = current_price <= envelope_lower_20
         _env_tv_ok    = trading_value >= min_nulim_tv
         _env_notup_ok = not is_upper_limit
@@ -2563,7 +2563,11 @@ def update_technical_data(df_theme, all_theme_map):
 
         print(f"⏱️ 스캔 소요시간: {time.time() - scan_start:.1f}초 ({len(results)}/{len(target_dict)}개 종목 처리 완료)")
 
-        # 📊 타점 인구조사 — 과매도 태그가 '시장에 없었나' 대 '상위 20에 못 들었나'를 가른다.
+        # 📊 타점 전수조사 — 과매도 태그가 '시장에 없었나' 대 '상위 20에 못 들었나'를 가른다.
+        #    '전수'는 표본을 뽑지 않고 **스캔한 전 종목**을 센다는 뜻이다. 상위 20만 보면
+        #    '시장에 없었나' 와 '있었는데 상위 20에 못 들었나' 를 구별할 수 없다.
+        #    📌 2026-09-15 이전 로그에는 이 줄이 '타점 **인구조사**' 로 찍혀 있다.
+        #       뜻은 같지만 한국어 '인구조사'가 사람 조사로 읽혀 바꿨다. 옛 로그를 찾을 땐 옛 이름으로.
         #
         # 🚨 [2026-09-14 정정] 예전엔 복합 조건 통과 수 하나만 세고
         #    "-20% 이탈 종목 자체가 0" 이라고 찍었다. **그건 과잉 진단이었다.**
@@ -2577,7 +2581,7 @@ def update_technical_data(df_theme, all_theme_map):
             _over = sum(1 for r in TAJEOM_CENSUS if r[0] == "📉 과매도 · 역배팅")
             _knife = sum(1 for r in TAJEOM_CENSUS if r[0].startswith("⏸ 관망 · 과매도"))
             _tv_floor = 10_000_000_000 if is_warning_market else 5_000_000_000
-            print(f"📊 [타점 인구조사] 스캔 {_scanned}종목 · 관문① 단계별: "
+            print(f"📊 [타점 전수조사] 스캔 {_scanned}종목 · 관문① 단계별: "
                   f"이격 {_price} → +거래대금({_tv_floor//100_000_000}억) {_price_tv} → +상한가·등락률 {_env}"
                   f" → 과매도·역배팅 {_over}건 · 반등미확인 {_knife}건")
             if _price == 0:
@@ -2597,10 +2601,10 @@ def update_technical_data(df_theme, all_theme_map):
                 envelope_pass=_env, oversold=_over, knife_wait=_knife,
                 warning_market=bool(is_warning_market), kospi_rate=kospi_rate)
             if _rec_ok:
-                print(f"   🗂️ 인구조사 보존 — {_rec_msg}")
+                print(f"   🗂️ 전수조사 보존 — {_rec_msg}")
             elif _rec_msg.startswith("기록 실패"):
                 # 조용히 넘어가면 결측을 아무도 모른다. 눈에 띄게 남긴다.
-                print(f"   ❌ [인구조사 보존 실패] {_rec_msg} — 오늘 기준선 한 줄이 비었다")
+                print(f"   ❌ [전수조사 보존 실패] {_rec_msg} — 오늘 기준선 한 줄이 비었다")
             else:
                 print(f"   · 보존 생략 — {_rec_msg}")
             TAJEOM_CENSUS.clear()

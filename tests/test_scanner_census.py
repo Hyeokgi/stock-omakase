@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""스캐너 타점 인구조사 보존 — 켜기 전 기준선이 정직하게 남는가.
+"""스캐너 타점 전수조사 보존 — 켜기 전 기준선이 정직하게 남는가.
 
 이 검사가 지키려는 것은 숫자 하나가 아니라 **전/후 비교의 성립 조건**이다.
 밴드 설정이 행에 안 남으면 나중에 "이 줄은 켜기 전인가 후인가"를 기억에
@@ -295,7 +295,7 @@ class ScannerWiring(unittest.TestCase):
         src = (Path(__file__).resolve().parents[1] / "omakase.py").read_text(encoding="utf-8")
         self.assertIn("scanner_census", src)
         self.assertIn("scanner_census.record(", src)
-        self.assertIn("타점 인구조사", src)
+        self.assertIn("타점 전수조사", src)
 
     def test_workflow_commits_the_census(self):
         wf = (Path(__file__).resolve().parents[1]
@@ -305,7 +305,7 @@ class ScannerWiring(unittest.TestCase):
 
     def test_scanner_surfaces_a_recording_failure_loudly(self):
         src = (Path(__file__).resolve().parents[1] / "omakase.py").read_text(encoding="utf-8")
-        self.assertIn("인구조사 보존 실패", src)
+        self.assertIn("전수조사 보존 실패", src)
 
 
 if __name__ == "__main__":

@@ -8,7 +8,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write   # 타점 인구조사 한 줄을 커밋하기 위해서만 쓴다 (아래 마지막 스텝)
+  contents: write   # 타점 전수조사 한 줄을 커밋하기 위해서만 쓴다 (아래 마지막 스텝)
 
 jobs:
   build:
@@ -46,7 +46,7 @@ jobs:
         if: always()
         run: python hyeoks_data_quality.py --check --spreadsheet-id 1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks
 
-      - name: 📊 타점 인구조사 보존
+      - name: 📊 타점 전수조사 보존
         # 스캐너는 10분마다 돌지만 기록은 하루 한 줄이다(14:40~15:10 KST, 날짜 멱등).
         # 그래서 이 스텝은 하루 144회 중 **1회만** 실제로 커밋하고 나머지는 즉시 끝난다.
         # 왜 남기나: 엔벨로프 통과 수는 지금까지 로그에만 있었고 로그는 만료된다.
@@ -60,12 +60,12 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -- data/scanner_census
-          git commit -m "data: 타점 인구조사 $(TZ=Asia/Seoul date +%Y-%m-%d) [skip ci]"
+          git commit -m "data: 타점 전수조사 $(TZ=Asia/Seoul date +%Y-%m-%d) [skip ci]"
           # 스냅샷·분봉 워크플로가 같은 시간대에 푸시할 수 있으므로 rebase 후 재시도
           for i in 1 2 3; do
             git pull --rebase --autostash origin main && git push origin HEAD:main && exit 0
             echo "⚠️ 푸시 재시도 $i/3"
             sleep 5
           done
-          echo "::error::타점 인구조사 푸시가 끝내 실패했다"
+          echo "::error::타점 전수조사 푸시가 끝내 실패했다"
           exit 1
