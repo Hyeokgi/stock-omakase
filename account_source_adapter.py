@@ -246,7 +246,10 @@ def gap_report(gaps, as_of, include_samples=False):
              "15:05는 종베의 의도된 진입 슬롯으로 유지한다. 파일 메타시각은 별도 보존한다.",
              "현재 capturedAt은 수집기 시작 시각으로 개별 종목의 실제 관측·체결 시각이 아니다.",
              "관측 상태는 해당 스냅샷에서만 유효하다. 시가·종가 거래 가능 또는 실체결 보장이 아니다.",
-             f"진입 모형: {gaps.get('entry_model', 'next_open')}", "",
+             f"진입 모형: {gaps.get('entry_model', 'next_open')}",
+             (f"측정 달력 구간: {gaps['calendar_first']} ~ {gaps['calendar_last']} "
+              f"({gaps['calendar_days']}거래일)" if gaps.get('calendar_days')
+              else "측정 달력 구간: 미기록"), "",
              "| 항목 | 값 |", "|---|---:|",
              f"| 예정 보유 구간 기초 칸 | {gaps['required_cells']} |",
              f"| 🔴 **거부된 원장 행** | {gaps.get('invalid_rows', 0)} |",
@@ -516,6 +519,21 @@ def self_test():
 
         rep = gap_report(gaps, "2026-09-03")
         chk("체결 상태와 구별한다", "실체결 보장" in rep)
+        # 🔴 측정 구간이 리포트에 남아야 한다 — 같은 날 다른 --days 로 덮어쓴 사고
+        g2 = {"required_cells": 1, "invalid_rows": 0, "sample_invalid": [],
+              "tradable_known": 1, "tradable_missing": 0, "price_missing": None,
+              "snapshot_dates_in_window": 1, "first_snapshot": "2026-08-28",
+              "entry_not_in_calendar": 0, "sample_tradable_missing": [],
+              "calendar_days": 13, "calendar_first": "2026-08-28",
+              "calendar_last": "2026-09-15"}
+        md2 = gap_report(g2, "2026-09-16")
+        chk("리포트가 측정 달력 구간을 밝힌다",
+            "2026-08-28 ~ 2026-09-15 (13거래일)" in md2, md2[:400])
+        chk("구간 정보가 없으면 '미기록' 이라고 쓴다(조용히 빠지지 않는다)",
+            "측정 달력 구간: 미기록" in gap_report(
+                {k: v for k, v in g2.items() if not k.startswith("calendar")},
+                "2026-09-16"))
+
         chk("추정 금지를 리포트에 적는다", "추정하지 않는다" in rep)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -570,6 +588,11 @@ def main(argv=None):
         "required_cells": len(need), "invalid_rows": len(invalid),
         "sample_invalid": invalid[:5], "tradable_known": len(known),
         "tradable_missing": len(missing), "price_missing": None, 'entry_model': a.entry_model,
+        # 🔴 2026-09-15 — 측정한 **달력 구간을 리포트에 박는다.** 같은 날 --days 를 바꿔
+        #    두 번 돌리면 파일명이 같아 앞 결과를 덮어썼고, 남은 파일만 봐서는 어느 창을
+        #    쟀는지 알 수 없었다(실제로 120일 결과가 13일 결과에 덮였다).
+        "calendar_days": len(sessions),
+        "calendar_first": sessions[0], "calendar_last": sessions[-1],
         "snapshot_dates_in_window": len(snaps),
         "first_snapshot": snaps[0] if snaps else None,
         "entry_not_in_calendar": len(unknown_entry),
@@ -581,7 +604,9 @@ def main(argv=None):
     print(f"🚧 거래상태 결손 {len(missing)} / {len(need)}")
 
     md = gap_report(gaps, today)
-    path = a.out or f"data/account/{today}_source_gaps.md"
+    # 파일명에도 조건을 넣는다 — 조건이 다른 측정은 다른 파일이어야 한다.
+    path = a.out or (f"data/account/{today}_source_gaps_"
+                     f"{a.entry_model}_{len(sessions)}d.md")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(md)
