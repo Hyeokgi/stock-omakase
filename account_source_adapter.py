@@ -105,18 +105,31 @@ def required_cells(rows, sessions, horizon_of, as_of=None, entry_model='next_ope
     if as_of not in sessions or entry_model not in ('next_open','closing_1505'):
         raise ValueError('invalid as_of/entry_model')
     idx = {d: i for i, d in enumerate(sessions)}
-    need, unknown_entry = set(), []
-    for row in rows[1:]:
+    need, unknown_entry, invalid = set(), [], []
+    for n, row in enumerate(rows[1:], start=2):        # 시트 행번호(1-based, 제목 제외)
         if not any(str(c).strip() for c in row) or is_excluded(row):
             continue
-        if len(row) <= C_CODE: raise ValueError('truncated ledger row')
+        # 🔴 2026-09-15 정정 — 이전에는 잘못된 행 하나에 `raise` 로 전체 측정을 멈췄고
+        #    **어느 행인지 말하지 않았다.** 실제로 그 때문에 9/15 실행이 traceback 만 남기고
+        #    죽었다(`ValueError: invalid ledger code/channel`).
+        #    거부 자체는 맞다 — 근거 없는 입력을 통과시키면 v3 게이트가 무의미해진다.
+        #    그러나 **말 없는 거부**는 고칠 수 없는 거부다. 모아서 보고하고 계속 센다.
+        #    (판정은 그대로 fail-closed: 호출부가 비어 있지 않으면 0 이 아닌 코드로 끝낸다.)
+        if len(row) <= C_CODE:
+            invalid.append({"행": n, "사유": "행이 짧다(종목코드 열 없음)",
+                            "코드": "", "채널": ""})
+            continue
         code = str(row[C_CODE]).replace("'", "").strip().zfill(6)
         entry = str(row[C_ENTRY]).strip()[:10]
         ch = str(row[C_CHANNEL]).strip()
         if ch.startswith('지수벤치'):
             continue
-        if not re.fullmatch(r'\d{6}',code) or code=='000000' or not ch:
-            raise ValueError('invalid ledger code/channel')
+        if not re.fullmatch(r'\d{6}', code) or code == '000000' or not ch:
+            why = ("채널 비어 있음" if not ch else
+                   "종목코드 비어 있음" if code == '000000' else
+                   "종목코드가 6자리 숫자가 아님")
+            invalid.append({"행": n, "사유": why, "코드": code, "채널": ch})
+            continue
         if entry not in idx or entry > as_of:
             unknown_entry.append((code, entry))
             continue
@@ -124,7 +137,7 @@ def required_cells(rows, sessions, horizon_of, as_of=None, entry_model='next_ope
         start = idx[entry] + (entry_model == 'next_open')
         for j in range(start, min(idx[entry] + h + 1, idx[as_of]+1)):
             need.add((code, sessions[j]))
-    return need, unknown_entry
+    return need, unknown_entry, invalid
 
 
 def coverage(need, snap_dates, root="data/market_snapshot"):
@@ -146,7 +159,7 @@ def build_source(rows, sessions, prices, as_of, horizon_of,
     prices 는 {code: {date: {open,high,low,close}}}. 관측 자료만 덧붙이고 tradable은 만들지 않는다.
     """
     now = now or datetime.datetime.now(KST)
-    need, unknown_entry = required_cells(rows, sessions, horizon_of, as_of)
+    need, unknown_entry, invalid = required_cells(rows, sessions, horizon_of, as_of)
     snaps = [d for d in snapshot_dates(root) if d in set(sessions)]
     known, missing_tradable, have = coverage(need, snaps, root)
 
@@ -165,7 +178,8 @@ def build_source(rows, sessions, prices, as_of, horizon_of,
         # Do not promote a 15:05 observation to daily execution availability.
 
     gaps = {
-        "required_cells": len(need),
+        "required_cells": len(need), "invalid_rows": len(invalid),
+        "sample_invalid": invalid[:5],
         "tradable_known": len(known),
         "tradable_missing": len(missing_tradable),
         "price_missing": len(missing_price),
@@ -208,6 +222,7 @@ def gap_report(gaps, as_of, include_samples=False):
              f"진입 모형: {gaps.get('entry_model', 'next_open')}", "",
              "| 항목 | 값 |", "|---|---:|",
              f"| 예정 보유 구간 기초 칸 | {gaps['required_cells']} |",
+             f"| 🔴 **거부된 원장 행** | {gaps.get('invalid_rows', 0)} |",
              f"| 15:05 상태 관측값 있음 | {gaps['tradable_known']} |",
              f"| 15:05 상태 관측값 없음 | {gaps['tradable_missing']} |",
              f"| 가격 결손 | {price} |",
@@ -225,6 +240,19 @@ def gap_report(gaps, as_of, include_samples=False):
              "- 상태가 없다는 이유로 보유 평가용 OHLC를 삭제하거나 정상 거래로 추정하지 않는다.", ""]
     if include_samples:
         lines.append("비공개 결손 예시: "+", ".join(gaps['sample_tradable_missing']))
+    if gaps.get('invalid_rows'):
+        lines += ["", "## 🔴 거부된 원장 행", "",
+                  f"**{gaps['invalid_rows']}행**이 형식 요건을 못 맞춰 측정에서 빠졌다. "
+                  "거부는 맞지만 **어느 행인지 알아야 고칠 수 있다.**", "",
+                  "| 시트 행 | 사유 | 코드 | 채널 |", "|--:|---|---|---|"]
+        # 이 파일은 저장소에 커밋된다. 기존 규약대로 종목코드는 기본으로 가린다
+        # (행번호·사유·채널만으로 원장을 고칠 수 있다). 실행 로그에는 그대로 남는다.
+        for b in gaps.get('sample_invalid', []):
+            code = f"`{b['코드']}`" if include_samples else "(비공개)"
+            lines.append(f"| {b['행']} | {b['사유']} | {code} | {b['채널']} |")
+        lines += ["",
+                  "> 이 행들을 고치거나 제외표식을 달기 전에는 계좌 재구성이 성립하지 않는다.",
+                  "> **자동으로 추측해 채우지 않는다** — 원장은 사람이 고치는 것이다."]
     return "\n".join(lines)
 
 
@@ -336,12 +364,43 @@ def self_test():
             r[C_ENTRY], r[C_CHANNEL], r[C_CODE] = entry, "차트TOP2", code
             return r
         rows = [hdr, mkrow("000001", "2026-09-01")]
-        need, unk = required_cells(rows, sessions, lambda c: 1)
+        need, unk, _bad = required_cells(rows, sessions, lambda c: 1)
         chk("신호일+H 까지 칸이 필요하다",
             need == {("000001", "2026-09-02")}, f"{sorted(need)}")
         chk("달력에 없는 진입일은 따로 센다",
             required_cells([hdr, mkrow("000001", "2026-12-25")], sessions,
                            lambda c: 1)[1] == [("000001", "2026-12-25")])
+
+        # 🔴 2026-09-15 — 잘못된 행 하나에 raise 로 멈추면 **어느 행인지 알 수 없다.**
+        #    실제로 9/15 실행이 traceback 만 남기고 죽었다. 모아서 보고하고 계속 센다.
+        bad = [hdr, mkrow("000001", "2026-09-01"), mkrow("", "2026-09-01"),
+               mkrow("12A456", "2026-09-01")]
+        bad[2][C_CHANNEL] = ""                      # 채널 비어 있음
+        need_b, _u, inv = required_cells(bad, sessions, lambda c: 1)
+        chk("잘못된 행에서 raise 하지 않는다", True)
+        chk("잘못된 행을 모아서 돌려준다", len(inv) == 2, f"{inv}")
+        chk("행번호는 시트 행번호(제목=1)", [b["행"] for b in inv] == [3, 4], f"{inv}")
+        chk("사유를 구분한다",
+            inv[0]["사유"] == "채널 비어 있음"
+            and inv[1]["사유"] == "종목코드가 6자리 숫자가 아님", f"{inv}")
+        chk("잘못된 행은 필요 칸에 포함되지 않는다",
+            need_b == {("000001", "2026-09-02")}, f"{sorted(need_b)}")
+
+        g = {"required_cells": 1, "invalid_rows": 2, "sample_invalid": inv,
+             "tradable_known": 0, "tradable_missing": 0, "price_missing": None,
+             "snapshot_dates_in_window": 0, "first_snapshot": None,
+             "entry_not_in_calendar": 0, "sample_tradable_missing": []}
+        md_bad = gap_report(g, "2026-09-15")
+        chk("리포트에 거부된 행 표가 나온다",
+            "## 🔴 거부된 원장 행" in md_bad and "| 3 |" in md_bad)
+        chk("커밋되는 리포트에서 종목코드는 가린다",
+            "12A456" not in md_bad and "(비공개)" in md_bad)
+        chk("예시 허용 시에는 코드를 보여준다",
+            "12A456" in gap_report(g, "2026-09-15", include_samples=True))
+        # 요약표의 `거부된 원장 행 | 0` 줄은 남는다(0건도 보고한다). 없어지는 건 상세 표다.
+        md_ok = gap_report(dict(g, invalid_rows=0, sample_invalid=[]), "2026-09-15")
+        chk("거부 행이 없으면 상세 표는 없다",
+            "## 🔴 거부된 원장 행" not in md_ok and "| 🔴 **거부된 원장 행** | 0 |" in md_ok)
 
         prices = {"000001": {d: {"open": 100, "high": 101, "low": 99, "close": 100}
                              for d in sessions}}
@@ -465,13 +524,15 @@ def main(argv=None):
     from hyeoks_verdict import HORIZON, DEFAULT_HORIZON
     horizon_of = lambda ch: HORIZON.get(ch, DEFAULT_HORIZON)
 
-    need, unknown_entry = required_cells(rows, sessions, horizon_of, sessions[-1], a.entry_model)
+    need, unknown_entry, invalid = required_cells(rows, sessions, horizon_of,
+                                                  sessions[-1], a.entry_model)
     snaps = [d for d in snapshot_dates() if d in set(sessions)]
     known, missing, _have = coverage(need, snaps)
     codes = {c for c, _ in need}
     ent = sorted({d for _, d in need})
     gaps = {
-        "required_cells": len(need), "tradable_known": len(known),
+        "required_cells": len(need), "invalid_rows": len(invalid),
+        "sample_invalid": invalid[:5], "tradable_known": len(known),
         "tradable_missing": len(missing), "price_missing": None, 'entry_model': a.entry_model,
         "snapshot_dates_in_window": len(snaps),
         "first_snapshot": snaps[0] if snaps else None,
@@ -491,6 +552,19 @@ def main(argv=None):
     print(f"💾 저장: {path}")
     print()
     print(md)
+
+    # fail-closed: 거부된 행이 있으면 측정이 불완전하다. 초록으로 끝내지 않는다.
+    # (리포트는 이미 저장·커밋되므로 어느 행인지는 남는다.)
+    if invalid:
+        print()
+        print(f"❌ 원장 {len(invalid)}행이 형식 요건을 못 맞춰 측정에서 빠졌다. "
+              "고치기 전에는 계좌 재구성이 성립하지 않는다:")
+        for b in invalid[:50]:
+            print(f"   - 시트 {b['행']}행: {b['사유']} "
+                  f"(코드 {b['코드'] or '-'} / 채널 {b['채널'] or '-'})")
+        if len(invalid) > 50:
+            print(f"   … 외 {len(invalid) - 50}행")
+        return 2
     return 0
 
 

@@ -20,6 +20,19 @@ class SourceTests(unittest.TestCase):
         r=rows();r[1][2]='지수벤치';self.assertEqual(a.required_cells(r,D,lambda _:1)[0],set())
     def test_asof_caps_range(self):
         self.assertEqual(a.required_cells(rows(),D,lambda _:20,as_of=D[1])[0],{('000001',D[1])})
+    def test_bad_row_is_reported_not_raised(self):
+        # 2026-09-15 회귀: 잘못된 행 하나에 raise 로 멈춰 어느 행인지 알 수 없었다
+        r=rows();bad=['']*38;bad[1]=D[0];bad[2]='차트TOP2';bad[4]='12A456';r.append(bad)
+        need,_u,inv=a.required_cells(r,D,lambda _:1)
+        self.assertEqual(need,{('000001',D[1])})
+        self.assertEqual([b['행'] for b in inv],[3])
+    def test_bad_row_code_hidden_in_committed_report(self):
+        g=dict(required_cells=0,invalid_rows=1,tradable_known=0,tradable_missing=0,
+               price_missing=None,snapshot_dates_in_window=0,first_snapshot=None,
+               entry_not_in_calendar=0,sample_tradable_missing=[],
+               sample_invalid=[{'행':3,'사유':'종목코드가 6자리 숫자가 아님','코드':'12A456','채널':'차트TOP2'}])
+        self.assertNotIn('12A456',a.gap_report(g,D[-1]))
+        self.assertIn('12A456',a.gap_report(g,D[-1],include_samples=True))
     def test_invalid_date_and_infinity(self):
         for data in ('20261340|1|2|1|2','20260901|inf|inf|inf|inf'):
             self.assertEqual(a.parse_fchart(f'<r><item data="{data}"/></r>'),([],1))
