@@ -246,6 +246,33 @@ def stage_of(dates):
     return (STAGE1 if matured >= PILOT_DAYS else STAGE0), matured
 
 
+def stage1_eta(dates, nontrading=None):
+    """Stage 1 이 되는 **예정 거래일**. 검증된 휴장 달력으로만 계산한다.
+
+    왜 도구 안에 넣나 — 2026-09-15 에 나는 이것을 손으로 세어 '9/25 경' 이라고 적었다.
+    **추석(9/24·9/25) 이틀을 빼먹었다.** 진행계획이 *"9/23 진입의 다음 예정 거래일은
+    9/28"* 이라고 못박아 둔 바로 그 지점이다. 손계산을 없애면 그 실수가 사라진다.
+
+    돌려주는 값: (예정일, 남은 거래일 수, 사유). 달력 범위 밖이면 (None, n, 사유) —
+    **평일로 추정하지 않는다.** 그 fail-closed 가 `hyeoks_trading_calendar` 의 기본 동작이다.
+    """
+    import hyeoks_trading_calendar as cal
+    stage, matured = stage_of(dates)
+    if stage == STAGE1:
+        return None, 0, "이미 Stage 1"
+    need = PILOT_DAYS - matured
+    if not dates:
+        return None, need, "관측 거래일이 없어 기산점이 없다"
+    nt = cal.load_nontrading() if nontrading is None else nontrading
+    d = dates[-1]
+    try:
+        for _ in range(need):
+            d = cal.next_trading_day(d, nt)
+    except ValueError as e:                        # 달력 범위 밖
+        return None, need, f"거래일 달력 미검증 — {e}"
+    return d, need, ""
+
+
 def report(snap_dir=SNAP_DIR, today=None):
     days, dates = collect(snap_dir, with_returns=False)
     stage, matured = stage_of(dates)
@@ -255,11 +282,19 @@ def report(snap_dir=SNAP_DIR, today=None):
              f"파일럿 문턱 {PILOT_DAYS}일 → **Stage {stage}**")
     L.append("")
     if stage == STAGE0:
+        eta, need, why = stage1_eta(dates)
         L += ["> 🔒 **Stage 0 — 수익률을 계산하지 않았다.**",
               f"> 성숙 거래일이 {matured}일로 파일럿 문턱 {PILOT_DAYS}일에 못 미친다.",
               "> 여기서 수익률을 내면 그 숫자를 보고 A·B·C 정의를 고치게 된다.",
               "> 이 파일은 그 경로를 **코드로 막는다** — 계산 자체를 하지 않는다.",
-              "> 아래는 **구조 집계**뿐이다. 성과가 아니다.", ""]
+              "> 아래는 **구조 집계**뿐이다. 성과가 아니다."]
+        if eta:
+            L.append(f"> **Stage 1 예정일: {eta}** (거래일 {need}일 더 · 검증된 휴장 달력 기준). "
+                     "손으로 세지 않는다 — 추석·대체공휴일이 여기서 빠진다.")
+        else:
+            L.append(f"> **Stage 1 예정일 산출 불가** — {why}")
+        L.append("> ⚠️ 예정일은 **수집이 매일 성공했을 때**의 날짜다. 결측일이 생기면 뒤로 밀린다.")
+        L.append("")
 
     L += ["## A → B → C 퍼널 (단계별로 센다)", "",
           "| 날짜 | A | 테마소속 | 테마 | **B** 대장 | 5배배제 | +거래대금100억 | **C** +단타 | B_시장 | 일치 |",
@@ -463,6 +498,24 @@ def self_test():
     chk("거래일 0이면 성숙 0 (음수가 되지 않는다)", stage_of([])[1] == 0)
     chk("collect 의 기본값이 수익률 없음 — 기본값이 안전한 쪽이어야 한다",
         collect.__defaults__[1] is False)
+
+    print("🧪 Stage 1 예정일 — 손계산을 없앤다 (2026-09-15 추석 누락 재발 방지)")
+    import hyeoks_trading_calendar as cal
+    _nt = cal.load_nontrading()
+    # 9/15 까지 13일 관측(성숙 12) → 8거래일 뒤. 추석 9/24·25 를 건너뛰어야 한다.
+    _obs = ["2026-08-28", "2026-08-31", "2026-09-01", "2026-09-02", "2026-09-03",
+            "2026-09-04", "2026-09-07", "2026-09-08", "2026-09-09", "2026-09-10",
+            "2026-09-11", "2026-09-14", "2026-09-15"]
+    _eta, _need, _why = stage1_eta(_obs, _nt)
+    chk("남은 거래일 수", _need == 8, str(_need))
+    chk("추석(9/24·25)을 건너뛴 2026-09-29 이어야 한다", _eta == "2026-09-29", str(_eta))
+    chk("9/25 는 답이 아니다 — 추석이라 거래일이 아니다", _eta != "2026-09-25")
+    chk("이미 Stage 1 이면 예정일 없음",
+        stage1_eta(["d"] * (PILOT_DAYS + 1), _nt) == (None, 0, "이미 Stage 1"))
+    chk("관측이 없으면 기산점이 없다고 말한다", "기산점" in stage1_eta([], _nt)[2])
+    _far, _, _w = stage1_eta(["2026-12-30"], _nt)   # 2027 달력 미검증 구간으로 넘어간다
+    chk("달력 범위를 넘으면 None 이고 사유를 말한다 (평일 추정 금지)",
+        _far is None and "미검증" in _w, _w[:40])
 
     print("🧪 선정에 익일 데이터를 쓰지 않는다 (운영대전제 §4)")
     body = src.split("def build_day")[0]

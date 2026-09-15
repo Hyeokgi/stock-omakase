@@ -1,0 +1,58 @@
+name: 🏴 테마 대장 A/B/C 분해
+
+# 목적: 진행계획 9/14~9/27 '테마 대장 A/B/C 분석기'. 운영대전제 §4 의 분해를 돌린다.
+#
+# 🔒 날짜를 cron 에 박지 않는다 — 도구가 스스로 성숙도를 보고 판단한다.
+#    2026-09-15 에 나는 Stage 1 예정일을 손으로 세어 '9/25 경' 이라 적었고
+#    **추석(9/24·9/25) 이틀을 빼먹었다.** 실제 예정일은 9/29 다.
+#    그래서 cron 에 '9/29' 를 박는 대신 매 거래일 돌리고, 성숙 20일 미만이면
+#    `hyeoks_theme_abc.py` 가 Stage 0 으로 떨어져 **수익률을 계산하지 않는다.**
+#    날짜가 밀리든 당겨지든(수집 결측) 스스로 맞는다. 사람의 산수가 개입하지 않는다.
+#
+# 읽기 전용: 저장소에 커밋된 스냅샷만 읽는다. 시트·네트워크를 건드리지 않고
+#            아무것도 커밋하지 않는다. 출력은 로그와 Actions 요약에 남는다.
+#
+# 이 워크플로는 판정하지 않는다. 문턱·채택·폐기를 말하지 않는다.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 18:10 KST(09:10 UTC) 평일 — 그날 1505 스냅샷 커밋이 끝난 뒤.
+    # 깃허브 cron 은 늦을 수 있으나 이 작업은 시간 창이 없다(커밋된 파일만 읽는다).
+    - cron: '10 9 * * 1-5'
+
+permissions:
+  contents: read
+
+jobs:
+  abc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - name: 📥 코드·스냅샷 가져오기
+      uses: actions/checkout@v7
+
+    - name: 🐍 파이썬 세팅
+      uses: actions/setup-python@v7
+      with:
+        python-version: '3.10'
+
+    - name: 🧪 자체검증 (스냅샷 해석 로직)
+      run: python hyeoks_theme_abc.py --self-test
+
+    - name: 🏴 A/B/C 분해
+      run: |
+        python hyeoks_theme_abc.py | tee abc_report.md
+        {
+          echo "## 🏴 테마 대장 A/B/C 분해"
+          echo
+          cat abc_report.md
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: 📤 리포트 보관
+      uses: actions/upload-artifact@v7
+      with:
+        name: theme-abc-${{ github.run_id }}
+        path: abc_report.md
+        retention-days: 90
