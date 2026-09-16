@@ -91,6 +91,22 @@ def snapshot_dates(root="data/market_snapshot"):
     return out
 
 
+
+def _finite(v):
+    """숫자로 읽히면 float, 아니면 None. 0 이나 음수도 그대로 돌려준다."""
+    try:
+        f = float(str(v).replace(",", "").strip())
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
+
+
+def _pos(v):
+    """양수일 때만 값. 0 은 **값이 아니다** — 거래정지의 표식이지 가격이 아니다."""
+    f = _finite(v)
+    return f if f is not None and f > 0 else None
+
+
 def tradable_map(date, root="data/market_snapshot"):
     """그날 15:05 슬롯의 {종목코드: 관측 상태/캡처 시각/출처}.
 
@@ -122,10 +138,27 @@ def tradable_map(date, root="data/market_snapshot"):
             flag = (row.get("tradeStopYn") or "").strip().upper()
             if not code or flag not in ("Y", "N"):
                 continue
-            out[code] = {'status_at_snapshot': flag == 'N', 'slot': '1505',
-                         'captured_at': stamp.isoformat(),
-                         'captured_at_semantics': 'collector_start_not_quote_time',
-                         'source': os.path.basename(path)}
+            # 🔴 2026-09-16 — 가격도 보존한다(사전등록 §3).
+            #    종베 진입가는 15:05 `nowPrice` 인데 **일봉에 없다.** 여기서 안 남기면
+            #    시가 청산 경로가 있어도 진입가가 없어 계산이 안 된다.
+            #    `openPrice`·`prevChangeRate` 는 이 날짜가 **청산일**일 때 쓰인다
+            #    (익일 시가와, 그 시가를 검사할 전일종가 복원용).
+            #    ⚠️ 관측 보존이지 체결 보장이 아니다. 자가 인증 금지는 그대로다.
+            entry = {'status_at_snapshot': flag == 'N', 'slot': '1505',
+                     'captured_at': stamp.isoformat(),
+                     'captured_at_semantics': 'collector_start_not_quote_time',
+                     'source': os.path.basename(path)}
+            now = _pos(row.get("nowPrice"))
+            if now is not None:
+                entry['price_1505'] = now
+            op = _pos(row.get("openPrice"))
+            if op is not None:
+                entry['open_price'] = op
+            rate = _finite(row.get("prevChangeRate"))
+            if rate is not None and rate > -100.0 and now is not None:
+                # 전일종가 복원 — closing_bet.exit_open 과 같은 식이다.
+                entry['prev_close_derived'] = now / (1.0 + rate / 100.0)
+            out[code] = entry
     return out
 
 

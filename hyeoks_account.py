@@ -227,8 +227,66 @@ def orders_from_ledger(bundle, sessions, as_of):
         exit_date = sessions[idx+horizon] if idx+horizon < len(sessions) else None
         orders.append(dict(id=str(row[0]), channel=channel, group=g, code=code,
                            signal=signal, entry=sessions[idx+1], exit=exit_date,
-                           horizon=horizon, themes=sorted(set(themes))))
+                           horizon=horizon, themes=sorted(set(themes)),
+                           fill_model=FILL_NEXT_OPEN_CLOSE))
     return sorted(orders, key=lambda x:(x['entry'], x['channel'], x['id'])), diagnostics
+
+
+# ── 종베 체결 경로 (2026-09-16 사전등록) ──────────────────────────────
+# `docs/사전등록_2026-09-16_종베_시가청산경로.md`. 문턱은 내가 고른 것이 아니라
+# `hyeoks_closing_bet.py` 의 연구 정의를 그대로 옮긴 것이다 — 다른 정의를 만들지 않는다.
+PRICE_LIMIT, LIMIT_TOL = 0.30, 0.005     # closing_bet.py:50-51
+ADJ_TOL = 0.35                           # closing_bet.py:52 (§6-12-6)
+
+FILL_NEXT_OPEN_CLOSE = 'next_open_close'        # 원장 전 채널 — 기존 동작
+FILL_1505_NEXT_OPEN = 'closing_1505_next_open'  # 종베
+FILL_MODELS = (FILL_NEXT_OPEN_CLOSE, FILL_1505_NEXT_OPEN)
+
+
+def snapshot_1505(prices, code, day):
+    """그날 15:05 관측. 없으면 None. **만들어내지 않는다.**"""
+    raw = prices.get(code, {}).get(day)
+    snap = raw.get('snapshot_1505') if isinstance(raw, dict) else None
+    return snap if isinstance(snap, dict) else None
+
+
+def entry_1505(prices, code, day):
+    """종베 진입가(15:05 `nowPrice`)와 거래 가능 관측. (가격, 사유) 중 하나.
+
+    일별 `tradable` 로 대신하지 않는다 — 15:05 관측이 바로 그 시점의 관측이다.
+    """
+    snap = snapshot_1505(prices, code, day)
+    if snap is None:
+        return None, 'no_1505_observation'
+    if snap.get('status_at_snapshot') is not True:
+        return None, 'halted_at_1505'
+    price = snap.get('price_1505')
+    if not isinstance(price, (int, float)) or not math.isfinite(price) or price <= 0:
+        return None, 'no_1505_price'
+    return float(price), None
+
+
+def exit_open(prices, code, day, entry_price):
+    """익일 시가 청산가. (가격, 사유) 중 하나. 가드는 closing_bet.day_returns 와 같다.
+
+    ⚠️ 사유가 있으면 **청산하지 않는다.** 그날 종가나 다음 날로 밀어 청산한 것으로
+       계산하지 않는다(사전등록 §2-3).
+    """
+    snap = snapshot_1505(prices, code, day)
+    if snap is None:
+        return None, 'delisted_or_absent'          # 익일소멸
+    op = snap.get('open_price')
+    if not isinstance(op, (int, float)) or not math.isfinite(op) or op <= 0:
+        return None, 'no_open_price'               # 익일시가없음(거래정지)
+    prev_close = snap.get('prev_close_derived')
+    if (not isinstance(prev_close, (int, float)) or not math.isfinite(prev_close)
+            or prev_close <= 0):
+        return None, 'prev_close_unavailable'      # 검사할 수 없으면 쓰지 않는다
+    if abs(op / prev_close - 1.0) > PRICE_LIMIT + LIMIT_TOL:
+        return None, 'price_limit_breach'          # 익일제한폭이탈
+    if entry_price > 0 and abs(prev_close / entry_price - 1.0) > ADJ_TOL:
+        return None, 'corporate_action_suspected'  # 기업행사조정의심
+    return float(op), None
 
 
 def bar(prices, code, day):
@@ -263,13 +321,49 @@ def simulate(orders, sessions, prices, cfg):
     Caps restrict new buys; subsequent market drift does not force liquidation.
     """
     cfg.validate()
+    # 모르는 체결 모형을 **조용히 기본값으로 처리하지 않는다** — 오타 하나로
+    # 종베 주문이 원장 규약으로 체결되면 아무도 모른다. 없으면 기본, 틀리면 오류.
+    for o in orders:
+        fm = o.get('fill_model')
+        if fm is not None and fm not in FILL_MODELS:
+            raise InputError(f"order {o.get('id')!r}: unknown fill_model {fm!r}")
     cash,realized,fees = cfg.initial_cash,0.0,0.0
     active,trades,rejected,series = [],[],[],[]
     peak_positions = peak_codes = 0
     peak_stock_weight = peak_theme_weight = 0.0
     for day in sessions:
         opening = sorted([o for o in orders if o['entry']==day],key=lambda o:(o['channel'],o['id']))
-        bars = {c:bar(prices,c,day) for c in {p['code'] for p in active}|{o['code'] for o in opening}}
+        # 하루 안의 순서 (사전등록 §2-2): ① 시가 청산 → ② 시가 매수 → ③ 15:05 매수 → ④ 종가 청산
+        open_now = [o for o in opening if o.get('fill_model') != FILL_1505_NEXT_OPEN]
+        bet_now = [o for o in opening if o.get('fill_model') == FILL_1505_NEXT_OPEN]
+
+        # ① 시가 청산 — 종베. 현금이 먼저 돌아와야 그날 매수에 쓸 수 있다.
+        #    가드에 걸리면 **청산하지 않고 그대로 남긴다.**
+        held = []
+        for pos in active:
+            # 종베의 청산일은 **정확히 다음 거래일 하루**다. `>=` 가 아니라 `==` 인 것이
+            #    사전등록 §2-3 의 요구다 — 가드에 걸린 포지션을 다음 날로 밀어
+            #    청산한 것으로 계산하지 않는다. 한 번 막히면 그대로 남는다.
+            if (pos.get('fill_model') != FILL_1505_NEXT_OPEN
+                    or pos['exit'] is None or day != pos['exit']):
+                held.append(pos)
+                continue
+            px, why = exit_open(prices, pos['code'], day, pos['entry_price_raw'])
+            if why:
+                pos = dict(pos, exit_blocked=why)
+                held.append(pos)
+                continue
+            fill = px*(1-cfg.slippage)
+            proceeds = pos['qty']*fill*(1-cfg.sell_fee)
+            profit = proceeds-pos['cost_basis']
+            cash += proceeds
+            fees += pos['qty']*fill*cfg.sell_fee
+            realized += profit
+            trades.append(dict(pos,exit_actual=day,exit_fill=fill,pnl=profit,
+                               return_pct=100*profit/pos['cost_basis']))
+        active = held
+
+        bars = {c:bar(prices,c,day) for c in {p['code'] for p in active}|{o['code'] for o in open_now}}
         def exposures(field):
             codes,themes = {},{}
             for p in active:
@@ -278,7 +372,7 @@ def simulate(orders, sessions, prices, cfg):
                 for t in p['themes']:
                     themes[t] = themes.get(t,0)+value
             return codes,themes
-        for order in opening:
+        for order in open_now:
             b = bars[order['code']]
             if not b['tradable']:
                 rejected.append(dict(id=order['id'],date=day,reason='not_tradable'))
@@ -299,7 +393,36 @@ def simulate(orders, sessions, prices, cfg):
                 continue
             cash -= debit
             fees += qty*fill*cfg.buy_fee
-            active.append(dict(order,qty=qty,entry_fill=fill,cost_basis=debit))
+            active.append(dict(order,qty=qty,entry_fill=fill,cost_basis=debit,
+                               entry_price_raw=b['open']))
+
+        # ③ 15:05 매수 — 종베. 장중이므로 시가 이후다.
+        #    거래 가능 판정은 그 시점 스냅샷 관측으로 한다(일별 tradable 로 대신하지 않는다).
+        for order in bet_now:
+            px, why = entry_1505(prices, order['code'], day)
+            if why:
+                rejected.append(dict(id=order['id'],date=day,reason=why))
+                continue
+            bars.setdefault(order['code'], bar(prices, order['code'], day))
+            codes,themes = exposures('close')       # 15:05 는 종가 쪽에 가깝다
+            fill = px*(1+cfg.slippage)
+            qty = math.floor(cfg.ticket_cash/(fill*(1+cfg.buy_fee)))
+            debit = qty*fill*(1+cfg.buy_fee)
+            value = qty*bars[order['code']]['close']
+            nav_after = cash+sum(codes.values())-debit+value
+            reason = None
+            if qty<=0: reason='below_one_share'
+            elif debit>cash+1e-8: reason='insufficient_cash'
+            elif codes.get(order['code'],0)+value>cfg.max_stock_weight*nav_after+1e-8: reason='stock_cap'
+            elif any(themes.get(t,0)+value>cfg.max_theme_weight*nav_after+1e-8 for t in order['themes']): reason='theme_cap'
+            if reason:
+                rejected.append(dict(id=order['id'],date=day,reason=reason))
+                continue
+            cash -= debit
+            fees += qty*fill*cfg.buy_fee
+            active.append(dict(order,qty=qty,entry_fill=fill,cost_basis=debit,
+                               entry_price_raw=px))
+
         peak_positions = max(peak_positions,len(active))
         peak_codes = max(peak_codes,len({p['code'] for p in active}))
         for field in ('open','close'):
@@ -311,6 +434,9 @@ def simulate(orders, sessions, prices, cfg):
         remaining = []
         for p in active:
             b = bars[p['code']]
+            if p.get('fill_model') == FILL_1505_NEXT_OPEN:
+                remaining.append(p)                 # 종베는 ①에서만 청산한다
+                continue
             if p['exit'] is not None and day>=p['exit'] and b['tradable']:
                 fill = b['close']*(1-cfg.slippage)
                 proceeds = p['qty']*fill*(1-cfg.sell_fee)
