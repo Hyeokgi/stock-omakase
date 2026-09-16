@@ -11,6 +11,7 @@ import random
 import json
 from after_market_quotes import scanner_after_quote, AFTER_HEADER, NXT_HEADER
 import scanner_census
+import rank_pool
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -3161,6 +3162,32 @@ def update_technical_data(df_theme, all_theme_map):
                 else:
                     # 현행(기본): V2 상위 2개. 위 실증 근거대로라면 과열 구간을 집을 수 있음.
                     supply_top2 = sorted(gate_passed, key=lambda x: x[31], reverse=True)[:2]
+
+                # 🆕 [순위 풀 적재 2026-09-16] "3~5위였다면 알파가 얼마였나" 를 나중에 재려면
+                #    지금 남겨야 한다. 1.5단계에서 그걸 재려다 **뽑히지 않은 후보의 수익률이
+                #    어디에도 없어서** 잴 수 없었다(candidate_pool 은 메모리, TOP2 만 원장).
+                #
+                #    ⚠️ **관측만 추가한다. 선정을 바꾸지 않는다.** chart_top2·supply_top2 가
+                #       이미 정해진 뒤에 같은 정렬 결과를 읽기만 한다. 그래야 기존 표본의
+                #       성격이 유지되고 변경 전/후 비교가 성립한다.
+                #    ⚠️ 수익률은 안 남긴다 — 나중에 코드+날짜로 일봉에서 계산한다
+                #       (원장과 같은 규약: T+1 시가 → T+N 종가). 지금은 T+1 이 아직 없다.
+                #    ⚠️ 기록 실패가 스캔을 죽이지 않는다(scanner_census 와 같은 규율).
+                _pool_runid = os.environ.get("GITHUB_RUN_ID", "")
+                for _ch, _ranked, _picked, _sidx in (
+                        ("차트TOP2", sorted(candidate_pool, key=lambda x: x[29], reverse=True),
+                         [r[1] for r in chart_top2], 29),
+                        ("수급TOP2", sorted(gate_passed, key=lambda x: x[31], reverse=True),
+                         [r[1] for r in supply_top2], 31)):
+                    _pok, _pmsg = rank_pool.record(
+                        today_str, _ch, _ranked, _picked, _sidx,
+                        run_id=_pool_runid)
+                    if _pok:
+                        print(f"   🗂️ 순위 풀 보존 — {_pmsg}")
+                    elif _pmsg.startswith("기록 실패"):
+                        print(f"   ❌ [순위 풀 보존 실패] {_ch}: {_pmsg}")
+                    else:
+                        print(f"   · 순위 풀 생략 — {_ch}: {_pmsg}")
 
                 # 대조군 랜덤2: '배지필터 이전' 전체 results에서 결정론적 추출 (seed=날짜 → 재현가능, builtin hash() 비사용)
                 valid_results = [r for r in results if len(r) >= 35 and parse_price_num(r[2]) > 0]
