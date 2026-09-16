@@ -1,0 +1,50 @@
+name: 🔎 HYEOKS 구 HTML 소스 진단
+
+# 목적: 2026-09-15 부터 finance.naver.com 구 HTML 다섯 소스가 전부 0건이다.
+#       예외가 난 게 아니라 `table.type_2` 가 없을 뿐 — 개편으로 보이지만
+#       응답의 모양을 봐야 확정할 수 있다.
+#
+# ⚠️ 개발 환경에서는 프록시가 finance.naver.com 을 막는다(403).
+#    실패가 일어나는 바로 그 환경에서 재야 의미가 있어서 액션으로 둔다.
+#
+# 아무것도 고치지 않는다. 시트도 텔레그램도 건드리지 않는다 — **읽고 보고만 한다.**
+# 수동 전용: 진단은 필요할 때 하는 것이지 매일 돌 일이 아니다.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 코드 가져오기
+        uses: actions/checkout@v7
+
+      - name: 파이썬 설치
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.10'
+
+      - name: 라이브러리 설치
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 gspread oauth2client
+
+      - name: 🧪 자기검증 (경보 판정 로직)
+        run: python -m unittest discover -s tests -p 'test_static_collector_health.py' -v
+
+      - name: 🔎 진단
+        # secret.json 을 만들지 않는다 — 시트에 닿을 수 없는 상태로 돌린다.
+        run: python hyeoks_static_collector.py --probe 2>&1 | tee probe.txt
+
+      - name: 📋 결과 보관
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: static-source-probe
+          path: probe.txt
+          retention-days: 90
