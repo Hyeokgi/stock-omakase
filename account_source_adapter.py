@@ -216,6 +216,26 @@ def coverage(need, snap_dates, root="data/market_snapshot"):
     return known, missing, have_by_date
 
 
+def split_missing(missing, snap_dates):
+    """결손을 **둘로 나눈다.** 섞어 놓으면 매일 아침 오탐이 된다.
+
+    🔴 2026-09-16 — 창을 8/28 로 고정하고 09:15 KST 에 돌렸더니 결손 6 이 나왔다.
+       전부 그날(9/16) 칸이었다 — 15:05 스냅샷은 15:05 에 생기니 아직 없는 게 당연하다.
+       이걸 그냥 '결손'이라 적으면 장중 실행마다 없는 구멍을 보고하게 된다.
+       (9/06 리포트 중복 게시를 미수집으로 오판했던 것과 같은 실수다.)
+
+       그렇다고 조용히 빼지도 않는다 — **날짜를 밝혀서** 읽는 사람이 판단하게 한다.
+       '오늘이라 아직'인지 '그날 수집이 실패'인지는 날짜를 보면 드러난다.
+
+    돌려주는 것: (그 날짜 스냅샷 자체가 없는 칸, 스냅샷은 있는데 종목이 없는 칸,
+                 파일이 없는 날짜 목록)
+    """
+    have = set(snap_dates)
+    no_file = [(c, d) for c, d in missing if d not in have]
+    in_file = [(c, d) for c, d in missing if d in have]
+    return no_file, in_file, sorted({d for _, d in no_file})
+
+
 def build_source(rows, sessions, prices, as_of, horizon_of,
                  config=None, root="data/market_snapshot", now=None):
     """v3 준비 자료를 만든다. **검증 상태를 정직하게 적는 것이 핵심이다.**
@@ -295,6 +315,10 @@ def gap_report(gaps, as_of, include_samples=False):
              f"| 🔴 **거부된 원장 행** | {gaps.get('invalid_rows', 0)} |",
              f"| 15:05 상태 관측값 있음 | {gaps['tradable_known']} |",
              f"| 15:05 상태 관측값 없음 | {gaps['tradable_missing']} |",
+             (f"| ↳ 그 날짜 스냅샷 자체가 없음 | {gaps['missing_no_snapshot_file']} |"
+              if 'missing_no_snapshot_file' in gaps else ""),
+             (f"| ↳ 스냅샷은 있는데 종목이 없음 | {gaps['missing_code_absent']} |"
+              if 'missing_code_absent' in gaps else ""),
              f"| 가격 결손 | {price} |",
              f"| 달력 내 스냅샷 파일 일수 | {gaps['snapshot_dates_in_window']} |",
              f"| 첫 파일 | {gaps['first_snapshot']} |",
@@ -308,6 +332,12 @@ def gap_report(gaps, as_of, include_samples=False):
              "- 짧은 구간은 연결 검증에 사용할 수 있으나 수익성 채택 근거는 아니다.",
              "- 창을 좁혀도 전 구간 검증이 자동 보장되지 않는다.",
              "- 상태가 없다는 이유로 보유 평가용 OHLC를 삭제하거나 정상 거래로 추정하지 않는다.", ""]
+    if gaps.get('no_snapshot_dates'):
+        lines += ["", "## 스냅샷 파일이 없는 날짜", "",
+                  "아래 날짜는 15:05 스냅샷 **파일 자체가 없다.** "
+                  "그날이 오늘이고 아직 15:05 전이면 정상이고, 지난 날짜면 수집 실패다. "
+                  "**둘을 자동으로 판정하지 않는다** — 날짜를 보고 사람이 안다.", "",
+                  "- " + ", ".join(f"`{d}`" for d in gaps['no_snapshot_dates']), ""]
     if include_samples:
         lines.append("비공개 결손 예시: "+", ".join(gaps['sample_tradable_missing']))
     if gaps.get('invalid_rows'):
@@ -559,6 +589,41 @@ def self_test():
 
         rep = gap_report(gaps, "2026-09-03")
         chk("체결 상태와 구별한다", "실체결 보장" in rep)
+        # ── 결손의 두 가지 원인 (2026-09-16) ──────────────────────────
+        miss = [("000001", "2026-09-15"), ("000002", "2026-09-16"),
+                ("000003", "2026-09-16")]
+        nofile, infile, dates = split_missing(miss, ["2026-09-15"])
+        chk("스냅샷 파일이 없는 날의 칸을 따로 센다",
+            nofile == [("000002", "2026-09-16"), ("000003", "2026-09-16")], f"{nofile}")
+        chk("스냅샷은 있는데 종목이 없는 칸은 따로 센다",
+            infile == [("000001", "2026-09-15")], f"{infile}")
+        chk("파일 없는 날짜를 중복 없이 모은다", dates == ["2026-09-16"], f"{dates}")
+        chk("결손이 없으면 둘 다 비어 있다",
+            split_missing([], ["2026-09-15"]) == ([], [], []))
+
+        # 🔴 실제로 있었던 장면 — 09:15 KST 실행에서 결손 6 이 전부 그날 칸이었다.
+        #    이걸 그냥 '결손'이라 적으면 매일 아침 오탐이 된다.
+        g4 = {"required_cells": 189, "invalid_rows": 0, "sample_invalid": [],
+              "tradable_known": 183, "tradable_missing": 6, "price_missing": None,
+              "snapshot_dates_in_window": 13, "first_snapshot": "2026-08-28",
+              "entry_not_in_calendar": 242, "sample_tradable_missing": [],
+              "calendar_days": 14, "calendar_first": "2026-08-28",
+              "calendar_last": "2026-09-16", "window_start": "2026-08-28",
+              "missing_no_snapshot_file": 6, "missing_code_absent": 0,
+              "no_snapshot_dates": ["2026-09-16"]}
+        md4 = gap_report(g4, "2026-09-16")
+        chk("결손을 원인별로 쪼개 보여준다",
+            "| ↳ 그 날짜 스냅샷 자체가 없음 | 6 |" in md4
+            and "| ↳ 스냅샷은 있는데 종목이 없음 | 0 |" in md4)
+        chk("파일 없는 날짜를 **밝힌다**(조용히 빼지 않는다)",
+            "## 스냅샷 파일이 없는 날짜" in md4 and "`2026-09-16`" in md4)
+        chk("오늘인지 수집실패인지 도구가 판정하지 않는다",
+            "둘을 자동으로 판정하지 않는다" in md4)
+        chk("파일 없는 날짜가 없으면 그 절도 없다",
+            "## 스냅샷 파일이 없는 날짜" not in gap_report(
+                dict(g4, no_snapshot_dates=[], tradable_missing=0,
+                     missing_no_snapshot_file=0), "2026-09-16"))
+
         # ── 창 고정 (2026-09-16 사용자 결정) ───────────────────────────
         cal = ["2026-08-26", "2026-08-27", "2026-08-28", "2026-08-31", "2026-09-01"]
         chk("창 시작일 이후만 남긴다",
@@ -683,12 +748,16 @@ def main(argv=None):
                                                   sessions[-1], a.entry_model)
     snaps = [d for d in snapshot_dates() if d in set(sessions)]
     known, missing, _have = coverage(need, snaps)
+    miss_nofile, miss_infile, nofile_dates = split_missing(missing, snaps)
     codes = {c for c, _ in need}
     ent = sorted({d for _, d in need})
     gaps = {
         "required_cells": len(need), "invalid_rows": len(invalid),
         "sample_invalid": invalid[:5], "tradable_known": len(known),
         "tradable_missing": len(missing), "price_missing": None, 'entry_model': a.entry_model,
+        "missing_no_snapshot_file": len(miss_nofile),
+        "missing_code_absent": len(miss_infile),
+        "no_snapshot_dates": nofile_dates,
         # 🔴 2026-09-15 — 측정한 **달력 구간을 리포트에 박는다.** 같은 날 --days 를 바꿔
         #    두 번 돌리면 파일명이 같아 앞 결과를 덮어썼고, 남은 파일만 봐서는 어느 창을
         #    쟀는지 알 수 없었다(실제로 120일 결과가 13일 결과에 덮였다).
