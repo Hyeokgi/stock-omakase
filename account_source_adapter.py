@@ -50,6 +50,19 @@ KST = datetime.timezone(datetime.timedelta(hours=9))
 #    수집기의 `len(c)==6 and c.isalnum()` 보다 좁게 간다 — 파이썬 `isalnum()` 은
 #    한글 음절도 참이라('가나다라마바'.isalnum() is True) 깨진 값을 통과시킨다.
 #    여기서는 ASCII 대문자·숫자 6자리로 못박는다.
+# ── 계좌 재구성 창 (2026-09-16 사용자 결정) ──────────────────────────
+# 9/16 실측으로 두 선택지의 대가가 확정됐다(`docs/계좌연결_2026-09-16.md` §4):
+#   · 120거래일 창 → 기초 칸 625 중 15:05 관측 **결손 436(70%)**
+#   · 8/28 이후 창 → 183 중 **결손 0(100% 관측)**, 대신 신호 242개가 창 밖
+# 사용자가 후자를 택했다. `tradeStopYn` 은 15:05 스냅샷에만 있고 스냅샷은 8/28 부터라
+# 그 이전 구간은 거래정지 여부를 **확인할 방법이 없다** — 양수 가격이나 거래량으로
+# 추정하지 않는다는 원칙(9/09 리포트)을 지키면 남는 선택지가 이것뿐이다.
+#
+# ⚠️ **`--days` 로 창을 잡지 않는다.** 거래일 개수는 날이 갈수록 굴러가서
+#    오늘의 `--days 13` 은 이미 8/31~9/16 이고 8/28 을 조용히 버린다.
+#    창의 시작은 **날짜로 고정**한다.
+WINDOW_START = "2026-08-28"
+
 KRX_CODE = re.compile(r'[0-9A-Z]{6}')
 
 
@@ -114,6 +127,30 @@ def tradable_map(date, root="data/market_snapshot"):
                          'captured_at_semantics': 'collector_start_not_quote_time',
                          'source': os.path.basename(path)}
     return out
+
+
+
+def window_sessions(sessions, start, snapshot_first):
+    """거래일 달력을 창 시작일 이후로 자른다. 전제가 깨지면 **막는다**.
+
+    start 가 None 이면 자르지 않는다(비교용 전체 창).
+    """
+    if start is None:
+        return list(sessions)
+    if not sessions:
+        raise ValueError('거래일 달력이 비어 있다')
+    if start not in sessions:
+        raise ValueError(
+            f"창 시작일 {start} 이 거래일 달력에 없다 — 휴장일이거나 달력이 그 앞까지 "
+            f"닿지 않는다(달력 {sessions[0]} ~ {sessions[-1]}). --days 를 늘려라.")
+    # 전제 확인: 이 창은 "첫 15:05 스냅샷부터"라는 이유로 정해졌다.
+    # 스냅샷이 더 앞으로 생겼거나 8/28 파일이 사라지면 그 이유가 더는 성립하지 않는다.
+    if snapshot_first is not None and snapshot_first != start:
+        raise ValueError(
+            f"창 시작일({start})과 첫 15:05 스냅샷({snapshot_first})이 다르다. "
+            "이 창은 '첫 스냅샷부터'라는 근거로 정해졌다 — 근거가 바뀌었으면 "
+            "숫자를 맞추지 말고 사람이 다시 정해야 한다.")
+    return [d for d in sessions if d >= start]
 
 
 # ── 원장에서 필요한 (종목, 날짜) 를 뽑는다 ────────────────────────────
@@ -249,7 +286,10 @@ def gap_report(gaps, as_of, include_samples=False):
              f"진입 모형: {gaps.get('entry_model', 'next_open')}",
              (f"측정 달력 구간: {gaps['calendar_first']} ~ {gaps['calendar_last']} "
               f"({gaps['calendar_days']}거래일)" if gaps.get('calendar_days')
-              else "측정 달력 구간: 미기록"), "",
+              else "측정 달력 구간: 미기록"),
+             (f"창 시작 고정: **{gaps['window_start']}** (2026-09-16 결정 · 첫 15:05 스냅샷)"
+              if gaps.get('window_start')
+              else "창 시작 고정: 없음 — 전체 구간 비교 측정이다(재구성용 아님)"), "",
              "| 항목 | 값 |", "|---|---:|",
              f"| 예정 보유 구간 기초 칸 | {gaps['required_cells']} |",
              f"| 🔴 **거부된 원장 행** | {gaps.get('invalid_rows', 0)} |",
@@ -519,6 +559,54 @@ def self_test():
 
         rep = gap_report(gaps, "2026-09-03")
         chk("체결 상태와 구별한다", "실체결 보장" in rep)
+        # ── 창 고정 (2026-09-16 사용자 결정) ───────────────────────────
+        cal = ["2026-08-26", "2026-08-27", "2026-08-28", "2026-08-31", "2026-09-01"]
+        chk("창 시작일 이후만 남긴다",
+            window_sessions(cal, "2026-08-28", "2026-08-28")
+            == ["2026-08-28", "2026-08-31", "2026-09-01"])
+        chk("시작일 자신은 포함한다",
+            window_sessions(cal, "2026-08-28", "2026-08-28")[0] == "2026-08-28")
+        chk("none 이면 자르지 않는다", window_sessions(cal, None, "2026-08-28") == cal)
+
+        # 🔴 이 검사가 이번 결정의 핵심이다 — 개수로 창을 잡으면 날마다 굴러간다.
+        #    9/15 에는 --days 13 이 8/28 부터였지만 9/16 에는 8/31 부터다.
+        #    (9/15 의 --days 13 은 8/28 부터였지만 9/16 의 --days 13 은 8/31 부터다.)
+        by_count = lambda upto, n: [d for d in cal if d <= upto][-n:]
+        chk("개수로 자르면 기준일이 하루 가면 시작일도 밀린다",
+            by_count("2026-08-31", 3)[0] == "2026-08-27"
+            and by_count("2026-09-01", 3)[0] == "2026-08-28",
+            f'{by_count("2026-08-31", 3)} vs {by_count("2026-09-01", 3)}')
+        chk("날짜로 고정하면 기준일이 가도 시작일이 그대로다 — 이번 결정의 핵심",
+            window_sessions([d for d in cal if d <= "2026-08-31"],
+                            "2026-08-28", "2026-08-28")[0] == "2026-08-28"
+            and window_sessions(cal, "2026-08-28", "2026-08-28")[0] == "2026-08-28")
+
+        def raises(fn):
+            try:
+                fn(); return False
+            except ValueError:
+                return True
+        chk("달력이 시작일까지 닿지 않으면 막는다(조용히 당기지 않는다)",
+            raises(lambda: window_sessions(["2026-09-01", "2026-09-02"],
+                                           "2026-08-28", "2026-08-28")))
+        chk("시작일이 휴장일이면 막는다",
+            raises(lambda: window_sessions(cal, "2026-08-29", "2026-08-29")))
+        chk("첫 스냅샷이 창 시작과 다르면 막는다 — 창의 **근거**가 바뀐 것이다",
+            raises(lambda: window_sessions(cal, "2026-08-28", "2026-08-26")))
+        chk("스냅샷이 아예 없으면 근거 검사를 건너뛴다(달력 검사는 그대로)",
+            window_sessions(cal, "2026-08-28", None)[0] == "2026-08-28")
+
+        g3 = {"required_cells": 1, "invalid_rows": 0, "sample_invalid": [],
+              "tradable_known": 1, "tradable_missing": 0, "price_missing": None,
+              "snapshot_dates_in_window": 1, "first_snapshot": "2026-08-28",
+              "entry_not_in_calendar": 0, "sample_tradable_missing": [],
+              "calendar_days": 13, "calendar_first": "2026-08-28",
+              "calendar_last": "2026-09-15", "window_start": "2026-08-28"}
+        chk("리포트가 고정된 창 시작을 밝힌다",
+            "창 시작 고정: **2026-08-28**" in gap_report(g3, "2026-09-16"))
+        chk("창을 안 자른 측정은 재구성용이 아니라고 적는다",
+            "재구성용 아님" in gap_report(dict(g3, window_start=None), "2026-09-16"))
+
         # 🔴 측정 구간이 리포트에 남아야 한다 — 같은 날 다른 --days 로 덮어쓴 사고
         g2 = {"required_cells": 1, "invalid_rows": 0, "sample_invalid": [],
               "tradable_known": 1, "tradable_missing": 0, "price_missing": None,
@@ -554,6 +642,9 @@ def main(argv=None):
     ap.add_argument("--out", default=None)
     ap.add_argument('--entry-model', choices=['next_open','closing_1505'], default='next_open',
                     help='closing_1505: 원장 신호일 15:05 진입~다음 거래일의 자료 필요량만 점검; 성과 계산 아님')
+    ap.add_argument('--window-start', default=WINDOW_START,
+                    help=f"계좌 재구성 창의 시작 거래일(기본 {WINDOW_START}, 2026-09-16 결정). "
+                         "'none' 이면 자르지 않는다 — 비교용이지 재구성용이 아니다.")
     a = ap.parse_args(argv)
     if a.self_test:
         return self_test()
@@ -573,7 +664,17 @@ def main(argv=None):
 
     # 거래일 달력 — 지수 일봉에서. ⚠️ 이걸 **독립 검증 자료로 쓰지 않는다.**
     sessions = sorted({b["date"] for b in fetch_bars("KOSPI", a.days)})
-    print(f"📅 거래일 {len(sessions)}일 ({sessions[0]} ~ {sessions[-1]})")
+    print(f"📅 받은 거래일 {len(sessions)}일 ({sessions[0]} ~ {sessions[-1]})")
+
+    # 창 자르기 — 날짜로 고정한다(개수로 잡으면 날마다 굴러간다).
+    win = None if str(a.window_start).lower() == 'none' else a.window_start
+    all_snaps = snapshot_dates()
+    sessions = window_sessions(sessions, win, all_snaps[0] if all_snaps else None)
+    if win:
+        print(f"🪟 창 {win} 이후로 자름 → {len(sessions)}거래일 "
+              f"({sessions[0]} ~ {sessions[-1]}) · 근거: 첫 15:05 스냅샷")
+    else:
+        print("🪟 창 자르지 않음 — 비교용 측정이다(재구성용 아님)")
 
     from hyeoks_verdict import HORIZON, DEFAULT_HORIZON
     horizon_of = lambda ch: HORIZON.get(ch, DEFAULT_HORIZON)
@@ -593,6 +694,7 @@ def main(argv=None):
         #    쟀는지 알 수 없었다(실제로 120일 결과가 13일 결과에 덮였다).
         "calendar_days": len(sessions),
         "calendar_first": sessions[0], "calendar_last": sessions[-1],
+        "window_start": win,
         "snapshot_dates_in_window": len(snaps),
         "first_snapshot": snaps[0] if snaps else None,
         "entry_not_in_calendar": len(unknown_entry),
@@ -605,8 +707,8 @@ def main(argv=None):
 
     md = gap_report(gaps, today)
     # 파일명에도 조건을 넣는다 — 조건이 다른 측정은 다른 파일이어야 한다.
-    path = a.out or (f"data/account/{today}_source_gaps_"
-                     f"{a.entry_model}_{len(sessions)}d.md")
+    path = a.out or (f"data/account/{today}_source_gaps_{a.entry_model}_"
+                     f"{('from' + win.replace('-', '')) if win else 'full'}.md")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(md)

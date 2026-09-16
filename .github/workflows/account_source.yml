@@ -7,6 +7,10 @@ name: 📋 HYEOKS 계좌 입력 자료 준비 상태
 # ⚠️ 이 워크플로는 v3 입력을 만들지 않는다. 어댑터는 확인하지 못한 것에
 #    verified 를 넣지 않으므로 산출물은 대개 **빌더가 막는 입력**이고 그게 맞다.
 #
+# 창: 2026-09-16 사용자 결정으로 **8/28(첫 15:05 스냅샷) 이후**로 고정한다.
+#     개수(`--days`)로 창을 잡지 않는다 — 날마다 굴러가 시작일이 밀린다.
+#     `--days` 는 달력을 얼마나 받을지일 뿐이고 창보다 넉넉해야 한다.
+#
 # 읽기 전용: 시트를 읽기만 한다. 락은 메인 스캐너와 공유한다(찢어진 읽기 방지).
 
 on:
@@ -22,6 +26,11 @@ on:
         type: choice
         options: [next_open, closing_1505]
         default: next_open
+      window_start:
+        description: "창 시작 거래일 고정 (2026-09-16 결정: 8/28 = 첫 15:05 스냅샷). 'none' 은 비교용"
+        required: false
+        default: '2026-08-28'
+        type: string
 
 concurrency:
   group: hyeoks-sheet-lock
@@ -65,9 +74,11 @@ jobs:
       env:
         SOURCE_DAYS: ${{ inputs.days }}
         SOURCE_ENTRY_MODEL: ${{ inputs.entry_model }}
+        SOURCE_WINDOW_START: ${{ inputs.window_start }}
       run: |
         set +e
-        python account_source_adapter.py --gaps-only --days "$SOURCE_DAYS" --entry-model "$SOURCE_ENTRY_MODEL" 2>&1 | tee source.txt
+        python account_source_adapter.py --gaps-only --days "$SOURCE_DAYS" \
+          --entry-model "$SOURCE_ENTRY_MODEL" --window-start "$SOURCE_WINDOW_START" 2>&1 | tee source.txt
         echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
         exit 0
 
