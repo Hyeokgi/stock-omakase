@@ -1,0 +1,82 @@
+name: 📅 HYEOKS 거래일 독립 근거 대조
+
+# 목적: 거래일 목록의 **순환논리를 깬다.**
+#       지수 일봉으로 만든 목록을 같은 목록으로 검증할 수 없으므로,
+#       출처가 다른 예정 휴장 목록(한국천문연구원 월력요항 + KRX 규정,
+#       data/market_snapshot/nontrading.txt)에서 거래일을 유도해 실제 관측과 맞춘다.
+#
+# ⚠️ 이 대조는 **실제 장 운영 인증이 아니다.** 등록 달력 자체가
+#    'scheduled_closures_only_not_actual_session_certification' 이라고 밝히고 있다.
+#
+# 읽기 전용: 저장소 파일만 읽는다. 시트도 네트워크도 쓰지 않는다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: '대조 시작일 (비우면 첫 15:05 스냅샷)'
+        required: false
+        default: ''
+        type: string
+      end:
+        description: '대조 종료일 (비우면 마지막 15:05 스냅샷)'
+        required: false
+        default: ''
+        type: string
+  schedule:
+    - cron: '30 7 * * 1'      # 월 16:30 KST — 그 주가 시작되기 전 달력 상태 점검
+
+permissions:
+  contents: write
+
+jobs:
+  calendar-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+    - name: 📥 코드 가져오기
+      uses: actions/checkout@v7
+
+    - name: 🐍 파이썬 세팅
+      uses: actions/setup-python@v7
+      with:
+        python-version: '3.10'
+
+    - name: 🧪 자기검증
+      run: python -m unittest discover -s tests -p 'test_evidence.py' -v
+
+    - name: 📅 대조
+      id: run
+      run: |
+        set +e
+        ARGS=""
+        [ -n "${{ inputs.start }}" ] && ARGS="$ARGS --start ${{ inputs.start }}"
+        [ -n "${{ inputs.end }}" ] && ARGS="$ARGS --end ${{ inputs.end }}"
+        python hyeoks_evidence.py $ARGS --emit data/account/calendar_verification.json 2>&1 | tee cal.txt
+        echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        exit 0
+
+    - name: 📋 실행 로그 보관
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: calendar-evidence-log
+        path: cal.txt
+        retention-days: 90
+
+    - name: 💾 결과 커밋
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add data/account/ || true
+        git diff --staged --quiet || git commit -m "data: 거래일 독립 근거 대조 $(date -u +%Y-%m-%d) [skip ci]"
+        git push
+
+    - name: 🚦 어긋나면 잡 실패
+      run: |
+        if [ "${{ steps.run.outputs.exit_code }}" != "0" ]; then
+          echo "❌ 예정 달력과 관측이 어긋납니다 — 사람이 확인해야 합니다"
+          exit 1
+        fi
+        echo "✅ 전 구간 일치"
