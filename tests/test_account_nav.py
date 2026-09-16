@@ -69,6 +69,28 @@ class AccountTests(unittest.TestCase):
         r=a.calculate(b)
         self.assertEqual(r['diagnostics'][0]['status'],'pending_entry')
 
+    def test_before_window_counted_not_fatal(self):
+        # 2026-09-16 창 고정: 창보다 앞선 신호는 오류가 아니라 재구성 대상이 아닐 뿐
+        b=fixture();b['rows'][1][1]='2026-08-01'
+        r=a.calculate(b)
+        d=[x for x in r['diagnostics'] if x['status']=='before_reconstruction_window']
+        self.assertEqual(len(d),1)
+        self.assertEqual(d[0]['signal'],'2026-08-01')
+        self.assertEqual(d[0]['window_start'],b['sessions'][0])
+
+    def test_inside_window_but_not_a_session_still_fatal(self):
+        # 창 안인데 거래일 달력에 없는 날짜는 손상이다 — 범위 밖과 구별한다
+        b=fixture();b['sessions'].remove('2026-09-03');b['rows'][1][1]='2026-09-03'
+        with self.assertRaises(a.InputError):a.calculate(b)
+
+    def test_future_signal_still_fatal(self):
+        b=fixture();b['rows'][1][1]='2027-01-04'
+        with self.assertRaises(a.InputError):a.calculate(b)
+
+    def test_empty_channel_still_fatal(self):
+        b=fixture();b['rows'][1][2]=''
+        with self.assertRaises(a.InputError):a.calculate(b)
+
     def test_calendar_holiday_not_weekday_approximation(self):
         b=fixture();b['sessions'].remove('2026-09-03')
         r=a.calculate(b)['accounts']['strategy']

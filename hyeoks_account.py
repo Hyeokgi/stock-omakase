@@ -195,7 +195,21 @@ def orders_from_ledger(bundle, sessions, as_of):
             diagnostics.append(dict(row=row_no, status='explicit_exclusion'))
             continue
         signal, channel = date(str(row[1]).strip()), str(row[2]).strip()
-        if not channel or signal not in indices or signal > as_of:
+        # 🔴 2026-09-16 — 계좌 재구성 창을 8/28 이후로 고정한 결과(사용자 결정,
+        #    `docs/계좌연결_2026-09-16.md` §7). 창보다 **앞선** 신호는 오류가 아니라
+        #    재구성 대상이 아닐 뿐이다. 그 전에는 여기서 전부 raise 해서, 창을 좁히는 순간
+        #    원장 대부분이 계산기를 막았다(9/16 실측으로 242행).
+        #    버리지 않고 **세어서 남긴다** — 빌더의 행 정합성 검사가 이 수를 받는다.
+        #
+        #    ⚠️ 나머지 보호는 그대로다. 창 **안**인데 거래일 달력에 없는 날짜,
+        #    기준일보다 뒤인 날짜, 빈 채널은 여전히 오류다 — 그건 손상이지 범위 밖이 아니다.
+        if not channel:
+            raise InputError(f'row {row_no}: empty channel')
+        if signal < sessions[0]:
+            diagnostics.append(dict(row=row_no, status='before_reconstruction_window',
+                                    signal=signal, window_start=sessions[0]))
+            continue
+        if signal not in indices or signal > as_of:
             raise InputError(f'row {row_no}: invalid signal date/channel')
         g = group(channel)
         if g is None:
