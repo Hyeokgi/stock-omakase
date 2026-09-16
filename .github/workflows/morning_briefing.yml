@@ -34,5 +34,8 @@ jobs:
         GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
         KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
         KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+        # 🔴 2026-09-17 — FRED 키가 소스에 하드코딩돼 있었고 저장소는 공개다.
+        #    git 이력에 남으므로 **키 교체 후** 이 secret 을 등록해야 한다.
+        FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
       run: |
         python hyeoks_morning.py

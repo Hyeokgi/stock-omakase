@@ -18,36 +18,102 @@ KST = datetime.timezone(datetime.timedelta(hours=9))
 # ==========================================
 KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")
-FRED_API_KEY = "eed13162f33f0ad6547783b9bb27190b"
+# 🔴 2026-09-17 — 이 키는 공개 저장소 소스에 하드코딩돼 있었다.
+#    git 이력에 남아 있으므로 **키 교체가 필요하다**(코드만 고쳐서는 노출이 안 사라진다).
+#    교체 후 FRED_API_KEY 를 Actions secret 으로 넣으면 아래가 그걸 읽는다.
+FRED_API_KEY = os.environ.get("FRED_API_KEY", "")
+
+# FRED 계열 — 단위는 FRED 가 정한 것이고 우리가 고른 것이 아니다.
+#   WTREGEN  : Millions of Dollars   ← 2026-09-17 정정. '십억 달러'로 적혀 있었다.
+#              실측 883,335 를 십억으로 읽으면 883조 달러가 되어 말이 안 된다.
+#   RRPONTSYD: Billions of Dollars
+#   WALCL    : Millions of Dollars
+#   M2SL     : Billions of Dollars
+FRED_SERIES = {
+    "WTREGEN": "TGA (미 재무부 일반계정 / 단위: 백만 달러)",
+    "RRPONTSYD": "Reverse Repo (역레포 잔고 / 단위: 십억 달러)",
+    "BAMLH0A0HYM2": "High-Yield Spread (하이일드 스프레드 / 단위: %)",
+    "WALCL": "Fed Total Assets (연준 총자산 / 단위: 백만 달러)",
+    "M2SL": "M2 (미국 총통화량 / 단위: 십억 달러)",
+}
+FRED_TIMEOUT = 15      # 5초는 너무 짧았다 — 계열마다 응답 편차가 크다
+FRED_RETRY = 1         # 일시 실패 한 번은 넘긴다
+
+
+def fred_fetch(series_id, key=None, timeout=FRED_TIMEOUT, retries=FRED_RETRY):
+    """FRED 관측 2개. (관측목록, 사유). **사유를 반드시 남긴다.**
+
+    🔴 2026-09-17 — 원래 `except Exception as e:` 로 잡아 놓고 e 를 **버리고**
+       "API 호출 에러" 만 남겼다. 그래서 9/17 실패 때 로그·텔레그램 어디에도
+       원인이 없었다(타임아웃인지 404 인지 레이트리밋인지 구분 불가).
+       고칠 수 없는 오류 보고는 보고가 아니다.
+    """
+    key = key if key is not None else FRED_API_KEY
+    if not key:
+        return None, "FRED_API_KEY 없음(환경변수 미설정)"
+    url = ("https://api.stlouisfed.org/fred/series/observations"
+           f"?series_id={series_id}&api_key={key}&file_type=json"
+           "&sort_order=desc&limit=2")
+    last = ""
+    for attempt in range(retries + 1):
+        try:
+            res = requests.get(url, timeout=timeout)
+            if res.status_code != 200:
+                # FRED 는 오류도 JSON 으로 준다 — 메시지를 꺼내 남긴다
+                try:
+                    detail = res.json().get("error_message", "")
+                except Exception:
+                    detail = res.text[:120]
+                last = f"HTTP {res.status_code}" + (f" · {detail}" if detail else "")
+                if res.status_code in (400, 404):
+                    return None, last          # 계열 문제면 재시도해도 같다
+                continue
+            obs = res.json().get("observations")
+            if not obs:
+                return None, "observations 없음"
+            if len(obs) < 2:
+                return None, f"관측 {len(obs)}개뿐(비교 불가)"
+            return obs, ""
+        except Exception as e:                 # noqa: BLE001
+            last = f"{type(e).__name__}: {str(e)[:100]}"
+    return None, last or "알 수 없는 실패"
+
+
+def format_fred(series_id, name, obs):
+    """관측 2개 → 표시 문자열. 값이 '.' 이면 쓰지 않는다."""
+    latest, prev = obs[0], obs[1]
+    if latest["value"] == "." or prev["value"] == ".":
+        return None
+    latest_val, prev_val = float(latest["value"]), float(prev["value"])
+    diff = latest_val - prev_val
+    trend = (f"🔺 증가 (+{diff:,.2f})" if diff > 0 else
+             f"🔻 감소 ({diff:,.2f})" if diff < 0 else "➖ 변동없음")
+    val = f"{latest_val:,.2f}%" if series_id == "BAMLH0A0HYM2" else f"{latest_val:,.1f}"
+    return f"- {name}: {val} ({trend}) [기준일: {latest['date']}]"
+
 
 def get_global_liquidity_data():
+    """(리포트 문자열, 실패한 계열 목록). 실패는 **이유와 함께** 돌려준다."""
     print("🌐 글로벌 유동성(FRED) 데이터 수집 중...")
-    indicators = {
-        "WTREGEN": "TGA (미 재무부 일반계정 / 단위: 십억 달러)", 
-        "RRPONTSYD": "Reverse Repo (역레포 잔고 / 단위: 십억 달러)", 
-        "BAMLH0A0HYM2": "High-Yield Spread (하이일드 스프레드 / 단위: %)", 
-        "WALCL": "Fed Total Assets (연준 총자산 / 단위: 백만 달러)", 
-        "M2SL": "M2 (미국 총통화량 / 단위: 십억 달러)" 
-    }
-    liquidity_report = []
-    for series_id, name in indicators.items():
-        try:
-            url = f"https://api.stlouisfed.org/fred/series/observations?series_id={series_id}&api_key={FRED_API_KEY}&file_type=json&sort_order=desc&limit=2"
-            res = requests.get(url, timeout=5).json()
-            if 'observations' in res and len(res['observations']) >= 2:
-                latest, prev = res['observations'][0], res['observations'][1]
-                if latest['value'] == '.' or prev['value'] == '.': continue
-                latest_val, prev_val = float(latest['value']), float(prev['value'])
-                date = latest['date']
-                diff = latest_val - prev_val
-                trend = f"🔺 증가 (+{diff:,.2f})" if diff > 0 else (f"🔻 감소 ({diff:,.2f})" if diff < 0 else "➖ 변동없음")
-                formatted_val = f"{latest_val:,.2f}%" if series_id == "BAMLH0A0HYM2" else f"{latest_val:,.1f}"
-                liquidity_report.append(f"- {name}: {formatted_val} ({trend}) [기준일: {date}]")
-            else:
-                liquidity_report.append(f"- {name}: 데이터 수집 지연")
-        except Exception as e:
-            liquidity_report.append(f"- {name}: API 호출 에러")
-    return "\n".join(liquidity_report) if liquidity_report else "유동성 데이터 수집 실패"
+    report, failures = [], []
+    for series_id, name in FRED_SERIES.items():
+        obs, why = fred_fetch(series_id)
+        if obs is None:
+            report.append(f"- {name}: 수집 실패 ({why})")
+            failures.append((series_id, why))
+            print(f"  ⚠️ {series_id}: {why}")
+            continue
+        line = format_fred(series_id, name, obs)
+        if line is None:
+            report.append(f"- {name}: 최신 관측이 결측(.)")
+            failures.append((series_id, "결측(.)"))
+            print(f"  ⚠️ {series_id}: 최신 관측이 결측")
+            continue
+        report.append(line)
+    if failures:
+        print(f"  📉 FRED {len(failures)}/{len(FRED_SERIES)} 계열 실패")
+    return ("\n".join(report) if report else "유동성 데이터 수집 실패"), failures
+
 
 def search_code_from_naver(stock_name):
     from naver_sources import search_code, SourceError
@@ -434,18 +500,49 @@ if __name__ == "__main__":
         
     # 배치 작업 완료 후 (혹은 6시 외의 정기 호출 시간대) 텔레그램 모닝 시황 발송 시스템 가동
     print("🚀 HYEOKS 능동형 모닝 브리핑 시스템 가동 시작...")
-    liquidity_data = get_global_liquidity_data()
+    liquidity_data, fred_failures = get_global_liquidity_data()
     market_data, news_data = get_us_market_summary()
     kor_context = get_yesterday_korean_context()
     report_context = get_report_picks_context()
     
-    # 💡 [안정성 보완] 데이터 수집 실패 시 구조적 예외 처리가 튕기지 않도록 단일화 처리
-    if "실패" in market_data or "에러" in kor_context or "에러" in liquidity_data:
-        final_briefing = f"🚨 [HYEOKS 시스템 경고] 모닝 데이터 수집 에러\n\n[에러 내용]\n- 유동성(FRED): {liquidity_data}\n- 뉴스 수집: {market_data}\n- 한국장: {kor_context}\n\n※ 문제를 수정해주세요."
+    # 🔴 2026-09-17 — 원래는 유동성 5개 중 **하나만** 실패해도 브리핑 전체가
+    #    경고문으로 대체됐다. 9/17 에 FRED 2계열이 실패하자 나머지 3계열·뉴스·
+    #    한국장이 전부 정상이었는데도 AI 브리핑을 통째로 못 받았다.
+    #    실패의 크기에 맞게 반응한다 — **부분 실패는 브리핑을 죽이지 않는다.**
+    #
+    #    그리고 `"에러" in kor_context` 같은 문자열 탐지를 판단 근거로 쓰지 않는다.
+    #    종목명·테마명에 그 글자가 들어가면 멀쩡한 날 브리핑이 죽는다.
+    #    ⚠️ `startswith("🚨")` 로 판정하면 안 된다 — get_yesterday_korean_context:218 의
+    #       "🚨 [전일 기준 부합 종목 부재]" 는 **에러가 아니라 정상 결과**다
+    #       (어제 조건을 통과한 종목이 없었다는 뜻). 그걸 실패로 읽으면
+    #       종목이 없는 날마다 브리핑이 죽는다.
+    #       실제 실패는 :178 파싱 오류와 :180 시트 비어 있음 둘뿐이다.
+    kor_failed = ("파싱 오류" in kor_context) or ("비어있습니다" in kor_context)
+    market_failed = "수집 실패" in market_data
+    fred_all_failed = len(fred_failures) >= len(FRED_SERIES)
+
+    today_str = now_obj.strftime('%Y년 %m월 %d일')
+    if market_failed and kor_failed:
+        # 핵심 두 축이 모두 죽었을 때만 경고문으로 대체한다
+        final_briefing = ("🚨 [HYEOKS 시스템 경고] 모닝 데이터 수집 에러\n\n[에러 내용]\n"
+                          f"- 유동성(FRED): {liquidity_data}\n- 뉴스 수집: {market_data}\n"
+                          f"- 한국장: {kor_context}\n\n※ 문제를 수정해주세요.")
     else:
-        briefing_text = generate_morning_briefing(market_data, news_data, kor_context, liquidity_data, report_context)
-        today_str = now_obj.strftime('%Y년 %m월 %d일')
-        final_briefing = f"🌅 [HYEOKS 모닝 브리핑] - {today_str}\n\n{briefing_text}"
+        briefing_text = generate_morning_briefing(market_data, news_data, kor_context,
+                                                  liquidity_data, report_context)
+        warn = []
+        if fred_failures:
+            warn.append("FRED " + ", ".join(f"{sid}({why})" for sid, why in fred_failures))
+        if market_failed:
+            warn.append("미국장 뉴스")
+        if kor_failed:
+            warn.append("한국장")
+        head = f"🌅 [HYEOKS 모닝 브리핑] - {today_str}"
+        if warn:
+            head += "\n⚠️ 일부 수집 실패: " + " · ".join(warn)
+            if fred_all_failed:
+                head += "\n⚠️ 유동성 지표 전량 실패 — 매크로 해석을 신뢰하지 말 것"
+        final_briefing = f"{head}\n\n{briefing_text}"
     
     print("📲 텔레그램 발송 중...")
     clean_briefing = final_briefing.replace('**', '')       
