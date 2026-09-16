@@ -184,7 +184,11 @@ DELTA_GRID = (0.5, 1.0, 1.5, 2.0, 3.0)     # %p — **내가 고르지 않는다
 
 def report(picks_, channels=None, as_of=None):
     chans = channels or sorted({p["channel"] for p in picks_} - {CONTROL})
-    L = [f"# 설계별 σ 실측 — {as_of or datetime.datetime.now(KST):%Y-%m-%d}", "",
+    # 🔴 as_of 는 **문자열**로 들어온다(main 이 그렇게 준다).
+    #    f"{as_of:%Y-%m-%d}" 로 쓰면 str 에 날짜 포맷을 걸어 ValueError 가 난다.
+    #    자기검증이 as_of=None 으로만 돌려서 실행 때 처음 터졌다.
+    stamp = as_of or datetime.datetime.now(KST).strftime("%Y-%m-%d")
+    L = [f"# 설계별 σ 실측 — {stamp}", "",
          f"`{SIGMA_VERSION}` · 원장 픽 {len(picks_)}건 · 대조군 `{CONTROL}`", "",
          "> **이 문서는 판정이 아니다.** σ(잡음)만 잰다. 설계별 t·p·유의성은 계산하지 않는다 —",
          "> 여러 설계의 유의성을 보고 고르면 그게 p-해킹이다. 판정은 `hyeoks_verdict` 가 한다.", "",
@@ -370,7 +374,12 @@ def self_test():
                    for d, v in enumerate([5, 3, -1, 2, 8, -4, 1, 0, 6, 30], start=1)]
     big += [row("랜덤2", f"2026-09-{d:02d}", 1.0, 1.0) for d in range(1, 11)]
     pbig = picks(big, horizon_of=lambda ch: 5)
-    md = report(pbig, channels=["차트TOP2"])
+    # 🔴 main 이 주는 것과 **같은 타입**으로 부른다 — 문자열 as_of
+    md = report(pbig, channels=["차트TOP2"], as_of="2026-09-16")
+    ok &= _chk("as_of 가 문자열이어도 죽지 않는다(main 이 쓰는 경로)",
+               "# 설계별 σ 실측 — 2026-09-16" in md)
+    ok &= _chk("as_of 가 없으면 오늘 날짜로 채운다",
+               "# 설계별 σ 실측 — " in report(pbig, channels=["차트TOP2"]))
     ok &= _chk("리포트에 설계별 σ 가 나온다", "① 픽·원수익률" in md and "④ 날짜짝짓기" in md)
     ok &= _chk("리포트가 **판정이 아니라고** 밝힌다", "판정이 아니다" in md)
     ok &= _chk("설계별 유의성을 계산하지 않는다 — p-해킹 방지",
