@@ -38,6 +38,12 @@ import sys
 from hyeoks_verdict import (C_ENTRY_DATE, C_CHANNEL, STOCK_COL, INDEX_COL,
                             HORIZON, CONTROL, is_excluded, t_one_sided_p)
 
+# 원장 헤더(omakase.py:1029) 기준 — "V1"=9, "V2"=10
+C_V1, C_V2 = 9, 10
+
+# 채널이 무엇으로 순위를 매기는가 (omakase.py:3132·3163)
+RANK_KEY = {"차트TOP2": "v1", "수급TOP2": "v2"}
+
 KST = datetime.timezone(datetime.timedelta(hours=9))
 SIGMA_VERSION = "sigma-v1"
 TRIM_K = 3          # 절사평균에서 위아래로 덜어낼 개수
@@ -75,7 +81,9 @@ def picks(rows, horizon_of=None):
         s, i = _num(row[si]), _num(row[ii])
         if s is None or i is None:
             continue
-        out.append({"channel": ch, "date": day, "h": h, "raw": s, "alpha": s - i})
+        out.append({"channel": ch, "date": day, "h": h, "raw": s, "alpha": s - i,
+                    "v1": _num(row[C_V1]) if len(row) > C_V1 else None,
+                    "v2": _num(row[C_V2]) if len(row) > C_V2 else None})
     return out
 
 
@@ -178,6 +186,60 @@ def shape(xs, trim=TRIM_K):
     return out
 
 
+
+def rank_gap(picks_, ch, key=None):
+    """같은 날 **1순위와 2순위**의 알파 차이. 순위가 알파를 담고 있는가.
+
+    왜 이 설계인가
+    --------------
+    "픽을 3·5개로 늘리면 δ 가 얼마나 떨어지나"를 과거 데이터로 재려면
+    **뽑히지 않은 후보의 수익률**이 필요한데 그건 어디에도 없다
+    (`candidate_pool` 은 메모리에서 계산되고 TOP2 만 원장에 남는다).
+
+    대신 **뽑힌 둘 사이의 순위 효과**는 잴 수 있다. 같은 날 1순위가 2순위보다
+    꾸준히 좋다면 순위에 정보가 있는 것이고, 픽을 늘리면 δ 가 떨어진다.
+    차이가 0 근처면 순위가 정보를 안 담는다는 뜻이고, **픽을 늘려도 δ 손실이 작다.**
+
+    ⚠️ 한계 — 이건 **상위 2개 안에서의** 기울기다. 3~5위로의 외삽이 아니다.
+       점수 분포의 잘린 꼬리만 보는 것이므로 외삽하면 틀릴 수 있다.
+
+    돌려주는 값: (차이 목록, 쓴 점수열) — 점수가 없으면 ([], None)
+    """
+    k = key or RANK_KEY.get(ch)
+    if not k:
+        return [], None
+    byd = {}
+    for p in picks_:
+        if p["channel"] == ch and p.get(k) is not None:
+            byd.setdefault(p["date"], []).append(p)
+    gaps = []
+    for _, group in sorted(byd.items()):
+        if len(group) < 2:
+            continue
+        g = sorted(group, key=lambda x: x[k], reverse=True)
+        if g[0][k] == g[1][k]:
+            continue                      # 동점이면 순위가 없다 — 세지 않는다
+        gaps.append(g[0]["alpha"] - g[1]["alpha"])
+    return gaps, k
+
+
+def score_bands(picks_, ch, key=None, edges=(40, 60, 80)):
+    """점수 구간별 알파. omakase.py:3137 이 기록한 '역U자'가 지금도 보이는가."""
+    k = key or RANK_KEY.get(ch)
+    if not k:
+        return []
+    lo = [-math.inf] + list(edges)
+    hi = list(edges) + [math.inf]
+    out = []
+    for a, b in zip(lo, hi):
+        vals = [p["alpha"] for p in picks_
+                if p["channel"] == ch and p.get(k) is not None and a <= p[k] < b]
+        label = (f"<{b:g}" if a == -math.inf else
+                 f"{a:g}+" if b == math.inf else f"{a:g}~{b:g}")
+        out.append((label, shape(vals)))
+    return out
+
+
 # ── 리포트 ───────────────────────────────────────────────────────────
 DELTA_GRID = (0.5, 1.0, 1.5, 2.0, 3.0)     # %p — **내가 고르지 않는다.** 곡선으로 낸다
 
@@ -219,6 +281,30 @@ def report(picks_, channels=None, as_of=None):
                      f"{best[1]}거래일로 가장 적다.")
             L.append("> ⚠️ 이건 **잡음이 작다**는 뜻이지 그 설계의 성적이 좋다는 뜻이 아니다.")
         L.append("")
+
+        # 🔴 1.5단계 — 순위가 알파를 담고 있는가 (픽 확대의 δ 손실)
+        gaps, k = rank_gap(picks_, ch)
+        if k:
+            L += ["", f"**순위 효과** (같은 날 1순위 − 2순위 알파, 점수열 `{k}`):", ""]
+            if len(gaps) >= 2:
+                m, sd = st.fmean(gaps), st.stdev(gaps)
+                se = sd / math.sqrt(len(gaps))
+                L += [f"- 짝 {len(gaps)}일 · 평균 차 **{m:+.2f}%p** · σ {sd:.2f} · 표준오차 {se:.2f}",
+                      f"- 1순위가 이긴 날 {sum(1 for g in gaps if g > 0)}/{len(gaps)}", ""]
+                L += ["> 차이가 0 근처면 순위가 정보를 안 담는다 — **픽을 늘려도 δ 손실이 작다.**",
+                      "> ⚠️ 이건 **상위 2개 안에서의** 기울기다. 3~5위로의 외삽이 아니다.", ""]
+            else:
+                L += ["- 짝지을 날이 부족하다(2일 미만). 측정 불가.", ""]
+            bands = score_bands(picks_, ch)
+            if any(b[1] for b in bands):
+                L += [f"점수 구간별 알파 (`{k}`):", "",
+                      "| 구간 | N | 평균 | 중앙값 | 승률 |", "|---|---:|---:|---:|---:|"]
+                for lab, sh2 in bands:
+                    if sh2:
+                        L.append(f"| {lab} | {sh2['n']} | {sh2['mean']:+.2f}%p | "
+                                 f"{sh2['median']:+.2f}%p | {100*sh2['win']:.0f}% |")
+                L += ["", "> 2026-08-07 기록(N=189)은 V2 가 **역U자**라고 했다 — "
+                      "상위 구간이 가장 나빴다(omakase.py:3137). 지금도 그런지 본다.", ""]
 
         # 분포 모양 — 평균만 보면 복권형 편향을 못 본다
         L += ["분포 모양 (픽·알파):", "",
@@ -375,6 +461,56 @@ def self_test():
     big += [row("랜덤2", f"2026-09-{d:02d}", 1.0, 1.0) for d in range(1, 11)]
     pbig = picks(big, horizon_of=lambda ch: 5)
     # 🔴 main 이 주는 것과 **같은 타입**으로 부른다 — 문자열 as_of
+    # ── 1.5단계 순위 효과 ────────────────────────────────────────
+    def rrow(ch, day, stock, index, v1=None, v2=None, n=32):
+        r = [""] * n
+        r[C_ENTRY_DATE], r[C_CHANNEL] = day, ch
+        r[STOCK_COL[5]], r[INDEX_COL[5]] = str(stock), str(index)
+        if v1 is not None:
+            r[C_V1] = str(v1)
+        if v2 is not None:
+            r[C_V2] = str(v2)
+        return r
+
+    # 1순위(점수 90)가 2순위(70)보다 매일 +2%p 좋은 경우
+    good = [hdr]
+    for d in range(1, 6):
+        day = f"2026-09-{d:02d}"
+        good += [rrow("차트TOP2", day, 3.0, 0.0, v1=90),
+                 rrow("차트TOP2", day, 1.0, 0.0, v1=70)]
+    g, k = rank_gap(picks(good, horizon_of=lambda ch: 5), "차트TOP2")
+    ok &= _chk("순위 효과 — 1순위가 좋으면 양수", g == [2.0] * 5 and k == "v1", f"{g}")
+
+    # 순위가 정보를 안 담는 경우(1순위가 오히려 나쁨)
+    bad = [hdr]
+    for d in range(1, 6):
+        day = f"2026-09-{d:02d}"
+        bad += [rrow("수급TOP2", day, 0.0, 0.0, v2=90),
+                rrow("수급TOP2", day, 2.0, 0.0, v2=70)]
+    g2, k2 = rank_gap(picks(bad, horizon_of=lambda ch: 5), "수급TOP2")
+    ok &= _chk("역전된 경우도 그대로 음수로 낸다(0 으로 뭉개지 않는다)",
+               g2 == [-2.0] * 5 and k2 == "v2", f"{g2}")
+    ok &= _chk("채널마다 다른 점수열을 쓴다(차트=v1, 수급=v2)",
+               RANK_KEY["차트TOP2"] == "v1" and RANK_KEY["수급TOP2"] == "v2")
+    tie = [hdr, rrow("차트TOP2", "2026-09-01", 3.0, 0.0, v1=80),
+           rrow("차트TOP2", "2026-09-01", 1.0, 0.0, v1=80)]
+    ok &= _chk("동점이면 순위가 없다 — 세지 않는다",
+               rank_gap(picks(tie, horizon_of=lambda ch: 5), "차트TOP2")[0] == [])
+    one = [hdr, rrow("차트TOP2", "2026-09-01", 3.0, 0.0, v1=80)]
+    ok &= _chk("픽이 하나면 짝이 없다",
+               rank_gap(picks(one, horizon_of=lambda ch: 5), "차트TOP2")[0] == [])
+    ok &= _chk("점수가 없는 채널은 측정하지 않는다",
+               rank_gap(picks(good, horizon_of=lambda ch: 5), "리포트TOP2_단기") == ([], None))
+
+    bands = score_bands(picks(bad, horizon_of=lambda ch: 5), "수급TOP2")
+    labs = [b[0] for b in bands]
+    ok &= _chk("점수 구간이 경계 없이 이어진다", labs == ["<40", "40~60", "60~80", "80+"],
+               f"{labs}")
+    filled = {lab: sh for lab, sh in bands if sh}
+    ok &= _chk("구간별로 나눠 담는다",
+               filled["60~80"]["mean"] == 2.0 and filled["80+"]["mean"] == 0.0,
+               f"{ {k: v['mean'] for k, v in filled.items()} }")
+
     md = report(pbig, channels=["차트TOP2"], as_of="2026-09-16")
     ok &= _chk("as_of 가 문자열이어도 죽지 않는다(main 이 쓰는 경로)",
                "# 설계별 σ 실측 — 2026-09-16" in md)
