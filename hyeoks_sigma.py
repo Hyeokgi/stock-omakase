@@ -45,7 +45,16 @@ C_V1, C_V2 = 9, 10
 RANK_KEY = {"차트TOP2": "v1", "수급TOP2": "v2"}
 
 KST = datetime.timezone(datetime.timedelta(hours=9))
-SIGMA_VERSION = "sigma-v1"
+SIGMA_VERSION = "sigma-v2"
+
+# 🔴 2026-09-16 정정 — v1 은 전부 α=0.05 로 계산해 놓고 "확증에 필요한 기간"처럼 읽혔다.
+#    Track C(차트TOP2·수급TOP2)의 실제 문턱은 결정일 family α=0.0125 에
+#    Holm m=2 를 적용한 **첫 관문 0.00625** 다. 두 값을 같이 낸다.
+#    ⚠️ 그래도 이건 **IID t 검정 참고치**다. 실제 확증은 H 길이 이동블록 부트스트랩이고
+#       T+5·T+10 은 인접일 보유기간이 겹쳐 독립이 아니다. 아래 수치를
+#       "현재 시스템의 검증 소요기간"으로 쓰면 안 된다.
+ALPHA_REF = 0.05        # 참고용(느슨한 쪽)
+ALPHA_TRACK_C = 0.00625  # §3-5-7 Track C 첫 관문
 TRIM_K = 3          # 절사평균에서 위아래로 덜어낼 개수
 
 
@@ -155,19 +164,20 @@ def need_n(sigma, delta, alpha=0.05, power=0.80, cap=100000):
     if not sigma or sigma <= 0 or not delta or delta <= 0:
         return None
     z_beta = 0.8416                      # Φ⁻¹(0.80)
-    n = 2
+    # 🔴 2026-09-16 — n=2 에서 출발하면 t_crit(1) 이 매우 커서 첫 걸음이 수십만으로
+    #    튄다. 그 중간값이 cap 에 걸려 **답이 있는데 None 을 냈다**(σ=10.01·δ=1.5·
+    #    α=0.00625 는 500 으로 수렴하는데 115113 을 지나다 잘렸다).
+    #    정규근사로 씨앗을 잡고 시작한다. cap 은 **수렴한 값에만** 적용한다.
+    n = max(2, math.ceil(((1.6449 + z_beta) * sigma / delta) ** 2))
     for _ in range(200):
         tc = t_crit(n - 1, alpha)
         if tc is None:
             return None
-        nxt = math.ceil(((tc + z_beta) * sigma / delta) ** 2)
-        nxt = max(nxt, 2)
+        nxt = max(2, math.ceil(((tc + z_beta) * sigma / delta) ** 2))
         if nxt == n:
-            return n
-        if nxt > cap:
-            return None
+            return n if n <= cap else None
         n = nxt
-    return n
+    return n if n <= cap else None
 
 
 def shape(xs, trim=TRIM_K):
@@ -257,7 +267,10 @@ def report(picks_, channels=None, as_of=None):
          "> 필요 표본은 δ 를 가로축에 둔 **곡선**이다. δ 를 내가 고르지 않는다.", ""]
 
     for ch in chans:
-        L += [f"## {ch}", "", "| 설계 | 관측 수 | 단위 | σ(%p) | "
+        L += [f"## {ch}", "",
+              f"필요 표본은 **α={ALPHA_REF} / α={ALPHA_TRACK_C}** 두 값을 나란히 낸다. "
+              "뒤가 Track C 의 실제 첫 관문(Holm m=2)이다.", "",
+              "| 설계 | 관측 수 | 단위 | σ(%p) | "
               + " | ".join(f"δ={d}" for d in DELTA_GRID) + " |",
               "|---|---:|---|---:|" + "---:|" * len(DELTA_GRID)]
         best = None
@@ -266,8 +279,9 @@ def report(picks_, channels=None, as_of=None):
             s = sigma_of(xs)
             cells = []
             for d in DELTA_GRID:
-                n = need_n(s, d)
-                cells.append("—" if n is None else str(n))
+                n1 = need_n(s, d, alpha=ALPHA_REF)
+                n2 = need_n(s, d, alpha=ALPHA_TRACK_C)
+                cells.append(f"{n1 or '—'} / {n2 or '—'}")
             L.append(f"| {name} | {len(xs)} | {unit} | "
                      + (f"{s:.2f}" if s else "—") + " | " + " | ".join(cells) + " |")
             # '거래일' 단위끼리만 비교한다 — 픽과 거래일은 같은 자가 아니다
@@ -277,9 +291,12 @@ def report(picks_, channels=None, as_of=None):
                     best = (name, n2)
         L.append("")
         if best:
-            L.append(f"> 거래일 단위끼리 비교하면 δ=1.5%p 기준 **{best[0]}** 가 "
-                     f"{best[1]}거래일로 가장 적다.")
-            L.append("> ⚠️ 이건 **잡음이 작다**는 뜻이지 그 설계의 성적이 좋다는 뜻이 아니다.")
+            L.append(f"> σ 만 보면 δ=1.5%p 기준 **{best[0]}** 가 {best[1]}거래일로 가장 적다.")
+            L += ["> ⚠️ **σ 가 작다고 그 설계를 고르면 안 된다.** ③과 ④는 같은 질문이 아니다 —",
+                  "> ③은 `전략 − 지수`(시장 대비 알파), ④는 `전략 알파 − 같은 날 대조군 알파`",
+                  "> (랭킹 자체의 부가가치)를 묻는다. **먼저 무엇을 승인할지 정하고 σ 는 그다음이다.**",
+                  "> 같은 데이터에서 분산이 가장 작은 변환을 고르는 것도 설계 선택이므로,",
+                  "> 고른 뒤에는 **새 미사용 표본에서 검증해야 한다.**"]
         L.append("")
 
         # 🔴 1.5단계 — 순위가 알파를 담고 있는가 (픽 확대의 δ 손실)
@@ -289,8 +306,18 @@ def report(picks_, channels=None, as_of=None):
             if len(gaps) >= 2:
                 m, sd = st.fmean(gaps), st.stdev(gaps)
                 se = sd / math.sqrt(len(gaps))
+                srt = sorted(gaps)
+                worst = srt[:max(1, len(srt) // 10)]
+                sh_g = shape(gaps, trim=1)
                 L += [f"- 짝 {len(gaps)}일 · 평균 차 **{m:+.2f}%p** · σ {sd:.2f} · 표준오차 {se:.2f}",
-                      f"- 1순위가 이긴 날 {sum(1 for g in gaps if g > 0)}/{len(gaps)}", ""]
+                      f"- **중앙값 {sh_g['median']:+.2f}%p**"
+                      + (f" · 절사평균(±1) {sh_g['trimmed']:+.2f}%p"
+                         if 'trimmed' in sh_g else ""),
+                      f"- 1순위가 이긴 날 {sum(1 for g in gaps if g > 0)}/{len(gaps)}"
+                      f" · 최악 10% 평균 {st.fmean(worst):+.2f}%p", ""]
+                if len(gaps) >= 5 and (m < 0) != (sh_g['median'] < 0):
+                    L += ["> ⚠️ **평균과 중앙값의 부호가 다르다.** 몇 번의 큰 손실이 평균을 끌고 있다 —",
+                          "> '순위가 역전됐다'가 아니라 **'상위 구간에 큰 하방 꼬리가 있다'** 로 읽어야 한다.", ""]
                 L += ["> 차이가 0 근처면 순위가 정보를 안 담는다 — **픽을 늘려도 δ 손실이 작다.**",
                       "> ⚠️ 이건 **상위 2개 안에서의** 기울기다. 3~5위로의 외삽이 아니다.", ""]
             else:
@@ -442,6 +469,13 @@ def self_test():
     ok &= _chk("δ 가 0 이면 None(무한대를 숫자로 안 만든다)", need_n(4.5, 0) is None)
     ok &= _chk("σ 가 없으면 None", need_n(None, 1.5) is None)
     ok &= _chk("δ 가 아주 작으면 None(캡)", need_n(4.5, 0.001) is None)
+    # 🔴 회귀 — 중간 반복값이 캡을 넘었다고 답을 버리면 안 된다
+    ok &= _chk("엄한 α 에서도 수렴한 답을 낸다(중간값이 커도 버리지 않는다)",
+               need_n(10.01, 1.5, alpha=ALPHA_TRACK_C) == 500,
+               f"{need_n(10.01, 1.5, alpha=ALPHA_TRACK_C)}")
+    ok &= _chk("씨앗을 바꿔도 같은 값으로 수렴한다",
+               need_n(7.76, 1.5, alpha=ALPHA_TRACK_C) == 302,
+               f"{need_n(7.76, 1.5, alpha=ALPHA_TRACK_C)}")
 
     ok &= _chk("t 임계값이 자유도에 따라 준다", t_crit(5) > t_crit(100) > 1.6)
 
@@ -518,6 +552,14 @@ def self_test():
                "# 설계별 σ 실측 — " in report(pbig, channels=["차트TOP2"]))
     ok &= _chk("리포트에 설계별 σ 가 나온다", "① 픽·원수익률" in md and "④ 날짜짝짓기" in md)
     ok &= _chk("리포트가 **판정이 아니라고** 밝힌다", "판정이 아니다" in md)
+    ok &= _chk("Track C 의 실제 α 를 같이 낸다(α=0.05 만 내면 낙관적으로 읽힌다)",
+               f"α={ALPHA_TRACK_C}" in md)
+    ok &= _chk("α 가 엄해지면 필요 표본이 는다",
+               need_n(7.76, 1.5, alpha=ALPHA_TRACK_C) > need_n(7.76, 1.5, alpha=ALPHA_REF),
+               f"{need_n(7.76,1.5,alpha=ALPHA_TRACK_C)} vs {need_n(7.76,1.5,alpha=ALPHA_REF)}")
+    ok &= _chk("③·④ 가 다른 질문이라고 리포트에 박혀 있다",
+               "같은 질문이 아니다" in md and "먼저 무엇을 승인할지" in md)
+    ok &= _chk("설계를 고른 뒤 새 표본 검증이 필요하다고 적는다", "미사용 표본" in md)
     ok &= _chk("설계별 유의성을 계산하지 않는다 — p-해킹 방지",
                "p-해킹" in md and " p=" not in md and "t=" not in md)
     ok &= _chk("δ 는 곡선으로 낸다(내가 고르지 않는다)",

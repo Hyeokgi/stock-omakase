@@ -39,11 +39,32 @@ class BuildTests(unittest.TestCase):
         rows = R.build_rows("2026-09-16", "차트TOP2", RANKED, ["'1"], R.IDX_V1)
         self.assertEqual(rows[0][6], "Y")
 
+    def test_band_marks_ineligible_without_dropping_them(self):
+        """🔴 밴드가 켜지면 실제 픽이 원점수 1위가 아니다.
+
+        원점수 순위는 그대로 남기되 적격 여부와 사유를 같이 남겨야
+        '현행 정책에서의 3위'와 '필터 전 원점수 3위'를 갈라 볼 수 있다.
+        """
+        rows = R.build_rows("2026-09-16", "수급TOP2", RANKED, ["000002"],
+                            R.IDX_V1, eligible_codes=["000002", "000003"],
+                            exclusion="V2_BAND")
+        self.assertEqual([r[3] for r in rows], ["000001", "000002", "000003", "000004"])
+        self.assertEqual([r[7] for r in rows], ["N", "Y", "Y", "N"])   # eligible
+        self.assertEqual(rows[0][8], "V2_BAND")                        # exclusion
+        self.assertEqual(rows[1][8], "")
+        self.assertTrue(all(r[10] == 2 for r in rows))                 # eligible_size
+        self.assertEqual(rows[1][6], "Y")                              # 2위가 실제 픽
+
+    def test_no_filter_means_everything_eligible(self):
+        rows = R.build_rows("2026-09-16", "차트TOP2", RANKED, [], R.IDX_V1)
+        self.assertTrue(all(r[7] == "Y" and r[8] == "" for r in rows))
+        self.assertTrue(all(r[10] == 4 for r in rows))
+
     def test_records_pool_size_not_just_top_n(self):
         """3~5위 질문에 답하려면 **전체 풀 크기**를 알아야 한다."""
         rows = R.build_rows("2026-09-16", "차트TOP2", RANKED, [], R.IDX_V1, top_n=2)
         self.assertEqual(len(rows), 2)
-        self.assertTrue(all(r[7] == 4 for r in rows))
+        self.assertTrue(all(r[9] == 4 for r in rows))
 
     def test_broken_row_skipped_others_kept(self):
         rows = R.build_rows("2026-09-16", "차트TOP2",
@@ -54,6 +75,11 @@ class BuildTests(unittest.TestCase):
         supply = [row("가", "000001", v2=61), row("나", "000002", v2=44)]
         rows = R.build_rows("2026-09-16", "수급TOP2", supply, [], R.IDX_V2)
         self.assertEqual([r[5] for r in rows], [61.0, 44.0])
+
+    def test_code_sha_recorded(self):
+        rows = R.build_rows("2026-09-16", "차트TOP2", RANKED, [], R.IDX_V1,
+                            sha="abc12345")
+        self.assertTrue(all(r[12] == "abc12345" for r in rows))
 
 
 class RecordTests(unittest.TestCase):
@@ -113,9 +139,24 @@ class CallSiteTests(unittest.TestCase):
     그래서 호출부를 그대로 흉내 낸다.
     """
 
-    def test_policy_id_resolves_without_caller_import(self):
-        """호출부가 hyeoks_tajeom 을 import 하지 않아도 정책 식별자가 채워진다."""
-        self.assertEqual(R.policy_id(), "oversold-veto-v2")
+    def test_policy_id_is_per_channel_not_global(self):
+        """🔴 2026-09-16 회귀 — 처음엔 모든 채널에 `oversold-veto-v2` 를 박았다.
+
+        그건 과매도 태그를 다루는 **리포트 중기 채널의 모수**이고 차트·수급 선정과
+        아무 상관이 없다. U3("정책 동일성은 채널별")을 스스로 어긴 것이었다.
+        """
+        chart = R.policy_id("차트TOP2")
+        supply = R.policy_id("수급TOP2")
+        self.assertNotIn("oversold", chart)
+        self.assertNotIn("oversold", supply)
+        self.assertNotEqual(chart, supply)
+        self.assertIn("v1", chart)
+        self.assertIn("v2", supply)
+
+    def test_policy_id_changes_when_band_switch_flips(self):
+        """스위치를 켜고 정책 ID 가 안 바뀌면 그게 조용한 정책 변경이다."""
+        self.assertNotEqual(R.policy_id("수급TOP2"),
+                            R.policy_id("수급TOP2", "45-79"))
 
     def test_call_site_shape(self):
         import os as _os, tempfile
@@ -131,7 +172,7 @@ class CallSiteTests(unittest.TestCase):
                 ("수급TOP2", sorted(gate, key=lambda x: x[31], reverse=True),
                  [r[1] for r in supply_top2], 31)):
             ok, msg = R.record("2026-09-16", ch, ranked, picked, sidx,
-                               run_id="123", path=path)
+                               run_id="123", sha="deadbeef", path=path)
             self.assertTrue(ok, msg)
         with open(path, encoding="utf-8") as f:
             rows = list(csv.DictReader(f))
@@ -139,7 +180,8 @@ class CallSiteTests(unittest.TestCase):
         self.assertEqual(len(chart), 7)
         self.assertEqual([r["picked"] for r in chart][:2], ["Y", "Y"])
         self.assertTrue(all(r["picked"] == "N" for r in chart[2:]))
-        self.assertTrue(all(r["policy_id"] == "oversold-veto-v2" for r in rows))
+        self.assertTrue(all(r["policy_id"].startswith("chart-top2")
+                            for r in chart))
 
     def test_selection_is_not_touched(self):
         """관측만 추가한다 — record 가 입력 목록을 바꾸지 않는다."""

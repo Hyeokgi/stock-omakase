@@ -36,7 +36,8 @@ POOL_PATH = "data/scanner_census/rank_pool.csv"
 TOP_N = 10          # 3~5위 질문에 답하려면 여유 있게. 풀이 작으면 있는 만큼만.
 
 HEADER = ["date", "channel", "rank", "code", "name", "score", "picked",
-          "pool_size", "policy_id", "run_id", "captured_at"]
+          "eligible", "exclusion", "pool_size", "eligible_size",
+          "policy_id", "code_sha", "run_id", "captured_at"]
 
 # 채널이 무엇으로 순위를 매기는가 — omakase.py:3132(차트=r[29]) · 3163(수급=r[31])
 IDX_NAME, IDX_CODE, IDX_V1, IDX_V2 = 0, 1, 29, 31
@@ -49,18 +50,30 @@ def _num(v):
         return None
 
 
-def policy_id():
-    """선정 정책 식별자. **호출부가 import 를 신경 쓰지 않게** 여기서 찾는다.
+def policy_id(channel, band=None):
+    """**채널별** 선정 정책 식별자.
 
-    scanner_census.policy_fields 와 같은 패턴이다. omakase 가
-    `hyeoks_tajeom.POLICY_ID` 를 직접 쓰면 그 모듈을 import 하지 않아
-    NameError 로 스캐너가 죽는다 — 실제로 그렇게 쓸 뻔했다.
+    🔴 2026-09-16 정정 — 처음에는 `hyeoks_tajeom.POLICY_ID`(= `oversold-veto-v2`)를
+       모든 채널에 박았다. **그건 범주 오류다.** 그 상수는 과매도 태그를 다루는
+       **리포트 중기 채널의 모수**이고(hyeoks_tajeom 모듈 설명), 차트TOP2·수급TOP2 의
+       선정과는 아무 상관이 없다. U3 에서 "정책 동일성은 글로벌이 아니라 채널별"이라고
+       정해 놓고 하루 뒤에 스스로 어겼다.
+
+    있지도 않은 정책 레지스트리 버전을 지어내지 않는다. 대신 **그 채널의 선정을
+    실제로 정하는 요소**를 조합해 만든다 — 순위열 + 후보 규칙 + 켜진 스위치.
+    스위치를 켜고 이 값이 안 바뀌면 그게 조용한 정책 변경이다.
     """
-    try:
-        from hyeoks_tajeom import POLICY_ID
-        return str(POLICY_ID)
-    except Exception:                          # noqa: BLE001
-        return ""
+    if channel == "차트TOP2":
+        return "chart-top2/v1/badge-pool"
+    if channel == "수급TOP2":
+        base = "supply-top2/v2/gate-pass"
+        return f"{base}+band{band}" if band else base
+    return f"{channel}/unspecified"
+
+
+def code_sha():
+    """그날 어떤 코드였나를 나중에 복원하려면 run_id 만으로는 부족하다."""
+    return (os.environ.get("GITHUB_SHA") or "")[:8]
 
 
 def norm_code(v):
@@ -68,7 +81,8 @@ def norm_code(v):
 
 
 def build_rows(day, channel, ranked, picked_codes, score_idx,
-               top_n=TOP_N, policy_id="", run_id="", captured_at=""):
+               top_n=TOP_N, policy="", run_id="", captured_at="",
+               eligible_codes=None, exclusion="", sha=""):
     """정렬된 후보 목록 → 기록할 행들. **순수 함수라 오프라인 검증된다.**
 
     `ranked` 는 **이미 정렬된** 목록이다. 여기서 다시 정렬하지 않는다 —
@@ -76,16 +90,29 @@ def build_rows(day, channel, ranked, picked_codes, score_idx,
     """
     out, pool = [], len(ranked)
     picked = {norm_code(c) for c in picked_codes}
+    # eligible_codes 가 None 이면 필터가 없다는 뜻 — 전부 적격이다.
+    elig = None if eligible_codes is None else {norm_code(c) for c in eligible_codes}
+    n_elig = pool if elig is None else sum(
+        1 for r in ranked if _safe_code(r) in elig)
     for i, r in enumerate(ranked[:top_n], start=1):
         try:
             code = norm_code(r[IDX_CODE])
+            ok = True if elig is None else code in elig
             out.append([day, channel, i, code, str(r[IDX_NAME]).strip(),
                         _num(r[score_idx]) if len(r) > score_idx else None,
                         "Y" if code in picked else "N",
-                        pool, policy_id, run_id, captured_at])
+                        "Y" if ok else "N", "" if ok else exclusion,
+                        pool, n_elig, policy, sha, run_id, captured_at])
         except (IndexError, TypeError):
             continue          # 행 하나가 깨져도 나머지는 남긴다
     return out
+
+
+def _safe_code(r):
+    try:
+        return norm_code(r[IDX_CODE])
+    except (IndexError, TypeError):
+        return None
 
 
 def already_recorded(day, channel, path=POOL_PATH):
@@ -113,7 +140,8 @@ def append(rows, path=POOL_PATH):
 
 
 def record(day, channel, ranked, picked_codes, score_idx,
-           policy=None, run_id="", now=None, path=POOL_PATH, top_n=TOP_N):
+           policy=None, run_id="", now=None, path=POOL_PATH, top_n=TOP_N,
+           eligible_codes=None, exclusion="", band=None, sha=None):
     """스캐너가 부르는 입구. (기록됨, 메시지).
 
     **절대 예외를 밖으로 내보내지 않는다.** scanner_census 와 같은 규율이다.
@@ -126,8 +154,11 @@ def record(day, channel, ranked, picked_codes, score_idx,
         now = now or datetime.datetime.now(KST)
         rows = build_rows(day, channel, ranked, picked_codes, score_idx,
                           top_n=top_n,
-                          policy_id=policy if policy is not None else policy_id(),
-                          run_id=run_id, captured_at=now.isoformat())
+                          policy=policy if policy is not None
+                          else policy_id(channel, band),
+                          run_id=run_id, captured_at=now.isoformat(),
+                          eligible_codes=eligible_codes, exclusion=exclusion,
+                          sha=code_sha() if sha is None else sha)
         if not rows:
             return False, "기록할 행이 없다"
         append(rows, path)

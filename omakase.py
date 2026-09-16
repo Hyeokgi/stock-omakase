@@ -3118,6 +3118,9 @@ def update_technical_data(df_theme, all_theme_map):
                     is_eod_log_window = False
                     print(f"🚫 [휴장일 감지] {today_str}는 거래일이 아님(지수 일봉 없음) — 백테스트 진입 적재를 건너뜁니다.")
             new_rows = []
+            # 순위 풀 계획은 EOD 블록 안에서 채워지고 append 성공 뒤에 쓰인다.
+            # 두 지점의 들여쓰기가 달라 미정의 경로가 생길 수 있으므로 여기서 먼저 비운다.
+            _pool_plan = []
             if is_eod_log_window:
                 entry_stage = 3 if kospi_rate <= -3.0 else (2 if is_warning_market else 1)
                 # 🔧 [수정] "집중도" 열이 모든 채널에서 계속 빈 값이던 문제 — 이미 계산해둔 뉴스키워드 1위:2위 비율을 그대로 기록
@@ -3167,27 +3170,27 @@ def update_technical_data(df_theme, all_theme_map):
                 #    지금 남겨야 한다. 1.5단계에서 그걸 재려다 **뽑히지 않은 후보의 수익률이
                 #    어디에도 없어서** 잴 수 없었다(candidate_pool 은 메모리, TOP2 만 원장).
                 #
-                #    ⚠️ **관측만 추가한다. 선정을 바꾸지 않는다.** chart_top2·supply_top2 가
-                #       이미 정해진 뒤에 같은 정렬 결과를 읽기만 한다. 그래야 기존 표본의
-                #       성격이 유지되고 변경 전/후 비교가 성립한다.
-                #    ⚠️ 수익률은 안 남긴다 — 나중에 코드+날짜로 일봉에서 계산한다
-                #       (원장과 같은 규약: T+1 시가 → T+N 종가). 지금은 T+1 이 아직 없다.
-                #    ⚠️ 기록 실패가 스캔을 죽이지 않는다(scanner_census 와 같은 규율).
-                _pool_runid = os.environ.get("GITHUB_RUN_ID", "")
-                for _ch, _ranked, _picked, _sidx in (
-                        ("차트TOP2", sorted(candidate_pool, key=lambda x: x[29], reverse=True),
-                         [r[1] for r in chart_top2], 29),
-                        ("수급TOP2", sorted(gate_passed, key=lambda x: x[31], reverse=True),
-                         [r[1] for r in supply_top2], 31)):
-                    _pok, _pmsg = rank_pool.record(
-                        today_str, _ch, _ranked, _picked, _sidx,
-                        run_id=_pool_runid)
-                    if _pok:
-                        print(f"   🗂️ 순위 풀 보존 — {_pmsg}")
-                    elif _pmsg.startswith("기록 실패"):
-                        print(f"   ❌ [순위 풀 보존 실패] {_ch}: {_pmsg}")
-                    else:
-                        print(f"   · 순위 풀 생략 — {_ch}: {_pmsg}")
+                #    ⚠️ **관측만 추가한다. 선정을 바꾸지 않는다.** 여기서는 **모아 두기만** 하고,
+                #       실제 기록은 `bt_sheet.append_rows()` 가 성공한 **뒤에** 한다.
+                #       (2026-09-16 외부 지적) append 실패는 아래 except 가 삼키는데
+                #       main.yml 의 커밋은 `if: always()` 다. 먼저 기록하면
+                #       "원장에 없는 픽이 picked=Y 로 남고, 다음 실행은 멱등 때문에 건너뛰는"
+                #       영구 불일치가 생긴다.
+                #
+                #    ⚠️ 순위는 **정책 적용 전 원점수 순서**로 남기되, 밴드가 켜져 있으면
+                #       적격 여부(eligible)와 제외 사유를 같이 남긴다. 그래야 나중에
+                #       '현행 정책에서의 3위'와 '필터 전 원점수 3위'를 갈라 볼 수 있다.
+                _band_tag = f"{_lo}-{_hi}" if _band_on else None
+                _pool_plan = [
+                    ("차트TOP2",
+                     sorted(candidate_pool, key=lambda x: x[29], reverse=True),
+                     29, None, "", None),
+                    ("수급TOP2",
+                     sorted(gate_passed, key=lambda x: x[31], reverse=True),
+                     31,
+                     ([r[1] for r in _banded] if _band_on else None),
+                     ("V2_BAND" if _band_on else ""), _band_tag),
+                ]
 
                 # 대조군 랜덤2: '배지필터 이전' 전체 results에서 결정론적 추출 (seed=날짜 → 재현가능, builtin hash() 비사용)
                 valid_results = [r for r in results if len(r) >= 35 and parse_price_num(r[2]) > 0]
@@ -3278,6 +3281,25 @@ def update_technical_data(df_theme, all_theme_map):
                 bt_sheet.append_rows(new_rows, value_input_option="USER_ENTERED")
                 print(f"✅ [백테스트 V6 Step1] 진입 {len(new_rows)}행 append 완료 (차트/수급/랜덤/지수 · 추적은 Step2)")
                 sort_and_format_backtest_log(doc, bt_sheet)  # 🆕 새 행이 추가된 직후에만 정렬+서식 재적용
+
+                # 🗂️ 순위 풀 — **append 가 성공한 뒤에만** 남긴다(위 주석 참조).
+                #    picked 는 메모리의 top2 가 아니라 **실제로 원장에 들어간 행**에서 뽑는다.
+                #    그래야 "고르려 했던 것"이 아니라 "표본에 들어간 선택"을 설명한다.
+                _pool_runid = os.environ.get("GITHUB_RUN_ID", "")
+                _appended = {}
+                for _nr in new_rows:
+                    _appended.setdefault(_nr[2], []).append(str(_nr[4]))
+                for _ch, _ranked, _sidx, _elig, _excl, _band in _pool_plan:
+                    _pok, _pmsg = rank_pool.record(
+                        today_str, _ch, _ranked, _appended.get(_ch, []), _sidx,
+                        run_id=_pool_runid, eligible_codes=_elig,
+                        exclusion=_excl, band=_band)
+                    if _pok:
+                        print(f"   🗂️ 순위 풀 보존 — {_pmsg}")
+                    elif _pmsg.startswith("기록 실패"):
+                        print(f"   ❌ [순위 풀 보존 실패] {_ch}: {_pmsg}")
+                    else:
+                        print(f"   · 순위 풀 생략 — {_ch}: {_pmsg}")
             else:
                 print("⏭ [백테스트 V6 Step1] 진입 추가 없음 (EOD 윈도 외 또는 전부 중복)")
         except Exception as e:
