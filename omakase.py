@@ -12,6 +12,7 @@ import json
 from after_market_quotes import scanner_after_quote, AFTER_HEADER, NXT_HEADER
 import scanner_census
 import rank_pool
+import feature_store
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -3121,6 +3122,7 @@ def update_technical_data(df_theme, all_theme_map):
             # 순위 풀 계획은 EOD 블록 안에서 채워지고 append 성공 뒤에 쓰인다.
             # 두 지점의 들여쓰기가 달라 미정의 경로가 생길 수 있으므로 여기서 먼저 비운다.
             _pool_plan = []
+            _fs_ctx = None
             if is_eod_log_window:
                 entry_stage = 3 if kospi_rate <= -3.0 else (2 if is_warning_market else 1)
                 # 🔧 [수정] "집중도" 열이 모든 채널에서 계속 빈 값이던 문제 — 이미 계산해둔 뉴스키워드 1위:2위 비율을 그대로 기록
@@ -3181,6 +3183,23 @@ def update_technical_data(df_theme, all_theme_map):
                 #       적격 여부(eligible)와 제외 사유를 같이 남긴다. 그래야 나중에
                 #       '현행 정책에서의 3위'와 '필터 전 원점수 3위'를 갈라 볼 수 있다.
                 _band_tag = f"{_lo}-{_hi}" if _band_on else None
+                # 🆕 [Feature Store 2026-09-17] 그날 알고 있던 것 전부를 동결한다.
+                #    analyze_single_stock 이 이미 종목당 35개 피처를 계산해 놓고
+                #    TOP2 만 빼고 버려 왔다. 버리지 않고 떨군다.
+                #    ⚠️ 여기서는 **재료만 모은다.** 기록은 append 성공 뒤다(rank_pool 과 동일).
+                #    ⚠️ 미래수익은 담지 않는다. 나중에 코드+날짜로 일봉에서 계산한다.
+                _fs_ctx = dict(
+                    kospi_rate=kospi_rate,
+                    warning_market=bool(is_warning_market),
+                    index_above_ma5=bool(index_above_ma5),
+                    static_db=set(static_db or {}),
+                    theme_rank=dict(theme_rank_dict or {}),
+                    theme_hist_max=dict(theme_historical_max or {}),
+                    candidate_codes=[r[1] for r in candidate_pool],
+                    gate_codes=[r[1] for r in gate_passed],
+                    rs_is_percentile=True,   # r[33] 은 스캔 완료 후 백분위로 덮어써진다
+                )
+
                 _pool_plan = [
                     ("차트TOP2",
                      sorted(candidate_pool, key=lambda x: x[29], reverse=True),
@@ -3289,6 +3308,21 @@ def update_technical_data(df_theme, all_theme_map):
                 _appended = {}
                 for _nr in new_rows:
                     _appended.setdefault(_nr[2], []).append(str(_nr[4]))
+                # 🗂️ Feature Store — append 성공 뒤에만. picked 는 실제로 적재된 행에서.
+                _fs_picked = {}
+                for _nr in new_rows:
+                    _fs_picked.setdefault(str(_nr[4]), _nr[2])
+                _fok, _fmsg = (feature_store.record(
+                    today_str, results, picked=_fs_picked,
+                    run_id=_pool_runid, **_fs_ctx)
+                    if _fs_ctx else (False, "EOD 창 밖 — 재료 없음"))
+                if _fok:
+                    print(f"   🗂️ Feature Store 보존 — {_fmsg}")
+                elif _fmsg.startswith("기록 실패"):
+                    print(f"   ❌ [Feature Store 보존 실패] {_fmsg}")
+                else:
+                    print(f"   · Feature Store 생략 — {_fmsg}")
+
                 for _ch, _ranked, _sidx, _elig, _excl, _band in _pool_plan:
                     _pok, _pmsg = rank_pool.record(
                         today_str, _ch, _ranked, _appended.get(_ch, []), _sidx,

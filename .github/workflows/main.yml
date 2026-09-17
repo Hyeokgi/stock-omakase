@@ -46,21 +46,21 @@ jobs:
         if: always()
         run: python hyeoks_data_quality.py --check --spreadsheet-id 1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks
 
-      - name: 📊 타점 전수조사 보존
+      - name: 📊 타점 전수조사·후보 동결 보존
         # 스캐너는 10분마다 돌지만 기록은 하루 한 줄이다(14:40~15:10 KST, 날짜 멱등).
         # 그래서 이 스텝은 하루 144회 중 **1회만** 실제로 커밋하고 나머지는 즉시 끝난다.
         # 왜 남기나: 엔벨로프 통과 수는 지금까지 로그에만 있었고 로그는 만료된다.
         # §3-2-1 의 ENVELOPE_BAND 를 켜면 이 값이 바뀌므로 켜기 전 기준선이 필요하다.
         if: always()
         run: |
-          if [ -z "$(git status --porcelain data/scanner_census)" ]; then
+          if [ -z "$(git status --porcelain data/scanner_census data/feature_store)" ]; then
             echo "기록 없음 (창 밖이거나 오늘치 이미 있음)"
             exit 0
           fi
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -- data/scanner_census
-          git commit -m "data: 타점 전수조사 $(TZ=Asia/Seoul date +%Y-%m-%d) [skip ci]"
+          git add -- data/scanner_census data/feature_store
+          git commit -m "data: 타점 전수조사·후보 동결 $(TZ=Asia/Seoul date +%Y-%m-%d) [skip ci]"
           # 스냅샷·분봉 워크플로가 같은 시간대에 푸시할 수 있으므로 rebase 후 재시도
           for i in 1 2 3; do
             git pull --rebase --autostash origin main && git push origin HEAD:main && exit 0
