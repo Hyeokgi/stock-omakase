@@ -1,0 +1,32 @@
+name: 🔎 HYEOKS FRED 점검
+
+# 목적: FRED_API_KEY secret 배선 확인 + 계열별 실패 사유 확인.
+#       2026-09-17 에 BAMLH0A0HYM2·M2SL 이 실패했는데 원인이 로그에 없었다.
+#
+# ⚠️ 텔레그램도 Gemini 도 건드리지 않는다. 읽기만 한다. 수동 전용.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.10'
+    - name: 📦 라이브러리 설치
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests beautifulsoup4 gspread oauth2client google-genai
+    - name: 🧪 자기검증
+      run: python -m unittest discover -s tests -p 'test_morning_fred.py' -v
+    - name: 🔎 FRED 점검
+      env:
+        FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+      run: python hyeoks_morning.py --check-fred

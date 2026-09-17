@@ -1,4 +1,4 @@
-import os, requests, datetime, time, json, re
+import os, sys, requests, datetime, time, json, re
 from bs4 import BeautifulSoup
 from google import genai
 import gspread
@@ -492,6 +492,24 @@ def batch_generate_briefings():
 # 메인 실행 트리거
 # ==========================================
 if __name__ == "__main__":
+    # 🔎 FRED 점검 전용 모드 — 텔레그램도 Gemini 도 건드리지 않는다.
+    #    secret 배선 확인과 "왜 실패했나" 를 보는 용도다. 읽기만 한다.
+    if "--check-fred" in sys.argv:
+        print("🔎 [FRED 점검] 키 배선과 계열별 응답만 확인한다 (발송 없음)\n")
+        print(f"키 설정됨: {'예' if FRED_API_KEY else '아니오'}"
+              + (f" (길이 {len(FRED_API_KEY)})" if FRED_API_KEY else ""))
+        print()
+        text, failures = get_global_liquidity_data()
+        print("\n--- 리포트 ---")
+        print(text)
+        if failures:
+            print(f"\n❌ 실패 {len(failures)}/{len(FRED_SERIES)}:")
+            for sid, why in failures:
+                print(f"   · {sid}: {why}")
+            sys.exit(2)
+        print(f"\n✅ {len(FRED_SERIES)}계열 전부 정상")
+        sys.exit(0)
+
     now_obj = datetime.datetime.now(KST)
     
     # 💡 [구조 수정] 새벽 6시 대에는 시트용 종목 브리핑을 일괄적으로 먼저 구운 뒤, 텔레그램 발송까지 물 흐르듯 이어집니다.
