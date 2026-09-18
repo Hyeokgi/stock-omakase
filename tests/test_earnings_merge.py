@@ -351,7 +351,7 @@ class WorkflowStateBindingTests(unittest.TestCase):
         거래일을 통째로 떨어뜨린다(false-negative 과다)."""
         src = self.source()
         self.assertIn("KIND_TO_WORKFLOW", src)
-        self.assertIn("production_receipt.latest(day, kind)", src)
+        self.assertIn("production_receipt.latest(day, kind, fingerprint=fp)", src)
         self.assertIn("actions/runs/{run_id}", src)
         self.assertNotIn("per_page=30", src)     # 날짜 전체 조회 흔적
 
@@ -360,4 +360,43 @@ class WorkflowStateBindingTests(unittest.TestCase):
 
     def test_missing_receipt_yields_no_conclusion(self):
         """영수증이 없으면 결론을 지어내지 않는다 — Builder 가 거짓으로 본다."""
-        self.assertIn("영수증이 없어", self.source())
+        self.assertIn("영수증이 없다", self.source())
+
+    def test_selects_receipt_by_current_fingerprint(self):
+        """🔴 2026-09-18 — Builder 는 지문으로 거르는데 여기는 안 걸렀다.
+
+        같은 날 두 지문의 실행이 섞이면 데이터 증거는 현재 지문, workflow 증거는
+        늦게 끝난 이전 지문을 가리킬 수 있었다. "1:1 로 묶었다" 가 아직 아니었다.
+        """
+        src = self.source()
+        self.assertIn("production_receipt.latest(day, kind, fingerprint=fp)", src)
+        self.assertIn("stability_gate.fingerprint()", src)
+        # 지문 없이 고르는 옛 **호출**이 남아 있으면 안 된다.
+        # 설명 주석에는 그 문구가 일부러 남아 있으므로 실행 코드만 본다.
+        import ast
+        tree = ast.parse(src)
+        bad = [f"line {n.lineno}" for n in ast.walk(tree)
+               if isinstance(n, ast.Call)
+               and isinstance(n.func, ast.Attribute) and n.func.attr == "latest"
+               and not any(k.arg == "fingerprint" for k in n.keywords)]
+        self.assertEqual(bad, [], f"지문 없이 영수증을 고르는 호출: {bad}")
+
+    def test_verifies_the_runs_actual_workflow_path(self):
+        """잘못된 run_id·오염된 영수증이 **다른 워크플로의 성공**을 가리켜도 막는다."""
+        src = self.source()
+        self.assertIn("expect_path", src)
+        self.assertIn('got_path != expect_path', src)
+        self.assertIn('f".github/workflows/{wf}"', src)
+
+    def test_path_mismatch_is_reported_not_swallowed(self):
+        self.assertIn("워크플로 불일치", self.source())
+
+    def test_run_conclusion_returns_reason(self):
+        """왜 인정하지 않았는지 말한다 — 조용한 빈 문자열을 남기지 않는다."""
+        import ast
+        tree = ast.parse(self.source())
+        fn = next(n for n in tree.body
+                  if isinstance(n, ast.FunctionDef) and n.name == "run_conclusion")
+        returns = [n for n in ast.walk(fn) if isinstance(n, ast.Return)]
+        self.assertTrue(all(isinstance(r.value, ast.Tuple) for r in returns),
+                        "모든 return 이 (결론, 사유) 여야 한다")
