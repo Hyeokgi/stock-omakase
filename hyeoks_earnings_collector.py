@@ -316,6 +316,55 @@ def compute_v3_score(quarters, summary):
 # ──────────────────────────────────────────────
 # ③ 대상 종목 목록 — 우선 DB_중장기 + DB_스캐너로 시작 (API 호출량 보수적 관리)
 # ──────────────────────────────────────────────
+EARNINGS_HEADER = ["종목코드", "종목명", "최신분기", "매출액", "영업이익", "매출증감률(YoY,%)",
+                   "영업이익증감률(YoY,%)", "매출증감률(QoQ,%)", "영업이익증감률(QoQ,%)",
+                   "실적개선여부", "V3(실적점수)", "연속성장", "재무제표기준", "갱신일시"]
+STAMP_COL = EARNINGS_HEADER.index("갱신일시")
+
+
+def _code_of(row):
+    return str(row[0]).lstrip("'").strip() if row else ""
+
+
+def merge_earnings_rows(old, new):
+    """🔴 2026-09-18 — DB_실적 은 매 실행 `clear()` 후 통째로 다시 썼다.
+
+    시간 예산(55분)에 걸려 127/143 만 처리한 날, **나머지 16종목의 이전 행이
+    시트에서 사라졌다.** 로그는 "나머지는 다음 실행에서 이어서 수집됩니다" 라고
+    말했지만 대상 순서가 고정이라 다음 실행도 같은 앞쪽 127개를 돌았다.
+    즉 꼬리는 이어받는 게 아니라 **매일 지워지고 영영 안 채워졌다.**
+
+    바로 옆 DB_컨센서스 경로는 이미 merge_consensus_rows 로 올바르게 보존하고
+    있었다. 같은 파일 안에서 두 시트가 다르게 동작하고 있었던 것이다.
+
+    이번 실행이 건드리지 못한 종목은 이전 행과 이전 갱신일시를 그대로 남긴다.
+    """
+    if not new or len(new[0]) != len(EARNINGS_HEADER):
+        raise ValueError("실적 출력 스키마가 다르다")
+    width = len(new[0])
+    if old and [str(c) for c in old[0][:width]] != new[0]:
+        raise ValueError("기존 DB_실적 헤더 불일치")
+    refreshed = {_code_of(r) for r in new[1:]}
+    preserved = [list(r[:width]) + [""] * (width - len(r[:width]))
+                 for r in old[1:] if _code_of(r) and _code_of(r) not in refreshed]
+    return new + preserved
+
+
+def stale_first(codes, old):
+    """갱신일시가 오래된(없으면 더 오래된 것으로) 종목부터 처리한다.
+
+    순서가 고정이면 시간 예산에 잘린 꼬리는 **영원히** 꼬리다.
+    오래된 것부터 돌면 어제 잘린 종목이 오늘 맨 앞에 온다 —
+    그래야 "다음 실행에서 이어서" 가 말이 아니라 사실이 된다.
+    """
+    stamp = {}
+    for row in (old or [])[1:]:
+        c = _code_of(row)
+        if c:
+            stamp[c] = str(row[STAMP_COL]).strip() if len(row) > STAMP_COL else ""
+    return sorted(codes, key=lambda c: (stamp.get(c, ""), c))
+
+
 def get_target_stocks(doc):
     """반환: {종목코드: 종목명} 딕셔너리"""
     names_from_trend = set()
@@ -374,13 +423,19 @@ if __name__ == "__main__":
     except Exception:
         out_sheet = doc.add_worksheet(title="DB_실적", rows="1000", cols="12")
 
-    header = ["종목코드", "종목명", "최신분기", "매출액", "영업이익", "매출증감률(YoY,%)", "영업이익증감률(YoY,%)", "매출증감률(QoQ,%)", "영업이익증감률(QoQ,%)", "실적개선여부", "V3(실적점수)", "연속성장", "재무제표기준", "갱신일시"]
-    rows_out = [header]
+    rows_out = [list(EARNINGS_HEADER)]   # 사본을 두지 않는다 — 어긋나면 병합이 헛돈다
     consensus_header = ["종목코드", "종목명", "추정분기", "추정매출액", "추정영업이익", "추정당기순이익", "갱신일시"]
     consensus_rows_out = [consensus_header]
     consensus_failures = []
     now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
-    target_codes = list(target_map.keys())
+    # 🔴 2026-09-18 — 순서가 고정이라 시간 예산에 잘린 꼬리가 다음 실행에도 꼬리였다.
+    #    기존 시트의 갱신일시를 읽어 **오래된 것부터** 돈다. 한 번도 못 받은 종목이 맨 앞.
+    try:
+        existing_earnings = out_sheet.get("A:N")
+    except Exception as e:
+        print(f"::warning::기존 DB_실적 읽기 실패({e}) — 보존·순서 재배치 없이 진행한다")
+        existing_earnings = []
+    target_codes = stale_first(list(target_map.keys()), existing_earnings)
     fs_div_counter = {"CFS": 0, "OFS": 0}
     DEBUG_STOCKS = {"005930", "000660", "035420"}  # 🔎 [진단용] 삼성전자/SK하이닉스/NAVER — 분기별 원본 수치를 그대로 로그에 찍어서 확인
 
@@ -445,12 +500,26 @@ if __name__ == "__main__":
         if (idx + 1) % 20 == 0:
             print(f"   ...{idx + 1}/{len(target_codes)} 진행 중")
 
-    partial_note = " (⏱️ 시간 예산 초과로 일부만 처리됨 — 나머지는 다음 실행에서 이어서 수집됩니다)" if time_budget_hit else ""
+    partial_note = (" (⏱️ 시간 예산 초과로 일부만 처리됨 — 나머지는 이전 값을 유지하고, "
+                    "갱신일시가 오래된 순서라 다음 실행에서 먼저 처리됩니다)") if time_budget_hit else ""
 
     if len(rows_out) > 1:
-        out_sheet.clear()
-        out_sheet.update(range_name="A1", values=rows_out, value_input_option="RAW")
-        print(f"✅ [DB_실적] {len(rows_out) - 1}개 종목 기록 완료 (연결기준 {fs_div_counter.get('CFS',0)}개 / 별도기준 {fs_div_counter.get('OFS',0)}개){partial_note}")
+        # 통째로 비우지 않는다 — 이번에 못 건드린 종목의 이전 행을 살린다(위 merge 주석 참조).
+        try:
+            merged = merge_earnings_rows(existing_earnings, rows_out)
+        except ValueError as e:
+            # 스키마가 바뀌었으면 옛 행을 살리는 것이 오히려 틀린다. 크게 말하고 새로 쓴다 —
+            # 오늘 모은 것까지 버리지는 않는다.
+            print(f"::error::기존 DB_실적 스키마 불일치({e}) — 보존 포기, 이번 수집분으로 새로 쓴다")
+            out_sheet.clear()
+            merged = rows_out
+        out_sheet.update(range_name="A1", values=merged, value_input_option="RAW")
+        if len(existing_earnings) > len(merged):
+            out_sheet.batch_clear([f"A{len(merged) + 1}:N{len(existing_earnings)}"])
+        kept = len(merged) - len(rows_out)
+        print(f"✅ [DB_실적] {len(rows_out) - 1}개 종목 기록 완료 "
+              f"(연결기준 {fs_div_counter.get('CFS',0)}개 / 별도기준 {fs_div_counter.get('OFS',0)}개){partial_note}"
+              + (f" · 이번에 못 돈 {kept}개는 이전 값 보존" if kept else ""))
     else:
         print("⚠️ 수집된 실적 데이터가 없습니다.")
 
