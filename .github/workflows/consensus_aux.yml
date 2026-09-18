@@ -7,7 +7,7 @@ name: 🧾 HYEOKS 컨센서스 AUX (WiseReport → DB_컨센서스)
 
 on:
   schedule:
-    - cron: '40 11 * * *'  # 21:40 KST 목표. 주 수집(11:00)보다 뒤에 둬서 시트 락이 겹치지 않게 한다
+    - cron: '40 11 * * *'  # 11:40 UTC = **20:40 KST**. 주 수집(11:00 UTC=20:00 KST)보다 40분 뒤 — 락이 겹치지 않게
   workflow_dispatch:        # 수동으로 바로 돌려서 테스트하고 싶을 때
 
 concurrency:

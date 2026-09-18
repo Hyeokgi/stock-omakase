@@ -45,7 +45,11 @@ class CriteriaTests(unittest.TestCase):
         self.assertEqual(bad, ["dart_complete"])
 
 
-class StreakTests(unittest.TestCase):
+class CycleTests(unittest.TestCase):
+    """③ 안정화 1회 = 개별 workflow run 이 아니라 **거래일 end-to-end 사이클**."""
+
+    FP = "aaaaaaaaaaaa"
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.path = str(pathlib.Path(self.tmp.name) / "runs.csv")
@@ -55,59 +59,124 @@ class StreakTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def add(self, run_id, evidence, date="2026-09-18"):
-        return G.record(run_id, date, "earnings", evidence, path=self.path)
+    def add(self, day, evidence, run_id=None, fp=None):
+        return G.record(day, run_id or f"run-{day}", "cycle", evidence,
+                        path=self.path, fp=fp or self.FP)
 
-    def test_three_consecutive_passes_open_the_gate(self):
-        for i in range(3):
-            self.add(f"r{i}", self.good)
-        self.assertTrue(G.state(path=self.path)[0])
+    def test_three_consecutive_trading_days_open_the_gate(self):
+        for day in ("2026-09-16", "2026-09-17", "2026-09-18"):
+            self.add(day, self.good)
+        self.assertTrue(G.state(path=self.path, fp=self.FP)[0])
 
-    def test_two_is_not_enough(self):
-        for i in range(2):
-            self.add(f"r{i}", self.good)
-        self.assertFalse(G.state(path=self.path)[0])
+    def test_same_trading_day_counted_once(self):
+        """하루에 스캐너가 144회 돈다 — run 단위로 세면 하루에 문턱을 넘을 수 있다."""
+        self.add("2026-09-18", self.good)
+        done, why = self.add("2026-09-18", self.good, run_id="다른런")
+        self.assertFalse(done)
+        self.assertIn("이미", why)
+        self.assertEqual(G.streak(path=self.path, fp=self.FP), 1)
 
-    def test_a_single_failure_resets_the_streak_to_zero(self):
-        """'거의 3회' 를 3회로 반올림하지 않는다."""
-        for i in range(2):
-            self.add(f"r{i}", self.good)
-        self.add("bad", self.bad)
-        self.assertEqual(G.streak(path=self.path), 0)
-        self.assertFalse(G.state(path=self.path)[0])
-        self.add("r3", self.good)
-        self.assertEqual(G.streak(path=self.path), 1)
+    def test_non_trading_day_is_skip(self):
+        self.add("2026-09-19", {})          # 토요일
+        self.assertEqual(G.load(self.path)[-1]["verdict"], G.SKIP)
 
-    def test_same_run_is_not_counted_twice(self):
-        """같은 실행을 세 번 기록해 문턱을 통과하는 길을 막는다."""
-        self.add("same", self.good)
-        for _ in range(2):
-            done, why = self.add("same", self.good)
-            self.assertFalse(done)
-            self.assertIn("이미", why)
-        self.assertEqual(G.streak(path=self.path), 1)
+    def test_skip_neither_extends_nor_breaks(self):
+        self.add("2026-09-17", self.good)
+        self.add("2026-09-18", self.good)
+        n = G.streak(path=self.path, fp=self.FP)
+        self.add("2026-09-19", {})          # 토
+        self.add("2026-09-20", {})          # 일
+        self.assertEqual(G.streak(path=self.path, fp=self.FP), n)
+        self.add("2026-09-21", self.good)   # 월
+        self.assertEqual(G.streak(path=self.path, fp=self.FP), n + 1)
 
-    def test_log_is_append_only(self):
-        for i in range(4):
-            self.add(f"r{i}", self.good if i != 1 else self.bad)
-        self.assertEqual(len(G.load(self.path)), 4)
+    def test_skip_does_not_need_evidence(self):
+        """비거래일에 증거를 요구하면 주말마다 EvidenceMissing 이 난다."""
+        done, why = self.add("2026-09-19", {})
+        self.assertTrue(done)
+        self.assertIn("SKIP", why)
 
-    def test_every_criterion_is_recorded_per_run(self):
-        """나중에 '어느 기준이 떨어졌나' 를 다시 물을 수 있어야 한다."""
-        self.add("r0", self.bad)
+    def test_a_failure_still_resets(self):
+        for day in ("2026-09-16", "2026-09-17"):
+            self.add(day, self.good)
+        self.add("2026-09-18", self.bad)
+        self.assertEqual(G.streak(path=self.path, fp=self.FP), 0)
+
+    def test_cycle_date_is_required(self):
+        with self.assertRaises(ValueError):
+            G.record("", "r", "cycle", self.good, path=self.path)
+
+    def test_run_id_is_still_required(self):
+        with self.assertRaises(ValueError):
+            G.record("2026-09-18", "", "cycle", self.good, path=self.path)
+
+    def test_every_criterion_recorded(self):
+        self.add("2026-09-18", self.bad)
         row = G.load(self.path)[0]
-        for k in G.KEYS:
-            self.assertIn(k, row)
         self.assertEqual(row["store_written"], "N")
         self.assertEqual(row["verdict"], "FAIL")
+        self.assertTrue(row["fingerprint"])
 
-    def test_run_id_is_required(self):
-        with self.assertRaises(ValueError):
-            G.record("", "2026-09-18", "earnings", self.good, path=self.path)
+    def test_log_is_append_only(self):
+        for day in ("2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18"):
+            self.add(day, self.good if day != "2026-09-16" else self.bad)
+        self.assertEqual(len(G.load(self.path)), 4)
 
     def test_empty_log_is_not_a_pass(self):
-        self.assertFalse(G.state(path=self.path)[0])
+        self.assertFalse(G.state(path=self.path, fp=self.FP)[0])
         self.assertIn("한 번도", G.report(path=self.path))
+
+
+class FingerprintTests(unittest.TestCase):
+    """④ 3회 연속은 **같은 파이프라인**이어야 한다."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = str(pathlib.Path(self.tmp.name) / "runs.csv")
+        self.good = {k: True for k in G.KEYS}
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def fill(self, fp):
+        for day in ("2026-09-16", "2026-09-17", "2026-09-18"):
+            G.record(day, f"r-{day}", "cycle", self.good, path=self.path, fp=fp)
+
+    def test_changing_the_pipeline_resets_the_streak(self):
+        """silent exception 정리와 feature_store 확장이 끝난 뒤부터 3회를 센다."""
+        self.fill("old000000000")
+        self.assertEqual(G.streak(path=self.path, fp="old000000000"), 3)
+        self.assertEqual(G.streak(path=self.path, fp="new000000000"), 0)
+        self.assertFalse(G.state(path=self.path, fp="new000000000")[0])
+
+    def test_reset_reason_is_stated(self):
+        self.fill("old000000000")
+        self.assertIn("지문이 바뀌었다", G.state(path=self.path, fp="new000000000")[1])
+
+    def test_core_files_are_in_the_fingerprint(self):
+        for f in ("omakase.py", "hyeoks_analyst.py", "earnings_schema.py",
+                  "feature_store.py", "rank_pool.py",
+                  ".github/workflows/main.yml",
+                  ".github/workflows/earnings_collector.yml"):
+            with self.subTest(f):
+                self.assertIn(f, G.FINGERPRINT_FILES)
+
+    def test_fingerprint_changes_with_content(self):
+        import tempfile as T
+        with T.TemporaryDirectory() as d:
+            p = pathlib.Path(d) / "x.py"
+            p.write_text("a", encoding="utf-8")
+            one = G.fingerprint(root=d, files=["x.py"])
+            p.write_text("b", encoding="utf-8")
+            self.assertNotEqual(one, G.fingerprint(root=d, files=["x.py"]))
+
+    def test_missing_file_is_a_change(self):
+        self.assertNotEqual(G.fingerprint(files=["없는1.py"]),
+                            G.fingerprint(files=["없는2.py"]))
+
+    def test_fingerprint_is_recorded_per_row(self):
+        self.fill("abc123abc123")
+        self.assertTrue(all(r["fingerprint"] == "abc123abc123" for r in G.load(self.path)))
 
 
 class ProductionEvidenceTests(unittest.TestCase):

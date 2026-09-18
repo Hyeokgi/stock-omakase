@@ -16,9 +16,52 @@
 **"수익 연구를 재개해도 입력을 믿을 수 있다"** 는 운영 기준이다.
 """
 import csv
+import hashlib
 import os
 
-GATE_VERSION = "stability-gate-v1"
+GATE_VERSION = "stability-gate-v2"
+
+# ═══════════════════════════════════════════════════════════════════════
+# ③ 안정화 1회 = 하나의 **KRX 거래일 end-to-end 생산 사이클**
+#    개별 workflow run 이 아니다. 하루에 스캐너가 144회 도는데 그 중 하나가
+#    통과했다고 "1회" 로 세면, 같은 날 세 번 돌려 문턱을 통과할 수 있다.
+#    비거래일은 SKIP — streak 를 늘리지도 끊지도 않는다.
+# ═══════════════════════════════════════════════════════════════════════
+SKIP = "SKIP"
+PASS = "PASS"
+FAIL = "FAIL"
+
+# ═══════════════════════════════════════════════════════════════════════
+# ④ 3회 연속은 **같은 파이프라인**이어야 한다
+#    핵심 코드·워크플로·스키마가 바뀌면 그 3회는 서로 다른 시스템의 기록이다.
+#    지문이 바뀌면 streak 를 0 으로 되돌린다.
+# ═══════════════════════════════════════════════════════════════════════
+FINGERPRINT_FILES = [
+    "omakase.py", "hyeoks_analyst.py", "hyeoks_earnings_collector.py",
+    "earnings_schema.py", "feature_store.py", "rank_pool.py", "scanner_census.py",
+    "hyeoks_tajeom.py", "stability_gate.py",
+    ".github/workflows/main.yml",
+    ".github/workflows/earnings_collector.yml",
+    ".github/workflows/consensus_aux.yml",
+    ".github/workflows/ai_report.yml",
+]
+
+
+def fingerprint(root=".", files=None):
+    """핵심 코드·워크플로·스키마의 지문. 하나라도 바뀌면 값이 바뀐다.
+
+    없는 파일은 이름만으로도 지문에 들어간다 — 파일이 사라진 것도 변경이다.
+    """
+    h = hashlib.sha256()
+    for name in sorted(files or FINGERPRINT_FILES):
+        path = os.path.join(root, name)
+        h.update(name.encode("utf-8"))
+        try:
+            with open(path, "rb") as fh:
+                h.update(fh.read())
+        except OSError:
+            h.update(b"<missing>")
+    return h.hexdigest()[:12]
 GATE_DIR = "data/stability_gate"
 GATE_LOG = os.path.join(GATE_DIR, "runs.csv")
 REQUIRED_STREAK = 3
@@ -36,7 +79,8 @@ CRITERIA = [
 ]
 KEYS = [k for k, _ in CRITERIA]
 
-HEADER = ["run_id", "date", "source", "verdict"] + KEYS + ["note", "gate_version"]
+HEADER = (["cycle_date", "run_id", "source", "verdict", "fingerprint"]
+          + KEYS + ["aux_state", "note", "gate_version"])
 
 
 class EvidenceMissing(ValueError):
@@ -63,58 +107,99 @@ def load(path=GATE_LOG):
         return list(csv.DictReader(fh))
 
 
-def record(run_id, date, source, evidence, note="", path=GATE_LOG):
-    """실행 하나를 append-only 로 남긴다. 같은 run_id 는 두 번 세지 않는다."""
+def is_trading_day(date):
+    """등록 달력으로 거래일 여부를 본다. 비거래일은 사이클이 아니다."""
+    from hyeoks_trading_calendar import scheduled_session
+    return bool(scheduled_session(date))
+
+
+def record(cycle_date, run_id, source, evidence, note="", path=GATE_LOG,
+           fp=None, aux_state="", root="."):
+    """**거래일 사이클 하나**를 append-only 로 남긴다.
+
+    ③ 같은 거래일을 두 번 세지 않는다. 비거래일은 SKIP 으로만 기록된다.
+    ④ 지문을 같이 남긴다 — 나중에 "이 3회가 같은 시스템이었나" 를 물을 수 있다.
+    """
+    cycle_date = str(cycle_date).strip()
     run_id = str(run_id).strip()
+    if not cycle_date:
+        raise ValueError("cycle_date 가 없으면 사이클을 셀 수 없다")
     if not run_id:
-        raise ValueError("run_id 가 없으면 중복을 막을 수 없다")
+        raise ValueError("run_id 가 없으면 증거를 되짚을 수 없다")
     rows = load(path)
-    if any(r["run_id"] == run_id for r in rows):
-        return False, f"이미 기록된 실행 {run_id} — 같은 실행을 두 번 세지 않는다"
-    ok, bad = evaluate(evidence)
+    if any(r["cycle_date"] == cycle_date for r in rows):
+        return False, f"이미 기록된 거래일 {cycle_date} — 같은 날을 두 번 세지 않는다"
+
+    if not is_trading_day(cycle_date):
+        verdict, bad = SKIP, []
+    else:
+        ok, bad = evaluate(evidence)
+        verdict = PASS if ok else FAIL
+
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     fresh = not os.path.exists(path)
     with open(path, "a", encoding="utf-8", newline="") as fh:
         writer = csv.writer(fh)
         if fresh:
             writer.writerow(HEADER)
-        writer.writerow([run_id, date, source, "PASS" if ok else "FAIL"]
-                        + ["Y" if evidence[k] else "N" for k in KEYS]
-                        + [note, GATE_VERSION])
-    return True, ("통과" if ok else f"미달: {bad}")
+        writer.writerow(
+            [cycle_date, run_id, source, verdict, fp or fingerprint(root)]
+            + [("-" if verdict == SKIP else ("Y" if evidence.get(k) else "N")) for k in KEYS]
+            + [aux_state, note, GATE_VERSION])
+    if verdict == SKIP:
+        return True, "비거래일 — SKIP(연속을 늘리지도 끊지도 않는다)"
+    return True, ("통과" if verdict == PASS else f"미달: {bad}")
 
 
-def streak(rows=None, path=GATE_LOG):
-    """뒤에서부터 연속 PASS 수. FAIL 을 만나면 거기서 끊는다."""
+def streak(rows=None, path=GATE_LOG, fp=None, root="."):
+    """뒤에서부터 연속 PASS 수.
+
+    ③ SKIP(비거래일)은 **건너뛴다** — 늘리지도 끊지도 않는다.
+    ④ 현재 지문과 다른 행을 만나면 거기서 끊는다. 다른 시스템의 기록이기 때문이다.
+    """
     rows = load(path) if rows is None else rows
+    current = fp or fingerprint(root)
     n = 0
     for r in reversed(rows):
-        if r.get("verdict") != "PASS":
+        v = r.get("verdict")
+        if v == SKIP:
+            continue
+        if v != PASS:
             break
+        if r.get("fingerprint") and r["fingerprint"] != current:
+            break            # 파이프라인이 바뀌었다 — 여기부터는 다른 시스템이다
         n += 1
     return n
 
 
-def state(rows=None, path=GATE_LOG):
+def state(rows=None, path=GATE_LOG, fp=None, root="."):
     """(통과 여부, 사람이 읽을 한 줄)."""
     rows = load(path) if rows is None else rows
-    n = streak(rows)
+    current = fp or fingerprint(root)
+    n = streak(rows, fp=current)
     if n >= REQUIRED_STREAK:
-        return True, (f"✅ 안정화 종료선 통과 — 연속 {n}회 (기준 {REQUIRED_STREAK}). "
-                      "운영 감사 Phase 를 닫고 알파 연구로 복귀한다")
-    last = rows[-1]["verdict"] if rows else "기록 없음"
-    return False, (f"⏳ 연속 {n}/{REQUIRED_STREAK}회 — 마지막 실행 {last}. "
-                   "아직 감사 Phase 다")
+        return True, (f"✅ 안정화 종료선 통과 — 연속 {n}거래일 (기준 {REQUIRED_STREAK}) "
+                      f"· 지문 {current}. 운영 감사 Phase 를 닫고 알파 연구로 복귀한다")
+    graded = [r for r in rows if r.get("verdict") != SKIP]
+    last = graded[-1]["verdict"] if graded else "기록 없음"
+    why = ""
+    if graded and graded[-1].get("fingerprint") not in ("", None, current):
+        why = " · ⚠️ 지문이 바뀌었다(파이프라인 변경) — 연속을 처음부터 다시 센다"
+    return False, (f"⏳ 연속 {n}/{REQUIRED_STREAK}거래일 — 마지막 판정 {last} "
+                   f"· 지문 {current}.{why} 아직 감사 Phase 다")
 
 
-def report(rows=None, path=GATE_LOG):
+def report(rows=None, path=GATE_LOG, root="."):
     rows = load(path) if rows is None else rows
-    lines = [f"🚦 {GATE_VERSION} — 기록 {len(rows)}회", state(rows)[1], ""]
+    current = fingerprint(root)
+    lines = [f"🚦 {GATE_VERSION} — 기록 {len(rows)}일", state(rows, fp=current)[1], ""]
     for r in rows[-REQUIRED_STREAK - 2:]:
         marks = " ".join(f"{k}={r.get(k, '?')}" for k in KEYS)
-        lines.append(f"  {r['date']} {r['source']} [{r['verdict']}] {marks}")
+        same = "" if r.get("fingerprint") == current else "  ⚠️지문다름"
+        lines.append(f"  {r['cycle_date']} {r['source']} [{r['verdict']}] {marks}"
+                     f"  aux={r.get('aux_state', '-')}{same}")
     if not rows:
-        lines.append("  (아직 실제 생산 실행을 한 번도 기록하지 않았다)")
+        lines.append("  (아직 거래일 사이클을 한 번도 기록하지 않았다)")
     return "\n".join(lines)
 
 
@@ -150,28 +235,53 @@ def _selftest():
     chk("연속 요구는 3회", REQUIRED_STREAK == 3)
 
     with tempfile.TemporaryDirectory() as d:
-        p = os.path.join(d, "runs.csv")
-        chk("기록 없으면 미통과", state(path=p)[0] is False)
+        pth = os.path.join(d, "runs.csv")
+        FP = "aaaaaaaaaaaa"
+        chk("기록 없으면 미통과", state(path=pth, fp=FP)[0] is False)
 
-        for i in range(3):
-            done, _ = record(f"run{i}", f"2026-09-{18+i}", "earnings", good, path=p)
-            assert done
-        chk("3회 연속이면 통과", state(path=p)[0] is True, streak(path=p))
+        # ③ 거래일 사이클 단위로 센다
+        for day in ("2026-09-16", "2026-09-17", "2026-09-18"):
+            done, _ = record(day, f"run-{day}", "cycle", good, path=pth, fp=FP)
+            assert done, day
+        chk("거래일 3회 연속이면 통과", state(path=pth, fp=FP)[0] is True, streak(path=pth, fp=FP))
 
-        again, why = record("run0", "2026-09-18", "earnings", good, path=p)
-        chk("같은 실행을 두 번 세지 않는다", again is False and "이미" in why)
+        again, why = record("2026-09-18", "다른런", "cycle", good, path=pth, fp=FP)
+        chk("같은 거래일을 두 번 세지 않는다", again is False and "이미" in why)
 
-        record("run3", "2026-09-21", "earnings", bad, path=p)
-        chk("한 번 떨어지면 통과가 풀린다", state(path=p)[0] is False)
-        chk("연속 카운트가 0 으로 돌아간다", streak(path=p) == 0)
+        # ③ 비거래일은 SKIP — 늘리지도 끊지도 않는다
+        before = streak(path=pth, fp=FP)
+        record("2026-09-19", "run-토", "cycle", {}, path=pth, fp=FP)   # 토요일
+        chk("비거래일은 SKIP 이다", load(pth)[-1]["verdict"] == SKIP)
+        chk("SKIP 은 연속을 늘리지 않는다", streak(path=pth, fp=FP) == before, streak(path=pth, fp=FP))
+        record("2026-09-21", "run-월", "cycle", good, path=pth, fp=FP)
+        chk("SKIP 이 연속을 끊지도 않는다", streak(path=pth, fp=FP) == before + 1)
+        chk("SKIP 행은 증거 없이도 기록된다(빈 증거로 죽지 않는다)",
+            load(pth)[-2]["ci_green"] == "-")
 
-        record("run4", "2026-09-22", "earnings", good, path=p)
-        chk("다시 1 부터 센다", streak(path=p) == 1)
-        chk("리포트가 상태를 말한다", "1/3" in report(path=p))
+        # ④ 지문이 바뀌면 처음부터 다시
+        chk("지문이 바뀌면 연속이 0 이다", streak(path=pth, fp="bbbbbbbbbbbb") == 0)
+        chk("지문이 바뀌면 통과가 풀린다", state(path=pth, fp="bbbbbbbbbbbb")[0] is False)
+        chk("그 이유를 말한다", "지문이 바뀌었다" in state(path=pth, fp="bbbbbbbbbbbb")[1])
+        record("2026-09-22", "run-새지문", "cycle", good, path=pth, fp="bbbbbbbbbbbb")
+        chk("새 지문에서 1 부터 센다", streak(path=pth, fp="bbbbbbbbbbbb") == 1)
 
-        rows = load(p)
-        chk("append-only — 지운 행이 없다", len(rows) == 5, len(rows))
-        chk("기준 열이 행마다 남는다", all(all(k in r for k in KEYS) for r in rows))
+        # 미달은 여전히 연속을 끊는다
+        record("2026-09-23", "run-미달", "cycle", bad, path=pth, fp="bbbbbbbbbbbb")
+        chk("미달이면 연속이 0", streak(path=pth, fp="bbbbbbbbbbbb") == 0)
+
+        chk("append-only", len(load(pth)) == 7, len(load(pth)))
+        chk("지문이 행마다 남는다", all(r["fingerprint"] for r in load(pth)))
+
+    # ④ 지문 자체
+    chk("지문은 12자리", len(fingerprint()) == 12)
+    chk("같은 입력이면 같은 지문", fingerprint() == fingerprint())
+    chk("파일 목록이 바뀌면 지문이 바뀐다",
+        fingerprint(files=["omakase.py"]) != fingerprint(files=["omakase.py", "rank_pool.py"]))
+    chk("없는 파일도 지문에 반영된다(사라진 것도 변경이다)",
+        fingerprint(files=["없는파일.py"]) != fingerprint(files=["다른없는파일.py"]))
+    chk("핵심 파일이 지문에 들어 있다",
+        all(f in FINGERPRINT_FILES for f in ("omakase.py", "earnings_schema.py",
+                                             ".github/workflows/main.yml")))
 
     print("\n" + f"✅ 전부 통과 ({ok_count}건)")
     return ok_count

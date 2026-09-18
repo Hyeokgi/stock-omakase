@@ -13,7 +13,7 @@ HYEOKS 실적(매출액/영업이익) 수집기 — 금융감독원 OpenDART 연
 필요 패키지: pip install gspread oauth2client requests --break-system-packages
 환경변수: DART_API_KEY (OpenDART에서 발급받은 인증키)
 """
-import os, re, time, datetime, zipfile, io
+import os, re, sys, time, datetime, zipfile, io
 import requests
 from bs4 import BeautifulSoup
 import gspread
@@ -470,8 +470,6 @@ if __name__ == "__main__":
     #      earnings_collector.yml  --phase primary  → DART → DB_실적
     #      consensus_aux.yml       --phase aux      → WiseReport → DB_컨센서스
     #    --phase all 은 기존 동작(한 실행에서 둘 다)이며 수동 점검용으로 남긴다.
-    import argparse as _ap
-    _args, _ = _ap.ArgumentParser(add_help=False).parse_known_args()
     PHASE = "all"
     for _i, _a in enumerate(sys.argv):
         if _a == "--phase" and _i + 1 < len(sys.argv):
@@ -482,17 +480,22 @@ if __name__ == "__main__":
     RUN_PRIMARY, RUN_AUX = PHASE in ("all", "primary"), PHASE in ("all", "aux")
     print(f"▶️ phase={PHASE} (primary={RUN_PRIMARY} · aux={RUN_AUX})")
 
-    if not DART_API_KEY:
+    # 🔴 2026-09-18 ⑩ — aux 는 DART 를 전혀 쓰지 않는다. 그런데 DART_API_KEY 가
+    #    없으면 여기서 죽었고, corp_code 매핑(DART 전용, 수 MB zip 다운로드)도
+    #    같이 돌았다. 분리가 이름만이고 의존성은 그대로였다는 뜻이다.
+    if RUN_PRIMARY and not DART_API_KEY:
         print("❌ DART_API_KEY 환경변수가 없습니다. GitHub Secrets에 등록해주세요.")
-        exit(1)
+        sys.exit(1)
 
     doc = get_doc()
-    corp_map = load_or_build_corp_code_map(doc)
+    corp_map = load_or_build_corp_code_map(doc) if RUN_PRIMARY else {}
     target_map = get_target_stocks(doc)  # {종목코드: 종목명}
     print(f"▶️ 총 {len(target_map)}개 종목의 실적 데이터를 수집합니다 (DB_중장기 + DB_스캐너 기준)...")
 
+    out_sheet = None
     try:
-        out_sheet = doc.worksheet("DB_실적")
+        # aux 는 DB_실적을 건드리지 않는다 — 없으면 만들지도 않는다
+        out_sheet = doc.worksheet("DB_실적") if RUN_PRIMARY else None
     except Exception:
         # 🔴 2026-09-18 GPT P0-4 — cols="12" 였다. 지금 스키마는 14열이다.
         #    기존 운영 시트가 이미 있어서 안 드러났을 뿐, 새/복구/시험 환경에서 깨진다.
@@ -515,7 +518,7 @@ if __name__ == "__main__":
     #    보존이 불가능하면 본표 쓰기를 막는다.
     existing_earnings, earnings_readable = [], True
     try:
-        existing_earnings = out_sheet.get("A:N")
+        existing_earnings = out_sheet.get("A:N") if RUN_PRIMARY else []
     except Exception as e:
         earnings_readable = False
         print(f"::error::기존 DB_실적 읽기 실패({type(e).__name__}: {e}) — "
