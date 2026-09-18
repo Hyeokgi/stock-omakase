@@ -12,14 +12,35 @@ class SourceError(RuntimeError):
     pass
 
 
+def why(error):
+    """\U0001f534 2026-09-18 — 실패 '사유' 를 버리고 있었다.
+
+    9/17 실적 수집기가 컨센서스 127종목을 **전부** 놓쳤는데 로그에 남은 건
+    `Source unavailable: URLError` 뿐이었다. URLError 는 DNS 실패·연결 거부·
+    TLS 오류·타임아웃·프록시 차단을 전부 같은 이름으로 덮는다. 그래서
+    "원천이 죽었나, 러너에서 못 나가나, 느린가" 를 **구분할 수 없었다.**
+    이름만 남기는 것은 조용한 실패에 가깝다. 사유를 같이 남긴다.
+
+    URL 은 싣지 않는다(쿼리에 무엇이 붙을지 모른다). 길이도 자른다.
+    """
+    reason = getattr(error, "reason", None)
+    code = getattr(error, "code", None)          # HTTPError 면 상태코드
+    parts = [str(code)] if code is not None else []
+    parts.append(str(reason) if reason is not None else str(error))
+    text = " ".join(p for p in parts if p).strip()
+    return text[:120] if text else "사유 없음"
+
+
 def read(url, referer="https://stock.naver.com/"):
     try:
         with urlopen(Request(url, headers={"User-Agent": "Mozilla/5.0", "Referer": referer}), timeout=12) as response:
             if response.status != 200:
-                raise SourceError("Non-200 response")
+                raise SourceError(f"Non-200 response: {response.status}")
             return response.read().decode("utf-8")
+    except SourceError:
+        raise
     except Exception as error:
-        raise SourceError(f"Source unavailable: {type(error).__name__}") from error
+        raise SourceError(f"Source unavailable: {type(error).__name__}: {why(error)}") from error
 
 
 def get_json(url, referer="https://stock.naver.com/"):

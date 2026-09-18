@@ -56,6 +56,13 @@ jobs:
         # §3-2-1 의 ENVELOPE_BAND 를 켜면 이 값이 바뀌므로 켜기 전 기준선이 필요하다.
         if: always()
         run: |
+          # 🔴 2026-09-18 — 어제 여기에 data/feature_store 를 더했는데 그 디렉터리는
+          #    아직 저장소에 없었다. `git status` 는 없는 경로에 조용하지만
+          #    `git add -- <없는 경로>` 는 exit 128 로 죽는다. 그래서 9/18 14:41·14:51
+          #    두 회차가 **전수조사 한 줄을 커밋하지 못하고 워크플로째 실패**했다.
+          #    기록 창은 14:40~15:10 뿐이다 — 계속 실패했으면 그날치를 통째로 잃었다.
+          #    관측을 남기려다 수집기를 죽이지 않는다. 경로를 먼저 만들어 둔다.
+          mkdir -p data/scanner_census data/feature_store
           if [ -z "$(git status --porcelain data/scanner_census data/feature_store)" ]; then
             echo "기록 없음 (창 밖이거나 오늘치 이미 있음)"
             exit 0

@@ -1,47 +1,31 @@
 name: Audit regressions (offline)
 
+# 🔴 2026-09-18 — 이 워크플로가 9/16 부터 **매 push 마다 빨간불**이었고 아무도 몰랐다.
+#    원인 둘:
+#      ① 의존성 설치 단계가 없었다. 9/16 에 추가된 test_morning_fred·
+#         test_static_collector_health, 9/18 의 test_telegram_chat_id 가
+#         requests 를 끌어오는 모듈을 import 하면서 ImportError 로 죽었다.
+#         결과: CI 는 368건만 돌고 **28건은 아예 실행되지 않았다.** 빨간불을
+#         6일간 깔고 그 위로 계속 push 했다.
+#      ② paths 필터가 파일 이름을 하나씩 열거한다. 새 모듈(hyeoks_sigma,
+#         feature_store, rank_pool, telegram_target …)은 목록에 없어서 그 파일만
+#         고치면 **CI 가 아예 돌지 않았다.** 목록을 유지보수하는 대신 .py 전체를 본다.
+#    'offline' 은 자격증명·유료 API 없이 돈다는 뜻이지 의존성이 없다는 뜻이 아니다.
+
 on:
   push:
     paths:
-      - 'omakase.py'
-      - 'after_market_quotes.py'
-      - 'hyeoks_analyst.py'
-      - 'hyeoks_performance_memory.py'
-      - 'hyeoks_verdict.py'
-      - 'hyeoks_closing_bet.py'
-      - 'scanner_census.py'
-      - 'hyeoks_sheet_probe.py'
-      - 'omakase.py'
-      - 'closing_study.py'
-      - 'hyeoks_trading_calendar.py'
-      - 'hyeoks_market_snapshot.py'
+      - '**.py'
+      - 'tests/**'
       - 'data/market_snapshot/nontrading.txt'
       - 'data/market_snapshot/calendar_scope.json'
-      - 'hyeoks_nightly.py'
-      - 'nightly_quotes.py'
-      - 'account_source_adapter.py'
-      - 'tests/**'
       - '.github/workflows/review_regressions.yml'
   pull_request:
     paths:
-      - 'omakase.py'
-      - 'after_market_quotes.py'
-      - 'hyeoks_analyst.py'
-      - 'hyeoks_performance_memory.py'
-      - 'hyeoks_verdict.py'
-      - 'hyeoks_closing_bet.py'
-      - 'scanner_census.py'
-      - 'hyeoks_sheet_probe.py'
-      - 'omakase.py'
-      - 'closing_study.py'
-      - 'hyeoks_trading_calendar.py'
-      - 'hyeoks_market_snapshot.py'
+      - '**.py'
+      - 'tests/**'
       - 'data/market_snapshot/nontrading.txt'
       - 'data/market_snapshot/calendar_scope.json'
-      - 'hyeoks_nightly.py'
-      - 'nightly_quotes.py'
-      - 'account_source_adapter.py'
-      - 'tests/**'
       - '.github/workflows/review_regressions.yml'
   workflow_dispatch:
 
@@ -51,12 +35,16 @@ permissions:
 jobs:
   offline:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: '3.10'
+      - name: 의존성 설치 (테스트가 import 하는 만큼만)
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 gspread oauth2client pyyaml
       - name: Test without credentials or paid APIs
         run: |
           python -m unittest discover -s tests
@@ -66,3 +54,15 @@ jobs:
           python account_source_adapter.py --self-test
           python hyeoks_run_freeze.py --self-test
           python test_tajeom.py
+          # 🔴 2026-09-18 — 아래 8개는 자체검증이 있는데 CI 가 돌리지 않고 있었다.
+          #    각자의 워크플로는 수동 dispatch 라서, 회귀가 나도 그 워크플로를
+          #    누가 돌릴 때까지 아무도 몰랐다. 전부 오프라인에서 통과한다.
+          python hyeoks_account.py --self-test
+          python hyeoks_sigma.py --self-test
+          python hyeoks_theme_abc.py --self-test
+          python hyeoks_cohort_probe.py --self-test
+          python hyeoks_paper_fill.py --self-test
+          python hyeoks_phase2_exit.py --self-test
+          python hyeoks_report_liveness.py --self-test
+          python hyeoks_switch_check.py --self-test
+          python telegram_target.py
