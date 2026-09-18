@@ -37,6 +37,7 @@ EXTRA = {
     "ledger": FT.CRITICAL,            # ⑦ scanner 원장 read-after-write 누락
     "report_ledger": FT.CRITICAL,     # P0-3 리포트 원장 누락
     "pool_row": FT.OBSERVE,           # ⑪ 순위 풀 기록 실패
+    "cycle_date": FT.OBSERVE,         # 2026-09-19 — 영수증 날짜와 저장 날짜 불일치
 }
 INSTRUMENTED_FILES = ("omakase.py", "hyeoks_analyst.py", "hyeoks_morning.py",
                       "hyeoks_nightly.py", "hyeoks_backfill_targets.py")

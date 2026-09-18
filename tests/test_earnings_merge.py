@@ -400,3 +400,59 @@ class WorkflowStateBindingTests(unittest.TestCase):
         returns = [n for n in ast.walk(fn) if isinstance(n, ast.Return)]
         self.assertTrue(all(isinstance(r.value, ast.Tuple) for r in returns),
                         "모든 return 이 (결론, 사유) 여야 한다")
+
+
+class CycleDateTests(unittest.TestCase):
+    """🔴 2026-09-19 — **첫 실제 실행이 드러낸 P0.**
+
+    실적 수집기가 23:45 KST(금 9/18) 시작 → 00:17 KST(토 9/19) 종료.
+    영수증을 `datetime.now(KST)` 로 찍어 cycle_date 가 **9/19** 가 됐다.
+    9/19 는 토요일이라 Gate 에서 SKIP 이고, 그 영수증은 영원히 쓰이지 않는다.
+    더 나쁜 것은 scanner·analyst 는 장중에 돌아 9/18 로 기록되므로
+    **required 3종이 같은 날짜에 모이지 않는다** — Gate 가 3/3 에 도달할 수 없다.
+
+    정적 감사가 아니라 **생산 데이터가 찾은 결함**이다.
+    """
+
+    def test_midnight_crossing_stays_on_its_trading_day(self):
+        import datetime
+        import production_receipt as R
+        kst = datetime.timezone(datetime.timedelta(hours=9))
+        self.assertEqual(
+            R.cycle_date_now(datetime.datetime(2026, 9, 19, 0, 17, tzinfo=kst)),
+            "2026-09-18")
+
+    def test_weekend_rolls_back(self):
+        import datetime
+        import production_receipt as R
+        kst = datetime.timezone(datetime.timedelta(hours=9))
+        self.assertEqual(
+            R.cycle_date_now(datetime.datetime(2026, 9, 20, 10, 0, tzinfo=kst)),
+            "2026-09-18")
+
+    def test_trading_day_is_itself(self):
+        import datetime
+        import production_receipt as R
+        kst = datetime.timezone(datetime.timedelta(hours=9))
+        for d, expect in (((2026, 9, 18, 14, 44), "2026-09-18"),
+                          ((2026, 9, 21, 9, 0), "2026-09-21")):
+            with self.subTest(d):
+                self.assertEqual(R.cycle_date_now(datetime.datetime(*d, tzinfo=kst)), expect)
+
+    def test_emitters_use_the_trading_day_not_the_wall_clock(self):
+        for f in ("hyeoks_earnings_collector.py", "hyeoks_analyst.py", "omakase.py"):
+            with self.subTest(f):
+                src = pathlib.Path(f).read_text(encoding="utf-8")
+                self.assertIn("cycle_date_now", src)
+
+    def test_run_start_is_pinned(self):
+        """긴 실행이 도중에 날짜를 넘겨도 시작 시각 기준으로 고정한다."""
+        self.assertIn("_RUN_STARTED_AT = datetime.datetime.now(KST)",
+                      pathlib.Path("hyeoks_earnings_collector.py").read_text(encoding="utf-8"))
+        self.assertIn('RECEIPT_STATE["started_at"]',
+                      pathlib.Path("hyeoks_analyst.py").read_text(encoding="utf-8"))
+
+    def test_builder_blocks_a_mismatched_cycle_date(self):
+        """영수증 날짜와 feature_store 날짜가 갈리면 증거가 아니다."""
+        src = pathlib.Path("evidence_builder.py").read_text(encoding="utf-8")
+        self.assertIn('cycle_date_matches', src)

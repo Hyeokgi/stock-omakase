@@ -41,6 +41,31 @@ RECEIPT_VERSION = "receipt-v2"
 KINDS = ("scanner", "analyst", "earnings", "consensus")
 
 
+def cycle_date_now(now=None, back=10):
+    """이 실행이 속한 **거래일**. 벽시계 날짜가 아니다.
+
+    🔴 2026-09-19 첫 실제 실행이 드러낸 P0.
+       실적 수집기가 23:45 KST(금 9/18)에 시작해 00:17 KST(토 9/19)에 끝났다.
+       영수증을 `datetime.now(KST)` 로 찍으니 cycle_date 가 **9/19** 가 됐다.
+       9/19 는 토요일 = 비거래일이라 Gate 에서 SKIP 으로 처리되고, 그 영수증은
+       영원히 쓰이지 않는다. 더 나쁜 것은 scanner·analyst 는 장중에 돌아 9/18 로
+       기록되므로 **required 3종이 같은 날짜에 모이지 않는다** — 그 거래일은
+       무슨 일이 있어도 FAIL 이다. Gate 가 3/3 에 도달할 수 없다.
+
+    그래서 벽시계 날짜가 거래일이 아니면 **가장 최근 거래일로 되돌린다.**
+    자정을 넘긴 실행도, 주말로 넘어간 실행도 자기 거래일에 묶인다.
+    """
+    from hyeoks_trading_calendar import scheduled_session
+    now = now or datetime.datetime.now(KST)
+    day = now.date()
+    for _ in range(back + 1):
+        iso = day.isoformat()
+        if scheduled_session(iso):
+            return iso
+        day -= datetime.timedelta(days=1)
+    return now.date().isoformat()      # 달력이 이상하면 벽시계 날짜라도 남긴다
+
+
 def dir_for(day, root=RECEIPT_DIR):
     return os.path.join(root, str(day))
 
@@ -129,6 +154,18 @@ def _selftest():
         print(f"  ✅ {name}{('   ' + str(extra)) if extra else ''}")
 
     print("🧪 생산 영수증 (v2 — 건당 독립 파일)")
+    # 🔴 자정을 넘긴 실행이 다음 날로 새지 않는가
+    KST9 = datetime.timezone(datetime.timedelta(hours=9))
+    midnight = datetime.datetime(2026, 9, 19, 0, 17, tzinfo=KST9)   # 토 00:17
+    chk("자정을 넘겨도 그 거래일(금 9/18)에 묶인다",
+        cycle_date_now(midnight) == "2026-09-18", cycle_date_now(midnight))
+    chk("장중 실행은 그날 그대로",
+        cycle_date_now(datetime.datetime(2026, 9, 18, 14, 44, tzinfo=KST9)) == "2026-09-18")
+    chk("주말 실행도 직전 거래일로",
+        cycle_date_now(datetime.datetime(2026, 9, 20, 10, 0, tzinfo=KST9)) == "2026-09-18")
+    chk("월요일은 월요일",
+        cycle_date_now(datetime.datetime(2026, 9, 21, 9, 0, tzinfo=KST9)) == "2026-09-21")
+
     with tempfile.TemporaryDirectory() as d:
         okk, msg = emit("2026-09-18", "scanner", {"scanned": 718}, root=d,
                         run_id="r1", sha="abc", fingerprint="fp1")

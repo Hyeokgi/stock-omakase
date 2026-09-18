@@ -156,11 +156,14 @@ def build(cycle_date, fingerprint, root=R.RECEIPT_DIR, workflow_states=None):
               and isinstance(fs.get("rows"), int) and fs["rows"] >= MIN_STORE_ROWS
               and isinstance(rp.get("rows"), int) and rp["rows"] >= MIN_POOL_ROWS
               and fs.get("dropped") == 0
-              and rp.get("total_dropped") == 0)
+              and rp.get("total_dropped") == 0
+              # 🔴 2026-09-19 — 영수증 날짜와 저장 날짜가 갈리면 증거가 아니다
+              and sc["payload"].get("cycle_date_matches") is not False)
         put("store_written", ok,
             f"feature_store(행={fs.get('rows')} 버림={fs.get('dropped')}) "
             f"rank_pool(행={rp.get('rows')} 버림={rp.get('total_dropped')}) "
-            f"날짜={fs.get('date')}/{rp.get('date')} 지문일치="
+            f"날짜={fs.get('date')}/{rp.get('date')} "
+            f"사이클일치={sc['payload'].get('cycle_date_matches')} 지문일치="
             f"{fs.get('fingerprint') == fingerprint and rp.get('fingerprint') == fingerprint}")
 
     # ⑥ ledger_written — read-after-write. **scanner 원장과 리포트 원장 둘 다** (P0-3)

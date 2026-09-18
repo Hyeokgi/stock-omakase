@@ -16,7 +16,8 @@ TELEMETRY = feature_telemetry.Telemetry()
 # 🔴 2026-09-18 P0-3 — 이전 영수증은 V3 를 읽은 **직후**(약 808행)에 떨어졌다.
 #    그 뒤로 후보선정·AI·PDF·발송·원장 적재가 전부 남아 있으므로 그건 완료의 증거가
 #    아니었다. 이제 상태를 모아 두었다가 **끝에서 한 번** 최종 영수증을 발행한다.
-RECEIPT_STATE = {"v3": {}, "v1_parsed": 0, "v2_parsed": 0,
+RECEIPT_STATE = {"started_at": datetime.datetime.now(KST),   # 영수증 거래일 고정
+                 "v3": {}, "v1_parsed": 0, "v2_parsed": 0,
                  "ledger_expected": [], "ledger_found": [], "ledger_verified": None,
                  "pdf": "", "stage": "start"}
 # 🏷️ 타점 해석은 의존성 없는 별도 모듈로 뺐다(F01, 2026-09-07).
@@ -1621,7 +1622,7 @@ try:
                      and RECEIPT_STATE.get("v3_read_ok") is True
                      and TELEMETRY.total() == 0)
         _rok, _rmsg = production_receipt.emit(
-            datetime.datetime.now(KST).strftime("%Y-%m-%d"), "analyst", {
+            production_receipt.cycle_date_now(RECEIPT_STATE["started_at"]), "analyst", {
                 "expected_state": "reached" if _final_ok else "degraded",
                 "stage": "final",
                 "pdf": str(pdf_file or ""),

@@ -3454,7 +3454,18 @@ def update_technical_data(df_theme, all_theme_map):
                             _fs_rows = int(str(_fmsg).split("행")[0].strip())
                         except (ValueError, IndexError):
                             _fs_rows = 0
-                    _rk, _rm = production_receipt.emit(today_str, "scanner", {
+                    # 🔴 2026-09-19 — 영수증의 cycle_date 는 벽시계가 아니라 **거래일**이다.
+                    #    스캐너는 EOD 창(14:40~15:10 KST)에서만 기록하므로 today_str 과
+                    #    같아야 정상이다. 다르면 feature_store·rank_pool 의 날짜와
+                    #    어긋나 Gate 의 store_written 이 떨어진다 — 조용히 넘기지 않는다.
+                    _cyc = production_receipt.cycle_date_now()
+                    if _cyc != today_str:
+                        TELEMETRY.note('cycle_date', f'{today_str}≠{_cyc}',
+                                       feature_telemetry.OBSERVE)
+                        print(f"⚠️ [사이클 날짜 불일치] today_str={today_str} cycle={_cyc}")
+                    _rk, _rm = production_receipt.emit(_cyc, "scanner", {
+                        "today_str": today_str,
+                        "cycle_date_matches": _cyc == today_str,
                         # ⑧ 기계 기준 — 사람이 "이상 없음" 이라고 쓰지 않는다
                         "expected_state": ("reached" if (_fok and _pool_rows and
                                                          TELEMETRY.total() == 0)

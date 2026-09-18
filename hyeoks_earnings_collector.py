@@ -571,6 +571,7 @@ if __name__ == "__main__":
     #    단 한 줄도 저장 안 되는 문제가 있었음 — 그 전에 미리 멈추고 지금까지 모은 것만이라도 저장함.
     SCRIPT_TIME_BUDGET_SEC = 55 * 60  # 하드 타임아웃(60분)보다 5분 여유
     script_start = time.time()
+    _RUN_STARTED_AT = datetime.datetime.now(KST)   # 영수증 거래일을 여기서 고정한다
     time_budget_hit = False
 
     for idx, code in enumerate(target_codes if RUN_PRIMARY else []):
@@ -762,7 +763,10 @@ if __name__ == "__main__":
     # ══════════════════════════════════════════════════════════════════
     import production_receipt
     import stability_gate as _sg
-    _cycle = datetime.datetime.now(KST).strftime("%Y-%m-%d")
+    # 🔴 2026-09-19 — 벽시계 날짜를 쓰면 자정을 넘긴 실행이 다음 날(비거래일)로 샌다.
+    #    실제로 9/18 23:45 시작 → 00:17 종료 실행이 9/19(토) 로 기록됐다.
+    #    거래일로 묶고, **시작 시각** 기준으로 고정한다(긴 실행이 밀리지 않게).
+    _cycle = production_receipt.cycle_date_now(_RUN_STARTED_AT)
     _fp = _sg.fingerprint()
     if RUN_PRIMARY:
         # 🔴 P0-2 — 역산하지 않는다. 대상 수와 사유별 합이 맞는지도 같이 싣는다.
