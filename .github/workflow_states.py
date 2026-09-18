@@ -1,8 +1,17 @@
 # -*- coding: utf-8 -*-
-"""required workflow 의 **실제** Actions 결론을 모은다 (2026-09-18 P1-3).
+"""required workflow 의 **실제** Actions 결론을 모은다 (2026-09-18 P1-3 · 개정).
 
-영수증의 `expected_state` 만 보면 영수증 **이후**의 실패를 못 본다 —
-scanner 영수증 뒤에도 품질검사·git push 가 남아 있고, analyst 는 더 많이 남아 있다.
+🔴 개정 이유 — 이전 판은 그 날짜에 돈 **모든** completed run 을 보고 하나라도
+   실패면 거래일 전체를 FAIL 로 만들었다. 그런데 main.yml 은 하루 144회,
+   ai_report.yml 도 하루 여러 번 돈다. 오전의 무관한 재시도 하나가 실패해도
+   그날이 통째로 떨어진다 — false-negative 가 과도해 3/3 이 불가능에 가까워진다.
+
+   증거와 1:1 로 묶어야 한다. 영수증에는 이미 `run_id` 가 있다.
+   **그 영수증을 만든 바로 그 run** 의 결론만 본다.
+
+       scanner  receipt.run_id → 그 main.yml run
+       analyst  receipt.run_id → 그 ai_report.yml run
+       earnings receipt.run_id → 그 earnings_collector.yml run
 
 usage: workflow_states.py <repo> <YYYY-MM-DD>   (GH_TOKEN 환경변수 필요)
 출력: WORKFLOW_STATES={"main.yml": "success", ...}
@@ -10,40 +19,61 @@ usage: workflow_states.py <repo> <YYYY-MM-DD>   (GH_TOKEN 환경변수 필요)
 import json
 import os
 import sys
+import urllib.error
 import urllib.request
 
 import evidence_builder
+import production_receipt
 
-API = "https://api.github.com/repos/{repo}/actions/workflows/{wf}/runs?created={day}&per_page=30"
+# 영수증 종류 → 그 영수증을 만드는 워크플로
+KIND_TO_WORKFLOW = {
+    "scanner": "main.yml",
+    "analyst": "ai_report.yml",
+    "earnings": "earnings_collector.yml",
+}
+RUN_API = "https://api.github.com/repos/{repo}/actions/runs/{run_id}"
 
 
-def conclusions(repo, day, token, wf):
+def run_conclusion(repo, run_id, token):
+    """그 run 하나의 결론. 없거나 미완료면 빈 문자열."""
     req = urllib.request.Request(
-        API.format(repo=repo, wf=wf, day=day),
+        RUN_API.format(repo=repo, run_id=run_id),
         headers={"Authorization": f"Bearer {token}",
                  "Accept": "application/vnd.github+json",
                  "User-Agent": "hyeoks-stability-gate"})
     with urllib.request.urlopen(req, timeout=20) as r:
-        runs = json.load(r).get("workflow_runs") or []
-    done = [x for x in runs if x.get("status") == "completed"]
-    if not done:
-        return ""                      # 결론 없음 — Builder 가 그대로 거짓으로 본다
-    # 하나라도 실패했으면 실패다. 재시도로 덮지 않는다.
-    return "success" if all(x.get("conclusion") == "success" for x in done) else "failure"
+        d = json.load(r)
+    if d.get("status") != "completed":
+        return ""
+    return d.get("conclusion") or ""
 
 
 def main():
     repo, day = sys.argv[1], sys.argv[2]
     token = os.environ.get("GH_TOKEN", "")
     out = {}
-    for wf in evidence_builder.REQUIRED_WORKFLOWS:
+    for kind, wf in KIND_TO_WORKFLOW.items():
+        rec = production_receipt.latest(day, kind)
+        if not rec:
+            print(f"::warning::{kind} 영수증이 없어 {wf} 결론을 묶을 수 없다", file=sys.stderr)
+            continue                       # 결론 없음 — Builder 가 그대로 거짓으로 본다
+        run_id = str(rec.get("run_id") or "").strip()
+        if not run_id or not run_id.isdigit():
+            print(f"::warning::{kind} 영수증에 쓸 수 있는 run_id 가 없다({run_id!r})",
+                  file=sys.stderr)
+            continue
         try:
-            c = conclusions(repo, day, token, wf)
-        except Exception as e:                       # noqa: BLE001
-            print(f"::warning::{wf} 결론 조회 실패: {type(e).__name__}", file=sys.stderr)
+            c = run_conclusion(repo, run_id, token)
+        except (urllib.error.URLError, ValueError, OSError) as e:
+            print(f"::warning::{wf} run {run_id} 조회 실패: {type(e).__name__}", file=sys.stderr)
             c = ""
         if c:
             out[wf] = c
+            print(f"{wf} ← {kind} receipt run {run_id}: {c}", file=sys.stderr)
+    # Builder 가 REQUIRED_WORKFLOWS 를 기준으로 빠진 것을 거짓으로 본다
+    missing = [w for w in evidence_builder.REQUIRED_WORKFLOWS if w not in out]
+    if missing:
+        print(f"::warning::결론을 못 얻은 워크플로: {missing}", file=sys.stderr)
     print("WORKFLOW_STATES=" + json.dumps(out, ensure_ascii=False))
     return 0
 

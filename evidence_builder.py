@@ -76,12 +76,16 @@ def build(cycle_date, fingerprint, root=R.RECEIPT_DIR, workflow_states=None):
         put("earnings_schema_ok", False, _miss("earnings"))
     else:
         p = ea["payload"]
+        # 🔴 v3_unparsable 도 본다. scanner·analyst 는 20시 실적 갱신 **이전**의
+        #    DB_실적을 읽으므로, 그날 새로 쓰인 행의 해석불가는 그쪽 telemetry 에
+        #    잡히지 않는다. 수집기 영수증이 유일한 증거다.
         ok = (p.get("schema_version") == "earnings-v2"
               and p.get("v3_out_of_range", 1) == 0
+              and p.get("v3_unparsable", 1) == 0
               and not p.get("schema_reason"))
         put("earnings_schema_ok", ok,
             f"schema={p.get('schema_version')} 범위밖={p.get('v3_out_of_range')} "
-            f"사유={p.get('schema_reason') or '-'}")
+            f"해석불가={p.get('v3_unparsable')} 사유={p.get('schema_reason') or '-'}")
 
     # ③ DART primary — 사유별 계수로 본다 (P0-2)
     #    `targets - success` 를 결측으로 역산하면 항등식이 되어 아무것도 검증하지 못한다.
@@ -265,7 +269,7 @@ def _selftest():
 
     def good_earnings():
         return {"expected_state": "reached", "schema_version": "earnings-v2",
-                "v3_out_of_range": 0, "schema_reason": "",
+                "v3_out_of_range": 0, "v3_unparsable": 0, "schema_reason": "",
                 "targets": 143, "dart_success": 140,
                 "outcomes": {"success": 140, "allowed_missing_corp_code": 2,
                              "allowed_insufficient_data": 1, "hard_error": 0,
@@ -381,7 +385,15 @@ def _selftest():
     with tempfile.TemporaryDirectory() as d:
         sc3 = good_scanner(); sc3["features"]["v3"]["unparsable"] = 1
         seed(d, sc3, good_earnings())
-        chk("v3_unparsable 도 Gate 기준이다 (P0-5)",
+        e4 = good_earnings(); e4["v3_unparsable"] = 3
+        seed(d, good_scanner(), e4)
+        chk("수집기의 v3_unparsable 도 스키마 기준이다",
+            build(DAY, FP, root=d, workflow_states=WF)[0]["earnings_schema_ok"] is False)
+
+    with tempfile.TemporaryDirectory() as d:
+        sc3 = good_scanner(); sc3["features"]["v3"]["unparsable"] = 1
+        seed(d, sc3, good_earnings())
+        chk("scanner 의 v3_unparsable 도 Gate 기준이다 (P0-5)",
             build(DAY, FP, root=d, workflow_states=WF)[0]["no_silent_parse_error"] is False)
 
     with tempfile.TemporaryDirectory() as d:          # ① CI

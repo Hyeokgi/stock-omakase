@@ -307,3 +307,57 @@ class WorkflowSeparationTests(unittest.TestCase):
         src = pathlib.Path("hyeoks_earnings_collector.py").read_text(encoding="utf-8")
         self.assertIn("PHASE B 생략", src)
         self.assertIn("DB_실적 생략", src)
+
+
+class TargetSourceHealthTests(unittest.TestCase):
+    """입력 시트가 조용히 줄어드는 경로 — 2026-09-18 재지적."""
+
+    def source(self):
+        return pathlib.Path("hyeoks_earnings_collector.py").read_text(encoding="utf-8")
+
+    def test_get_target_stocks_returns_health(self):
+        """개수(N>=50)는 source health 가 아니다. DB_중장기가 통째로 실패해도
+        DB_스캐너에 100종목이 있으면 'ok' 가 됐다."""
+        src = self.source()
+        self.assertIn("return result, health", src)
+        self.assertIn('health["DB_중장기"]', src)
+        self.assertIn('health["DB_스캐너"]', src)
+        self.assertIn('health["기업정보"]', src)
+
+    def test_health_drives_the_verdict_not_the_count(self):
+        src = self.source()
+        self.assertIn("_bad_sheets = [k for k, v in _sheet_health.items()", src)
+        self.assertIn("sanity: target 수 비정상", src)   # 개수는 보조로만 남는다
+
+    def test_missing_sheet_key_is_also_a_failure(self):
+        """예외 없이 건너뛰어 키 자체가 없는 경우도 잡아야 한다."""
+        self.assertIn("_missing_sheets = [k for k in", self.source())
+
+    def test_missing_corp_codes_are_recorded(self):
+        """지금 새 임계값을 만들지 않는다 — 목록만 남겨 며칠 보고 판단한다."""
+        src = self.source()
+        self.assertIn('"missing_corp_codes"', src)
+        self.assertIn("_missing_corp.append(code)", src)
+
+
+class WorkflowStateBindingTests(unittest.TestCase):
+    """🔴 workflow 결론을 **영수증의 run_id** 와 1:1 로 묶는가."""
+
+    def source(self):
+        return pathlib.Path(".github/workflow_states.py").read_text(encoding="utf-8")
+
+    def test_binds_by_run_id_not_by_date(self):
+        """main.yml 은 하루 144회 돈다. 날짜 전체를 보면 무관한 재시도 하나가
+        거래일을 통째로 떨어뜨린다(false-negative 과다)."""
+        src = self.source()
+        self.assertIn("KIND_TO_WORKFLOW", src)
+        self.assertIn("production_receipt.latest(day, kind)", src)
+        self.assertIn("actions/runs/{run_id}", src)
+        self.assertNotIn("per_page=30", src)     # 날짜 전체 조회 흔적
+
+    def test_incomplete_run_is_not_a_success(self):
+        self.assertIn('if d.get("status") != "completed"', self.source())
+
+    def test_missing_receipt_yields_no_conclusion(self):
+        """영수증이 없으면 결론을 지어내지 않는다 — Builder 가 거짓으로 본다."""
+        self.assertIn("영수증이 없어", self.source())

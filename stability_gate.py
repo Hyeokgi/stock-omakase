@@ -55,6 +55,13 @@ FINGERPRINT_FILES = [
     ".github/workflows/consensus_aux.yml",
     ".github/workflows/ai_report.yml",
     ".github/workflows/review_regressions.yml",
+    # 🔴 2026-09-18 — Gate **자신을 실행하는 코드**가 지문에 빠져 있었다.
+    #    이 셋이 바뀌면 "증거를 어떻게 모으고 누가 판정하는가" 가 바뀐다.
+    #    빠져 있으면 변경 전 PASS 와 변경 후 PASS 를 같은 3회로 셀 수 있다 —
+    #    지문을 만든 목적과 정면으로 충돌한다.
+    ".github/workflows/stability_finalizer.yml",
+    ".github/receipt_commit.sh",
+    ".github/workflow_states.py",
 ]
 
 
@@ -337,7 +344,9 @@ def _selftest():
         all(f in FINGERPRINT_FILES for f in (
             "omakase.py", "earnings_schema.py", "feature_store.py", "rank_pool.py",
             "evidence_builder.py", "production_receipt.py", "feature_telemetry.py",
-            "hyeoks_trading_calendar.py", ".github/workflows/main.yml")))
+            "hyeoks_trading_calendar.py", ".github/workflows/main.yml",
+            ".github/workflows/stability_finalizer.yml",
+            ".github/receipt_commit.sh", ".github/workflow_states.py")))
     chk("데이터 디렉터리는 지문에 없다(매일 달라지면 streak 가 매일 0 이 된다)",
         not any(f.startswith("data/") for f in FINGERPRINT_FILES))
 

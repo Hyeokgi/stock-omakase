@@ -153,6 +153,27 @@ class FingerprintTests(unittest.TestCase):
         self.fill("old000000000")
         self.assertIn("지문이 바뀌었다", G.state(path=self.path, fp="new000000000")[1])
 
+    def test_gate_execution_code_is_in_the_fingerprint(self):
+        """🔴 2026-09-18 — Gate **자신을 실행하는 코드**가 빠져 있었다.
+
+        영수증을 저장하는 코드 · workflow 결론을 판정하는 코드 · 3/3 을 기록하는
+        finalizer 가 바뀌어도 지문이 그대로면, 변경 전 PASS 와 변경 후 PASS 를
+        같은 3회로 세게 된다. 지문을 만든 목적과 정면으로 충돌한다.
+        """
+        for f in (".github/workflows/stability_finalizer.yml",
+                  ".github/receipt_commit.sh",
+                  ".github/workflow_states.py"):
+            with self.subTest(f):
+                self.assertIn(f, G.FINGERPRINT_FILES)
+                self.assertTrue((ROOT / f).exists(), f"{f} 가 실제로 없다")
+
+    def test_ci_wakes_on_gate_execution_code(self):
+        import yaml
+        d = yaml.safe_load((ROOT / ".github/workflows/review_regressions.yml")
+                           .read_text(encoding="utf-8"))
+        paths = (d.get("on") or d.get(True))["push"]["paths"]
+        self.assertIn(".github/*.sh", paths)
+
     def test_core_files_are_in_the_fingerprint(self):
         for f in ("omakase.py", "hyeoks_analyst.py", "earnings_schema.py",
                   "feature_store.py", "rank_pool.py",
@@ -221,7 +242,7 @@ class EndToEndGateTests(unittest.TestCase):
         an = {"expected_state": "reached", "stage": "final", "features": self.feats(),
               "ledger": {"expected_trade_ids": ["r1"], "found_trade_ids": ["r1"]}}
         ea = {"expected_state": "reached", "schema_version": "earnings-v2",
-              "v3_out_of_range": 0, "schema_reason": "",
+              "v3_out_of_range": 0, "v3_unparsable": 0, "schema_reason": "",
               "targets": 143, "dart_success": 143,
               "outcomes": {"success": 143, "allowed_missing_corp_code": 0,
                            "allowed_insufficient_data": 0, "hard_error": 0,
@@ -271,6 +292,10 @@ class EndToEndGateTests(unittest.TestCase):
                 "expected_trade_ids": ["r1"], "found_trade_ids": []}}},
             "analyst 중간 영수증": {"analyst": {"stage": "start"}},
             "본표 차단": {"earnings": {"write_blocked": "스키마 불일치"}},
+            "수집기 v3 해석불가": {"earnings": {"v3_unparsable": 2}},
+            "v3_unparsable 증거 없음": {"earnings": {"v3_unparsable": None}},
+            "입력 시트 이상": {"earnings": {
+                "target_source_health": "입력 시트 이상 ['DB_중장기']"}},
         }
         for name, over in cases.items():
             with self.subTest(name):

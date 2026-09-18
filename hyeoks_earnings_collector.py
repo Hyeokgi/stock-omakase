@@ -422,7 +422,15 @@ def consensus_health(attempted, succeeded):
 
 
 def get_target_stocks(doc):
-    """반환: {종목코드: 종목명} 딕셔너리"""
+    """반환: ({종목코드: 종목명}, {시트: "ok"|사유})
+
+    🔴 2026-09-18 — 세 시트 읽기가 전부 로그만 남기고 넘어갔다. 하나가 실패해도
+       나머지로 dict 가 만들어지므로 **universe 가 조용히 줄어든다.**
+       앞서 나는 `len(target_map) >= 50` 으로 대신했는데 그건 source health 가
+       아니다 — DB_중장기가 통째로 실패해도 DB_스캐너에 100종목이 있으면 "ok" 다.
+       시트별 성공 여부를 그대로 돌려준다.
+    """
+    health = {}
     names_from_trend = set()
     try:
         rows = doc.worksheet("DB_중장기").get_all_values()[1:]
@@ -432,7 +440,9 @@ def get_target_stocks(doc):
                     if len(row) > col_idx and row[col_idx].strip():
                         nm = row[col_idx].split('(')[0].strip()
                         if nm: names_from_trend.add(nm)
+        health["DB_중장기"] = "ok"
     except Exception as e:
+        health["DB_중장기"] = f"읽기 실패 {type(e).__name__}"
         print(f"⚠️ [DB_중장기 읽기 실패] {e}")
 
     codes_from_scanner = {}  # code -> name(DB_스캐너 자체 표기, 하이퍼링크 수식일 수 있어 보정 필요)
@@ -444,7 +454,9 @@ def get_target_stocks(doc):
                 raw_name = str(row[0]).strip()
                 m = re.search(r',\s*"([^"]+)"\)', raw_name)  # =HYPERLINK(...,"종목명") 형태 대비
                 codes_from_scanner[code] = m.group(1).strip() if m else raw_name
+        health["DB_스캐너"] = "ok"
     except Exception as e:
+        health["DB_스캐너"] = f"읽기 실패 {type(e).__name__}"
         print(f"⚠️ [DB_스캐너 읽기 실패] {e}")
 
     result = {}
@@ -457,11 +469,13 @@ def get_target_stocks(doc):
                 result[name_to_code[nm]] = nm
         for code, nm in codes_from_scanner.items():
             result[code] = code_to_name.get(code, nm)  # 기업정보가 더 정확하면 그걸 우선
+        health["기업정보"] = "ok"
     except Exception as e:
+        health["기업정보"] = f"매핑 실패 {type(e).__name__}"
         print(f"⚠️ [기업정보 이름→코드 매핑 실패] {e}")
         result = dict(codes_from_scanner)
 
-    return result
+    return result, health
 
 
 if __name__ == "__main__":
@@ -490,10 +504,20 @@ if __name__ == "__main__":
 
     doc = get_doc()
     corp_map = load_or_build_corp_code_map(doc) if RUN_PRIMARY else {}
-    target_map = get_target_stocks(doc)  # {종목코드: 종목명}
-    # 🔴 P0-2 — 입력 시트를 못 읽으면 target universe 자체가 줄어든다.
-    #    그러면 "전부 처리했다" 가 참이어도 실제로는 일부만 본 것이다.
-    _target_health = "ok" if len(target_map) >= 50 else f"target 수 비정상({len(target_map)})"
+    target_map, _sheet_health = get_target_stocks(doc)
+    # 🔴 입력 시트를 하나라도 못 읽으면 universe 가 줄어든다. 그러면
+    #    "전부 처리했다" 가 참이어도 실제로는 일부만 본 것이다.
+    #    개수(N>=50)는 **보조 sanity check** 로만 남기고 근거로 쓰지 않는다.
+    _bad_sheets = [k for k, v in _sheet_health.items() if v != "ok"]
+    _missing_sheets = [k for k in ("DB_중장기", "DB_스캐너", "기업정보")
+                       if k not in _sheet_health]
+    if _bad_sheets or _missing_sheets:
+        _target_health = f"입력 시트 이상 {_bad_sheets + _missing_sheets}"
+    elif len(target_map) < 50:
+        _target_health = f"sanity: target 수 비정상({len(target_map)})"
+    else:
+        _target_health = "ok"
+    print(f"📋 입력 시트 상태: {_sheet_health} → {_target_health}")
     print(f"▶️ 총 {len(target_map)}개 종목의 실적 데이터를 수집합니다 (DB_중장기 + DB_스캐너 기준)...")
 
     out_sheet = None
@@ -532,6 +556,7 @@ if __name__ == "__main__":
     # 🔴 2026-09-18 P0-2 — `targets - success` 를 결측으로 **역산**하면
     #    `success + skip == targets` 는 정의상 항상 참이다. 시간예산 초과·회로차단·
     #    예외·미처리가 전부 '명시적 결측' 으로 둔갑한다. 실제 경로에서 직접 센다.
+    _missing_corp = []
     OUTCOME = {
         "success": 0,
         "allowed_missing_corp_code": 0,   # 비상장·최근상장 — 허용되는 결측
@@ -558,6 +583,7 @@ if __name__ == "__main__":
         if not corp_code:
             print(f"⚠️ [{code}] DART corp_code 매핑 없음 (비상장·최근상장 등) — 스킵")
             OUTCOME["allowed_missing_corp_code"] += 1
+            _missing_corp.append(code)
             continue
         try:
             quarters, fs_div = get_recent_quarters(corp_code, num_years=2)
@@ -765,6 +791,10 @@ if __name__ == "__main__":
             "time_budget_hit": bool(time_budget_hit),
             # 대상 universe 자체가 줄어든 경우를 따로 본다(입력 시트 읽기 실패)
             "target_source_health": _target_health,
+            "sheet_health": dict(_sheet_health),
+            # corp_code 누락 종목을 그대로 남긴다 — 지금 새 임계값을 만들지 않고,
+            # 며칠 실데이터를 본 뒤 정말 허용 가능한 유형인지 판단한다.
+            "missing_corp_codes": list(_missing_corp)[:200],
             "write_blocked": earnings_blocked,
             "rows_final": v3_stats.get("rows", 0),
             "oldest_stamp": stamps[0] if stamps else "",

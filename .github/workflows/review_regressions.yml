@@ -28,6 +28,9 @@ on:
       #    놓일 수 없으므로 단일 레벨이 맞고, 확실하다.
       - '.github/workflows/*.yml'
       - '.github/workflows/*.yaml'
+      # Gate 실행 코드도 CI 를 깨운다(영수증 보존 스크립트·workflow 결론 조회)
+      - '.github/*.sh'
+      - '.github/*.py'
   pull_request:
     paths:
       - '**.py'
@@ -43,6 +46,9 @@ on:
       #    놓일 수 없으므로 단일 레벨이 맞고, 확실하다.
       - '.github/workflows/*.yml'
       - '.github/workflows/*.yaml'
+      # Gate 실행 코드도 CI 를 깨운다(영수증 보존 스크립트·workflow 결론 조회)
+      - '.github/*.sh'
+      - '.github/*.py'
   workflow_dispatch:
 
 permissions:
