@@ -31,8 +31,11 @@ EXPECTED = {
 }
 # 12곳 표 밖에서 **추가로** 건 계측 — 지시 ⑤(V1·V2·V3 각각)와 ⑦(원장) 때문에 필요하다.
 EXTRA = {
-    "v2_score": FT.CRITICAL,          # ⑤ V2 게이트 판정 실패(fail-closed 는 유지)
-    "ledger": FT.CRITICAL,            # ⑦ read-after-write 로 누락을 확인했을 때
+    "v1_score": FT.CRITICAL,          # P0-5 — scanner·analyst 양쪽
+    "v2_score": FT.CRITICAL,          # P0-5 — V2 게이트 판정 실패(fail-closed 유지)
+    "v3_score": FT.CRITICAL,          # P0-5 — DB_실적 읽기 실패도 v3 오류다
+    "ledger": FT.CRITICAL,            # ⑦ scanner 원장 read-after-write 누락
+    "report_ledger": FT.CRITICAL,     # P0-3 리포트 원장 누락
     "pool_row": FT.OBSERVE,           # ⑪ 순위 풀 기록 실패
 }
 INSTRUMENTED_FILES = ("omakase.py", "hyeoks_analyst.py", "hyeoks_morning.py",
@@ -48,9 +51,12 @@ def telemetry_calls():
             if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                     and node.func.attr == "note"
                     and isinstance(node.args[0], ast.Constant)):
-                klass = node.args[-1]
-                found[node.args[0].value] = (
-                    klass.attr if isinstance(klass, ast.Attribute) else "?")
+                # 분류는 위치가 아니라 `feature_telemetry.X` 형태로 찾는다
+                #    (code 인자가 뒤에 붙으면 args[-1] 은 분류가 아니다)
+                klass = next((a.attr for a in node.args
+                              if isinstance(a, ast.Attribute)
+                              and getattr(a.value, "id", "") == "feature_telemetry"), "?")
+                found[node.args[0].value] = klass
     return found
 
 

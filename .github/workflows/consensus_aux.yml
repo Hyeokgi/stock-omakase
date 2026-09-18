@@ -17,6 +17,9 @@ concurrency:
   #    없었음 — 전용 락으로 분리해서 서로 절대 안 막도록 함.
   cancel-in-progress: false
 
+permissions:
+  contents: write   # 영수증 보존(P0-1)
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -48,3 +51,6 @@ jobs:
       run: |
         python hyeoks_earnings_collector.py --phase aux
 
+    - name: 🧾 영수증 보존 (Gate 증거 · P0-1)
+      if: always()
+      run: bash .github/receipt_commit.sh consensus

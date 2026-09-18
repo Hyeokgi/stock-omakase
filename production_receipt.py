@@ -21,17 +21,34 @@
 import datetime
 import json
 import os
+import pathlib
 
 KST = datetime.timezone(datetime.timedelta(hours=9))
 RECEIPT_DIR = "data/receipts"
-RECEIPT_VERSION = "receipt-v1"
+RECEIPT_VERSION = "receipt-v2"
+
+# 🔴 2026-09-18 P0-1 — v1 은 거래일마다 **공유 JSONL 한 개**에 append 했다. 두 문제:
+#    ① 워크플로는 서로 다른 runner 에서 돈다. 각자 로컬 파일에 쓰고, 그걸 git 에
+#       보존하는 것은 main.yml 뿐이었다. analyst·earnings·consensus 영수증은
+#       **runner 가 끝나는 순간 사라졌다.** Evidence Builder 가 요구하는 세 종류가
+#       저장소에 동시에 존재할 수 없는 구조였다 → Gate 는 영원히 통과 불가.
+#    ② 여러 워크플로가 같은 파일을 고치면 git merge conflict 가 난다.
+#    그래서 v2 는 **영수증 한 건당 독립 파일**이다. 각 워크플로가 자기 파일만 보존한다.
+#        data/receipts/2026-09-21/scanner-<runid>.json
+#                                 analyst-<runid>.json  ...
 
 # 어떤 파이프라인이 어떤 영수증을 내는가. Evidence Builder 가 이 이름으로 찾는다.
 KINDS = ("scanner", "analyst", "earnings", "consensus")
 
 
-def path_for(day, root=RECEIPT_DIR):
-    return os.path.join(root, f"{day}.jsonl")
+def dir_for(day, root=RECEIPT_DIR):
+    return os.path.join(root, str(day))
+
+
+def path_for(day, kind, run_id="", root=RECEIPT_DIR, seq=""):
+    """영수증 한 건의 경로. 파일 이름이 겹치지 않아야 충돌이 없다."""
+    tag = str(run_id or "norun").replace("/", "_")[:40]
+    return os.path.join(dir_for(day, root), f"{kind}-{tag}{seq}.json")
 
 
 def emit(day, kind, payload, root=RECEIPT_DIR, run_id="", sha="", fingerprint=""):
@@ -45,36 +62,51 @@ def emit(day, kind, payload, root=RECEIPT_DIR, run_id="", sha="", fingerprint=""
         rec = {
             "cycle_date": str(day),
             "kind": kind,
-            "emitted_at": datetime.datetime.now(KST).isoformat(timespec="seconds"),
+            "emitted_at": datetime.datetime.now(KST).isoformat(timespec="microseconds"),
             "run_id": str(run_id or os.environ.get("GITHUB_RUN_ID", "")),
             "code_sha": str(sha or (os.environ.get("GITHUB_SHA") or "")[:8]),
             "fingerprint": str(fingerprint),
             "receipt_version": RECEIPT_VERSION,
             "payload": payload,
         }
-        os.makedirs(root, exist_ok=True)
-        with open(path_for(day, root), "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(rec, ensure_ascii=False, sort_keys=True) + "\n")
-        return True, f"영수증 {kind} 기록"
+        os.makedirs(dir_for(day, root), exist_ok=True)
+        blob = json.dumps(rec, ensure_ascii=False, sort_keys=True, indent=1)
+        target = path_for(day, kind, rec["run_id"], root)
+        # 같은 run 이 두 번 떨구면(재시도 등) 덮어쓰지 않고 옆에 쌓는다 — append-only
+        n = 1
+        while os.path.exists(target):
+            target = path_for(day, kind, rec["run_id"], root, seq=f"-{n}")
+            n += 1
+        with open(target, "w", encoding="utf-8") as fh:
+            fh.write(blob)
+        return True, f"영수증 {kind} → {target}"
     except Exception as e:                       # noqa: BLE001 — 생산을 죽이지 않는다
         return False, f"영수증 {kind} 기록 실패: {type(e).__name__}: {e}"
 
 
 def load(day, root=RECEIPT_DIR):
-    """그 거래일의 영수증 전부. 깨진 줄은 세되 버린다(조용히 넘기지 않는다)."""
-    p = path_for(day, root)
+    """그 거래일의 영수증 전부. 깨진 파일은 세되 버린다(조용히 넘기지 않는다).
+
+    `emitted_at` 순으로 돌려준다 — Builder 가 '마지막 것' 을 고를 수 있어야 한다.
+    """
+    d = dir_for(day, root)
     out, broken = [], 0
-    if not os.path.exists(p):
+    if not os.path.isdir(d):
         return out, broken
-    with open(p, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                out.append(json.loads(line))
-            except ValueError:
-                broken += 1
+    for name in sorted(os.listdir(d)):
+        if not name.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(d, name), encoding="utf-8") as fh:
+                rec = json.load(fh)
+            if not isinstance(rec, dict) or "kind" not in rec:
+                raise ValueError("스키마 아님")
+            rec["_file"] = name
+            out.append(rec)
+        except (ValueError, OSError):
+            broken += 1
+    # 같은 순간이면 파일 이름으로 가른다 — 정렬이 흔들리면 "마지막" 이 흔들린다
+    out.sort(key=lambda r: (str(r.get("emitted_at", "")), str(r.get("_file", ""))))
     return out, broken
 
 
@@ -96,11 +128,11 @@ def _selftest():
         ok += 1
         print(f"  ✅ {name}{('   ' + str(extra)) if extra else ''}")
 
-    print("🧪 생산 영수증")
+    print("🧪 생산 영수증 (v2 — 건당 독립 파일)")
     with tempfile.TemporaryDirectory() as d:
         okk, msg = emit("2026-09-18", "scanner", {"scanned": 718}, root=d,
                         run_id="r1", sha="abc", fingerprint="fp1")
-        chk("영수증이 기록된다", okk and "scanner" in msg)
+        chk("영수증이 파일 하나로 떨어진다", okk and msg.endswith("scanner-r1.json"), msg)
 
         rows, broken = load("2026-09-18", root=d)
         chk("읽힌다", len(rows) == 1 and broken == 0)
@@ -108,25 +140,33 @@ def _selftest():
         chk("실행 식별자가 붙는다",
             rows[0]["run_id"] == "r1" and rows[0]["fingerprint"] == "fp1")
 
-        emit("2026-09-18", "scanner", {"scanned": 720}, root=d, fingerprint="fp1")
-        rows, _ = load("2026-09-18", root=d)
-        chk("append-only — 덮어쓰지 않는다", len(rows) == 2)
+        # 🔴 P0-1 핵심 — 워크플로마다 **다른 파일**이라 서로 덮지 않는다
+        emit("2026-09-18", "analyst", {"x": 1}, root=d, run_id="r2", fingerprint="fp1")
+        emit("2026-09-18", "earnings", {"y": 2}, root=d, run_id="r3", fingerprint="fp1")
+        files = sorted(os.listdir(dir_for("2026-09-18", d)))
+        chk("종류마다 독립 파일", files == ["analyst-r2.json", "earnings-r3.json",
+                                            "scanner-r1.json"], files)
+        chk("세 종류가 동시에 존재한다", len(load("2026-09-18", root=d)[0]) == 3)
+
+        emit("2026-09-18", "scanner", {"scanned": 720}, root=d, run_id="r1", fingerprint="fp1")
+        chk("같은 run 이 또 떨궈도 덮어쓰지 않는다(append-only)",
+            os.path.exists(os.path.join(dir_for("2026-09-18", d), "scanner-r1-1.json")))
         chk("마지막 것을 고를 수 있다",
             latest("2026-09-18", "scanner", root=d)["payload"]["scanned"] == 720)
 
-        emit("2026-09-18", "earnings", {"targets": 143}, root=d, fingerprint="fp2")
+        emit("2026-09-18", "consensus", {"state": "OK"}, root=d, run_id="r4", fingerprint="fp2")
         chk("지문으로 거를 수 있다",
-            latest("2026-09-18", "earnings", root=d, fingerprint="fp1") is None)
+            latest("2026-09-18", "consensus", root=d, fingerprint="fp1") is None)
         chk("다른 지문은 찾힌다",
-            latest("2026-09-18", "earnings", root=d, fingerprint="fp2") is not None)
+            latest("2026-09-18", "consensus", root=d, fingerprint="fp2") is not None)
 
         chk("모르는 종류는 거부", emit("2026-09-18", "엉뚱", {}, root=d)[0] is False)
         chk("없는 날은 빈 목록", load("2026-01-01", root=d) == ([], 0))
 
-        with open(path_for("2026-09-18", d), "a", encoding="utf-8") as fh:
-            fh.write("{깨진 줄\n")
+        pathlib.Path(dir_for("2026-09-18", d), "scanner-깨짐.json").write_text(
+            "{깨진", encoding="utf-8")
         rows, broken = load("2026-09-18", root=d)
-        chk("깨진 줄은 세고 버린다", broken == 1 and len(rows) == 3)
+        chk("깨진 파일은 세고 버린다", broken == 1 and len(rows) == 5, (broken, len(rows)))
 
         bad_ok, bad_msg = emit("2026-09-18", "scanner", {"x": object()}, root=d)
         chk("직렬화 불가여도 예외를 밖으로 내지 않는다", bad_ok is False)

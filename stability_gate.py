@@ -44,6 +44,8 @@ FINGERPRINT_FILES = [
     "scanner_census.py", "hyeoks_tajeom.py",
     # 스키마·계약
     "earnings_schema.py", "feature_store.py", "rank_pool.py",
+    # P1-4 — is_trading_day() 가 이걸 쓴다. 거래일 판정이 바뀌면 사이클 정의가 바뀐다.
+    "hyeoks_trading_calendar.py",
     # 안정화 판정 자체
     "stability_gate.py", "evidence_builder.py", "production_receipt.py",
     "feature_telemetry.py",
@@ -281,6 +283,22 @@ def _selftest():
         chk("append-only", len(load(pth)) == 7, len(load(pth)))
         chk("지문이 행마다 남는다", all(r["fingerprint"] for r in load(pth)))
 
+    # P1-2 — cutoff 전에는 보류한다
+    import tempfile as _tf
+    import datetime as _dt
+    with _tf.TemporaryDirectory() as _d:
+        early = _dt.datetime(2026, 9, 21, 15, 0,
+                             tzinfo=_dt.timezone(_dt.timedelta(hours=9)))
+        late = early.replace(hour=23, minute=30)
+        r_ok, r_why = ready("2026-09-21", _d, now=early)
+        chk("영수증이 없고 cutoff 전이면 보류", r_ok is False and "보류" in r_why)
+        chk("cutoff 을 지나면 판정한다", ready("2026-09-21", _d, now=late)[0] is True)
+        import production_receipt as _pr
+        for _k in ("scanner", "analyst", "earnings"):
+            _pr.emit("2026-09-21", _k, {}, root=_d, run_id="r", fingerprint="fp")
+        chk("required 가 다 모이면 cutoff 전에도 판정한다",
+            ready("2026-09-21", _d, now=early)[0] is True)
+
     # ② 증거는 사람이 넣지 않는다 — Evidence Builder 와 실제로 물리는가
     import evidence_builder as _eb
     chk("gate 기준과 builder 기준 이름이 같다", set(KEYS) == set(_eb.build("2026-09-19", "x")[0]))
@@ -288,6 +306,25 @@ def _selftest():
         all(isinstance(v, bool) for v in _eb.build("2026-09-19", "x")[0].values()))
     chk("증거가 없으면 builder 도 통과를 내지 않는다",
         evaluate(_eb.build("2026-09-19", "x")[0])[0] is False)
+
+    # P1-1 — CI 증거를 지문으로 찾는다
+    def nochange(_sha):
+        return ["data/feature_store/2026-09-18.csv.gz", "docs/메모.md"]
+
+    def codechange(_sha):
+        return ["omakase.py"]
+
+    ok, why = ci_evidence_for_fingerprint(runs=[("abc1234def", "success")],
+                                          changed_since=nochange)
+    chk("데이터만 바뀌었으면 이전 CI 성공을 증거로 인정한다", ok, why)
+    ok2, why2 = ci_evidence_for_fingerprint(runs=[("abc1234def", "success")],
+                                            changed_since=codechange)
+    chk("핵심 파일이 바뀌었으면 인정하지 않는다", ok2 is False and "omakase.py" in why2)
+    chk("실패한 run 은 증거가 아니다",
+        ci_evidence_for_fingerprint(runs=[("a", "failure")], changed_since=nochange)[0] is False)
+    chk("run 이 없으면 증거가 없다", ci_evidence_for_fingerprint(runs=[])[0] is False)
+    chk("변경 목록을 못 보면 인정하지 않는다",
+        ci_evidence_for_fingerprint(runs=[("a", "success")], changed_since=None)[0] is False)
 
     # ④ 지문 자체
     chk("지문은 12자리", len(fingerprint()) == 12)
@@ -300,7 +337,7 @@ def _selftest():
         all(f in FINGERPRINT_FILES for f in (
             "omakase.py", "earnings_schema.py", "feature_store.py", "rank_pool.py",
             "evidence_builder.py", "production_receipt.py", "feature_telemetry.py",
-            ".github/workflows/main.yml")))
+            "hyeoks_trading_calendar.py", ".github/workflows/main.yml")))
     chk("데이터 디렉터리는 지문에 없다(매일 달라지면 streak 가 매일 0 이 된다)",
         not any(f.startswith("data/") for f in FINGERPRINT_FILES))
 
@@ -308,8 +345,70 @@ def _selftest():
     return ok_count
 
 
+def ci_evidence_for_fingerprint(root=".", runs=None, changed_since=None):
+    """🔴 2026-09-18 P1-1 — CI 증거를 **HEAD SHA** 로 찾으면 안 된다.
+
+    데이터 전용 커밋(`[skip ci]`)에는 audit CI 가 돌지 않는다. 그래서 정상 코드인데도
+    `conclusion=""` 이 되어 `ci_green` 이 거짓이 된다 — 매일 데이터가 커밋되므로
+    사실상 항상 거짓이다.
+
+    증명해야 하는 것은 "HEAD 가 CI 를 통과했나" 가 아니라
+    **"지금 지문이 CI 를 통과했나"** 다. 그래서:
+      ① 최근 성공한 audit run 의 SHA 를 받아
+      ② 그 SHA 와 현재 사이에 FINGERPRINT_FILES 가 바뀌지 않았는지 보고
+      ③ 안 바뀌었으면 그 성공을 현재 지문의 증거로 인정한다.
+
+    `runs` 는 [(sha, conclusion), ...] 를 최신순으로 받는다(호출부가 API 로 채운다).
+    `changed_since(sha)` 는 그 SHA 이후 바뀐 파일 목록을 준다.
+    """
+    core = set(FINGERPRINT_FILES)
+    for sha, conclusion in (runs or []):
+        if conclusion != "success":
+            continue
+        try:
+            changed = set(changed_since(sha)) if changed_since else None
+        except Exception as e:                       # noqa: BLE001
+            return False, f"변경 목록 조회 실패({type(e).__name__})"
+        if changed is None:
+            return False, "변경 목록을 볼 수 없다"
+        touched = sorted(core & changed)
+        if touched:
+            return False, (f"{sha[:8]} 이후 핵심 파일이 바뀌었다: {touched} — "
+                           "그 성공은 지금 지문의 증거가 아니다")
+        return True, f"{sha[:8]} audit 성공 · 이후 핵심 파일 변경 없음"
+    return False, "성공한 audit run 을 찾지 못했다"
+
+
+# P1-2 — 너무 일찍 판정하면 영수증이 아직 없다. cutoff 전에는 **보류**한다.
+#    (영수증이 다 모이기 전의 FAIL 을 영구 기록으로 남기지 않는다)
+CUTOFF_KST_HOUR = 23
+
+
+def ready(cycle_date, root=None, now=None):
+    """(준비됨, 사유) — required 영수증이 다 모였는가, 아니면 cutoff 을 지났는가."""
+    import datetime as _dt
+    import evidence_builder
+    import production_receipt
+    root = root or production_receipt.RECEIPT_DIR
+    rows, _ = production_receipt.load(cycle_date, root)
+    kinds = {r.get("kind") for r in rows}
+    missing = [k for k in evidence_builder.REQUIRED_KINDS if k not in kinds]
+    if not missing:
+        return True, "required 영수증 전부 도착"
+    now = now or _dt.datetime.now(_dt.timezone(_dt.timedelta(hours=9)))
+    try:
+        day = _dt.date.fromisoformat(str(cycle_date))
+    except ValueError:
+        return False, f"거래일 형식 오류 {cycle_date}"
+    cutoff = _dt.datetime.combine(day, _dt.time(CUTOFF_KST_HOUR), tzinfo=now.tzinfo)
+    if now < cutoff:
+        return False, (f"아직 {missing} 영수증이 없고 cutoff({CUTOFF_KST_HOUR}시 KST) 전이다 "
+                       "— 보류한다(영구 FAIL 로 기록하지 않는다)")
+    return True, f"cutoff 경과 — {missing} 없이 판정한다"
+
+
 def record_cycle(cycle_date, source="cycle", root=".", path=GATE_LOG,
-                 receipts_root=None):
+                 receipts_root=None, workflow_states=None, now=None, fp=None):
     """🔴 2026-09-18 지시 ② — **증거를 사람이 넣지 않는다.**
 
     Evidence Builder 가 영수증에서 7개 기준을 기계적으로 만들고, 그걸 그대로 기록한다.
@@ -317,12 +416,16 @@ def record_cycle(cycle_date, source="cycle", root=".", path=GATE_LOG,
     """
     import evidence_builder
     import production_receipt
-    fp = fingerprint(root)
+    fp = fp or fingerprint(root)
     if not is_trading_day(cycle_date):
         return record(cycle_date, f"skip-{cycle_date}", source, {},
                       path=path, fp=fp, root=root)
+    ok_ready, why_ready = ready(cycle_date, receipts_root, now=now)
+    if not ok_ready:
+        return False, why_ready          # 기록하지 않는다 — 다음 실행에서 다시 본다
     ev, detail = evidence_builder.build(
-        cycle_date, fp, root=receipts_root or production_receipt.RECEIPT_DIR)
+        cycle_date, fp, root=receipts_root or production_receipt.RECEIPT_DIR,
+        workflow_states=workflow_states)
     run_id = "+".join(sorted({
         r.get("run_id", "") for r in production_receipt.load(
             cycle_date, receipts_root or production_receipt.RECEIPT_DIR)[0]
@@ -337,12 +440,35 @@ if __name__ == "__main__":
     import sys
     if "--self-test" in sys.argv:
         sys.exit(0 if _selftest() else 1)
+    if "--ci-evidence" in sys.argv:
+        # 워크플로가 넘긴 runs(JSON) 와 변경 파일 목록으로 판정해 한 줄 출력한다
+        import json
+        import subprocess
+        raw = sys.argv[sys.argv.index("--ci-evidence") + 1]
+        runs = [(r.get("head_sha", ""), r.get("conclusion", ""))
+                for r in json.loads(raw or "[]")]
+
+        def changed(sha):
+            out = subprocess.run(["git", "diff", "--name-only", f"{sha}..HEAD"],
+                                 capture_output=True, text=True, timeout=60)
+            if out.returncode != 0:
+                raise RuntimeError(out.stderr.strip()[:120])
+            return [l for l in out.stdout.splitlines() if l.strip()]
+
+        ok, why = ci_evidence_for_fingerprint(runs=runs, changed_since=changed)
+        print(f"CI_EVIDENCE={'success' if ok else ''}")
+        print(f"근거: {why}")
+        sys.exit(0)
     if "--record" in sys.argv:
+        import json
         i = sys.argv.index("--record")
         if i + 1 >= len(sys.argv):
             print("❌ --record 다음에 거래일(YYYY-MM-DD)이 필요하다")
             sys.exit(2)
-        done, why = record_cycle(sys.argv[i + 1])
+        wf = None
+        if "--workflows" in sys.argv:
+            wf = json.loads(sys.argv[sys.argv.index("--workflows") + 1] or "{}")
+        done, why = record_cycle(sys.argv[i + 1], workflow_states=wf)
         print(f"\n{'기록' if done else '무시'}: {why}")
         print(report())
         sys.exit(0)

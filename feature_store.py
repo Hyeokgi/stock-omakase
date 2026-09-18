@@ -56,7 +56,7 @@ V2_CONTEXT_FIELDS = [
     "earnings_schema_version",
     "chart_policy_id",
     "supply_policy_id",
-    "report_policy_id",
+    "report_mid_policy_id",
     "switches",                  # ENVELOPE_BAND=off;SUPPLY_V2_BAND=off;...
     "policy_bundle_id",          # 위 전체의 지문 — 원래 필드도 **보존**한다
 ]
@@ -86,10 +86,10 @@ CONTEXT_FIELDS = [
 HEADER = CONTEXT_FIELDS + RESULT_FIELDS
 
 
-def policy_bundle_id(chart, supply, report, switches):
+def policy_bundle_id(chart, supply, report_mid, switches):
     """채널별 정책 + 스위치 전체의 지문. **원래 필드를 대체하지 않고 더한다.**"""
     import hashlib
-    raw = "|".join(str(x) for x in (chart, supply, report, switches))
+    raw = "|".join(str(x) for x in (chart, supply, report_mid, switches))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:10]
 
 
@@ -122,7 +122,7 @@ def build_rows(day, results, *, kospi_rate=None, warning_market=None,
                gate_codes=None, captured_at="", run_id="", sha="",
                rs_is_percentile=True,
                v3_map=None, earnings_meta=None, earnings_schema_version="",
-               chart_policy_id="", supply_policy_id="", report_policy_id="",
+               chart_policy_id="", supply_policy_id="", report_mid_policy_id="",
                switches=""):
     """`results` → 저장할 행들. **순수 함수라 오프라인 검증된다.**
 
@@ -143,7 +143,7 @@ def build_rows(day, results, *, kospi_rate=None, warning_market=None,
     v3_map = {norm_code(k): v for k, v in (v3_map or {}).items()}
     earnings_meta = {norm_code(k): v for k, v in (earnings_meta or {}).items()}
     bundle = policy_bundle_id(chart_policy_id, supply_policy_id,
-                              report_policy_id, switches)
+                              report_mid_policy_id, switches)
     rows = []
     for r in results:
         try:
@@ -166,7 +166,7 @@ def build_rows(day, results, *, kospi_rate=None, warning_market=None,
                 v3_map.get(code, ""),
                 quarter, fetched, earnings_age_days(fetched, day),
                 earnings_schema_version,
-                chart_policy_id, supply_policy_id, report_policy_id,
+                chart_policy_id, supply_policy_id, report_mid_policy_id,
                 switches, bundle,
             ]
             vals = [r[i] if i < len(r) else "" for i in range(len(RESULT_FIELDS))]

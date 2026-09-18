@@ -2705,11 +2705,13 @@ def update_technical_data(df_theme, all_theme_map):
         # 🔴 기본값을 try **밖에** 둔다. 안에서만 만들면 읽기가 실패했을 때
         #    아래 Feature Store 적재에서 NameError 로 스캐너가 죽는다.
         v3_warn_map, _v3w_stats, _earnings_meta = {}, {"reason": "읽지 않음"}, {}
+        _v3_read_ok = False
         try:
             _earn_values = doc.worksheet("DB_실적").get_all_values()
             v3_warn_map, _v3w_stats = earnings_schema.read_v3_map(_earn_values)
             _earnings_meta = earnings_schema.read_meta(_earn_values)
             print(earnings_schema.v3_report(_v3w_stats))
+            _v3_read_ok = True
             EARNINGS_WARNING_THRESHOLD = 20  # hyeoks_analyst.py의 중기 픽 필터 기준과 통일
             for r in results:
                 if len(r) > 1 and r[0] in long_term_stocks:
@@ -2718,6 +2720,10 @@ def update_technical_data(df_theme, all_theme_map):
                     if v3 is not None and v3 < EARNINGS_WARNING_THRESHOLD:
                         r[8] = str(r[8]) + " 🔻(실적 악화 주의)"
         except Exception as e:
+            # 🔴 P0-5 — DB_실적 읽기 실패는 **v3 계측 실패**로 남긴다.
+            #    조용히 넘기면 receipt 의 v3 오류 0 이 '문제 없음' 으로 읽힌다.
+            TELEMETRY.note('v3_score', f'DB_실적 읽기 {type(e).__name__}',
+                           feature_telemetry.CRITICAL)
             print(f"⚠️ [실적 악화 경고 배지 처리 스킵] {e}")
 
         existing_data = {}
@@ -3182,6 +3188,15 @@ def update_technical_data(df_theme, all_theme_map):
                                   and not any(n in str(r[8]) for n in negative_markers)
                                   and any(p in str(r[8]) for p in positive_badges)]
 
+                # 🔴 P0-5 — V1 점수를 숫자로 못 읽는 행을 센다. 계측 지점이 없으면
+                #    receipt 의 v1 오류 0 은 '실패 0' 이 아니라 '재지 않음' 이다.
+                _v1_seen = 0
+                for _r in candidate_pool:
+                    try:
+                        float(_r[29]); _v1_seen += 1
+                    except (TypeError, ValueError, IndexError) as _e:
+                        TELEMETRY.note('v1_score', type(_e).__name__,
+                                       feature_telemetry.CRITICAL, _r[1] if len(_r) > 1 else "")
                 chart_top2 = sorted(candidate_pool, key=lambda x: x[29], reverse=True)[:2]
                 gate_passed = [r for r in candidate_pool if r[34] == "GATE_PASS"]
 
@@ -3253,7 +3268,10 @@ def update_technical_data(df_theme, all_theme_map):
                     chart_policy_id=rank_pool.policy_id("차트TOP2"),
                     supply_policy_id=rank_pool.policy_id(
                         "수급TOP2", band=(f"{_lo}-{_hi}" if _band_on else None)),
-                    report_policy_id=hyeoks_tajeom.POLICY_ID,
+                    # 🔴 P1-6 — hyeoks_tajeom.POLICY_ID 는 과매도 veto 계열이고
+                    #    그건 **리포트 중기** 채널의 모수다. 이름을 사실대로 둔다.
+                    #    단기·장기 정책은 별도 단위이며 지금 이 값으로 대표하지 않는다.
+                    report_mid_policy_id=hyeoks_tajeom.POLICY_ID,
                     switches=(f"ENVELOPE_BAND={os.environ.get('ENVELOPE_BAND', 'off')};"
                               f"SUPPLY_V2_BAND={os.environ.get('SUPPLY_V2_BAND', 'off')};"
                               f"SUPPLY_V2_BAND_RANGE={os.environ.get('SUPPLY_V2_BAND_RANGE', '45-79')}"),
@@ -3383,13 +3401,17 @@ def update_technical_data(df_theme, all_theme_map):
                 #    그래야 "고르려 했던 것"이 아니라 "표본에 들어간 선택"을 설명한다.
                 _pool_runid = os.environ.get("GITHUB_RUN_ID", "")
                 _pool_rows = 0
+                _pool_dropped = {}      # P0-4 — 채널마다 clear() 되므로 여기서 누적한다
                 _appended = {}
                 for _nr in new_rows:
                     _appended.setdefault(_nr[2], []).append(str(_nr[4]))
                 # 🗂️ Feature Store — append 성공 뒤에만. picked 는 실제로 적재된 행에서.
-                _fs_picked = {}
+                # 🔴 P1-5 — setdefault 는 **첫 채널만** 남긴다. 채널 중첩 자체가
+                #    Track R 의 Feature 이므로 전부 보존한다(차트TOP2|수급TOP2).
+                _fs_multi = {}
                 for _nr in new_rows:
-                    _fs_picked.setdefault(str(_nr[4]), _nr[2])
+                    _fs_multi.setdefault(str(_nr[4]), []).append(_nr[2])
+                _fs_picked = {k: "|".join(dict.fromkeys(v)) for k, v in _fs_multi.items()}
                 _fok, _fmsg = (feature_store.record(
                     today_str, results, picked=_fs_picked,
                     run_id=_pool_runid, **_fs_ctx)
@@ -3406,6 +3428,7 @@ def update_technical_data(df_theme, all_theme_map):
                         today_str, _ch, _ranked, _appended.get(_ch, []), _sidx,
                         run_id=_pool_runid, eligible_codes=_elig,
                         exclusion=_excl, band=_band)
+                    _pool_dropped[_ch] = len(rank_pool.DROPPED)   # P0-4 채널별 누적
                     if _pok:
                         _pool_rows += 1
                         print(f"   🗂️ 순위 풀 보존 — {_pmsg}")
@@ -3437,7 +3460,20 @@ def update_technical_data(df_theme, all_theme_map):
                                                          TELEMETRY.total() == 0)
                                            else "degraded"),
                         "ci_conclusion": os.environ.get("CI_CONCLUSION", ""),
-                        # ⑤ V1·V2·V3 **각각** — V3 요약만으로 참을 만들지 않는다
+                        # ⑤/P0-5 — "계측되지 않음" 과 "실패 0" 을 가른다.
+                        #    measured=False 면 Evidence Builder 가 곧바로 거짓으로 본다.
+                        "features": {
+                            "v1": {"measured": True, "parsed": _v1_seen,
+                                   "errors": TELEMETRY.errors("v1_score")},
+                            "v2": {"measured": True, "parsed": len(candidate_pool),
+                                   "errors": TELEMETRY.errors("v2_score")},
+                            "v3": {"measured": bool(_v3_read_ok),
+                                   "used": _v3w_stats.get("used", 0),
+                                   "errors": TELEMETRY.errors("v3_score"),
+                                   "unparsable": _v3w_stats.get("unparsable", 0),
+                                   "out_of_range": _v3w_stats.get("out_of_range", 0),
+                                   "schema_reason": _v3w_stats.get("reason", "")},
+                        },
                         "v1_parse_errors": TELEMETRY.errors("v1_score"),
                         "v2_parse_errors": TELEMETRY.errors("v2_score"),
                         "v3_parse_errors": TELEMETRY.errors("v3_score"),
@@ -3450,10 +3486,13 @@ def update_technical_data(df_theme, all_theme_map):
                         "rank_pool": {"date": today_str,
                                       "fingerprint": _sg.fingerprint(),
                                       "rows": _pool_rows,
-                                      "dropped": len(rank_pool.DROPPED)},
+                                      "by_channel_dropped": _pool_dropped,
+                                      "total_dropped": sum(_pool_dropped.values())},
                         # ⑦ read-after-write
                         "ledger": {"expected_trade_ids": _ledger_expected,
-                                   "found_trade_ids": _ledger_found},
+                                   "found_trade_ids": _ledger_found,
+                                   "expected_zero_reason": (
+                                       "" if _ledger_expected else "신규 진입 행 없음")},
                         "scanned": len(results),
                     }, run_id=_pool_runid, fingerprint=_sg.fingerprint())
                     print(f"🧾 {_rm}")

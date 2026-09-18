@@ -12,6 +12,13 @@ import feature_telemetry
 
 # 분류 근거: docs/silent_exception_분류_2026-09-18.md
 TELEMETRY = feature_telemetry.Telemetry()
+
+# 🔴 2026-09-18 P0-3 — 이전 영수증은 V3 를 읽은 **직후**(약 808행)에 떨어졌다.
+#    그 뒤로 후보선정·AI·PDF·발송·원장 적재가 전부 남아 있으므로 그건 완료의 증거가
+#    아니었다. 이제 상태를 모아 두었다가 **끝에서 한 번** 최종 영수증을 발행한다.
+RECEIPT_STATE = {"v3": {}, "v1_parsed": 0, "v2_parsed": 0,
+                 "ledger_expected": [], "ledger_found": [], "ledger_verified": None,
+                 "pdf": "", "stage": "start"}
 # 🏷️ 타점 해석은 의존성 없는 별도 모듈로 뺐다(F01, 2026-09-07).
 #    이 파일은 gspread·pdfkit·genai 를 최상단에서 import 하므로 로직만 시험할 수 없었다.
 #    사본을 시험하면 원본이 맞다는 보장이 없어서, 원본을 옮기고 여기서 가져다 쓴다.
@@ -805,27 +812,10 @@ try:
     print(f"범위밖 {_v3_stats.get('out_of_range', 0)}")
     print(f"schema {'이상: ' + _v3_stats['reason'] if _v3_stats.get('reason') else '정상'}")
 
-    # 🧾 생산 영수증 — Evidence Builder 가 읽는다(지시 ②·⑧)
-    try:
-        import production_receipt
-        import stability_gate as _sg
-        _today = datetime.datetime.now(KST).strftime("%Y-%m-%d")
-        _ok, _msg = production_receipt.emit(_today, "analyst", {
-            # ⑧ 기계 기준 — 사람이 "이상 없음" 이라 쓰지 않는다
-            "expected_state": ("reached" if (not _v3_stats.get("reason")
-                                             and TELEMETRY.total() == 0) else "degraded"),
-            "v3_rows": _v3_stats.get("rows", 0),
-            "v3_used": _v3_stats.get("used", 0),
-            "v3_blank": _v3_stats.get("blank", 0),
-            "v3_unparsable": _v3_stats.get("unparsable", 0),
-            "v3_out_of_range": _v3_stats.get("out_of_range", 0),
-            "v3_schema_reason": _v3_stats.get("reason", ""),
-            "telemetry": TELEMETRY.snapshot(),
-        }, fingerprint=_sg.fingerprint())
-        print(f"🧾 {_msg}")
-        print(TELEMETRY.render())
-    except Exception as _e:
-        print(f"⚠️ [영수증 기록 실패] {type(_e).__name__}: {_e}")
+    # 🔴 P0-3 — 여기서 영수증을 발행하지 않는다. 뒤에 작업이 대부분 남아 있다.
+    #    상태만 모아 두고 **끝에서** 최종 영수증을 발행한다.
+    RECEIPT_STATE["v3"] = dict(_v3_stats)
+    RECEIPT_STATE["v3_read_ok"] = not _v3_stats.get("reason")
 
     cands_list = []
     for r in tech_data:
@@ -837,10 +827,20 @@ try:
         prog = str(r[20]).strip()
         seed_tag = str(r[25]).strip() if len(r) > 25 else "NORMAL"
  
-        try: v1_score = int(r[29]) if len(r) > 29 else 0
-        except Exception: v1_score = 0
-        try: v2_score = int(r[31]) if len(r) > 31 else 0
-        except Exception: v2_score = 0
+        # 🔴 P0-5 — 변환 실패를 0 으로 조용히 바꾸고 있었다. 0 은 실제 점수 0 과
+        #    구분되지 않으며 그대로 후보 점수(combo_score)에 쓰인다. 계측한다.
+        try:
+            v1_score = int(r[29]) if len(r) > 29 else 0
+            RECEIPT_STATE["v1_parsed"] += 1
+        except Exception as _e:
+            TELEMETRY.note('v1_score', type(_e).__name__, feature_telemetry.CRITICAL, code)
+            v1_score = 0
+        try:
+            v2_score = int(r[31]) if len(r) > 31 else 0
+            RECEIPT_STATE["v2_parsed"] += 1
+        except Exception as _e:
+            TELEMETRY.note('v2_score', type(_e).__name__, feature_telemetry.CRITICAL, code)
+            v2_score = 0
         # 🆕 [RS등급] 전종목 상대강도 백분위(1~99) — 표본 부족한 날은 빈 칸이라 그런 경우엔 프롬프트에서 아예 생략
         rs_grade_raw = str(r[33]).strip() if len(r) > 33 else ""
         try: rs_grade = int(rs_grade_raw) if rs_grade_raw else None
@@ -1522,6 +1522,7 @@ try:
                 #    누락됐으면 그 종목만 다시 씀(최대 3회).
                 pending = list(new_rows)
                 verified = False
+                RECEIPT_STATE["ledger_expected"] = [str(r[0]) for r in new_rows]
                 for attempt in range(3):
                     try:
                         bt_sheet.append_rows(pending, value_input_option="USER_ENTERED")
@@ -1534,6 +1535,7 @@ try:
                     pending = [r for r in pending if r[0] not in check_ids]
                     if not pending:
                         verified = True
+                        RECEIPT_STATE["ledger_found"] = list(RECEIPT_STATE["ledger_expected"])
                         break
                     print(f"⚠️ [리포트 채널 기록 확인 실패, 재시도 {attempt + 1}/3] 누락: {[r[0] for r in pending]}")
                     time.sleep(3)
@@ -1590,12 +1592,62 @@ try:
                     except Exception as _se:
                         print(f"⚠️ [백테스트_로그 정렬/구분선 실패 — 다음 omakase 회차에서 복구됨] {_se}")
                 else:
-                    print(f"❌ [백테스트 V6 Step1] 3회 재시도 후에도 확인 실패 — 누락: {[r[0] for r in pending]}")
+                    _miss = [str(r[0]) for r in pending]
+                    RECEIPT_STATE["ledger_found"] = [
+                        t for t in RECEIPT_STATE["ledger_expected"] if t not in set(_miss)]
+                    TELEMETRY.note('report_ledger', '3회 재시도 후에도 누락',
+                                   feature_telemetry.CRITICAL)
+                    print(f"❌ [백테스트 V6 Step1] 3회 재시도 후에도 확인 실패 — 누락: {_miss}")
+                RECEIPT_STATE["ledger_verified"] = bool(verified)
             else:
+                RECEIPT_STATE["ledger_verified"] = True
+                RECEIPT_STATE["ledger_zero_reason"] = "그날 리포트 픽 없음"
                 print("⏭ [백테스트 V6 Step1] 리포트 채널 — 추가 없음.")
     except Exception as e: print(f"⚠️ [백테스트 V6 Step1] 리포트 채널 기록 에러: {e}")
         
     print(f"🎉 모든 작업이 성공적으로 완료되었습니다: {pdf_file}")
+
+    # ══════════════════════════════════════════════════════════════
+    # 🧾 최종 영수증 (P0-3) — 후보선정·AI·PDF·발송·원장 적재를 **전부 지난 뒤**
+    #    발행한다. Gate 가 인정하는 것은 이 영수증뿐이다.
+    # ══════════════════════════════════════════════════════════════
+    try:
+        import production_receipt
+        import stability_gate as _sg
+        _v3 = RECEIPT_STATE.get("v3") or {}
+        _led_exp = RECEIPT_STATE.get("ledger_expected") or []
+        _final_ok = (bool(pdf_file)
+                     and RECEIPT_STATE.get("ledger_verified") is True
+                     and RECEIPT_STATE.get("v3_read_ok") is True
+                     and TELEMETRY.total() == 0)
+        _rok, _rmsg = production_receipt.emit(
+            datetime.datetime.now(KST).strftime("%Y-%m-%d"), "analyst", {
+                "expected_state": "reached" if _final_ok else "degraded",
+                "stage": "final",
+                "pdf": str(pdf_file or ""),
+                "features": {
+                    "v1": {"measured": True, "parsed": RECEIPT_STATE["v1_parsed"],
+                           "errors": TELEMETRY.errors("v1_score")},
+                    "v2": {"measured": True, "parsed": RECEIPT_STATE["v2_parsed"],
+                           "errors": TELEMETRY.errors("v2_score")},
+                    "v3": {"measured": bool(RECEIPT_STATE.get("v3_read_ok")),
+                           "used": _v3.get("used", 0),
+                           "errors": TELEMETRY.errors("v3_score"),
+                           "unparsable": _v3.get("unparsable", 0),
+                           "out_of_range": _v3.get("out_of_range", 0),
+                           "schema_reason": _v3.get("reason", "")},
+                },
+                # P0-3 — 리포트 원장도 Gate 검증 대상이다
+                "ledger": {"expected_trade_ids": _led_exp,
+                           "found_trade_ids": RECEIPT_STATE.get("ledger_found") or [],
+                           "expected_zero_reason": (
+                               "" if _led_exp else RECEIPT_STATE.get("ledger_zero_reason", ""))},
+                "telemetry": TELEMETRY.snapshot(),
+            }, fingerprint=_sg.fingerprint())
+        print(f"🧾 {_rmsg}")
+        print(TELEMETRY.render())
+    except Exception as _e:
+        print(f"⚠️ [최종 영수증 기록 실패] {type(_e).__name__}: {_e}")
 except GeminiUnreachableError as e:
     print(f"\n🚨 [제미나이 회로차단기 발동] {e}")
     print("   → 헛되이 재시도하며 시간을 낭비하지 않고 여기서 안전하게 종료합니다. 다음 예약 실행에서 자연스럽게 복구됩니다.")

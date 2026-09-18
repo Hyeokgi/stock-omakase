@@ -19,6 +19,8 @@ jobs:
     steps:
       - name: 코드 가져오기
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # P1-1 — 지문 증거가 `git diff <sha>..HEAD` 를 쓴다
 
       - name: 파이썬 설치하기
         uses: actions/setup-python@v7
@@ -30,16 +32,22 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4 pandas gspread oauth2client kiwipiepy
 
-      - name: 🚦 이 커밋의 audit CI 결론 조회 (Gate 증거)
+      - name: 🚦 지문 기준 audit CI 증거 (P1-1)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 실패해도 스캐너를 막지 않는다 — 빈 값이면 Gate 가 그 기준을 거짓으로 본다
-          CONC=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/review_regressions.yml/runs?head_sha=${{ github.sha }}&per_page=1" \
-            | python -c "import json,sys; r=json.load(sys.stdin).get('workflow_runs') or [{}]; print(r[0].get('conclusion') or '')" 2>/dev/null || echo "")
-          echo "CI_CONCLUSION=$CONC" >> $GITHUB_ENV
-          echo "audit CI 결론: ${CONC:-미상}"
+          # 🔴 P1-1 — HEAD SHA 로 찾으면 데이터 전용 커밋([skip ci]) 뒤에는 CI 가
+          #    없어서 정상 코드인데도 증거가 사라진다. 매일 데이터가 커밋되므로
+          #    사실상 항상 거짓이 된다. 증명할 것은 "지금 **지문**이 CI 를 통과했나" 다.
+          set +e
+          RUNS=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/review_regressions.yml/runs?status=success&branch=main&per_page=10" \
+            | python -c "import json,sys; d=json.load(sys.stdin); print(json.dumps([{'head_sha':r['head_sha'],'conclusion':r['conclusion']} for r in d.get('workflow_runs',[])]))" 2>/dev/null)
+          [ -z "$RUNS" ] && RUNS="[]"
+          OUT=$(python stability_gate.py --ci-evidence "$RUNS")
+          echo "$OUT"
+          echo "$OUT" | grep '^CI_EVIDENCE=' >> $GITHUB_ENV
+          set -e
 
       - name: 비밀번호 파일(secret.json) 만들기
         env:
@@ -56,7 +64,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           # 🔴 2026-09-18 지시 ② — Stability Gate 의 `ci_green` 은 사람이 넣지 않는다.
           #    이 커밋(SHA)의 audit CI 결론을 영수증에 실어 Evidence Builder 가 읽는다.
-          CI_CONCLUSION: ${{ env.CI_CONCLUSION }}
+          CI_CONCLUSION: ${{ env.CI_EVIDENCE }}
         run: python omakase.py
 
       - name: 데이터 품질표 연결 검사 (원장 읽기 전용)

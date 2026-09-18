@@ -1,0 +1,80 @@
+name: 🚦 HYEOKS 안정화 사이클 판정 (finalizer)
+
+# 2026-09-18 P1-2 — `stability_gate.py --record` 를 실제로 돌리고 runs.csv 를
+# 보존하는 워크플로가 없었다. 판정 코드만 있고 **아무도 부르지 않았다.**
+#
+# 하루 한 번, 영수증이 다 모인 뒤에 돈다. 너무 일찍 돌면 영수증이 아직 없으므로
+# 즉시 영구 FAIL 로 기록하지 않고 **보류**한다(gate 의 ready() 가 막는다).
+
+on:
+  schedule:
+    - cron: '30 14 * * 1-5'   # 14:30 UTC = 23:30 KST — 스캐너·리포트·실적이 전부 끝난 뒤
+  workflow_dispatch:
+    inputs:
+      cycle_date:
+        description: '판정할 거래일 (YYYY-MM-DD, 비우면 오늘 KST)'
+        required: false
+
+concurrency:
+  group: hyeoks-stability-gate
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # 지문 증거가 git diff 를 쓴다
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.10'
+
+      - name: 🧪 깨진 판정기로 판정하지 않는다
+        run: |
+          python stability_gate.py --self-test
+          python evidence_builder.py
+          python production_receipt.py
+
+      - name: 📅 판정 대상 거래일
+        run: |
+          D="${{ github.event.inputs.cycle_date }}"
+          [ -z "$D" ] && D=$(TZ=Asia/Seoul date +%Y-%m-%d)
+          echo "CYCLE_DATE=$D" >> $GITHUB_ENV
+          echo "대상 거래일: $D"
+
+      - name: 🔎 required workflow 실제 결론 (P1-3)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python .github/workflow_states.py "${{ github.repository }}" "$CYCLE_DATE" >> $GITHUB_ENV
+          echo "조회 완료"
+
+      - name: 🚦 사이클 판정 + 기록
+        run: |
+          python stability_gate.py --record "$CYCLE_DATE" --workflows "$WORKFLOW_STATES"
+
+      - name: 💾 runs.csv 보존
+        if: always()
+        run: |
+          # 🔴 없는 경로에 `git add` 는 exit 128 이다(2026-09-18 main.yml 에서 겪었다).
+          mkdir -p data/stability_gate
+          if [ -z "$(git status --porcelain data/stability_gate)" ]; then
+            echo "기록 없음 (보류됐거나 이미 기록된 거래일)"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -- data/stability_gate
+          git commit -m "gate: 안정화 사이클 $CYCLE_DATE [skip ci]"
+          for i in 1 2 3 4; do
+            git pull --rebase --autostash origin main && git push origin HEAD:main && exit 0
+            echo "⚠️ 재시도 $i/4"; sleep $((i * 3))
+          done
+          echo "::error::Gate 기록 푸시 실패"
+          exit 1

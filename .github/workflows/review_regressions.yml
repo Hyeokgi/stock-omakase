@@ -88,3 +88,4 @@ jobs:
           python feature_telemetry.py
           python production_receipt.py
           python evidence_builder.py
+          python .github/workflow_states.py --help 2>/dev/null || python -c "import ast,pathlib; ast.parse(pathlib.Path('.github/workflow_states.py').read_text(encoding='utf-8'))"

@@ -185,6 +185,134 @@ class FingerprintTests(unittest.TestCase):
         self.assertTrue(all(r["fingerprint"] == "abc123abc123" for r in G.load(self.path)))
 
 
+class EndToEndGateTests(unittest.TestCase):
+    """영수증 → Builder → Gate 전 경로. 참/거짓 시나리오를 모두 본다.
+
+    사용자 지시 "Gate false/true 시나리오 확인" — 판정이 **양쪽으로** 움직여야 한다.
+    한쪽으로만 움직이면 그 기준은 아무것도 검증하지 못한다(P0-2 가 그랬다).
+    """
+
+    FP = "e2e000000000"
+    WF = {"main.yml": "success", "ai_report.yml": "success",
+          "earnings_collector.yml": "success"}
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.rec = str(pathlib.Path(self.tmp.name) / "receipts")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def feats(self):
+        return {"v1": {"measured": True, "parsed": 700, "errors": 0},
+                "v2": {"measured": True, "parsed": 700, "errors": 0},
+                "v3": {"measured": True, "used": 140, "errors": 0,
+                       "unparsable": 0, "out_of_range": 0, "schema_reason": ""}}
+
+    def seed(self, day="2026-09-21", **over):
+        import production_receipt as R
+        sc = {"expected_state": "reached", "ci_conclusion": "success",
+              "features": self.feats(),
+              "feature_store": {"date": day, "run_id": "R1", "fingerprint": self.FP,
+                                "rows": 718, "dropped": 0},
+              "rank_pool": {"date": day, "fingerprint": self.FP, "rows": 8,
+                            "total_dropped": 0},
+              "ledger": {"expected_trade_ids": ["t1"], "found_trade_ids": ["t1"]}}
+        an = {"expected_state": "reached", "stage": "final", "features": self.feats(),
+              "ledger": {"expected_trade_ids": ["r1"], "found_trade_ids": ["r1"]}}
+        ea = {"expected_state": "reached", "schema_version": "earnings-v2",
+              "v3_out_of_range": 0, "schema_reason": "",
+              "targets": 143, "dart_success": 143,
+              "outcomes": {"success": 143, "allowed_missing_corp_code": 0,
+                           "allowed_insufficient_data": 0, "hard_error": 0,
+                           "circuit_breaker_unprocessed": 0,
+                           "time_budget_unprocessed": 0},
+              "unaccounted": 0, "target_source_health": "ok", "write_blocked": ""}
+        sc.update(over.get("scanner") or {})
+        an.update(over.get("analyst") or {})
+        ea.update(over.get("earnings") or {})
+        R.emit(day, "scanner", sc, root=self.rec, run_id="R1", fingerprint=self.FP)
+        R.emit(day, "analyst", an, root=self.rec, run_id="R1", fingerprint=self.FP)
+        R.emit(day, "earnings", ea, root=self.rec, run_id="R2", fingerprint=self.FP)
+        R.emit(day, "consensus", {"state": "DEGRADED", "expected_state": "reached"},
+               root=self.rec, run_id="R3", fingerprint=self.FP)
+
+    def build(self, day="2026-09-21", wf=None):
+        import evidence_builder as E
+        return E.build(day, self.FP, root=self.rec,
+                       workflow_states=self.WF if wf is None else wf)
+
+    def test_true_scenario_passes_every_criterion(self):
+        self.seed()
+        ev, det = self.build()
+        self.assertTrue(all(ev.values()), det["reasons"])
+        self.assertEqual(G.evaluate(ev), (True, []))
+
+    def test_aux_degraded_does_not_block(self):
+        """보조 자료의 저하가 주 판정을 흐리지 않는다."""
+        self.seed()
+        ev, det = self.build()
+        self.assertTrue(all(ev.values()))
+        self.assertEqual(det["aux_state"], "DEGRADED")
+
+    def test_false_scenarios(self):
+        cases = {
+            "dart 시간예산": {"earnings": {"outcomes": {
+                "success": 127, "allowed_missing_corp_code": 0,
+                "allowed_insufficient_data": 0, "hard_error": 0,
+                "circuit_breaker_unprocessed": 0, "time_budget_unprocessed": 16}}},
+            "feature_store 버림": {"scanner": {"feature_store": {
+                "date": "2026-09-21", "run_id": "R1", "fingerprint": FP_OK,
+                "rows": 718, "dropped": 3}}},
+            "v1 미계측": {"scanner": {"features": {
+                "v1": {"measured": False}, "v2": {"measured": True, "errors": 0},
+                "v3": {"measured": True, "errors": 0}}}},
+            "리포트 원장 누락": {"analyst": {"ledger": {
+                "expected_trade_ids": ["r1"], "found_trade_ids": []}}},
+            "analyst 중간 영수증": {"analyst": {"stage": "start"}},
+            "본표 차단": {"earnings": {"write_blocked": "스키마 불일치"}},
+        }
+        for name, over in cases.items():
+            with self.subTest(name):
+                self.tearDown(); self.setUp()
+                self.seed(**over)
+                ev, det = self.build()
+                self.assertFalse(all(ev.values()), f"{name} 이 통과해 버렸다: {det['reasons']}")
+                self.assertFalse(G.evaluate(ev)[0])
+
+    def test_workflow_failure_blocks_even_when_receipts_look_fine(self):
+        """P1-3 — 영수증은 멀쩡한데 워크플로가 실패한 경우."""
+        self.seed()
+        ev, _ = self.build(wf={**self.WF, "main.yml": "failure"})
+        self.assertFalse(ev["no_unexplained_failure"])
+
+    def test_record_cycle_uses_only_receipts(self):
+        """사람이 bool 을 넣지 않는다 — 영수증만으로 한 사이클이 만들어지는가."""
+        self.seed()
+        log = str(pathlib.Path(self.tmp.name) / "runs.csv")
+        done, why = G.record_cycle("2026-09-21", path=log, receipts_root=self.rec,
+                                   workflow_states=self.WF, fp=self.FP)
+        self.assertTrue(done, why)
+        self.assertEqual(G.load(log)[0]["verdict"], "PASS")
+        self.assertEqual(G.load(log)[0]["aux_state"], "DEGRADED")
+
+    def test_holds_before_cutoff_instead_of_recording_fail(self):
+        """P1-2 — 영수증이 아직 없을 때 영구 FAIL 을 남기지 않는다."""
+        log = str(pathlib.Path(self.tmp.name) / "runs.csv")
+        done, why = G.record_cycle("2026-09-21", path=log, receipts_root=self.rec,
+                                   workflow_states=self.WF, fp=self.FP,
+                                   now=__import__("datetime").datetime(
+                                       2026, 9, 21, 15, 0,
+                                       tzinfo=__import__("datetime").timezone(
+                                           __import__("datetime").timedelta(hours=9))))
+        self.assertFalse(done)
+        self.assertIn("보류", why)
+        self.assertEqual(G.load(log), [])
+
+
+FP_OK = "e2e000000000"
+
+
 class ProductionEvidenceTests(unittest.TestCase):
     """문턱이 읽을 증거를 생산 코드가 실제로 찍는가 (GPT §1)."""
 

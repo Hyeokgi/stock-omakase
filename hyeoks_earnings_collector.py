@@ -491,6 +491,9 @@ if __name__ == "__main__":
     doc = get_doc()
     corp_map = load_or_build_corp_code_map(doc) if RUN_PRIMARY else {}
     target_map = get_target_stocks(doc)  # {종목코드: 종목명}
+    # 🔴 P0-2 — 입력 시트를 못 읽으면 target universe 자체가 줄어든다.
+    #    그러면 "전부 처리했다" 가 참이어도 실제로는 일부만 본 것이다.
+    _target_health = "ok" if len(target_map) >= 50 else f"target 수 비정상({len(target_map)})"
     print(f"▶️ 총 {len(target_map)}개 종목의 실적 데이터를 수집합니다 (DB_중장기 + DB_스캐너 기준)...")
 
     out_sheet = None
@@ -526,6 +529,17 @@ if __name__ == "__main__":
               "보존이 불가능하므로 DB_실적 본표에 쓰지 않는다")
     target_codes = stale_first(list(target_map.keys()), existing_earnings)
     fs_div_counter = {"CFS": 0, "OFS": 0}
+    # 🔴 2026-09-18 P0-2 — `targets - success` 를 결측으로 **역산**하면
+    #    `success + skip == targets` 는 정의상 항상 참이다. 시간예산 초과·회로차단·
+    #    예외·미처리가 전부 '명시적 결측' 으로 둔갑한다. 실제 경로에서 직접 센다.
+    OUTCOME = {
+        "success": 0,
+        "allowed_missing_corp_code": 0,   # 비상장·최근상장 — 허용되는 결측
+        "allowed_insufficient_data": 0,   # 분기 수 부족 — 허용되는 결측
+        "hard_error": 0,                  # 처리 중 예외 — 허용되지 않는다
+        "circuit_breaker_unprocessed": 0,  # 회로차단기로 남은 종목
+        "time_budget_unprocessed": 0,      # 예산 초과로 남은 종목
+    }
     DEBUG_STOCKS = {"005930", "000660", "035420"}  # 🔎 [진단용] 삼성전자/SK하이닉스/NAVER — 분기별 원본 수치를 그대로 로그에 찍어서 확인
 
     # 🆕 [시간 예산] 워크플로의 하드 타임아웃(30분)에 강제 종료당하면 그때까지 모은 데이터가
@@ -538,10 +552,12 @@ if __name__ == "__main__":
         if time.time() - script_start > SCRIPT_TIME_BUDGET_SEC:
             print(f"⏱️ [시간 예산 초과] {SCRIPT_TIME_BUDGET_SEC}초 경과 — 남은 {len(target_codes) - idx}개 종목은 건너뛰고, 지금까지 모은 데이터부터 저장합니다.")
             time_budget_hit = True
+            OUTCOME["time_budget_unprocessed"] = len(target_codes) - idx
             break
         corp_code = corp_map.get(code)
         if not corp_code:
             print(f"⚠️ [{code}] DART corp_code 매핑 없음 (비상장·최근상장 등) — 스킵")
+            OUTCOME["allowed_missing_corp_code"] += 1
             continue
         try:
             quarters, fs_div = get_recent_quarters(corp_code, num_years=2)
@@ -554,6 +570,7 @@ if __name__ == "__main__":
             summary = summarize(quarters)
             if not summary:
                 print(f"⚠️ [{code}] 실적 데이터 부족 — 스킵")
+                OUTCOME["allowed_insufficient_data"] += 1
                 continue
             fs_div_counter[fs_div] = fs_div_counter.get(fs_div, 0) + 1
             v3_score, streak_label = compute_v3_score(quarters, summary)
@@ -563,6 +580,7 @@ if __name__ == "__main__":
                 summary["is_improving"], v3_score, streak_label,
                 "연결" if fs_div == "CFS" else "별도", now_str
             ])
+            OUTCOME["success"] += 1
 
             # 🔴 2026-09-18 GPT 교차검증 §5 — 여기서 종목마다 컨센서스를 같이 불렀다.
             #    보조 원천 하나가 종목당 최대 12초 타임아웃을 일으키면 **주 산출물인
@@ -574,9 +592,11 @@ if __name__ == "__main__":
         except DartUnreachableError as e:
             print(f"🚨 [회로차단기 발동] {e}")
             print("⏭ 이번 실행은 여기서 조기 종료합니다 — 다음 스케줄 실행에서 다시 시도됩니다.")
+            OUTCOME["circuit_breaker_unprocessed"] = len(target_codes) - idx
             break
         except Exception as e:
             print(f"⚠️ [{code}] 실적 처리 실패: {e}")
+            OUTCOME["hard_error"] += 1      # 허용되는 결측이 아니다
             continue
 
         if (idx + 1) % 20 == 0:
@@ -719,20 +739,32 @@ if __name__ == "__main__":
     _cycle = datetime.datetime.now(KST).strftime("%Y-%m-%d")
     _fp = _sg.fingerprint()
     if RUN_PRIMARY:
-        _explicit_skips = len(target_map) - (len(rows_out) - 1)
+        # 🔴 P0-2 — 역산하지 않는다. 대상 수와 사유별 합이 맞는지도 같이 싣는다.
+        _accounted = sum(OUTCOME.values())
+        _unaccounted = len(target_map) - _accounted
         _rok, _rmsg = production_receipt.emit(_cycle, "earnings", {
             "expected_state": "reached" if not earnings_blocked else "blocked",
             "schema_version": EARNINGS_SCHEMA_VERSION,
             "schema_reason": v3_stats.get("reason", ""),
+            "features": {
+                "v3": {"measured": not v3_stats.get("reason"),
+                       "used": v3_stats.get("used", 0),
+                       "errors": 0,
+                       "unparsable": v3_stats.get("unparsable", 0),
+                       "out_of_range": v3_stats.get("out_of_range", 0),
+                       "schema_reason": v3_stats.get("reason", "")},
+            },
             "v3_used": v3_stats.get("used", 0),
             "v3_blank": v3_stats.get("blank", 0),
             "v3_unparsable": v3_stats.get("unparsable", 0),
             "v3_out_of_range": v3_stats.get("out_of_range", 0),
             "targets": len(target_map),
-            "dart_success": len(rows_out) - 1,
-            # 스킵은 **명시적**이어야 한다 — 로그에 사유가 찍힌 건수다
-            "dart_skipped_explicit": _explicit_skips,
+            "dart_success": OUTCOME["success"],
+            "outcomes": dict(OUTCOME),
+            "unaccounted": _unaccounted,     # 0 이 아니면 어딘가 세지 않은 경로가 있다
             "time_budget_hit": bool(time_budget_hit),
+            # 대상 universe 자체가 줄어든 경우를 따로 본다(입력 시트 읽기 실패)
+            "target_source_health": _target_health,
             "write_blocked": earnings_blocked,
             "rows_final": v3_stats.get("rows", 0),
             "oldest_stamp": stamps[0] if stamps else "",
