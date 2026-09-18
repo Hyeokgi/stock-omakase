@@ -45,8 +45,14 @@ def counts(path=TRIALS_PATH):
     for r in _rows(path):
         try:
             out[int(r["stage"])] = out.get(int(r["stage"]), 0) + 1
-        except (ValueError, KeyError):
-            continue
+        except (ValueError, KeyError) as e:
+            # 🔴 2026-09-18 ⑫ — 12곳 중 **여기만 동작을 바꾼다**(지시 5번).
+            #    이 함수는 탐색 시도 상한(단계 15/45/20 · 총 80)을 센다.
+            #    깨진 행을 조용히 건너뛰면 실제 시도가 상한보다 많아도 통과한다.
+            #    상한을 코드로 막아 둔 의미가 사라지므로 세는 것으로는 부족하다.
+            raise ValueError(
+                f"시도 기록이 깨졌다({type(e).__name__}: {e}) — "
+                f"상한을 셀 수 없으므로 집계를 거부한다. {path} 를 확인하라") from e
     out["total"] = sum(v for k, v in out.items() if isinstance(k, int))
     return out
 

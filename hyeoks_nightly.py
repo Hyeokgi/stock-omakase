@@ -15,6 +15,9 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 #    "-1003778485916" 이 리포트·브리핑이 지금 도착하는 채널이다. 목적지는 상수로
 #    되돌리되 사본 5개가 아니라 telegram_target 한 곳만 본다.
 from telegram_target import chat_id as _chat_id
+import feature_telemetry
+# 분류 근거: docs/silent_exception_분류_2026-09-18.md
+TELEMETRY = feature_telemetry.Telemetry()
 TELEGRAM_CHAT_ID = _chat_id()
 KIS_APP_KEY        = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET     = os.environ.get("KIS_APP_SECRET")
@@ -175,8 +178,9 @@ def get_chart_data(code, kis_headers, req, date_100, today_str):
                 ma20_text = f"{int(sum(int(x['stck_clpr']) for x in h_data[:20]) / 20):,}"
             if len(h_data) > 0:
                 high60_text = f"{max(int(x['stck_hgpr']) for x in h_data):,}"
-    except Exception:
-        pass
+    except Exception as _e:
+        # 🔇 ⑧ MA20·60일 고가 텍스트 — 시간외 표시
+        TELEMETRY.note('ma20_high60', type(_e).__name__, feature_telemetry.DISPLAY)
     return ma20_text, high60_text
 
 # ==========================================

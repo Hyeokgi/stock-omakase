@@ -29,6 +29,8 @@ QoQ 는 보통 "12.3" 같은 소수라 int() 가 실패하고 **V3 가 없는 �
   ③ 값 범위(0~100)를 검사한다 — 이 검사만 있었어도 QoQ 오독을 잡았다
 """
 
+SCHEMA_VERSION = "earnings-v2"   # v1=12열(V3 index 8) / v2=14열(V3 index 10)
+
 HEADER = ["종목코드", "종목명", "최신분기", "매출액", "영업이익", "매출증감률(YoY,%)",
           "영업이익증감률(YoY,%)", "매출증감률(QoQ,%)", "영업이익증감률(QoQ,%)",
           "실적개선여부", "V3(실적점수)", "연속성장", "재무제표기준", "갱신일시"]
@@ -110,6 +112,33 @@ def read_v3_map(all_values):
     return out, stats
 
 
+def read_meta(all_values):
+    """{코드: (최신분기, 갱신일시)} — freshness 를 소비자에게 넘기기 위한 것.
+
+    2026-09-18 사용자 지시 ⑪ — Feature Store 에 실적의 age 를 남기려면 소비자가
+    갱신일시를 읽어야 한다. 지금까지 어떤 소비 경로도 이 열을 보지 않았다.
+    """
+    if not all_values:
+        return {}
+    head = all_values[0]
+    code_col, _ = locate(head, HEADER[CODE_COL])
+    q_col, _ = locate(head, "최신분기")
+    t_col, _ = locate(head, STAMP_NAME)
+    if code_col is None:
+        return {}
+    out = {}
+    for row in all_values[1:]:
+        if len(row) <= code_col:
+            continue
+        code = str(row[code_col]).replace("'", "").strip()
+        if not code:
+            continue
+        q = str(row[q_col]).strip() if q_col is not None and len(row) > q_col else ""
+        t = str(row[t_col]).strip() if t_col is not None and len(row) > t_col else ""
+        out[code.zfill(6)] = (q, t)
+    return out
+
+
 def v3_report(stats):
     """소비자가 로그에 그대로 찍을 한 줄. 조용히 넘어가지 않기 위한 것이다."""
     if stats.get("reason"):
@@ -134,6 +163,7 @@ def _selftest():
 
     print("🧪 DB_실적 스키마 계약")
     chk("V3 는 11번째 열이다(index 10)", V3_COL == 10, V3_COL)
+    chk("스키마 버전이 계약 모듈에 있다", SCHEMA_VERSION == "earnings-v2")
     chk("갱신일시는 마지막 열", STAMP_COL == len(HEADER) - 1)
     chk("헤더는 14열", len(HEADER) == 14)
 
@@ -187,6 +217,9 @@ def _selftest():
     chk("빈칸은 빈칸으로 센다", m7 == {} and st7["blank"] == 1)
 
     chk("빈 입력도 사유를 남긴다", read_v3_map([])[1]["reason"] != "")
+    meta = read_meta([list(HEADER), row("005930", **{"최신분기": "2026.06", "갱신일시": "2026-09-18 20:00:00"})])
+    chk("최신분기·갱신일시를 같이 읽는다", meta == {"005930": ("2026.06", "2026-09-18 20:00:00")}, meta)
+    chk("빈 시트면 빈 메타", read_meta([]) == {})
     chk("따옴표 코드도 맞춘다",
         read_v3_map([list(HEADER), row("'005930", **{"V3(실적점수)": "72"})])[0] == {"005930": 72})
     print("\n" + f"✅ 전부 통과 ({ok}건)")

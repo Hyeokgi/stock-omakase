@@ -36,7 +36,30 @@ import os
 
 KST = datetime.timezone(datetime.timedelta(hours=9))
 STORE_DIR = "data/feature_store"
-STORE_VERSION = "feature-store-v1"
+# ⑩ build_rows 가 버린 행의 사유 목록. 호출부가 읽어 영수증에 싣는다.
+DROPPED = []
+STORE_VERSION = "feature-store-v2"
+
+# 🔴 2026-09-18 v2 — 사용자 지시 ⑪. 새 저장소를 만들지 않고 기존 것을 확장한다.
+#    추가는 CONTEXT_FIELDS **뒤쪽에만** 한다(RESULT_FIELDS 는 omakase result_row 와
+#    1:1 이라 순서를 건드리면 과거 파일과 어긋난다).
+#
+#    ⚠️ 단일 policy_id 를 쓰지 않는다. 이 파일은 특정 채널의 결과가 아니라
+#       **그날 후보 전체의 스냅샷**이므로 채널마다 다른 정책을 한 칸에 욱여넣으면
+#       나중에 "이 행이 어느 정책 아래 있었나" 를 되물을 수 없다.
+#       (9/16 에 rank_pool 이 모든 채널에 oversold-veto-v2 를 박았던 것과 같은 실수다)
+V2_CONTEXT_FIELDS = [
+    "v3_score",                  # V3 열 오독 사고(P0-1) 이후 더 중요해졌다
+    "earnings_latest_quarter",
+    "earnings_fetched_at",       # age 계산의 원천
+    "earnings_age_days",         # 계산해서 같이 둔다(소비자가 빼먹지 않게)
+    "earnings_schema_version",
+    "chart_policy_id",
+    "supply_policy_id",
+    "report_policy_id",
+    "switches",                  # ENVELOPE_BAND=off;SUPPLY_V2_BAND=off;...
+    "policy_bundle_id",          # 위 전체의 지문 — 원래 필드도 **보존**한다
+]
 
 # omakase.py:2348 `result_row` 의 순서 그대로. 이름은 우리가 붙인다.
 # ⚠️ 이 목록의 순서를 바꾸면 과거 파일과 어긋난다. 추가는 **뒤에만** 한다.
@@ -58,9 +81,27 @@ CONTEXT_FIELDS = [
     "is_junk", "theme_rank", "theme_hist_max", "rs_is_percentile",
     "picked_by", "in_candidate_pool", "gate_passed",
     "store_version", "code_sha", "run_id",
-]
+] + V2_CONTEXT_FIELDS
 
 HEADER = CONTEXT_FIELDS + RESULT_FIELDS
+
+
+def policy_bundle_id(chart, supply, report, switches):
+    """채널별 정책 + 스위치 전체의 지문. **원래 필드를 대체하지 않고 더한다.**"""
+    import hashlib
+    raw = "|".join(str(x) for x in (chart, supply, report, switches))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:10]
+
+
+def earnings_age_days(fetched_at, day):
+    """갱신일시와 그날 사이의 일수. 못 재면 빈칸이다(0 으로 가장하지 않는다)."""
+    if not fetched_at or not day:
+        return ""
+    try:
+        got = datetime.date.fromisoformat(str(fetched_at).strip()[:10])
+        return (datetime.date.fromisoformat(str(day).strip()[:10]) - got).days
+    except ValueError:
+        return ""
 
 
 def norm_code(v):
@@ -79,13 +120,17 @@ def build_rows(day, results, *, kospi_rate=None, warning_market=None,
                index_above_ma5=None, static_db=None, theme_rank=None,
                theme_hist_max=None, picked=None, candidate_codes=None,
                gate_codes=None, captured_at="", run_id="", sha="",
-               rs_is_percentile=True):
+               rs_is_percentile=True,
+               v3_map=None, earnings_meta=None, earnings_schema_version="",
+               chart_policy_id="", supply_policy_id="", report_policy_id="",
+               switches=""):
     """`results` → 저장할 행들. **순수 함수라 오프라인 검증된다.**
 
     picked          : {종목코드: "차트TOP2|수급TOP2|..."} — 그날 실제로 원장에 들어간 것
     candidate_codes : 배지 필터 통과 풀(차트TOP2 모집단)
     gate_codes      : V2 게이트 통과 풀(수급TOP2 모집단)
     """
+    DROPPED.clear()                             # 호출마다 새로 센다
     static_db = static_db or {}
     theme_rank = theme_rank or {}
     theme_hist_max = theme_hist_max or {}
@@ -95,6 +140,10 @@ def build_rows(day, results, *, kospi_rate=None, warning_market=None,
     static_db = {norm_code(k) for k in static_db}
     cand = {norm_code(c) for c in (candidate_codes or [])}
     gate = {norm_code(c) for c in (gate_codes or [])}
+    v3_map = {norm_code(k): v for k, v in (v3_map or {}).items()}
+    earnings_meta = {norm_code(k): v for k, v in (earnings_meta or {}).items()}
+    bundle = policy_bundle_id(chart_policy_id, supply_policy_id,
+                              report_policy_id, switches)
     rows = []
     for r in results:
         try:
@@ -112,11 +161,23 @@ def build_rows(day, results, *, kospi_rate=None, warning_market=None,
                 "Y" if code in gate else "N",
                 STORE_VERSION, sha, run_id,
             ]
+            quarter, fetched = (earnings_meta.get(code) or ("", ""))
+            ctx += [
+                v3_map.get(code, ""),
+                quarter, fetched, earnings_age_days(fetched, day),
+                earnings_schema_version,
+                chart_policy_id, supply_policy_id, report_policy_id,
+                switches, bundle,
+            ]
             vals = [r[i] if i < len(r) else "" for i in range(len(RESULT_FIELDS))]
             vals[1] = code                      # 아포스트로피 제거한 코드로 통일
             rows.append(ctx + vals)
-        except (IndexError, TypeError):
-            continue                            # 한 행이 깨져도 나머지는 남긴다
+        except (IndexError, TypeError) as e:
+            # 🔇 ⑩ OBSERVE — 한 행이 깨져도 나머지는 남긴다. 다만 **몇 개를 버렸는지**
+            #    남긴다. 연구 표본에서 종목이 조용히 사라지는 것을 막을 수는 없어도
+            #    사라졌다는 사실은 보이게 한다. 이 수가 0 이 아니면 Gate 가 떨어진다.
+            DROPPED.append(f"{type(e).__name__}")
+            continue
     return rows
 
 
@@ -150,6 +211,7 @@ def record(day, results, **kw):
         if not rows:
             return False, "기록할 행이 없다"
         ok, msg = write(day, rows, root)
-        return (True, f"{len(rows)}행 → {msg}") if ok else (False, msg)
+        drop = f" · ⚠️ 버린 행 {len(DROPPED)}" if DROPPED else ""
+        return (True, f"{len(rows)}행 → {msg}{drop}") if ok else (False, msg)
     except Exception as e:                      # noqa: BLE001 — 스캐너를 죽이지 않는다
         return False, f"기록 실패: {e}"

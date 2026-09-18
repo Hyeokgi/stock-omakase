@@ -316,7 +316,8 @@ def compute_v3_score(quarters, summary):
 # ──────────────────────────────────────────────
 # ③ 대상 종목 목록 — 우선 DB_중장기 + DB_스캐너로 시작 (API 호출량 보수적 관리)
 # ──────────────────────────────────────────────
-EARNINGS_SCHEMA_VERSION = "earnings-v2"   # v1=12열(V3 index 8) / v2=14열(V3 index 10)
+import earnings_schema as _es
+EARNINGS_SCHEMA_VERSION = _es.SCHEMA_VERSION   # 사본을 두지 않는다
 EARNINGS_HEADER = ["종목코드", "종목명", "최신분기", "매출액", "영업이익", "매출증감률(YoY,%)",
                    "영업이익증감률(YoY,%)", "매출증감률(QoQ,%)", "영업이익증감률(QoQ,%)",
                    "실적개선여부", "V3(실적점수)", "연속성장", "재무제표기준", "갱신일시"]
@@ -709,6 +710,47 @@ if __name__ == "__main__":
     print(f"success {consensus_done}")
     print(f"failed {len(consensus_failures)}")
     print(f"state={state}")
+
+    # ══════════════════════════════════════════════════════════════════
+    # 생산 영수증 — Evidence Builder 가 읽는다(사람이 True/False 를 넣지 않는다)
+    # ══════════════════════════════════════════════════════════════════
+    import production_receipt
+    import stability_gate as _sg
+    _cycle = datetime.datetime.now(KST).strftime("%Y-%m-%d")
+    _fp = _sg.fingerprint()
+    if RUN_PRIMARY:
+        _explicit_skips = len(target_map) - (len(rows_out) - 1)
+        _rok, _rmsg = production_receipt.emit(_cycle, "earnings", {
+            "expected_state": "reached" if not earnings_blocked else "blocked",
+            "schema_version": EARNINGS_SCHEMA_VERSION,
+            "schema_reason": v3_stats.get("reason", ""),
+            "v3_used": v3_stats.get("used", 0),
+            "v3_blank": v3_stats.get("blank", 0),
+            "v3_unparsable": v3_stats.get("unparsable", 0),
+            "v3_out_of_range": v3_stats.get("out_of_range", 0),
+            "targets": len(target_map),
+            "dart_success": len(rows_out) - 1,
+            # 스킵은 **명시적**이어야 한다 — 로그에 사유가 찍힌 건수다
+            "dart_skipped_explicit": _explicit_skips,
+            "time_budget_hit": bool(time_budget_hit),
+            "write_blocked": earnings_blocked,
+            "rows_final": v3_stats.get("rows", 0),
+            "oldest_stamp": stamps[0] if stamps else "",
+            "newest_stamp": stamps[-1] if stamps else "",
+        }, fingerprint=_fp)
+        print(f"🧾 {_rmsg}")
+    if RUN_AUX:
+        _rok, _rmsg = production_receipt.emit(_cycle, "consensus", {
+            "expected_state": "reached" if state in ("OK", "DEGRADED") else "degraded",
+            "state": state,
+            "preflight_ok": bool(pre_ok),
+            "preflight": [{"code": c, "state": st, "secs": sec, "why": w}
+                          for c, st, sec, w in pre_detail],
+            "attempted": len(consensus_targets),
+            "success": consensus_done,
+            "failed": len(consensus_failures),
+        }, fingerprint=_fp)
+        print(f"🧾 {_rmsg}")
 
     # ══════════════════════════════════════════════════════════════════
     # 종료코드 — 주 산출물과 보조 자료를 가른다 (GPT §7 · Q1)

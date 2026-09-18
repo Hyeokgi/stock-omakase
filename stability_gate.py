@@ -36,14 +36,23 @@ FAIL = "FAIL"
 #    핵심 코드·워크플로·스키마가 바뀌면 그 3회는 서로 다른 시스템의 기록이다.
 #    지문이 바뀌면 streak 를 0 으로 되돌린다.
 # ═══════════════════════════════════════════════════════════════════════
+#    ⚠️ 데이터 자동 커밋으로 매일 달라지는 저장소 전체 SHA 를 쓰지 않는다.
+#       **핵심 생산 코드·워크플로·스키마/계약 모듈**만 본다(사용자 지시 ⑥).
 FINGERPRINT_FILES = [
+    # 생산 코드
     "omakase.py", "hyeoks_analyst.py", "hyeoks_earnings_collector.py",
-    "earnings_schema.py", "feature_store.py", "rank_pool.py", "scanner_census.py",
-    "hyeoks_tajeom.py", "stability_gate.py",
+    "scanner_census.py", "hyeoks_tajeom.py",
+    # 스키마·계약
+    "earnings_schema.py", "feature_store.py", "rank_pool.py",
+    # 안정화 판정 자체
+    "stability_gate.py", "evidence_builder.py", "production_receipt.py",
+    "feature_telemetry.py",
+    # 워크플로
     ".github/workflows/main.yml",
     ".github/workflows/earnings_collector.yml",
     ".github/workflows/consensus_aux.yml",
     ".github/workflows/ai_report.yml",
+    ".github/workflows/review_regressions.yml",
 ]
 
 
@@ -272,6 +281,14 @@ def _selftest():
         chk("append-only", len(load(pth)) == 7, len(load(pth)))
         chk("지문이 행마다 남는다", all(r["fingerprint"] for r in load(pth)))
 
+    # ② 증거는 사람이 넣지 않는다 — Evidence Builder 와 실제로 물리는가
+    import evidence_builder as _eb
+    chk("gate 기준과 builder 기준 이름이 같다", set(KEYS) == set(_eb.build("2026-09-19", "x")[0]))
+    chk("builder 는 bool 만 낸다",
+        all(isinstance(v, bool) for v in _eb.build("2026-09-19", "x")[0].values()))
+    chk("증거가 없으면 builder 도 통과를 내지 않는다",
+        evaluate(_eb.build("2026-09-19", "x")[0])[0] is False)
+
     # ④ 지문 자체
     chk("지문은 12자리", len(fingerprint()) == 12)
     chk("같은 입력이면 같은 지문", fingerprint() == fingerprint())
@@ -280,15 +297,53 @@ def _selftest():
     chk("없는 파일도 지문에 반영된다(사라진 것도 변경이다)",
         fingerprint(files=["없는파일.py"]) != fingerprint(files=["다른없는파일.py"]))
     chk("핵심 파일이 지문에 들어 있다",
-        all(f in FINGERPRINT_FILES for f in ("omakase.py", "earnings_schema.py",
-                                             ".github/workflows/main.yml")))
+        all(f in FINGERPRINT_FILES for f in (
+            "omakase.py", "earnings_schema.py", "feature_store.py", "rank_pool.py",
+            "evidence_builder.py", "production_receipt.py", "feature_telemetry.py",
+            ".github/workflows/main.yml")))
+    chk("데이터 디렉터리는 지문에 없다(매일 달라지면 streak 가 매일 0 이 된다)",
+        not any(f.startswith("data/") for f in FINGERPRINT_FILES))
 
     print("\n" + f"✅ 전부 통과 ({ok_count}건)")
     return ok_count
+
+
+def record_cycle(cycle_date, source="cycle", root=".", path=GATE_LOG,
+                 receipts_root=None):
+    """🔴 2026-09-18 지시 ② — **증거를 사람이 넣지 않는다.**
+
+    Evidence Builder 가 영수증에서 7개 기준을 기계적으로 만들고, 그걸 그대로 기록한다.
+    이 함수 밖에서 evidence 를 손으로 만들어 넣는 경로는 문서에서 증거로 인정되지 않는다.
+    """
+    import evidence_builder
+    import production_receipt
+    fp = fingerprint(root)
+    if not is_trading_day(cycle_date):
+        return record(cycle_date, f"skip-{cycle_date}", source, {},
+                      path=path, fp=fp, root=root)
+    ev, detail = evidence_builder.build(
+        cycle_date, fp, root=receipts_root or production_receipt.RECEIPT_DIR)
+    run_id = "+".join(sorted({
+        r.get("run_id", "") for r in production_receipt.load(
+            cycle_date, receipts_root or production_receipt.RECEIPT_DIR)[0]
+        if r.get("run_id")})) or f"norun-{cycle_date}"
+    note = "; ".join(f"{k}:{v}" for k, v in detail["reasons"].items() if not ev[k])
+    print(evidence_builder.render(ev, detail))
+    return record(cycle_date, run_id[:200], source, ev, note=note[:900],
+                  path=path, fp=fp, root=root, aux_state=detail["aux_state"])
 
 
 if __name__ == "__main__":
     import sys
     if "--self-test" in sys.argv:
         sys.exit(0 if _selftest() else 1)
+    if "--record" in sys.argv:
+        i = sys.argv.index("--record")
+        if i + 1 >= len(sys.argv):
+            print("❌ --record 다음에 거래일(YYYY-MM-DD)이 필요하다")
+            sys.exit(2)
+        done, why = record_cycle(sys.argv[i + 1])
+        print(f"\n{'기록' if done else '무시'}: {why}")
+        print(report())
+        sys.exit(0)
     print(report())

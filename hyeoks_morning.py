@@ -7,6 +7,10 @@ import urllib3
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+import feature_telemetry
+# 분류 근거: docs/silent_exception_분류_2026-09-18.md
+TELEMETRY = feature_telemetry.Telemetry()
+
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 # 🔴 2026-09-18 되돌림 — 어제 이 줄을 os.environ 으로 바꿨는데 방향이 반대였다.
@@ -140,7 +144,10 @@ def get_vip_deep_dive_data(code, kis_token):
             output = res_price.get("output", {})
             per, pbr = output.get("per", "N/A"), output.get("pbr", "N/A")
             vip["펀더멘털"] = f"PER: {per} / PBR: {pbr}"
-    except: pass
+    except Exception as _e:
+        # 🔇 ⑦ PER/PBR — 브리핑 표시. bare except 를 없앴다
+        TELEMETRY.note('fundamental', type(_e).__name__, feature_telemetry.DISPLAY)
+
     return f"📊 {vip['펀더멘털']}"
 
 def get_us_market_summary():

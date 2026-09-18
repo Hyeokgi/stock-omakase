@@ -30,6 +30,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests beautifulsoup4 pandas gspread oauth2client kiwipiepy
 
+      - name: 🚦 이 커밋의 audit CI 결론 조회 (Gate 증거)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 실패해도 스캐너를 막지 않는다 — 빈 값이면 Gate 가 그 기준을 거짓으로 본다
+          CONC=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/review_regressions.yml/runs?head_sha=${{ github.sha }}&per_page=1" \
+            | python -c "import json,sys; r=json.load(sys.stdin).get('workflow_runs') or [{}]; print(r[0].get('conclusion') or '')" 2>/dev/null || echo "")
+          echo "CI_CONCLUSION=$CONC" >> $GITHUB_ENV
+          echo "audit CI 결론: ${CONC:-미상}"
+
       - name: 비밀번호 파일(secret.json) 만들기
         env:
           GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
@@ -43,6 +54,9 @@ jobs:
           # 🔴 2026-09-18 — 이 둘이 빠져 있어서 omakase 의 실시간 알림이
           #    조용히 꺼져 있었다(목표가 도달·트레일링 손절, 호출 3곳).
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          # 🔴 2026-09-18 지시 ② — Stability Gate 의 `ci_green` 은 사람이 넣지 않는다.
+          #    이 커밋(SHA)의 audit CI 결론을 영수증에 실어 Evidence Builder 가 읽는다.
+          CI_CONCLUSION: ${{ env.CI_CONCLUSION }}
         run: python omakase.py
 
       - name: 데이터 품질표 연결 검사 (원장 읽기 전용)
@@ -62,14 +76,14 @@ jobs:
           #    두 회차가 **전수조사 한 줄을 커밋하지 못하고 워크플로째 실패**했다.
           #    기록 창은 14:40~15:10 뿐이다 — 계속 실패했으면 그날치를 통째로 잃었다.
           #    관측을 남기려다 수집기를 죽이지 않는다. 경로를 먼저 만들어 둔다.
-          mkdir -p data/scanner_census data/feature_store
-          if [ -z "$(git status --porcelain data/scanner_census data/feature_store)" ]; then
+          mkdir -p data/scanner_census data/feature_store data/receipts
+          if [ -z "$(git status --porcelain data/scanner_census data/feature_store data/receipts)" ]; then
             echo "기록 없음 (창 밖이거나 오늘치 이미 있음)"
             exit 0
           fi
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -- data/scanner_census data/feature_store
+          git add -- data/scanner_census data/feature_store data/receipts
           git commit -m "data: 타점 전수조사·후보 동결 $(TZ=Asia/Seoul date +%Y-%m-%d) [skip ci]"
           # 스냅샷·분봉 워크플로가 같은 시간대에 푸시할 수 있으므로 rebase 후 재시도
           for i in 1 2 3; do

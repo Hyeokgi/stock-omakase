@@ -62,9 +62,13 @@ def module_bound_names(tree):
 
 
 class UndefinedModuleUseTests(unittest.TestCase):
-    """`sys.argv` 를 쓰면서 `import sys` 를 안 한 파일이 있는가."""
+    """`sys.argv` 를 쓰면서 `import sys` 를 안 한 파일이 있는가.
 
-    def test_no_module_is_used_without_being_imported(self):
+    2026-09-18 확장 — 표준 모듈만 보다가 `hyeoks_tajeom.POLICY_ID` 를 import 없이
+    쓴 것을 놓칠 뻔했다. **이 저장소의 모듈 이름**도 같은 방식으로 검사한다.
+    """
+
+    def check(self, names, label):
         bad = []
         for path in sorted(ROOT.glob("*.py")) + sorted((ROOT / "tests").glob("*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -73,10 +77,17 @@ class UndefinedModuleUseTests(unittest.TestCase):
                 # `sys.argv` 같은 **속성 접근**만 본다(지역 변수 오탐을 줄인다)
                 if (isinstance(node, ast.Attribute)
                         and isinstance(node.value, ast.Name)
-                        and node.value.id in STDLIB_HINTS
+                        and node.value.id in names
+                        and node.value.id != path.stem
                         and node.value.id not in bound):
                     bad.append(f"{path.name}:{node.lineno} {node.value.id}.{node.attr}")
-        self.assertEqual(bad, [], f"import 없이 쓰는 표준 모듈: {bad}")
+        self.assertEqual(bad, [], f"import 없이 쓰는 {label}: {bad}")
+
+    def test_no_stdlib_module_is_used_without_being_imported(self):
+        self.check(STDLIB_HINTS, "표준 모듈")
+
+    def test_no_local_module_is_used_without_being_imported(self):
+        self.check({p.stem for p in ROOT.glob("*.py")}, "저장소 모듈")
 
 
 class EarningsCollectorCliTests(unittest.TestCase):

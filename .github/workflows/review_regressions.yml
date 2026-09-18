@@ -85,3 +85,6 @@ jobs:
           python earnings_schema.py
           python stability_gate.py --self-test
           python hyeoks_v3_probe.py --self-test
+          python feature_telemetry.py
+          python production_receipt.py
+          python evidence_builder.py

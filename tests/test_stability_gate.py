@@ -156,7 +156,9 @@ class FingerprintTests(unittest.TestCase):
     def test_core_files_are_in_the_fingerprint(self):
         for f in ("omakase.py", "hyeoks_analyst.py", "earnings_schema.py",
                   "feature_store.py", "rank_pool.py",
+                  "evidence_builder.py", "production_receipt.py", "feature_telemetry.py",
                   ".github/workflows/main.yml",
+                  ".github/workflows/review_regressions.yml",
                   ".github/workflows/earnings_collector.yml"):
             with self.subTest(f):
                 self.assertIn(f, G.FINGERPRINT_FILES)
@@ -169,6 +171,10 @@ class FingerprintTests(unittest.TestCase):
             one = G.fingerprint(root=d, files=["x.py"])
             p.write_text("b", encoding="utf-8")
             self.assertNotEqual(one, G.fingerprint(root=d, files=["x.py"]))
+
+    def test_data_directories_are_not_in_the_fingerprint(self):
+        """⑥ — 데이터 자동 커밋으로 매일 달라지면 streak 가 매일 0 이 된다."""
+        self.assertFalse([f for f in G.FINGERPRINT_FILES if f.startswith("data/")])
 
     def test_missing_file_is_a_change(self):
         self.assertNotEqual(G.fingerprint(files=["없는1.py"]),
@@ -195,9 +201,13 @@ class ProductionEvidenceTests(unittest.TestCase):
             with self.subTest(token):
                 self.assertIn(token, src)
 
-    def test_schema_version_is_declared(self):
+    def test_schema_version_has_a_single_source(self):
+        """버전 문자열의 사본을 두지 않는다 — 어긋나면 어느 쪽이 거짓말인지 모른다."""
+        import earnings_schema
+        self.assertEqual(earnings_schema.SCHEMA_VERSION, "earnings-v2")
         src = (ROOT / "hyeoks_earnings_collector.py").read_text(encoding="utf-8")
-        self.assertIn('EARNINGS_SCHEMA_VERSION = "earnings-v2"', src)
+        self.assertIn("EARNINGS_SCHEMA_VERSION = _es.SCHEMA_VERSION", src)
+        self.assertNotIn('EARNINGS_SCHEMA_VERSION = "', src)
 
     def test_selftest(self):
         self.assertGreaterEqual(G._selftest(), 15)

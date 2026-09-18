@@ -12,6 +12,12 @@ import json
 from after_market_quotes import scanner_after_quote, AFTER_HEADER, NXT_HEADER
 import scanner_census
 import earnings_schema
+import hyeoks_tajeom
+import feature_telemetry
+
+# 🔴 2026-09-18 — 조용한 예외를 '세고 사유를 남기는' 구조로 바꾼다.
+#    분류 근거: docs/silent_exception_분류_2026-09-18.md
+TELEMETRY = feature_telemetry.Telemetry()
 import rank_pool
 import feature_store
 
@@ -447,7 +453,10 @@ def search_code_from_naver(stock_name):
                     code = str(it.get('code', '')).strip()
                     if code.isdigit() and len(code) == 6:
                         return code
-    except Exception:
+    except Exception as _e:
+        # 🔇 ③ 종목코드 조회 — 다중 원천 폴백(설계된 동작)
+        TELEMETRY.note('code_lookup', type(_e).__name__, feature_telemetry.DISPLAY)
+
         pass
     return None
 
@@ -603,7 +612,10 @@ def get_real_money_themes():
 
                             if rate_num >= TARGET_PERCENT and val_num >= 5000:
                                 stocks.append({'name': s_name, 'code': s_code, 'rate': rate_num, 'value': val_num})
-                        except Exception: continue
+                        except Exception as _e:
+                            # 🔇 ① 파싱 실패한 종목이 후보 목록에서 조용히 빠졌다
+                            TELEMETRY.note('surge_scan', type(_e).__name__, feature_telemetry.CRITICAL)
+                            continue
                         
                 stocks_val = sorted(stocks, key=lambda x: x['value'], reverse=True)[:5]
                 if len(stocks_val) >= 2:
@@ -999,7 +1011,9 @@ def check_target_alerts_and_trailing_stop(doc, bt_sheet):
                 entry_p = float(entry_raw.replace(',', '')) if entry_raw else float(str(row[14]).replace(',', ''))
                 if entry_p <= 0:
                     entry_p = float(str(row[14]).replace(',', ''))
-            except Exception:
+            except Exception as _e:
+                # 🔇 ② 진입가 파싱 실패 — 트레일링 손절 **발동가**가 틀어진다
+                TELEMETRY.note('entry_price', type(_e).__name__, feature_telemetry.CRITICAL)
                 continue
 
             curr_p = get_current_price_for_backtest(code)
@@ -2349,7 +2363,11 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             # 위치요건(고가 근처 0.70~1.00) 제거: 수급(매집)은 바닥에서도 일어나 스캐너의 종베·바닥 픽과 상충 → 수급TOP2 영구 사망.
             #   유동성(150억)+거래량폭발(전일비 150%)의 '실거래 품질'만으로 게이트 → 수급 강한 종목이 차트 위치 불문 통과.
             is_v2_gate_passed = is_absolute_liquidity and is_volume_shuting
-        except Exception: is_v2_gate_passed = False   # 게이트 판정 실패 시 fail-closed(미통과)
+        except Exception as _e:
+            # 🔇 CRITICAL — V2 게이트 판정 실패. fail-closed 는 유지하되 **보이게** 한다.
+            #    (지시 ⑤ — V1/V2/V3 각각의 telemetry 로 증명한다)
+            TELEMETRY.note('v2_score', type(_e).__name__, feature_telemetry.CRITICAL)
+            is_v2_gate_passed = False   # 게이트 판정 실패 시 fail-closed(미통과)
 
         if is_v2_gate_passed:
             if has_s_tier: v2_quant_score = 85 + (v2_base * 0.15)
@@ -2525,7 +2543,10 @@ def update_technical_data(df_theme, all_theme_map):
                                     try:
                                         row_date = datetime.datetime.strptime(r_date_str, '%Y-%m-%d').date()
                                         if row_date != today_date and row_date >= three_months_ago: past_theme_map[s_name] = t_name
-                                    except Exception: continue
+                                    except Exception as _e:
+                                        # 🔇 ④ 과거 테마 매핑 — 연구용. 해당 표본만 fail-closed
+                                        TELEMETRY.note('past_theme', type(_e).__name__, feature_telemetry.RESEARCH)
+                                        continue
                 except Exception as e: print(f"⚠️ [past_theme_map Loop Exception for {sheet_name}] {e}")
         except Exception as e: print(f"⚠️ [past_theme_map overall block Exception] {e}")
 
@@ -2681,9 +2702,13 @@ def update_technical_data(df_theme, all_theme_map):
         #    V3 데이터가 아직 없는 종목은 판단 근거가 없으니 경고하지 않음(fail-open).
         # 🔴 2026-09-18 GPT 교차검증 P0-1 — `int(row[8])` 은 V3 가 아니라
         #    **영업이익증감률(QoQ,%)** 였다(V3 는 index 10). 열을 이름으로 찾는다.
+        # 🔴 기본값을 try **밖에** 둔다. 안에서만 만들면 읽기가 실패했을 때
+        #    아래 Feature Store 적재에서 NameError 로 스캐너가 죽는다.
+        v3_warn_map, _v3w_stats, _earnings_meta = {}, {"reason": "읽지 않음"}, {}
         try:
-            v3_warn_map, _v3w_stats = earnings_schema.read_v3_map(
-                doc.worksheet("DB_실적").get_all_values())
+            _earn_values = doc.worksheet("DB_실적").get_all_values()
+            v3_warn_map, _v3w_stats = earnings_schema.read_v3_map(_earn_values)
+            _earnings_meta = earnings_schema.read_meta(_earn_values)
             print(earnings_schema.v3_report(_v3w_stats))
             EARNINGS_WARNING_THRESHOLD = 20  # hyeoks_analyst.py의 중기 픽 필터 기준과 통일
             for r in results:
@@ -3220,6 +3245,18 @@ def update_technical_data(df_theme, all_theme_map):
                     candidate_codes=[r[1] for r in candidate_pool],
                     gate_codes=[r[1] for r in gate_passed],
                     rs_is_percentile=True,   # r[33] 은 스캔 완료 후 백분위로 덮어써진다
+                    # 🔴 feature-store-v2 (지시 ⑪) — 단일 policy_id 를 쓰지 않는다.
+                    #    이 파일은 그날 **후보 전체**의 스냅샷이므로 정책을 채널별로 남긴다.
+                    v3_map=v3_warn_map,
+                    earnings_meta=_earnings_meta,
+                    earnings_schema_version=earnings_schema.SCHEMA_VERSION,
+                    chart_policy_id=rank_pool.policy_id("차트TOP2"),
+                    supply_policy_id=rank_pool.policy_id(
+                        "수급TOP2", band=(f"{_lo}-{_hi}" if _band_on else None)),
+                    report_policy_id=hyeoks_tajeom.POLICY_ID,
+                    switches=(f"ENVELOPE_BAND={os.environ.get('ENVELOPE_BAND', 'off')};"
+                              f"SUPPLY_V2_BAND={os.environ.get('SUPPLY_V2_BAND', 'off')};"
+                              f"SUPPLY_V2_BAND_RANGE={os.environ.get('SUPPLY_V2_BAND_RANGE', '45-79')}"),
                 )
 
                 _pool_plan = [
@@ -3318,15 +3355,34 @@ def update_technical_data(df_theme, all_theme_map):
                                      "", "", "", "", "KOSDAQ", ixc_kq, ixc_kq] + [""] * 16 + ["", "", "", ""])
                     existing_ids.add(tid_idx_kq)
 
+            _ledger_expected, _ledger_found = [], []
             if new_rows:
                 bt_sheet.append_rows(new_rows, value_input_option="USER_ENTERED")
                 print(f"✅ [백테스트 V6 Step1] 진입 {len(new_rows)}행 append 완료 (차트/수급/랜덤/지수 · 추적은 Step2)")
+                # 🔴 2026-09-18 지시 ⑦ — append **호출 성공**은 적재의 증거가 아니다.
+                #    시트를 다시 읽어 기대한 trade_id 가 실재하는지 확인한다(read-after-write).
+                #    이 확인이 없으면 "썼다고 생각했는데 없는" 경로를 영영 못 본다.
+                _ledger_expected = [str(_nr[0]) for _nr in new_rows]
+                try:
+                    _after = bt_sheet.col_values(1)
+                    _ledger_found = [t for t in _ledger_expected if t in set(_after)]
+                    _missing = sorted(set(_ledger_expected) - set(_ledger_found))
+                    print(f"🔎 [원장 확인] 기대 {len(_ledger_expected)}건 · 실재 "
+                          f"{len(_ledger_found)}건" + (f" · ❌ 누락 {_missing}" if _missing else ""))
+                    if _missing:
+                        TELEMETRY.note('ledger', 'append 후 행이 없다',
+                                       feature_telemetry.CRITICAL)
+                except Exception as _e:
+                    TELEMETRY.note('ledger', f'확인 실패 {type(_e).__name__}',
+                                   feature_telemetry.CRITICAL)
+                    print(f"⚠️ [원장 확인 실패] {type(_e).__name__}: {_e}")
                 sort_and_format_backtest_log(doc, bt_sheet)  # 🆕 새 행이 추가된 직후에만 정렬+서식 재적용
 
                 # 🗂️ 순위 풀 — **append 가 성공한 뒤에만** 남긴다(위 주석 참조).
                 #    picked 는 메모리의 top2 가 아니라 **실제로 원장에 들어간 행**에서 뽑는다.
                 #    그래야 "고르려 했던 것"이 아니라 "표본에 들어간 선택"을 설명한다.
                 _pool_runid = os.environ.get("GITHUB_RUN_ID", "")
+                _pool_rows = 0
                 _appended = {}
                 for _nr in new_rows:
                     _appended.setdefault(_nr[2], []).append(str(_nr[4]))
@@ -3351,11 +3407,59 @@ def update_technical_data(df_theme, all_theme_map):
                         run_id=_pool_runid, eligible_codes=_elig,
                         exclusion=_excl, band=_band)
                     if _pok:
+                        _pool_rows += 1
                         print(f"   🗂️ 순위 풀 보존 — {_pmsg}")
                     elif _pmsg.startswith("기록 실패"):
+                        TELEMETRY.note('pool_row', '순위 풀 기록 실패',
+                                       feature_telemetry.OBSERVE)
                         print(f"   ❌ [순위 풀 보존 실패] {_ch}: {_pmsg}")
                     else:
                         print(f"   · 순위 풀 생략 — {_ch}: {_pmsg}")
+
+                # ══════════════════════════════════════════════════════
+                # 🧾 생산 영수증 — Evidence Builder 가 읽는다(지시 ②·⑤·⑥·⑦·⑧)
+                #    사람이 True/False 를 넣는 경로를 만들지 않는다.
+                # ══════════════════════════════════════════════════════
+                try:
+                    import production_receipt
+                    import stability_gate as _sg
+                    _snap = TELEMETRY.snapshot()
+                    print(TELEMETRY.render())
+                    _fs_rows = 0
+                    if _fok:
+                        try:
+                            _fs_rows = int(str(_fmsg).split("행")[0].strip())
+                        except (ValueError, IndexError):
+                            _fs_rows = 0
+                    _rk, _rm = production_receipt.emit(today_str, "scanner", {
+                        # ⑧ 기계 기준 — 사람이 "이상 없음" 이라고 쓰지 않는다
+                        "expected_state": ("reached" if (_fok and _pool_rows and
+                                                         TELEMETRY.total() == 0)
+                                           else "degraded"),
+                        "ci_conclusion": os.environ.get("CI_CONCLUSION", ""),
+                        # ⑤ V1·V2·V3 **각각** — V3 요약만으로 참을 만들지 않는다
+                        "v1_parse_errors": TELEMETRY.errors("v1_score"),
+                        "v2_parse_errors": TELEMETRY.errors("v2_score"),
+                        "v3_parse_errors": TELEMETRY.errors("v3_score"),
+                        "telemetry": _snap,
+                        # ⑥ 존재가 아니라 일치와 유효 행수
+                        "feature_store": {"date": today_str, "run_id": _pool_runid,
+                                          "fingerprint": _sg.fingerprint(),
+                                          "rows": _fs_rows,
+                                          "dropped": len(feature_store.DROPPED)},
+                        "rank_pool": {"date": today_str,
+                                      "fingerprint": _sg.fingerprint(),
+                                      "rows": _pool_rows,
+                                      "dropped": len(rank_pool.DROPPED)},
+                        # ⑦ read-after-write
+                        "ledger": {"expected_trade_ids": _ledger_expected,
+                                   "found_trade_ids": _ledger_found},
+                        "scanned": len(results),
+                    }, run_id=_pool_runid, fingerprint=_sg.fingerprint())
+                    print(f"🧾 {_rm}")
+                except Exception as _e:
+                    # 영수증 때문에 스캐너를 죽이지 않는다. 대신 조용하지도 않다.
+                    print(f"⚠️ [영수증 기록 실패] {type(_e).__name__}: {_e}")
             else:
                 print("⏭ [백테스트 V6 Step1] 진입 추가 없음 (EOD 윈도 외 또는 전부 중복)")
         except Exception as e:

@@ -35,6 +35,9 @@ KST = datetime.timezone(datetime.timedelta(hours=9))
 POOL_PATH = "data/scanner_census/rank_pool.csv"
 TOP_N = 10          # 3~5위 질문에 답하려면 여유 있게. 풀이 작으면 있는 만큼만.
 
+# ⑪ build_rows 가 버린 행의 사유 목록. 호출부가 읽어 영수증에 싣는다.
+DROPPED = []
+
 HEADER = ["date", "channel", "rank", "code", "name", "score", "picked",
           "eligible", "exclusion", "pool_size", "eligible_size",
           "policy_id", "code_sha", "run_id", "captured_at"]
@@ -88,6 +91,7 @@ def build_rows(day, channel, ranked, picked_codes, score_idx,
     `ranked` 는 **이미 정렬된** 목록이다. 여기서 다시 정렬하지 않는다 —
     호출부가 쓴 바로 그 순서를 남겨야 '그때 무엇을 봤는가' 가 보존된다.
     """
+    DROPPED.clear()                 # 호출마다 새로 센다
     out, pool = [], len(ranked)
     picked = {norm_code(c) for c in picked_codes}
     # eligible_codes 가 None 이면 필터가 없다는 뜻 — 전부 적격이다.
@@ -103,7 +107,11 @@ def build_rows(day, channel, ranked, picked_codes, score_idx,
                         "Y" if code in picked else "N",
                         "Y" if ok else "N", "" if ok else exclusion,
                         pool, n_elig, policy, sha, run_id, captured_at])
-        except (IndexError, TypeError):
+        except (IndexError, TypeError) as e:
+            # 🔇 ⑪ OBSERVE — 버린 행 수를 남긴다(feature_store 와 같은 규율).
+            #    연구 표본에서 종목이 조용히 사라지는 것을 막을 수는 없어도
+            #    사라졌다는 사실은 보이게 한다. 0 이 아니면 Gate 가 떨어진다.
+            DROPPED.append(type(e).__name__)
             continue          # 행 하나가 깨져도 나머지는 남긴다
     return out
 

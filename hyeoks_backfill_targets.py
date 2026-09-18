@@ -19,6 +19,8 @@ HYEOKS 백테스트_로그 — 과거 목표가·손절가 역추적 백필 스�
    pip install pypdf google-api-python-client --break-system-packages
 """
 import io
+import feature_telemetry
+TELEMETRY = feature_telemetry.Telemetry()
 import re
 import time
 from collections import defaultdict
@@ -156,7 +158,9 @@ def main():
             try:
                 target = int(data_match.group(1).replace(',', ''))
                 stop = int(data_match.group(2).replace(',', ''))
-            except Exception:
+            except Exception as _e:
+                # 🔇 ⑨ 과거 목표가 백필 — 1회성 유틸. 해당 행 fail-closed
+                TELEMETRY.note('backfill_target', type(_e).__name__, feature_telemetry.RESEARCH)
                 continue
             if target <= 0 and stop <= 0:  # 관망("000000" 처리 등)으로 둘 다 0인 경우는 채울 값이 없으므로 스킵
                 continue

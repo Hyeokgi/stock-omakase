@@ -8,6 +8,10 @@ import urllib3
 import xml.etree.ElementTree as ET
 import concurrent.futures
 import earnings_schema
+import feature_telemetry
+
+# 분류 근거: docs/silent_exception_분류_2026-09-18.md
+TELEMETRY = feature_telemetry.Telemetry()
 # 🏷️ 타점 해석은 의존성 없는 별도 모듈로 뺐다(F01, 2026-09-07).
 #    이 파일은 gspread·pdfkit·genai 를 최상단에서 import 하므로 로직만 시험할 수 없었다.
 #    사본을 시험하면 원본이 맞다는 보장이 없어서, 원본을 옮기고 여기서 가져다 쓴다.
@@ -767,7 +771,10 @@ try:
                     try:
                         r_val = int(str(row[val_idx]).replace(',', '').strip())
                         raw_theme_daily_map[(r_date, r_theme)] = raw_theme_daily_map.get((r_date, r_theme), 0) + r_val
-                    except Exception: pass
+                    except Exception as _e:
+                        # 🔇 ⑤ 테마 일별 대금 — **대장 판정 근거**
+                        TELEMETRY.note('theme_money', type(_e).__name__, feature_telemetry.CRITICAL)
+
     except Exception as e:
         print(f"⚠️ 역사적 주도 테마 대금 연산 보조맵 생성 누락: {e}")
  
@@ -797,6 +804,28 @@ try:
     print(f"해석불가 {_v3_stats.get('unparsable', 0)}")
     print(f"범위밖 {_v3_stats.get('out_of_range', 0)}")
     print(f"schema {'이상: ' + _v3_stats['reason'] if _v3_stats.get('reason') else '정상'}")
+
+    # 🧾 생산 영수증 — Evidence Builder 가 읽는다(지시 ②·⑧)
+    try:
+        import production_receipt
+        import stability_gate as _sg
+        _today = datetime.datetime.now(KST).strftime("%Y-%m-%d")
+        _ok, _msg = production_receipt.emit(_today, "analyst", {
+            # ⑧ 기계 기준 — 사람이 "이상 없음" 이라 쓰지 않는다
+            "expected_state": ("reached" if (not _v3_stats.get("reason")
+                                             and TELEMETRY.total() == 0) else "degraded"),
+            "v3_rows": _v3_stats.get("rows", 0),
+            "v3_used": _v3_stats.get("used", 0),
+            "v3_blank": _v3_stats.get("blank", 0),
+            "v3_unparsable": _v3_stats.get("unparsable", 0),
+            "v3_out_of_range": _v3_stats.get("out_of_range", 0),
+            "v3_schema_reason": _v3_stats.get("reason", ""),
+            "telemetry": TELEMETRY.snapshot(),
+        }, fingerprint=_sg.fingerprint())
+        print(f"🧾 {_msg}")
+        print(TELEMETRY.render())
+    except Exception as _e:
+        print(f"⚠️ [영수증 기록 실패] {type(_e).__name__}: {_e}")
 
     cands_list = []
     for r in tech_data:
@@ -843,7 +872,9 @@ try:
         try:
             curr_p_int = int(curr_p.replace(',', '').replace('원', ''))
             if curr_p_int <= 0: continue
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError) as _e:
+            # 🔇 ⑥ 현재가 표시 변환 — 프롬프트 표시용
+            TELEMETRY.note('curr_price_fmt', type(_e).__name__, feature_telemetry.DISPLAY)
             continue
 
         cands_list.append({

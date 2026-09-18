@@ -30,3 +30,4 @@ health_report.json
 
 # 본표 쓰기가 막혔을 때만 생기는 복구용 임시 파일 — artifact 로 꺼내고 저장소에는 넣지 않는다
 data/earnings_staging/
+# 영수증은 증거다 — 커밋한다(main.yml 이 data/receipts 를 add 한다)
