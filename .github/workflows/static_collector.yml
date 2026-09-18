@@ -35,5 +35,4 @@ jobs:
       - name: 정적데이터 수집 실행
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python hyeoks_static_collector.py

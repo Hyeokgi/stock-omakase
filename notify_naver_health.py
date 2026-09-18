@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import sys
 from naver_health_policy import evaluate
+from telegram_target import chat_id
 
 
 def notification(payload, exit_code, run_id):
@@ -33,7 +34,9 @@ def main():
         return 0
     msg = (msg + "\n" + os.environ.get("RUN_URL", ""))[:3900]
     print(msg)
-    token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
+    # 🔴 2026-09-18 — 목적지를 secret 에서 읽고 있었는데 그 secret 은 옛 채널이다.
+    #    리포트·브리핑과 같은 채널로 보낸다(telegram_target 한 곳).
+    token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), chat_id()
     if token and chat:
         import requests
         response = requests.post(f"https://api.telegram.org/bot{token}/sendMessage",

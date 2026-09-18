@@ -43,7 +43,6 @@ jobs:
           # 🔴 2026-09-18 — 이 둘이 빠져 있어서 omakase 의 실시간 알림이
           #    조용히 꺼져 있었다(목표가 도달·트레일링 손절, 호출 3곳).
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python omakase.py
 
       - name: 데이터 품질표 연결 검사 (원장 읽기 전용)

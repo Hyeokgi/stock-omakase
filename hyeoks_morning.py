@@ -9,10 +9,12 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-# 🔴 2026-09-18 — 채널 ID 가 하드코딩돼 있어 워크플로가 secret 을 넘겨도
-#    코드가 덮어썼다. 채널을 옮겨도 알림은 옛 채널로 갔을 것이다.
-#    환경변수로 통일한다 — secret 하나를 바꾸면 전부 따라가야 한다.
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+# 🔴 2026-09-18 되돌림 — 어제 이 줄을 os.environ 으로 바꿨는데 방향이 반대였다.
+#    secret TELEGRAM_CHAT_ID 는 **더는 안 쓰는 옛 채널** 값이고, 하드코딩돼 있던
+#    "-1003778485916" 이 리포트·브리핑이 지금 도착하는 채널이다. 목적지는 상수로
+#    되돌리되 사본 5개가 아니라 telegram_target 한 곳만 본다.
+from telegram_target import chat_id as _chat_id
+TELEGRAM_CHAT_ID = _chat_id()
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit"
 KST = datetime.timezone(datetime.timedelta(hours=9))
 

@@ -30,7 +30,6 @@ jobs:
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
       run: |
         python scanner_bot.py

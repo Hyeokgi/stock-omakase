@@ -7,7 +7,7 @@ name: 🆔 HYEOKS 텔레그램 채널 ID 찾기
 #   1. 새 채널에 봇을 **관리자로** 추가
 #   2. 그 채널에 아무 메시지나 하나 올림
 #   3. 이 워크플로 실행
-#   4. 나온 chat_id 를 secret `TELEGRAM_CHAT_ID` 에 등록
+#   4. 나온 chat_id 를 telegram_target.py 의 CHAT_ID 에 반영 (secret 아님)
 #
 # ⚠️ 읽기만 한다. 메시지를 보내지 않는다. 수동 전용.
 

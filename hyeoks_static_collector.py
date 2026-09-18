@@ -18,7 +18,12 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit"
 KST = datetime.timezone(datetime.timedelta(hours=9))
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+# 🔴 2026-09-18 되돌림 — 어제 이 줄을 os.environ 으로 바꿨는데 방향이 반대였다.
+#    secret TELEGRAM_CHAT_ID 는 **더는 안 쓰는 옛 채널** 값이고, 하드코딩돼 있던
+#    "-1003778485916" 이 리포트·브리핑이 지금 도착하는 채널이다. 목적지는 상수로
+#    되돌리되 사본 5개가 아니라 telegram_target 한 곳만 본다.
+from telegram_target import chat_id as _chat_id
+TELEGRAM_CHAT_ID = _chat_id()
 
 # 견고성 게이트 임계치: 이 수치 미만이면 '수집 실패'로 간주하고 덮어쓰기 중단
 MIN_MANAGED = 20    # 관리종목 최소 기대치

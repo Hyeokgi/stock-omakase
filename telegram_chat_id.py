@@ -9,7 +9,9 @@
   1. 새 채널에 봇을 **관리자로** 추가한다 (채널은 관리자여야 글을 쓸 수 있다)
   2. 그 채널에 아무 메시지나 하나 올린다
   3. 이 스크립트를 돌린다 → 보이는 채널의 이름과 chat_id 가 찍힌다
-  4. 그 값을 GitHub secret `TELEGRAM_CHAT_ID` 에 넣는다
+  4. 그 값을 telegram_target.py 의 CHAT_ID 에 반영한다
+     (secret 에 넣지 않는다 — 코드는 secret 을 목적지로 읽지 않는다.
+      2026-09-18 에 그 배선이 알림을 옛 채널로 보낼 뻔했다.)
 
 ⚠️ 읽기만 한다. 메시지를 보내지 않는다.
 ⚠️ `getUpdates` 는 최근 것만 돌려주고, 웹훅이 걸려 있으면 비어 있을 수 있다.
@@ -92,7 +94,7 @@ def main(argv=None):
     for cid, kind, title in chats:
         mark = "  ← 채널" if kind == "channel" else ""
         print(f"  {cid:>16}  {kind:<10} {title}{mark}")
-    print("\n이 중 새 채널의 chat_id 를 GitHub secret `TELEGRAM_CHAT_ID` 에 넣는다.")
+    print("\n이 중 새 채널의 chat_id 를 telegram_target.py 의 CHAT_ID 에 반영한다.")
     print("(채널이면 보통 -100 으로 시작한다)")
     return 0
 

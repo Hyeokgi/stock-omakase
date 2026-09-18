@@ -19,11 +19,12 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # 🆕 [트레일링 스탑 알림용] hyeoks_analyst.py와 동일한 텔레그램 봇/채널을 재사용 —
 #    PDF 리포트가 아니라 목표가 도달·트레일링 손절 같은 실시간 짧은 알림 전용으로 sendMessage만 씀.
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-# 🔴 2026-09-18 — 여기에 채널 ID 가 **하드코딩**돼 있었다("-1003778485916").
-#    다른 7개 모듈은 전부 secrets 의 TELEGRAM_CHAT_ID 를 읽는데 이 파일만 달라서,
-#    채널을 옮겨도 **스캐너 알림만 옛 채널로 계속 갔을 것**이다.
-#    환경변수로 통일한다 — secret 하나를 바꾸면 전부 따라가야 한다.
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+# 🔴 2026-09-18 되돌림 — 어제 이 줄을 os.environ 으로 바꿨는데 방향이 반대였다.
+#    secret TELEGRAM_CHAT_ID 는 **더는 안 쓰는 옛 채널** 값이고, 하드코딩돼 있던
+#    "-1003778485916" 이 리포트·브리핑이 지금 도착하는 채널이다. 목적지는 상수로
+#    되돌리되 사본 5개가 아니라 telegram_target 한 곳만 본다.
+from telegram_target import chat_id as _chat_id
+TELEGRAM_CHAT_ID = _chat_id()
 
 _TELEGRAM_WARNED = False
 
