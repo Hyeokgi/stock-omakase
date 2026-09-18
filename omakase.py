@@ -19,10 +19,31 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # 🆕 [트레일링 스탑 알림용] hyeoks_analyst.py와 동일한 텔레그램 봇/채널을 재사용 —
 #    PDF 리포트가 아니라 목표가 도달·트레일링 손절 같은 실시간 짧은 알림 전용으로 sendMessage만 씀.
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = "-1003778485916"
+# 🔴 2026-09-18 — 여기에 채널 ID 가 **하드코딩**돼 있었다("-1003778485916").
+#    다른 7개 모듈은 전부 secrets 의 TELEGRAM_CHAT_ID 를 읽는데 이 파일만 달라서,
+#    채널을 옮겨도 **스캐너 알림만 옛 채널로 계속 갔을 것**이다.
+#    환경변수로 통일한다 — secret 하나를 바꾸면 전부 따라가야 한다.
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+
+_TELEGRAM_WARNED = False
+
 
 def send_telegram_alert(text):
-    if not TELEGRAM_BOT_TOKEN:
+    # 🔴 2026-09-18 — main.yml 이 TELEGRAM_BOT_TOKEN 을 넘기지 않아 이 함수가
+    #    **조용히 아무것도 안 하고 있었다.** 목표가 도달·트레일링 손절 알림이
+    #    세 곳에서 불리는데 한 번도 나가지 않았다.
+    #    배선이 빠지면 **한 번은 눈에 띄게 말한다.** 조용한 실패를 반복하지 않는다.
+    global _TELEGRAM_WARNED
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        if not _TELEGRAM_WARNED:
+            missing = []
+            if not TELEGRAM_BOT_TOKEN:
+                missing.append("TELEGRAM_BOT_TOKEN")
+            if not TELEGRAM_CHAT_ID:
+                missing.append("TELEGRAM_CHAT_ID")
+            print(f"⚠️ [텔레그램 미배선] {'·'.join(missing)} 없음 — "
+                  "실시간 알림(목표가 도달·트레일링 손절)이 나가지 않는다")
+            _TELEGRAM_WARNED = True
         return
     try:
         requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",

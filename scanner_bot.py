@@ -6,7 +6,10 @@ from google import genai
 # 환경변수 로드
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = "-1003778485916"
+# 🔴 2026-09-18 — 채널 ID 가 하드코딩돼 있어 워크플로가 secret 을 넘겨도
+#    코드가 덮어썼다. 채널을 옮겨도 알림은 옛 채널로 갔을 것이다.
+#    환경변수로 통일한다 — secret 하나를 바꾸면 전부 따라가야 한다.
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks/edit"
 KST = datetime.timezone(datetime.timedelta(hours=9))
 

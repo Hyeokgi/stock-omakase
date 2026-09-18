@@ -1,0 +1,36 @@
+name: 🆔 HYEOKS 텔레그램 채널 ID 찾기
+
+# 목적: 채널을 옮겼을 때 새 채널의 chat_id 를 찾는다.
+#       초대 링크(https://t.me/+XXXX)는 chat_id 가 아니다.
+#
+# 쓰기 전에:
+#   1. 새 채널에 봇을 **관리자로** 추가
+#   2. 그 채널에 아무 메시지나 하나 올림
+#   3. 이 워크플로 실행
+#   4. 나온 chat_id 를 secret `TELEGRAM_CHAT_ID` 에 등록
+#
+# ⚠️ 읽기만 한다. 메시지를 보내지 않는다. 수동 전용.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  find:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.10'
+    - name: 📦 라이브러리 설치
+      run: pip install requests
+    - name: 🧪 자기검증
+      run: python -m unittest discover -s tests -p 'test_telegram_chat_id.py' -v
+    - name: 🆔 채널 ID 찾기
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      run: python telegram_chat_id.py
