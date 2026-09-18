@@ -83,3 +83,5 @@ jobs:
           python hyeoks_switch_check.py --self-test
           python telegram_target.py
           python earnings_schema.py
+          python stability_gate.py --self-test
+          python hyeoks_v3_probe.py --self-test

@@ -1,0 +1,50 @@
+name: 🧾 HYEOKS 컨센서스 AUX (WiseReport → DB_컨센서스)
+
+# 🔴 2026-09-18 GPT §5 — **보조 자료 전용.** 여기가 빨간불이어도 DB_실적(투자 핵심
+#    데이터)은 무관하다. 그 구분이 이 파일이 존재하는 이유다.
+#    9/14~9/17 나흘 연속 빨간불이 실은 전부 이쪽이었는데, 한 워크플로에 묶여 있어
+#    "수집기가 고장났다" 로만 보였고 그래서 아무도 보지 않게 됐다.
+
+on:
+  schedule:
+    - cron: '40 11 * * *'  # 21:40 KST 목표. 주 수집(11:00)보다 뒤에 둬서 시트 락이 겹치지 않게 한다
+  workflow_dispatch:        # 수동으로 바로 돌려서 테스트하고 싶을 때
+
+concurrency:
+  group: hyeoks-consensus-lock  # 🔧 [수정] omakase.py와 같은 락(hyeoks-sheet-lock)을 썼다가, 이 스크립트가
+  #    DART API 불통으로 몇 시간씩 안 끝나면 스캐너 트리거들이 대기열에 밀려 취소되는 연쇄를 겪었음
+  #    (2026-07 사고). 실제로 겹치는 시트가 없어서(DB_실적·DB_기업코드매핑만 건드림) 같은 락을 쓸 이유가
+  #    없었음 — 전용 락으로 분리해서 서로 절대 안 막도록 함.
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60  # 보조 원천이 느려도 주 수집을 막지 않는다 — 별 잡이므로 격리된다
+
+    steps:
+    - name: 📥 코드 가져오기
+      uses: actions/checkout@v7
+
+    - name: 🐍 파이썬 세팅
+      uses: actions/setup-python@v7
+      with:
+        python-version: '3.10'
+
+    - name: 📦 필수 라이브러리 설치
+      run: |
+        python -m pip install --upgrade pip
+        pip install gspread oauth2client requests beautifulsoup4
+
+    - name: 🚀 구글 시트 보안 인증 파일(secret.json) 생성
+      env:
+        SECRET_JSON: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+      run: |
+        echo "$SECRET_JSON" > secret.json
+
+    - name: 🧾 컨센서스 → DB_컨센서스 (보조)
+      env:
+        DART_API_KEY: ${{ secrets.DART_API_KEY }}
+      run: |
+        python hyeoks_earnings_collector.py --phase aux
+

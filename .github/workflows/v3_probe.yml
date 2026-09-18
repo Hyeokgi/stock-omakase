@@ -1,0 +1,46 @@
+name: 🔎 HYEOKS V3 사고범위 계측 (읽기 전용)
+
+# 2026-09-18 GPT 교차검증 P0-1 후속.
+# 전략 변경이 아니라 **사고범위 계측**이다. 시트에 아무것도 쓰지 않는다.
+# 수동 전용 — 매일 돌 일이 아니고, 돌 때마다 값이 바뀌는 성질의 조사도 아니다.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: hyeoks-sheet-lock   # 찢어진 읽기 방지 — 스캐너와 같은 락을 공유한다
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.10'
+      - run: |
+          python -m pip install --upgrade pip
+          pip install gspread oauth2client
+
+      - name: 🧪 깨진 도구로 재지 않는다
+        run: python hyeoks_v3_probe.py --self-test
+
+      - name: 🔐 secret.json
+        env:
+          SECRET_JSON: ${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}
+        run: echo "$SECRET_JSON" > secret.json
+
+      - name: 🔎 계측
+        run: python hyeoks_v3_probe.py --json | tee v3_probe.txt
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v3-probe-${{ github.run_id }}
+          path: v3_probe.txt
+          retention-days: 90

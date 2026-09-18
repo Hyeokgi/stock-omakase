@@ -1,4 +1,8 @@
-name: 📊 HYEOKS 실적(매출액/영업이익) 수집기
+name: 📊 HYEOKS 실적 PRIMARY (DART → DB_실적)
+
+# 🔴 2026-09-18 GPT §5 — 주 산출물 전용. 보조(컨센서스)는 consensus_aux.yml.
+#    하나의 워크플로가 빨간불이면 투자 핵심 데이터가 죽었는지 보조자료가
+#    죽었는지 로그를 열어봐야 했다. 이제 **이름으로** 구분된다.
 
 on:
   schedule:
@@ -37,11 +41,11 @@ jobs:
       run: |
         echo "$SECRET_JSON" > secret.json
 
-    - name: 📊 실적(매출액/영업이익) 수집 및 DB_실적 반영
+    - name: 📊 DART 확정치 → DB_실적 (주 산출물)
       env:
         DART_API_KEY: ${{ secrets.DART_API_KEY }}
       run: |
-        python hyeoks_earnings_collector.py
+        python hyeoks_earnings_collector.py --phase primary
 
     # 🔴 2026-09-18 GPT P0-2/P0-3 — 본표 쓰기를 막았을 때 오늘 수집분을 잃지 않는다.
     #    컨테이너는 사라지므로 파일만 써 두는 것으로는 부족하다. artifact 로 꺼낸다.

@@ -316,6 +316,7 @@ def compute_v3_score(quarters, summary):
 # ──────────────────────────────────────────────
 # ③ 대상 종목 목록 — 우선 DB_중장기 + DB_스캐너로 시작 (API 호출량 보수적 관리)
 # ──────────────────────────────────────────────
+EARNINGS_SCHEMA_VERSION = "earnings-v2"   # v1=12열(V3 index 8) / v2=14열(V3 index 10)
 EARNINGS_HEADER = ["종목코드", "종목명", "최신분기", "매출액", "영업이익", "매출증감률(YoY,%)",
                    "영업이익증감률(YoY,%)", "매출증감률(QoQ,%)", "영업이익증감률(QoQ,%)",
                    "실적개선여부", "V3(실적점수)", "연속성장", "재무제표기준", "갱신일시"]
@@ -463,6 +464,24 @@ def get_target_stocks(doc):
 
 
 if __name__ == "__main__":
+    # 🔴 2026-09-18 GPT §5 — 워크플로를 갈라 **장애 도메인**을 분리한다.
+    #    하나의 워크플로가 빨간불이면 "투자 핵심 데이터가 죽었는지 보조자료가
+    #    죽었는지" 로그를 열어봐야 했다. 이제 이름으로 구분된다.
+    #      earnings_collector.yml  --phase primary  → DART → DB_실적
+    #      consensus_aux.yml       --phase aux      → WiseReport → DB_컨센서스
+    #    --phase all 은 기존 동작(한 실행에서 둘 다)이며 수동 점검용으로 남긴다.
+    import argparse as _ap
+    _args, _ = _ap.ArgumentParser(add_help=False).parse_known_args()
+    PHASE = "all"
+    for _i, _a in enumerate(sys.argv):
+        if _a == "--phase" and _i + 1 < len(sys.argv):
+            PHASE = sys.argv[_i + 1]
+    if PHASE not in ("all", "primary", "aux"):
+        print(f"❌ --phase 는 all|primary|aux 다 (받은 값: {PHASE})")
+        sys.exit(2)
+    RUN_PRIMARY, RUN_AUX = PHASE in ("all", "primary"), PHASE in ("all", "aux")
+    print(f"▶️ phase={PHASE} (primary={RUN_PRIMARY} · aux={RUN_AUX})")
+
     if not DART_API_KEY:
         print("❌ DART_API_KEY 환경변수가 없습니다. GitHub Secrets에 등록해주세요.")
         exit(1)
@@ -511,7 +530,7 @@ if __name__ == "__main__":
     script_start = time.time()
     time_budget_hit = False
 
-    for idx, code in enumerate(target_codes):
+    for idx, code in enumerate(target_codes if RUN_PRIMARY else []):
         if time.time() - script_start > SCRIPT_TIME_BUDGET_SEC:
             print(f"⏱️ [시간 예산 초과] {SCRIPT_TIME_BUDGET_SEC}초 경과 — 남은 {len(target_codes) - idx}개 종목은 건너뛰고, 지금까지 모은 데이터부터 저장합니다.")
             time_budget_hit = True
@@ -563,8 +582,10 @@ if __name__ == "__main__":
                     "갱신일시가 오래된 순서라 다음 실행에서 먼저 처리됩니다)") if time_budget_hit else ""
 
     earnings_blocked = ""
-    if len(rows_out) > 1:
-        merged = None
+    merged = None
+    if not RUN_PRIMARY:
+        print("⏭ [DB_실적 생략] phase=aux — 본표는 earnings_collector.yml 이 맡는다.")
+    elif len(rows_out) > 1:
         if not earnings_readable:
             earnings_blocked = "기존 시트를 읽지 못해 보존이 불가능하다"
         else:
@@ -596,15 +617,22 @@ if __name__ == "__main__":
     # ══════════════════════════════════════════════════════════════════
     # PHASE B — 컨센서스(보조). 주 산출물을 저장한 뒤에 시작한다.
     # ══════════════════════════════════════════════════════════════════
-    print(f"\n▶️ [PHASE B] 컨센서스 {len(consensus_targets)}종목 — 보조 자료다. "
-          "여기서 실패해도 위의 DB_실적은 이미 확정됐다.")
-    pre_ok, pre_detail = consensus_preflight(fetch_consensus_estimates)
-    for c, pre_state, secs, why in pre_detail:
-        print(f"   · preflight {c}: {pre_state} {secs}s {why}")
-    if not pre_ok:
-        print("::error::[컨센서스 preflight 실패] 대조 종목이 전부 실패 — "
-              "배치를 시작하지 않는다(DART 예산을 지킨다)")
-        consensus_targets = []
+    if not RUN_PRIMARY:
+        # aux 단독 — DART 루프를 안 돌았으니 대상은 목록에서 직접 온다(오래된 순서 유지).
+        consensus_targets = list(target_codes)
+    if not RUN_AUX:
+        print("\n⏭ [PHASE B 생략] phase=primary — 컨센서스는 consensus_aux.yml 이 맡는다.")
+        consensus_targets, pre_ok, pre_detail = [], True, []
+    else:
+        print(f"\n▶️ [PHASE B] 컨센서스 {len(consensus_targets)}종목 — 보조 자료다. "
+              "여기서 실패해도 위의 DB_실적은 이미 확정됐다.")
+        pre_ok, pre_detail = consensus_preflight(fetch_consensus_estimates)
+        for c, pre_state, secs, why in pre_detail:
+            print(f"   · preflight {c}: {pre_state} {secs}s {why}")
+        if not pre_ok:
+            print("::error::[컨센서스 preflight 실패] 대조 종목이 전부 실패 — "
+                  "배치를 시작하지 않는다(DART 예산을 지킨다)")
+            consensus_targets = []
 
     for idx, code in enumerate(consensus_targets):
         if time.time() - script_start > SCRIPT_TIME_BUDGET_SEC:
@@ -646,6 +674,38 @@ if __name__ == "__main__":
         print(f"✅ [DB_컨센서스 · 개인 참고용] {len(consensus_rows_out) - 1}행 기록 완료{partial_note}")
     else:
         print("::warning::분기 연결 컨센서스 신규 추정치 없음. 기존 자료/갱신시각 보존; 정상 갱신 아님.")
+
+    # ══════════════════════════════════════════════════════════════════
+    # 실행 요약 한 줄 — 안정화 종료선(stability_gate)이 읽는 증거다.
+    # 2026-09-18 GPT §1 — "447개 시험보다 실제 생산 실행 한 번이 더 중요한 증거다."
+    # 로그를 사람이 눈으로 훑어 판단하지 않도록, 기계가 읽을 수 있게 고정 형식으로 찍는다.
+    # ══════════════════════════════════════════════════════════════════
+    try:
+        import earnings_schema
+        final_rows = merged if not earnings_blocked and len(rows_out) > 1 else existing_earnings
+        v3_map, v3_stats = earnings_schema.read_v3_map(final_rows)
+        stamps = sorted(str(r[earnings_schema.STAMP_COL]).strip()
+                        for r in (final_rows or [])[1:]
+                        if len(r) > earnings_schema.STAMP_COL and str(r[earnings_schema.STAMP_COL]).strip())
+    except Exception as e:
+        v3_stats, stamps = {"rows": 0, "used": 0, "blank": 0, "unparsable": 0,
+                            "out_of_range": 0, "reason": f"요약 실패 {e}", "col": None}, []
+    print("\n[DB_실적]")
+    print(f"대상 {len(target_map)}")
+    print(f"DART 성공 {len(rows_out) - 1} / 스킵·실패 {len(target_map) - (len(rows_out) - 1)}")
+    print(f"DB_실적 최종 보유 {v3_stats['rows']}")
+    print(f"V3 정상 {v3_stats['used']} / 빈값 {v3_stats['blank']} / "
+          f"해석불가 {v3_stats['unparsable']} / 범위오류 {v3_stats['out_of_range']}")
+    print(f"최저 갱신일시 {stamps[0] if stamps else '-'}")
+    print(f"최고 갱신일시 {stamps[-1] if stamps else '-'}")
+    print(f"schema={EARNINGS_SCHEMA_VERSION}")
+    print(f"예산초과={'Y' if time_budget_hit else 'N'} 본표쓰기={'차단' if earnings_blocked else '정상'}")
+    print("\n[Consensus]")
+    print(f"preflight {'OK' if pre_ok else 'FAIL'}")
+    print(f"attempted {len(consensus_targets)}")
+    print(f"success {consensus_done}")
+    print(f"failed {len(consensus_failures)}")
+    print(f"state={state}")
 
     # ══════════════════════════════════════════════════════════════════
     # 종료코드 — 주 산출물과 보조 자료를 가른다 (GPT §7 · Q1)

@@ -786,7 +786,17 @@ try:
             doc.worksheet("DB_실적").get_all_values())
         print(earnings_schema.v3_report(_v3_stats))
     except Exception as e:
+        _v3_stats = {"reason": f"{type(e).__name__}: {e}"}
         print(f"⚠️ [DB_실적 읽기 실패, V3 없이 진행] {type(e).__name__}: {e}")
+    # 2026-09-18 GPT §1 — 소비자 쪽에서도 고정 형식으로 한 줄 남긴다.
+    #    "테스트 통과" 와 "실제 시트 소비 성공" 은 다른 증거다.
+    print("[V3 INPUT]")
+    print(f"DB_실적 행 {_v3_stats.get('rows', 0)}")
+    print(f"V3 사용가능 {_v3_stats.get('used', 0)}")
+    print(f"빈값 {_v3_stats.get('blank', 0)}")
+    print(f"해석불가 {_v3_stats.get('unparsable', 0)}")
+    print(f"범위밖 {_v3_stats.get('out_of_range', 0)}")
+    print(f"schema {'이상: ' + _v3_stats['reason'] if _v3_stats.get('reason') else '정상'}")
 
     cands_list = []
     for r in tech_data:

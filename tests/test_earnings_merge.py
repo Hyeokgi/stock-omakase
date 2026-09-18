@@ -255,3 +255,55 @@ class ConsensusHealthTests(unittest.TestCase):
         src = pathlib.Path("hyeoks_earnings_collector.py").read_text(encoding="utf-8")
         body = src[src.find("def consensus_health("):][:600]
         self.assertNotRegex(body, r"0\.[89]\d*|9[05]\s*%")
+
+
+class WorkflowSeparationTests(unittest.TestCase):
+    """🔴 GPT §5 — 장애 도메인을 워크플로 수준에서 가른다."""
+
+    WF = pathlib.Path(".github/workflows")
+
+    def load(self, name):
+        import yaml
+        return yaml.safe_load((self.WF / name).read_text(encoding="utf-8"))
+
+    def test_two_workflows_exist(self):
+        for name in ("earnings_collector.yml", "consensus_aux.yml"):
+            with self.subTest(name):
+                self.assertTrue((self.WF / name).exists())
+
+    def test_primary_runs_only_the_primary_phase(self):
+        body = "\n".join(s.get("run", "")
+                         for s in self.load("earnings_collector.yml")["jobs"]["build"]["steps"])
+        self.assertIn("--phase primary", body)
+        self.assertNotIn("--phase aux", body)
+
+    def test_aux_runs_only_the_aux_phase(self):
+        body = "\n".join(s.get("run", "")
+                         for s in self.load("consensus_aux.yml")["jobs"]["build"]["steps"])
+        self.assertIn("--phase aux", body)
+        self.assertNotIn("--phase primary", body)
+
+    def test_locks_are_separate(self):
+        """같은 락을 쓰면 보조가 느릴 때 주가 대기열에 밀린다(2026-07 사고)."""
+        a = self.load("earnings_collector.yml")["concurrency"]["group"]
+        b = self.load("consensus_aux.yml")["concurrency"]["group"]
+        self.assertNotEqual(a, b)
+
+    def test_schedules_do_not_collide(self):
+        def cron(name):
+            return self.load(name)[True]["schedule"][0]["cron"]
+        self.assertNotEqual(cron("earnings_collector.yml"), cron("consensus_aux.yml"))
+
+    def test_phase_values_are_validated(self):
+        src = pathlib.Path("hyeoks_earnings_collector.py").read_text(encoding="utf-8")
+        self.assertIn('if PHASE not in ("all", "primary", "aux")', src)
+
+    def test_aux_alone_still_has_targets(self):
+        """aux 단독이면 DART 루프를 안 도니 대상이 비어 버릴 수 있었다."""
+        src = pathlib.Path("hyeoks_earnings_collector.py").read_text(encoding="utf-8")
+        self.assertIn("consensus_targets = list(target_codes)", src)
+
+    def test_primary_skips_the_aux_phase(self):
+        src = pathlib.Path("hyeoks_earnings_collector.py").read_text(encoding="utf-8")
+        self.assertIn("PHASE B 생략", src)
+        self.assertIn("DB_실적 생략", src)
