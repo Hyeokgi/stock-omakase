@@ -124,3 +124,134 @@ class SchemaTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+PHASE_B = "# PHASE B — 컨센서스(보조)"   # 주석 언급이 아니라 실제 구획 표시
+
+
+class FailClosedTests(unittest.TestCase):
+    """🔴 2026-09-18 GPT P0-2/P0-3 — 앞 커밋의 내 수정에 fail-open 이 둘 남아 있었다."""
+
+    def source(self):
+        return pathlib.Path("hyeoks_earnings_collector.py").read_text(encoding="utf-8")
+
+    def test_read_failure_blocks_the_primary_write(self):
+        """못 읽었는데 쓰는 것이 보존 병합에서 가장 위험한 패턴이다.
+
+        읽기 실패를 빈 목록으로 취급하면 새 데이터가 위쪽만 덮고 아래쪽 옛 행이
+        고아로 남는다. batch_clear 가드도 `0 > N` 이라 돌지 않는다.
+        """
+        src = self.source()
+        self.assertIn("earnings_readable", src)
+        self.assertIn("기존 시트를 읽지 못해 보존이 불가능하다", src)
+        # 읽기 실패 경로가 ::warning:: 이 아니라 ::error:: 여야 한다
+        self.assertRegex(src, r"::error::기존 DB_실적 읽기 실패")
+
+    def test_schema_mismatch_never_clears(self):
+        """'해석할 수 없으니 전부 지운다' 는 fail-closed 가 아니다."""
+        src = self.source()
+        block = src[src.find("merge_earnings_rows(existing_earnings"):][:1200]
+        self.assertNotIn("out_sheet.clear()", block,
+                         "스키마 불일치에 clear() 가 남아 있다")
+
+    def test_blocked_write_still_preserves_todays_collection(self):
+        """멈추는 것이 틀린 값보다 낫다는 원칙이 '모은 것을 버린다' 는 뜻은 아니다."""
+        src = self.source()
+        self.assertIn("def stage_earnings(", src)
+        self.assertIn("stage_earnings(rows_out", src)
+
+    def test_staging_is_written_and_readable(self):
+        import csv
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            path = E.stage_earnings([list(H), row("005930")], "시험 사유", out_dir=d)
+            rows = list(csv.reader(open(path, encoding="utf-8")))
+            self.assertEqual(rows[0], ["# 본표 쓰기 차단", "시험 사유"])
+            self.assertEqual(rows[1], list(H))
+            self.assertEqual(rows[2][0], "005930")
+
+
+class PhaseSeparationTests(unittest.TestCase):
+    """🔴 GPT §5 — 보조 원천이 주 산출물의 시간 예산을 먹고 있었다."""
+
+    def source(self):
+        return pathlib.Path("hyeoks_earnings_collector.py").read_text(encoding="utf-8")
+
+    def test_consensus_is_not_called_inside_the_dart_loop(self):
+        """종목당 12초 타임아웃이 DART 다음 종목을 막던 구조를 끊는다."""
+        src = self.source()
+        dart_loop = src[src.find("for idx, code in enumerate(target_codes):"):]
+        dart_loop = dart_loop[:dart_loop.find(PHASE_B)]
+        self.assertNotIn("fetch_consensus_estimates(", dart_loop)
+
+    def test_consensus_runs_after_the_primary_write(self):
+        src = self.source()
+        self.assertLess(src.find('out_sheet.update(range_name="A1"'),
+                        src.find(PHASE_B),
+                        "DB_실적 저장보다 컨센서스가 먼저면 분리한 의미가 없다")
+
+    def test_preflight_exists_and_can_skip_the_batch(self):
+        """143종목을 다시 때려 보고 원인을 추측하지 않는다(GPT §13)."""
+        self.assertIn("def consensus_preflight(", self.source())
+        self.assertIn("배치를 시작하지 않는다", self.source())
+
+    def test_preflight_ok_when_any_control_succeeds(self):
+        calls = []
+
+        def fetch(code):
+            calls.append(code)
+            if code == E.CONSENSUS_CONTROL[0]:
+                raise RuntimeError("timed out")
+            return {"2026.12(E)": {}}
+
+        ok, detail = E.consensus_preflight(fetch)
+        self.assertTrue(ok)
+        self.assertEqual([d[1] for d in detail], ["fail", "ok"])
+        self.assertIn("timed out", detail[0][3])
+
+    def test_preflight_fails_only_when_all_controls_fail(self):
+        def dead(code):
+            raise RuntimeError("Connection refused")
+        ok, detail = E.consensus_preflight(dead)
+        self.assertFalse(ok)
+        self.assertEqual(len(detail), len(E.CONSENSUS_CONTROL))
+
+    def test_preflight_uses_few_controls(self):
+        """대조는 적어야 한다 — 진단이 곧 부하가 되면 안 된다."""
+        self.assertLessEqual(len(E.CONSENSUS_CONTROL), 3)
+
+
+class ConsensusHealthTests(unittest.TestCase):
+    """🔴 GPT §6 — 1건 실패가 142건 성공을 **저장하기 전에** 종료시키고 있었다."""
+
+    def test_states(self):
+        self.assertEqual(E.consensus_health(143, 143), "OK")
+        self.assertEqual(E.consensus_health(143, 142), "DEGRADED")
+        self.assertEqual(E.consensus_health(143, 0), "FAILED")
+        self.assertEqual(E.consensus_health(0, 0), "SKIPPED")
+
+    def test_partial_success_is_written_before_the_exit_decision(self):
+        src = pathlib.Path("hyeoks_earnings_collector.py").read_text(encoding="utf-8")
+        write_at = src.find("consensus_sheet.update(")
+        exit_at = src.find('if state == "FAILED"')
+        self.assertGreater(write_at, 0)
+        self.assertGreater(exit_at, write_at,
+                           "성공분을 저장하기 전에 종료하면 142건이 버려진다")
+
+    def test_one_failure_no_longer_reddens_the_workflow(self):
+        """주 산출물이 정상이면 보조 일부 실패는 초록이다."""
+        src = pathlib.Path("hyeoks_earnings_collector.py").read_text(encoding="utf-8")
+        self.assertNotRegex(src, r"if consensus_failures:\s*\n\s*print[^\n]*\n\s*raise SystemExit")
+        self.assertIn('if state == "DEGRADED"', src)
+
+    def test_primary_failure_is_still_red(self):
+        src = pathlib.Path("hyeoks_earnings_collector.py").read_text(encoding="utf-8")
+        self.assertIn("if earnings_blocked:", src)
+        block = src[src.find("주 산출물과 보조 자료를 가른다"):]
+        self.assertIn("raise SystemExit(1)", block)
+
+    def test_no_arbitrary_coverage_threshold_yet(self):
+        """문턱 숫자는 원인 조사 후 사전 고정한다 — 지금 90% 를 박지 않는다."""
+        src = pathlib.Path("hyeoks_earnings_collector.py").read_text(encoding="utf-8")
+        body = src[src.find("def consensus_health("):][:600]
+        self.assertNotRegex(body, r"0\.[89]\d*|9[05]\s*%")

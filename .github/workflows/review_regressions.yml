@@ -19,14 +19,30 @@ on:
       - 'tests/**'
       - 'data/market_snapshot/nontrading.txt'
       - 'data/market_snapshot/calendar_scope.json'
-      - '.github/workflows/review_regressions.yml'
+      # 🔴 2026-09-18 GPT §10 — 이 워크플로 하나만 걸려 있었다. 그런데
+      #    tests/test_ci_wiring.py 는 main.yml 등 **다른 워크플로**를 검사한다.
+      #    즉 배선 시험을 만들어 놓고 배선 파일을 고쳐도 그 시험이 깨어나지 않았다.
+      #    워크플로 YAML 이 바뀌면 전부 audit CI 를 깨운다.
+      #    `**/*.yml` 은 쓰지 않는다 — `**/` 가 '디렉터리 0개'를 매치한다는 보장이
+      #    없어서 최상위 main.yml 을 놓칠 수 있다. 워크플로는 하위 디렉터리에
+      #    놓일 수 없으므로 단일 레벨이 맞고, 확실하다.
+      - '.github/workflows/*.yml'
+      - '.github/workflows/*.yaml'
   pull_request:
     paths:
       - '**.py'
       - 'tests/**'
       - 'data/market_snapshot/nontrading.txt'
       - 'data/market_snapshot/calendar_scope.json'
-      - '.github/workflows/review_regressions.yml'
+      # 🔴 2026-09-18 GPT §10 — 이 워크플로 하나만 걸려 있었다. 그런데
+      #    tests/test_ci_wiring.py 는 main.yml 등 **다른 워크플로**를 검사한다.
+      #    즉 배선 시험을 만들어 놓고 배선 파일을 고쳐도 그 시험이 깨어나지 않았다.
+      #    워크플로 YAML 이 바뀌면 전부 audit CI 를 깨운다.
+      #    `**/*.yml` 은 쓰지 않는다 — `**/` 가 '디렉터리 0개'를 매치한다는 보장이
+      #    없어서 최상위 main.yml 을 놓칠 수 있다. 워크플로는 하위 디렉터리에
+      #    놓일 수 없으므로 단일 레벨이 맞고, 확실하다.
+      - '.github/workflows/*.yml'
+      - '.github/workflows/*.yaml'
   workflow_dispatch:
 
 permissions:
@@ -66,3 +82,4 @@ jobs:
           python hyeoks_report_liveness.py --self-test
           python hyeoks_switch_check.py --self-test
           python telegram_target.py
+          python earnings_schema.py

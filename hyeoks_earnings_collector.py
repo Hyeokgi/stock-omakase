@@ -365,6 +365,60 @@ def stale_first(codes, old):
     return sorted(codes, key=lambda c: (stamp.get(c, ""), c))
 
 
+CONSENSUS_CONTROL = ("005930", "000660")   # 대조 종목: 커버리지가 확실한 대형주
+
+
+def stage_earnings(rows, reason, out_dir="data/earnings_staging"):
+    """🔴 2026-09-18 GPT P0-2/P0-3 — 본표 쓰기를 막을 때 오늘 수집분을 버리지 않는다.
+
+    보존이 불가능하거나 스키마를 못 믿으면 시트는 건드리지 않되, 모은 것은 파일로
+    남겨 복구 후 병합할 수 있게 한다. "멈추는 오류가 틀린 값보다 낫다" 는 원칙은
+    "모은 것을 버린다" 는 뜻이 아니다.
+    """
+    import csv
+    import os
+    os.makedirs(out_dir, exist_ok=True)
+    stamp = datetime.datetime.now(KST).strftime("%Y%m%dT%H%M%S")
+    path = os.path.join(out_dir, f"{stamp}_earnings.csv")
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["# 본표 쓰기 차단", reason])
+        writer.writerows(rows)
+    return path
+
+
+def consensus_preflight(fetch, controls=CONSENSUS_CONTROL):
+    """🔴 2026-09-18 GPT §13 — 143종목을 다시 때려 보고 원인을 추측하지 않는다.
+
+    대조 종목 두 개로 원천 상태를 먼저 본다. 전부 실패하면 그날 배치를 **시작하지
+    않는다.** 이것만으로 DART 예산을 지킬 수 있고, 실패 사유도 두 줄이면 나온다.
+
+    반환: (ok, [(code, 상태, 초, 사유)...])
+    """
+    detail = []
+    for code in controls:
+        start = time.time()
+        try:
+            fetch(code)
+            detail.append((code, "ok", round(time.time() - start, 1), ""))
+        except Exception as error:
+            detail.append((code, "fail", round(time.time() - start, 1),
+                           f"{type(error).__name__}: {error}"[:140]))
+    return any(d[1] == "ok" for d in detail), detail
+
+
+def consensus_health(attempted, succeeded):
+    """OK / DEGRADED / FAILED. 문턱 숫자는 아직 박지 않는다(원인 조사 후 사전 고정).
+
+    🔴 GPT §6 — 이전에는 1건만 실패해도 성공한 142건을 **저장하기 전에** 종료했다.
+    """
+    if attempted <= 0:
+        return "SKIPPED"
+    if succeeded == 0:
+        return "FAILED"
+    return "OK" if succeeded == attempted else "DEGRADED"
+
+
 def get_target_stocks(doc):
     """반환: {종목코드: 종목명} 딕셔너리"""
     names_from_trend = set()
@@ -421,20 +475,32 @@ if __name__ == "__main__":
     try:
         out_sheet = doc.worksheet("DB_실적")
     except Exception:
-        out_sheet = doc.add_worksheet(title="DB_실적", rows="1000", cols="12")
+        # 🔴 2026-09-18 GPT P0-4 — cols="12" 였다. 지금 스키마는 14열이다.
+        #    기존 운영 시트가 이미 있어서 안 드러났을 뿐, 새/복구/시험 환경에서 깨진다.
+        #    (이 12 라는 숫자가 V3 가 index 8 이던 옛 스키마의 화석이다 — P0-1 참조)
+        out_sheet = doc.add_worksheet(title="DB_실적", rows="1000",
+                                      cols=str(len(EARNINGS_HEADER)))
 
     rows_out = [list(EARNINGS_HEADER)]   # 사본을 두지 않는다 — 어긋나면 병합이 헛돈다
     consensus_header = ["종목코드", "종목명", "추정분기", "추정매출액", "추정영업이익", "추정당기순이익", "갱신일시"]
     consensus_rows_out = [consensus_header]
     consensus_failures = []
+    consensus_targets = []
     now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
     # 🔴 2026-09-18 — 순서가 고정이라 시간 예산에 잘린 꼬리가 다음 실행에도 꼬리였다.
     #    기존 시트의 갱신일시를 읽어 **오래된 것부터** 돈다. 한 번도 못 받은 종목이 맨 앞.
+    # 🔴 2026-09-18 GPT P0-2 — 읽기 실패를 빈 시트로 취급하면 안 된다.
+    #    못 읽었다고 시트가 비어 있는 건 아니다. 빈 목록으로 병합하면 새 데이터가
+    #    위쪽만 덮고 아래쪽 옛 행은 고아로 남는다(batch_clear 가드도 0 > N 이라 안 돈다).
+    #    **읽지 못했는데 쓰는 것**이 보존 병합에서 가장 위험한 패턴이다.
+    #    보존이 불가능하면 본표 쓰기를 막는다.
+    existing_earnings, earnings_readable = [], True
     try:
         existing_earnings = out_sheet.get("A:N")
     except Exception as e:
-        print(f"::warning::기존 DB_실적 읽기 실패({e}) — 보존·순서 재배치 없이 진행한다")
-        existing_earnings = []
+        earnings_readable = False
+        print(f"::error::기존 DB_실적 읽기 실패({type(e).__name__}: {e}) — "
+              "보존이 불가능하므로 DB_실적 본표에 쓰지 않는다")
     target_codes = stale_first(list(target_map.keys()), existing_earnings)
     fs_div_counter = {"CFS": 0, "OFS": 0}
     DEBUG_STOCKS = {"005930", "000660", "035420"}  # 🔎 [진단용] 삼성전자/SK하이닉스/NAVER — 분기별 원본 수치를 그대로 로그에 찍어서 확인
@@ -475,20 +541,13 @@ if __name__ == "__main__":
                 "연결" if fs_div == "CFS" else "별도", now_str
             ])
 
-            # 🆕 [개인용 참고자료] 애널리스트 컨센서스 — DART 확정치(V3)와는 완전히 분리해서 별도 시트에 기록
-            try:
-                consensus = fetch_consensus_estimates(code, debug=(code in DEBUG_STOCKS))
-            except Exception as error:
-                consensus_failures.append(code)
-                print(f"::warning::컨센서스 원천 실패 {code}: {error}")
-                consensus = None
-            if consensus:
-                for q_label, vals in consensus.items():
-                    consensus_rows_out.append([
-                        code, target_map.get(code, ""), q_label,
-                        vals.get("매출액", ""), vals.get("영업이익", ""), vals.get("당기순이익", ""), now_str
-                    ])
-            time.sleep(0.2)  # 네이버 호출 과다 방지
+            # 🔴 2026-09-18 GPT 교차검증 §5 — 여기서 종목마다 컨센서스를 같이 불렀다.
+            #    보조 원천 하나가 종목당 최대 12초 타임아웃을 일으키면 **주 산출물인
+            #    DART 수집이 그만큼 멈춘다.** 127건 실패면 타임아웃만 25분이고,
+            #    그게 55분 예산을 먹어 DB_실적이 127/143 에서 잘린 원인이다.
+            #    즉 "DART 가 느리다" 가 아니라 "보조가 주의 예산을 먹는다" 였다.
+            #    컨센서스는 DB_실적을 저장한 **뒤** PHASE B 에서 따로 돈다.
+            consensus_targets.append(code)
         except DartUnreachableError as e:
             print(f"🚨 [회로차단기 발동] {e}")
             print("⏭ 이번 실행은 여기서 조기 종료합니다 — 다음 스케줄 실행에서 다시 시도됩니다.")
@@ -503,29 +562,75 @@ if __name__ == "__main__":
     partial_note = (" (⏱️ 시간 예산 초과로 일부만 처리됨 — 나머지는 이전 값을 유지하고, "
                     "갱신일시가 오래된 순서라 다음 실행에서 먼저 처리됩니다)") if time_budget_hit else ""
 
+    earnings_blocked = ""
     if len(rows_out) > 1:
-        # 통째로 비우지 않는다 — 이번에 못 건드린 종목의 이전 행을 살린다(위 merge 주석 참조).
-        try:
-            merged = merge_earnings_rows(existing_earnings, rows_out)
-        except ValueError as e:
-            # 스키마가 바뀌었으면 옛 행을 살리는 것이 오히려 틀린다. 크게 말하고 새로 쓴다 —
-            # 오늘 모은 것까지 버리지는 않는다.
-            print(f"::error::기존 DB_실적 스키마 불일치({e}) — 보존 포기, 이번 수집분으로 새로 쓴다")
-            out_sheet.clear()
-            merged = rows_out
-        out_sheet.update(range_name="A1", values=merged, value_input_option="RAW")
-        if len(existing_earnings) > len(merged):
-            out_sheet.batch_clear([f"A{len(merged) + 1}:N{len(existing_earnings)}"])
-        kept = len(merged) - len(rows_out)
-        print(f"✅ [DB_실적] {len(rows_out) - 1}개 종목 기록 완료 "
-              f"(연결기준 {fs_div_counter.get('CFS',0)}개 / 별도기준 {fs_div_counter.get('OFS',0)}개){partial_note}"
-              + (f" · 이번에 못 돈 {kept}개는 이전 값 보존" if kept else ""))
+        merged = None
+        if not earnings_readable:
+            earnings_blocked = "기존 시트를 읽지 못해 보존이 불가능하다"
+        else:
+            try:
+                # 통째로 비우지 않는다 — 못 건드린 종목의 이전 행을 살린다(merge 주석 참조).
+                merged = merge_earnings_rows(existing_earnings, rows_out)
+            except ValueError as e:
+                # 🔴 2026-09-18 GPT P0-3 — 앞 커밋에서 나는 여기서 clear() 후 새로 썼다.
+                #    "해석할 수 없으니 기존 데이터를 전부 지운다" 는 fail-closed 가 아니다.
+                #    특히 예산에 걸린 부분 실행이면 일부 종목만으로 전체 시트를 대체한다.
+                #    스키마를 못 믿으면 **본표를 건드리지 않는다.**
+                earnings_blocked = f"스키마 불일치({e})"
+
+        if earnings_blocked:
+            stage = stage_earnings(rows_out, earnings_blocked)
+            print(f"::error::[DB_실적 쓰기 차단] {earnings_blocked} — "
+                  f"본표 무수정. 이번 수집분 {len(rows_out) - 1}종목은 {stage} 에 보존했다")
+        else:
+            out_sheet.update(range_name="A1", values=merged, value_input_option="RAW")
+            if len(existing_earnings) > len(merged):
+                out_sheet.batch_clear([f"A{len(merged) + 1}:N{len(existing_earnings)}"])
+            kept = len(merged) - len(rows_out)
+            print(f"✅ [DB_실적] {len(rows_out) - 1}개 종목 기록 완료 "
+                  f"(연결기준 {fs_div_counter.get('CFS',0)}개 / 별도기준 {fs_div_counter.get('OFS',0)}개){partial_note}"
+                  + (f" · 이번에 못 돈 {kept}개는 이전 값 보존" if kept else ""))
     else:
         print("⚠️ 수집된 실적 데이터가 없습니다.")
 
-    if consensus_failures:
-        print(f"::error::컨센서스 {len(consensus_failures)}종목 수집 실패. 기존 시트와 갱신시각 보존.")
-        raise SystemExit(1)
+    # ══════════════════════════════════════════════════════════════════
+    # PHASE B — 컨센서스(보조). 주 산출물을 저장한 뒤에 시작한다.
+    # ══════════════════════════════════════════════════════════════════
+    print(f"\n▶️ [PHASE B] 컨센서스 {len(consensus_targets)}종목 — 보조 자료다. "
+          "여기서 실패해도 위의 DB_실적은 이미 확정됐다.")
+    pre_ok, pre_detail = consensus_preflight(fetch_consensus_estimates)
+    for c, pre_state, secs, why in pre_detail:
+        print(f"   · preflight {c}: {pre_state} {secs}s {why}")
+    if not pre_ok:
+        print("::error::[컨센서스 preflight 실패] 대조 종목이 전부 실패 — "
+              "배치를 시작하지 않는다(DART 예산을 지킨다)")
+        consensus_targets = []
+
+    for idx, code in enumerate(consensus_targets):
+        if time.time() - script_start > SCRIPT_TIME_BUDGET_SEC:
+            print(f"⏱️ [PHASE B 예산 초과] 남은 {len(consensus_targets) - idx}종목은 다음 실행에서")
+            break
+        try:
+            consensus = fetch_consensus_estimates(code, debug=(code in DEBUG_STOCKS))
+        except Exception as error:
+            consensus_failures.append(code)
+            print(f"::warning::컨센서스 원천 실패 {code}: {error}")
+            consensus = None
+        if consensus:
+            for q_label, vals in consensus.items():
+                consensus_rows_out.append([
+                    code, target_map.get(code, ""), q_label,
+                    vals.get("매출액", ""), vals.get("영업이익", ""),
+                    vals.get("당기순이익", ""), now_str
+                ])
+        time.sleep(0.2)  # 원천 호출 과다 방지
+
+    consensus_done = len({r[0] for r in consensus_rows_out[1:]})
+    state = consensus_health(len(consensus_targets), consensus_done)
+    print(f"📊 [컨센서스] {state} — 시도 {len(consensus_targets)} · 성공 {consensus_done} · "
+          f"실패 {len(consensus_failures)}")
+
+    # 🔴 GPT §6 — 성공분을 **먼저 정직하게 저장하고** 그 다음에 상태를 판단한다.
     if len(consensus_rows_out) > 1:
         try:
             consensus_sheet = doc.worksheet("DB_컨센서스")
@@ -541,3 +646,24 @@ if __name__ == "__main__":
         print(f"✅ [DB_컨센서스 · 개인 참고용] {len(consensus_rows_out) - 1}행 기록 완료{partial_note}")
     else:
         print("::warning::분기 연결 컨센서스 신규 추정치 없음. 기존 자료/갱신시각 보존; 정상 갱신 아님.")
+
+    # ══════════════════════════════════════════════════════════════════
+    # 종료코드 — 주 산출물과 보조 자료를 가른다 (GPT §7 · Q1)
+    # ══════════════════════════════════════════════════════════════════
+    # 이전에는 컨센서스 1종목 실패가 워크플로 전체를 적색으로 만들었다. 그래서
+    # 9/14~9/17 나흘 연속 빨간불이었는데 1건 실패와 127건 실패가 같은 신호였고,
+    # 아무도 보지 않게 됐다. 매일 빨간 경보는 경보가 아니다.
+    #
+    # 이제: 주 산출물(DB_실적) 실패 → 적색. 보조(컨센서스)는 **완전 붕괴만** 적색.
+    # DEGRADED(일부 실패)의 정확한 커버리지 문턱은 원인 조사 후 사전 고정한다 —
+    # 지금 90% 같은 숫자를 즉흥적으로 박지 않는다(GPT §6).
+    if earnings_blocked:
+        print(f"::error::[주 산출물 실패] DB_실적 본표를 쓰지 못했다 — {earnings_blocked}")
+        raise SystemExit(1)
+    if state == "FAILED":
+        print(f"::error::[보조 원천 붕괴] 컨센서스 {len(consensus_targets)}종목 전량 실패. "
+              "DB_실적은 위에서 정상 확정됐다.")
+        raise SystemExit(1)
+    if state == "DEGRADED":
+        print(f"::warning::[보조 원천 저하] 컨센서스 {len(consensus_failures)}종목 실패, "
+              f"{consensus_done}종목 성공분은 저장됨. 주 산출물은 정상이므로 초록으로 둔다.")

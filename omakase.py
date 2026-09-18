@@ -11,6 +11,7 @@ import random
 import json
 from after_market_quotes import scanner_after_quote, AFTER_HEADER, NXT_HEADER
 import scanner_census
+import earnings_schema
 import rank_pool
 import feature_store
 
@@ -2678,13 +2679,12 @@ def update_technical_data(df_theme, all_theme_map):
         # 🆕 [실적 악화 경고] DB_중장기(장기 보유 후보) 종목 중, 실적점수(V3)가 낮게 확인되는 종목에
         #    경고 배지를 붙임 — "사놓고 방치"가 아니라 실적이 꺾이면 눈에 띄게 하려는 목적.
         #    V3 데이터가 아직 없는 종목은 판단 근거가 없으니 경고하지 않음(fail-open).
+        # 🔴 2026-09-18 GPT 교차검증 P0-1 — `int(row[8])` 은 V3 가 아니라
+        #    **영업이익증감률(QoQ,%)** 였다(V3 는 index 10). 열을 이름으로 찾는다.
         try:
-            v3_warn_map = {}
-            earn_rows = doc.worksheet("DB_실적").get_all_values()[1:]
-            for row in earn_rows:
-                if len(row) > 8 and row[0].strip():
-                    try: v3_warn_map[str(row[0]).strip().zfill(6)] = int(row[8])
-                    except Exception: pass
+            v3_warn_map, _v3w_stats = earnings_schema.read_v3_map(
+                doc.worksheet("DB_실적").get_all_values())
+            print(earnings_schema.v3_report(_v3w_stats))
             EARNINGS_WARNING_THRESHOLD = 20  # hyeoks_analyst.py의 중기 픽 필터 기준과 통일
             for r in results:
                 if len(r) > 1 and r[0] in long_term_stocks:

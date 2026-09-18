@@ -105,6 +105,30 @@ class OfflineAuditTests(unittest.TestCase):
             with self.subTest(event):
                 self.assertIn("**.py", triggers(self.doc)[event]["paths"])
 
+    def test_workflow_changes_wake_the_wiring_tests(self):
+        """🔴 2026-09-18 GPT §10 — 이 파일이 main.yml 등을 검사하는데,
+        정작 그 워크플로를 고쳐도 audit CI 가 깨어나지 않았다.
+        배선 시험을 만들어 놓고 배선 파일이 시험을 못 깨우는 구조였다."""
+        for event in ("push", "pull_request"):
+            with self.subTest(event):
+                paths = triggers(self.doc)[event]["paths"]
+                self.assertIn(".github/workflows/*.yml", paths,
+                              f"워크플로 YAML 변경이 CI 를 깨우지 않는다: {paths}")
+                # `**/` 는 디렉터리 0개를 매치한다는 보장이 없다 — 최상위 파일을 놓친다
+                self.assertNotIn(".github/workflows/**/*.yml", paths,
+                                 "`**/` 패턴은 최상위 main.yml 을 놓칠 수 있다")
+
+    def test_every_workflow_this_suite_checks_is_covered(self):
+        """시험이 읽는 워크플로 파일은 전부 트리거 범위 안이어야 한다."""
+        import fnmatch
+        checked = {"main.yml", "review_regressions.yml", "earnings_collector.yml"}
+        paths = triggers(self.doc)["push"]["paths"]
+        for wf in sorted(checked):
+            with self.subTest(wf):
+                target = f".github/workflows/{wf}"
+                self.assertTrue(any(fnmatch.fnmatch(target, p) for p in paths),
+                                f"{wf} 변경이 CI 를 깨우지 않는다")
+
     def test_self_tests_that_exist_are_actually_run(self):
         """자체검증을 만들어 놓고 CI 가 안 돌리면 회귀를 아무도 모른다."""
         has = {p.name for p in ROOT.glob("*.py")

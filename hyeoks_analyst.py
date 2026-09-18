@@ -7,6 +7,7 @@ from google import genai
 import urllib3
 import xml.etree.ElementTree as ET
 import concurrent.futures
+import earnings_schema
 # 🏷️ 타점 해석은 의존성 없는 별도 모듈로 뺐다(F01, 2026-09-07).
 #    이 파일은 gspread·pdfkit·genai 를 최상단에서 import 하므로 로직만 시험할 수 없었다.
 #    사본을 시험하면 원본이 맞다는 보장이 없어서, 원본을 옮기고 여기서 가져다 쓴다.
@@ -774,15 +775,18 @@ try:
 
     # 🆕 [V3 연결] DB_실적(hyeoks_earnings_collector.py가 채워둔 실적점수)을 종목코드 기준으로 미리 읽어둠.
     #    아직 DB_중장기·DB_스캐너 종목만 커버하므로, 데이터가 없는 종목은 "모른다"로 두고 불이익 주지 않음(fail-open).
-    v3_map = {}
+    # 🔴 2026-09-18 GPT 교차검증 P0-1 — 여기서 `int(row[8])` 을 읽고 있었다.
+    #    index 8 은 V3 가 아니라 **영업이익증감률(QoQ,%)** 다. V3 는 index 10 이다.
+    #    아래 v3_score < 20 필터가 장기 구조적 SEED 를 실제로 **제외**하므로
+    #    표시 오류가 아니라 후보군이 바뀌는 오류였다.
+    #    이제 열을 이름으로 찾고(earnings_schema), 못 믿으면 V3 를 쓰지 않는다.
+    v3_map, _v3_stats = {}, {"reason": "읽지 않음"}
     try:
-        earn_rows = doc.worksheet("DB_실적").get_all_values()[1:]
-        for row in earn_rows:
-            if len(row) > 8 and row[0].strip():
-                try: v3_map[str(row[0]).strip().zfill(6)] = int(row[8])
-                except Exception: pass
+        v3_map, _v3_stats = earnings_schema.read_v3_map(
+            doc.worksheet("DB_실적").get_all_values())
+        print(earnings_schema.v3_report(_v3_stats))
     except Exception as e:
-        print(f"⚠️ [DB_실적 읽기 실패, V3 없이 진행] {e}")
+        print(f"⚠️ [DB_실적 읽기 실패, V3 없이 진행] {type(e).__name__}: {e}")
 
     cands_list = []
     for r in tech_data:
