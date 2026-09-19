@@ -1,0 +1,2 @@
+cycle_date,run_id,source,verdict,fingerprint,ci_green,earnings_schema_ok,dart_complete,no_silent_parse_error,store_written,ledger_written,no_unexplained_failure,aux_state,note,gate_version
+2026-09-19,skip-2026-09-19,cycle,SKIP,06855b9c72bf,-,-,-,-,-,-,-,,,stability-gate-v2
