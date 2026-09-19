@@ -158,7 +158,7 @@ def build(cycle_date, fingerprint, root=R.RECEIPT_DIR, workflow_states=None):
               and fs.get("dropped") == 0
               and rp.get("total_dropped") == 0
               # 🔴 2026-09-19 — 영수증 날짜와 저장 날짜가 갈리면 증거가 아니다
-              and sc["payload"].get("cycle_date_matches") is not False)
+              and sc["payload"].get("cycle_date_matches") is True)
         put("store_written", ok,
             f"feature_store(행={fs.get('rows')} 버림={fs.get('dropped')}) "
             f"rank_pool(행={rp.get('rows')} 버림={rp.get('total_dropped')}) "
@@ -254,6 +254,7 @@ def _selftest():
     def good_scanner():
         import copy
         return {
+            "cycle_date_matches": True,
             "ci_conclusion": "success", "expected_state": "reached",
             "features": copy.deepcopy(FEATS),
             "feature_store": {"date": DAY, "run_id": "R1", "fingerprint": FP,

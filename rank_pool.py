@@ -137,6 +137,14 @@ def already_recorded(day, channel, path=POOL_PATH):
     return False
 
 
+def recorded_count(day, channel, run_id, path=POOL_PATH):
+    """Read back the actual rows written by this run, not channel count."""
+    with open(path, encoding='utf-8', newline='') as f:
+        return sum(1 for r in csv.DictReader(f)
+                   if r.get('date') == day and r.get('channel') == channel
+                   and r.get('run_id') == str(run_id))
+
+
 def append(rows, path=POOL_PATH):
     new = not os.path.exists(path)
     os.makedirs(os.path.dirname(path), exist_ok=True)

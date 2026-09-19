@@ -9,6 +9,10 @@ on:
   schedule:
     - cron: '40 11 * * *'  # 11:40 UTC = **20:40 KST**. 주 수집(11:00 UTC=20:00 KST)보다 40분 뒤 — 락이 겹치지 않게
   workflow_dispatch:        # 수동으로 바로 돌려서 테스트하고 싶을 때
+    inputs:
+      cycle_date:
+        description: '지연 실행의 명시적 거래일 YYYY-MM-DD (평시 비움)'
+        required: false
 
 concurrency:
   group: hyeoks-consensus-lock  # 🔧 [수정] omakase.py와 같은 락(hyeoks-sheet-lock)을 썼다가, 이 스크립트가
@@ -48,6 +52,7 @@ jobs:
     - name: 🧾 컨센서스 → DB_컨센서스 (보조)
       env:
         DART_API_KEY: ${{ secrets.DART_API_KEY }}
+        PRODUCTION_CYCLE_DATE: ${{ inputs.cycle_date }}
       run: |
         python hyeoks_earnings_collector.py --phase aux
 

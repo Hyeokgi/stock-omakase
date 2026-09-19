@@ -64,7 +64,7 @@ class PointInTimeTests(unittest.TestCase):
 
     def test_is_junk_embedded(self):
         """DB_정적데이터는 매일 덮어쓰인다 — 나중에 조인하면 오늘 명단이 과거를 물들인다."""
-        self.assertEqual(self.col(self.rows(), "is_junk"), ["N", "Y", "N"])
+        self.assertEqual(self.col(self.rows(), "is_junk"), ["UNKNOWN", "Y", "UNKNOWN"])
 
     def test_theme_rank_and_hist_max_embedded(self):
         r = self.rows()
@@ -165,7 +165,7 @@ class CallSiteTests(unittest.TestCase):
         ok, msg = F.record(
             "2026-09-18", results, picked=picked, run_id="999", root=d,
             kospi_rate=0.84, warning_market=True, index_above_ma5=True,
-            static_db={"000004"}, theme_rank={"반도체": 2},
+            static_db={"000004": {'is_junk': True}}, theme_rank={"반도체": 2},
             theme_hist_max={"반도체": 9.9},
             candidate_codes=[r[1] for r in candidate_pool],
             gate_codes=[r[1] for r in gate_passed])

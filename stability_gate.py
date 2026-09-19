@@ -18,8 +18,9 @@
 import csv
 import hashlib
 import os
+import datetime
 
-GATE_VERSION = "stability-gate-v2"
+GATE_VERSION = "stability-gate-v3"
 
 # ═══════════════════════════════════════════════════════════════════════
 # ③ 안정화 1회 = 하나의 **KRX 거래일 end-to-end 생산 사이클**
@@ -39,6 +40,10 @@ FAIL = "FAIL"
 #    ⚠️ 데이터 자동 커밋으로 매일 달라지는 저장소 전체 SHA 를 쓰지 않는다.
 #       **핵심 생산 코드·워크플로·스키마/계약 모듈**만 본다(사용자 지시 ⑥).
 FINGERPRINT_FILES = [
+    "naver_sources.py", "after_market_quotes.py", "telegram_target.py",
+    "hyeoks_performance_memory.py", "hyeoks_data_quality.py",
+    "hyeoks_run_freeze.py",
+    "data/market_snapshot/nontrading.txt", "data/market_snapshot/calendar_scope.json",
     # 생산 코드
     "omakase.py", "hyeoks_analyst.py", "hyeoks_earnings_collector.py",
     "scanner_census.py", "hyeoks_tajeom.py",
@@ -178,15 +183,38 @@ def streak(rows=None, path=GATE_LOG, fp=None, root="."):
     rows = load(path) if rows is None else rows
     current = fp or fingerprint(root)
     n = 0
+    seen = set()
+    last_day = None
+    # Duplicate/out-of-order dates are ambiguous evidence, not extra cycles.
+    for r in rows:
+        try:
+            day = datetime.date.fromisoformat(r['cycle_date'])
+        except (KeyError, TypeError, ValueError):
+            return 0
+        if day in seen or (last_day is not None and day <= last_day):
+            return 0
+        seen.add(day)
+        last_day = day
+    newer = None
     for r in reversed(rows):
+        day = datetime.date.fromisoformat(r['cycle_date'])
         v = r.get("verdict")
         if v == SKIP:
+            if is_trading_day(day.isoformat()):
+                break
             continue
         if v != PASS:
             break
-        if r.get("fingerprint") and r["fingerprint"] != current:
+        if r.get("fingerprint") != current or not is_trading_day(day.isoformat()):
             break            # 파이프라인이 바뀌었다 — 여기부터는 다른 시스템이다
+        if newer is not None:
+            expected = newer - datetime.timedelta(days=1)
+            while not is_trading_day(expected.isoformat()):
+                expected -= datetime.timedelta(days=1)
+            if day != expected:
+                break
         n += 1
+        newer = day
     return n
 
 
@@ -347,8 +375,9 @@ def _selftest():
             "hyeoks_trading_calendar.py", ".github/workflows/main.yml",
             ".github/workflows/stability_finalizer.yml",
             ".github/receipt_commit.sh", ".github/workflow_states.py")))
-    chk("데이터 디렉터리는 지문에 없다(매일 달라지면 streak 가 매일 0 이 된다)",
-        not any(f.startswith("data/") for f in FINGERPRINT_FILES))
+    chk("관측 데이터는 제외하되 달력 설정은 지문에 포함한다",
+        {f for f in FINGERPRINT_FILES if f.startswith('data/')} ==
+        {'data/market_snapshot/nontrading.txt', 'data/market_snapshot/calendar_scope.json'})
 
     print("\n" + f"✅ 전부 통과 ({ok_count}건)")
     return ok_count

@@ -3254,7 +3254,7 @@ def update_technical_data(df_theme, all_theme_map):
                     kospi_rate=kospi_rate,
                     warning_market=bool(is_warning_market),
                     index_above_ma5=bool(index_above_ma5),
-                    static_db=set(static_db or {}),
+                    static_db=dict(static_db or {}),
                     theme_rank=dict(theme_rank_dict or {}),
                     theme_hist_max=dict(theme_historical_max or {}),
                     candidate_codes=[r[1] for r in candidate_pool],
@@ -3430,7 +3430,7 @@ def update_technical_data(df_theme, all_theme_map):
                         exclusion=_excl, band=_band)
                     _pool_dropped[_ch] = len(rank_pool.DROPPED)   # P0-4 채널별 누적
                     if _pok:
-                        _pool_rows += 1
+                        _pool_rows += rank_pool.recorded_count(today_str, _ch, _pool_runid)
                         print(f"   🗂️ 순위 풀 보존 — {_pmsg}")
                     elif _pmsg.startswith("기록 실패"):
                         TELEMETRY.note('pool_row', '순위 풀 기록 실패',

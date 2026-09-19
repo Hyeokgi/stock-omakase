@@ -443,7 +443,8 @@ class CycleDateTests(unittest.TestCase):
         for f in ("hyeoks_earnings_collector.py", "hyeoks_analyst.py", "omakase.py"):
             with self.subTest(f):
                 src = pathlib.Path(f).read_text(encoding="utf-8")
-                self.assertIn("cycle_date_now", src)
+                self.assertIn("collector_cycle" if f == 'hyeoks_earnings_collector.py'
+                              else "cycle_date_now", src)
 
     def test_run_start_is_pinned(self):
         """긴 실행이 도중에 날짜를 넘겨도 시작 시각 기준으로 고정한다."""

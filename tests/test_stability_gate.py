@@ -195,7 +195,8 @@ class FingerprintTests(unittest.TestCase):
 
     def test_data_directories_are_not_in_the_fingerprint(self):
         """⑥ — 데이터 자동 커밋으로 매일 달라지면 streak 가 매일 0 이 된다."""
-        self.assertFalse([f for f in G.FINGERPRINT_FILES if f.startswith("data/")])
+        self.assertEqual({f for f in G.FINGERPRINT_FILES if f.startswith('data/')},
+                         {'data/market_snapshot/nontrading.txt', 'data/market_snapshot/calendar_scope.json'})
 
     def test_missing_file_is_a_change(self):
         self.assertNotEqual(G.fingerprint(files=["없는1.py"]),
@@ -233,6 +234,7 @@ class EndToEndGateTests(unittest.TestCase):
     def seed(self, day="2026-09-21", **over):
         import production_receipt as R
         sc = {"expected_state": "reached", "ci_conclusion": "success",
+              "cycle_date_matches": True,
               "features": self.feats(),
               "feature_store": {"date": day, "run_id": "R1", "fingerprint": self.FP,
                                 "rows": 718, "dropped": 0},

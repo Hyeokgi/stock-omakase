@@ -38,7 +38,7 @@ KST = datetime.timezone(datetime.timedelta(hours=9))
 STORE_DIR = "data/feature_store"
 # ⑩ build_rows 가 버린 행의 사유 목록. 호출부가 읽어 영수증에 싣는다.
 DROPPED = []
-STORE_VERSION = "feature-store-v2"
+STORE_VERSION = "feature-store-v3"
 
 # 🔴 2026-09-18 v2 — 사용자 지시 ⑪. 새 저장소를 만들지 않고 기존 것을 확장한다.
 #    추가는 CONTEXT_FIELDS **뒤쪽에만** 한다(RESULT_FIELDS 는 omakase result_row 와
@@ -137,7 +137,9 @@ def build_rows(day, results, *, kospi_rate=None, warning_market=None,
     # 🔴 키를 정규화한다. 호출부(omakase)는 원장 행에서 `'000001` 형태로 준다 —
     #    정규화하지 않으면 picked_by 가 **전 행에서 빈칸**이 된다.
     picked = {norm_code(k): v for k, v in (picked or {}).items()}
-    static_db = {norm_code(k) for k in static_db}
+    # Membership is not a risk flag. Legacy sets cannot certify either Y or N.
+    static_db = ({norm_code(k): v for k, v in static_db.items()}
+                 if isinstance(static_db, dict) else {})
     cand = {norm_code(c) for c in (candidate_codes or [])}
     gate = {norm_code(c) for c in (gate_codes or [])}
     v3_map = {norm_code(k): v for k, v in (v3_map or {}).items()}
@@ -152,7 +154,7 @@ def build_rows(day, results, *, kospi_rate=None, warning_market=None,
             ctx = [
                 day, captured_at, kospi_rate, warning_market, index_above_ma5,
                 # 🔴 나중에 조인 불가 — 지금 박는다
-                "Y" if code in static_db else "N",
+                junk_flag(static_db.get(code)),
                 theme_rank.get(theme, ""),
                 theme_hist_max.get(theme, ""),
                 "Y" if rs_is_percentile else "N",
@@ -179,6 +181,11 @@ def build_rows(day, results, *, kospi_rate=None, warning_market=None,
             DROPPED.append(f"{type(e).__name__}")
             continue
     return rows
+
+
+def junk_flag(info):
+    value = info.get('is_junk') if isinstance(info, dict) else info
+    return 'Y' if value is True else ('N' if value is False else 'UNKNOWN')
 
 
 def write(day, rows, root=STORE_DIR):

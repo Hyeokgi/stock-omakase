@@ -93,6 +93,26 @@ def previous_trading_day(now=None, back=15):
     return (now.date() - datetime.timedelta(days=1)).isoformat()
 
 
+def collector_cycle(started_at, explicit=None):
+    """Ambiguous delayed evening jobs need an explicit cycle, not a guess.
+
+    Before 06:00 a trading weekday can belong to yesterday's delayed job.
+    Weekend runs remain observations assigned by the existing calendar policy.
+    """
+    from hyeoks_trading_calendar import scheduled_session
+    if started_at.tzinfo is None:
+        raise ValueError('timezone-aware start required')
+    started_at = started_at.astimezone(KST)
+    if explicit:
+        day = datetime.date.fromisoformat(explicit)
+        if day > started_at.date() or not scheduled_session(day.isoformat()):
+            raise ValueError('invalid explicit production cycle')
+        return day.isoformat()
+    if started_at.hour < 6 and scheduled_session(started_at.date().isoformat()):
+        raise ValueError('ambiguous delayed run: supply PRODUCTION_CYCLE_DATE')
+    return cycle_date_now(started_at)
+
+
 def dir_for(day, root=RECEIPT_DIR):
     return os.path.join(root, str(day))
 
