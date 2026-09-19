@@ -33,13 +33,27 @@ usage: workflow_states.py <repo> <YYYY-MM-DD>   (GH_TOKEN 환경변수 필요)
 """
 import json
 import os
+import pathlib
 import sys
 import urllib.error
 import urllib.request
 
-import evidence_builder
-import production_receipt
-import stability_gate
+# 🔴 2026-09-19 생산 P0 — finalizer run #1 이 여기서 죽었다.
+#
+#       ModuleNotFoundError: No module named 'evidence_builder'
+#
+#    `python .github/workflow_states.py` 로 부르면 sys.path[0] 이 **스크립트가
+#    있는 `.github/`** 가 된다. 저장소 루트가 아니다. 그래서 루트 모듈 세 개를
+#    하나도 import 할 수 없다. 로컬에서 `python -c "import workflow_states"` 를
+#    한 적이 없고, 시험이 전부 AST/텍스트였으므로 546건이 통과하는데도
+#    **워크플로는 첫 실행에서 즉사했다.** `import sys` 누락과 같은 계열이다.
+#
+#    루트를 명시적으로 넣는다. 위치에 의존하지 않는다.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+
+import evidence_builder      # noqa: E402  (위 sys.path 보정 뒤에 와야 한다)
+import production_receipt    # noqa: E402
+import stability_gate        # noqa: E402
 
 # 영수증 종류 → 그 영수증을 만드는 워크플로
 KIND_TO_WORKFLOW = {

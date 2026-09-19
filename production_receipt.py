@@ -66,6 +66,33 @@ def cycle_date_now(now=None, back=10):
     return now.date().isoformat()      # 달력이 이상하면 벽시계 날짜라도 남긴다
 
 
+def previous_trading_day(now=None, back=15):
+    """오늘(KST) **직전**의 가장 최근 거래일. 판정 대상 거래일이다.
+
+    🔴 2026-09-19 생산 P0 ② — finalizer run #1 이 `TZ=Asia/Seoul date +%Y-%m-%d`
+       로 판정 대상을 정했다. 예약은 23:30 KST(금)였는데 Actions 가 **3시간 19분**
+       늦어 02:49 KST(토)에 돌았고, 대상 거래일이 `2026-09-19` — **토요일**이 됐다.
+       비거래일이므로 SKIP 만 기록된다. 금요일 9/18 은 아무도 판정하지 않는다.
+
+       이것은 수집기에서 방금 고친 것과 **같은 결함**이다. 벽시계 날짜를 거래일로
+       쓰면 cron 지연 한 번에 그 거래일을 통째로 잃는다.
+
+    그래서 "지금" 이 아니라 "**끝난 거래일**" 을 본다. 오늘 직전으로 한 칸 물러선 뒤
+    가장 가까운 거래일까지 되돌린다. 이 값은 실행이 몇 시간 늦어도 같은 답을 준다
+    (같은 날 안에서는 언제 돌든 불변이다). 이미 기록된 거래일이면 Gate 가 중복을
+    세지 않으므로 다시 돌아도 안전하다.
+    """
+    from hyeoks_trading_calendar import scheduled_session
+    now = now or datetime.datetime.now(KST)
+    day = now.date() - datetime.timedelta(days=1)
+    for _ in range(back + 1):
+        iso = day.isoformat()
+        if scheduled_session(iso):
+            return iso
+        day -= datetime.timedelta(days=1)
+    return (now.date() - datetime.timedelta(days=1)).isoformat()
+
+
 def dir_for(day, root=RECEIPT_DIR):
     return os.path.join(root, str(day))
 
@@ -166,6 +193,23 @@ def _selftest():
     chk("월요일은 월요일",
         cycle_date_now(datetime.datetime(2026, 9, 21, 9, 0, tzinfo=KST9)) == "2026-09-21")
 
+    # 🔴 판정 대상 거래일 — finalizer 가 쓰는 값(2026-09-19 생산 P0 ②)
+    #    실제로 겪은 상황: 예약 23:30 금 → 실제 02:49 토. 그래도 금요일을 판정해야 한다.
+    chk("토 02:49 에 늦게 돌아도 판정 대상은 금 9/18",
+        previous_trading_day(datetime.datetime(2026, 9, 19, 2, 49, tzinfo=KST9)) == "2026-09-18")
+    chk("토 06:30 정시도 같은 답",
+        previous_trading_day(datetime.datetime(2026, 9, 19, 6, 30, tzinfo=KST9)) == "2026-09-18")
+    chk("화 06:30 은 월요일을 판정한다",
+        previous_trading_day(datetime.datetime(2026, 9, 22, 6, 30, tzinfo=KST9)) == "2026-09-21")
+    chk("월 06:30 은 주말을 건너뛰고 금요일로",
+        previous_trading_day(datetime.datetime(2026, 9, 21, 6, 30, tzinfo=KST9)) == "2026-09-18")
+    chk("연휴(9/24·25 휴장) 다음 월요일은 9/23 을 판정한다",
+        previous_trading_day(datetime.datetime(2026, 9, 28, 6, 30, tzinfo=KST9)) == "2026-09-23",
+        previous_trading_day(datetime.datetime(2026, 9, 28, 6, 30, tzinfo=KST9)))
+    chk("판정 대상은 결코 오늘이 아니다(진행 중인 거래일을 판정하지 않는다)",
+        all(previous_trading_day(datetime.datetime(2026, 9, d, 6, 30, tzinfo=KST9))
+            < f"2026-09-{d:02d}" for d in range(15, 30)))
+
     with tempfile.TemporaryDirectory() as d:
         okk, msg = emit("2026-09-18", "scanner", {"scanned": 718}, root=d,
                         run_id="r1", sha="abc", fingerprint="fp1")
@@ -217,4 +261,8 @@ def _selftest():
 
 if __name__ == "__main__":
     import sys
+    if "--previous-trading-day" in sys.argv:
+        # finalizer 가 판정 대상 거래일을 여기서 받는다(쉘의 벽시계 날짜가 아니라)
+        print(previous_trading_day())
+        sys.exit(0)
     sys.exit(0 if _selftest() else 1)

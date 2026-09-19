@@ -5,14 +5,29 @@ name: 🚦 HYEOKS 안정화 사이클 판정 (finalizer)
 #
 # 하루 한 번, 영수증이 다 모인 뒤에 돈다. 너무 일찍 돌면 영수증이 아직 없으므로
 # 즉시 영구 FAIL 로 기록하지 않고 **보류**한다(gate 의 ready() 가 막는다).
+#
+# 🔴 2026-09-19 개정 — run #1 이 드러낸 생산 P0 ②.
+#    이전 판은 23:30 KST 예약 + `date +%Y-%m-%d`(벽시계) 였다. 실제로는:
+#      · 예약 14:30 UTC → 실제 17:49 UTC. Actions cron 이 **3시간 19분** 늦었다
+#      · 그 사이 KST 자정을 넘겨 판정 대상이 토요일 `2026-09-19` 가 됐다
+#      · 토요일은 비거래일 → SKIP. **금요일 9/18 은 아무도 판정하지 않는다**
+#    게다가 실적 PRIMARY 는 20:00 KST 예약인데 23:45 에 시작해 00:17 에 끝났다.
+#    "23:30 이면 다 끝났겠지" 라는 가정 자체가 생산에서 틀렸다.
+#
+#    그래서 두 가지를 바꾼다.
+#      ① **끝난 거래일을 다음 날 아침에 판정한다.** 06:30 KST(화~토).
+#         금요일 밤에 자정을 넘겨 끝난 실적도 이때는 이미 커밋돼 있다.
+#      ② 판정 대상은 벽시계가 아니라 `previous_trading_day()` 다.
+#         몇 시간 늦게 돌아도 같은 답을 준다 — 지연이 거래일을 삼키지 못한다.
 
 on:
   schedule:
-    - cron: '30 14 * * 1-5'   # 14:30 UTC = 23:30 KST — 스캐너·리포트·실적이 전부 끝난 뒤
+    # 21:30 UTC(월~금) = 06:30 KST(화~토). 직전 거래일을 판정한다.
+    - cron: '30 21 * * 1-5'
   workflow_dispatch:
     inputs:
       cycle_date:
-        description: '판정할 거래일 (YYYY-MM-DD, 비우면 오늘 KST)'
+        description: '판정할 거래일 (YYYY-MM-DD, 비우면 직전 거래일)'
         required: false
 
 concurrency:
@@ -41,10 +56,18 @@ jobs:
           python evidence_builder.py
           python production_receipt.py
 
-      - name: 📅 판정 대상 거래일
+      - name: 📅 판정 대상 거래일 (직전 거래일 — 벽시계가 아니다)
         run: |
+          set -euo pipefail
           D="${{ github.event.inputs.cycle_date }}"
-          [ -z "$D" ] && D=$(TZ=Asia/Seoul date +%Y-%m-%d)
+          if [ -z "$D" ]; then
+            # 🔴 `date +%Y-%m-%d` 금지. cron 지연 한 번에 거래일을 잃는다.
+            D=$(python production_receipt.py --previous-trading-day)
+          fi
+          case "$D" in
+            [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+            *) echo "::error::판정 대상 거래일을 얻지 못했다: '$D'"; exit 1 ;;
+          esac
           echo "CYCLE_DATE=$D" >> $GITHUB_ENV
           echo "대상 거래일: $D"
 
