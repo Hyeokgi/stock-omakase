@@ -20,6 +20,7 @@ import feature_telemetry
 TELEMETRY = feature_telemetry.Telemetry()
 import rank_pool
 import feature_store
+import badge_observations
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -2400,6 +2401,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             raw_rs_score if raw_rs_score is not None else "",  # 🆕 인덱스 33 — 스캔 완료 후 백분위(RS등급)로 덮어써짐
             v2_gate_flag
         ]
+        # Observation only: capture independent conditions before display priority
+        # hides combinations. The recorder explicitly whitelists fields, not locals.
+        badge_observations.capture(code, locals())
         return result_row, minervini_diag
     except Exception as e:
         print(f"❌ 분석 에러 [{name}]: {e}")
@@ -2576,6 +2580,7 @@ def update_technical_data(df_theme, all_theme_map):
         worker_count = bounded_workers(len(target_dict))
         SCAN_DEADLINE_SEC = 480  # 🆕 [수정] 8분 예산 — 10분 간격 트리거보다 여유 있게 짧게 잡아서, 느린 회차가
         #    다음 트리거와 겹쳐 뒤로 줄줄이 밀리는 걸 방지 (예전엔 시간 제한이 아예 없어서 15분씩 걸리기도 했음)
+        badge_observations.begin(target_dict, target_names - set(target_dict))
         scan_start = time.time()
         print(f"⚡ {len(target_dict)}개 고유 종목을 {worker_count}개의 스레드로 동시 타격합니다... (최대 {SCAN_DEADLINE_SEC}초 예산)")
 
@@ -2682,6 +2687,16 @@ def update_technical_data(df_theme, all_theme_map):
             for r in results:
                 if len(r) > 33: r[33] = ""
             print(f"⏭ [RS등급] 표본 부족({len(rs_candidates)}개)으로 이번 회차는 건너뜀")
+
+        # Save all targets, including failed/unfinished ones, before selection or
+        # ledger writes. RS display is now final; later earnings warnings excluded.
+        badge_observations.finish(
+            target_dict, results, target_names - set(target_dict),
+            market={'kospi_rate': kospi_rate, 'warning_market': is_warning_market,
+                    'index_above_ma5': index_above_ma5,
+                    'theme_rank': dict(theme_rank_dict),
+                    'rs_percentile_computed': len(rs_candidates) >= 10,
+                    'deadline_hit': deadline_hit})
 
         # 🆕 [진단용] 미너비니 추세템플릿 0개가 "정상적으로 희귀해서"인지 "조건이 잘못돼서"인지 구분하기 위해
         #    조건별 통과 종목 수를 집계해서 로그로 남김. 특정 조건 하나만 유독 0에 가깝다면 그 조건을 의심할 것.

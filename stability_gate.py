@@ -40,6 +40,7 @@ FAIL = "FAIL"
 #    ⚠️ 데이터 자동 커밋으로 매일 달라지는 저장소 전체 SHA 를 쓰지 않는다.
 #       **핵심 생산 코드·워크플로·스키마/계약 모듈**만 본다(사용자 지시 ⑥).
 FINGERPRINT_FILES = [
+    "badge_observations.py",
     # 🔴 2026-09-20 — naver_sources 는 종목코드 규칙을 krx_code 에 위임한다.
     #    위임한 모듈이 지문에 없으면 규칙이 바뀌어도 지문이 그대로다(3차 교차검증과 같은 계열).
     "krx_code.py",

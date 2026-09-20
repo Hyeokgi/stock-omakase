@@ -67,6 +67,10 @@ jobs:
           CI_CONCLUSION: ${{ env.CI_EVIDENCE }}
         run: python omakase.py
 
+      - name: 배지 조합 관측 보존 (비공개 원자료, 결과와 분리)
+        if: always()
+        run: python badge_observations.py --upload
+
       - name: 데이터 품질표 연결 검사 (원장 읽기 전용)
         if: always()
         run: python hyeoks_data_quality.py --check --spreadsheet-id 1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks
