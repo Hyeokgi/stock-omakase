@@ -191,6 +191,20 @@ def finish(targets, results, unresolved=(), market=None, now=None):
         print(f'::warning::badge observation finish failed: {type(exc).__name__}: {exc}')
 
 
+def _note_failure(folder, state, reason):
+    """실패를 **배지 자신의 상태**에 남긴다.
+
+    주 시스템(main.yml)은 이걸로 빨개지지 않는다. 대신 조용하지도 않다 —
+    상태 파일과 로그 경고 양쪽에 남는다. 수집 실패를 "수집 없음" 과 구분한다.
+    """
+    try:
+        save_once(Path(folder) / 'upload_status.json.gz',
+                  {'version': VERSION, 'state': state, 'reason': reason,
+                   'noted_at': dt.datetime.now(KST).isoformat()})
+    except Exception as exc:                       # 상태 기록 실패도 조용하지 않다
+        print(f'::warning::badge status note failed: {type(exc).__name__}')
+
+
 def archive(root=ROOT, uploader=None):
     """One attempt per bundle. An ambiguous upload is never automatically retried.
 
@@ -208,7 +222,8 @@ def archive(root=ROOT, uploader=None):
         if receipt.exists():
             continue
         if intent.exists():
-            print('::error::badge archive outcome uncertain; inspect Drive before retry')
+            print('::warning::badge archive outcome uncertain; inspect Drive before retry')
+            _note_failure(folder, 'UNCERTAIN', 'intent without receipt; no automatic retry')
             failures += 1
             continue
         try:
@@ -226,10 +241,12 @@ def archive(root=ROOT, uploader=None):
                                 'readback_verified': False})
             print(f'Badge archive acknowledged: sha256={digest}; readback not verified')
             if 'completed.json.gz' not in parts:
-                print('::error::badge scan incomplete; start evidence archived, not a valid sample')
+                print('::warning::badge scan incomplete; start evidence archived, not a valid sample')
+                _note_failure(folder, 'INCOMPLETE', 'no completed.json.gz; not a valid sample')
                 failures += 1
         except Exception as exc:
-            print(f'::error::badge archive failed or uncertain: {type(exc).__name__}; no automatic retry')
+            print(f'::warning::badge archive failed or uncertain: {type(exc).__name__}; no automatic retry')
+            _note_failure(folder, 'FAILED', f'{type(exc).__name__}; no automatic retry')
             failures += 1
     return 1 if failures else 0
 
@@ -260,4 +277,14 @@ if __name__ == '__main__':
     args = parser.parse_args()
     if not args.upload:
         parser.error('--upload required')
-    raise SystemExit(archive())
+    # 🔴 2026-09-20 — 이 스텝은 **주 시스템을 막지 않는다.**
+    #    배지 수집은 연구 자료다. 그런데 main.yml 안에 있으므로 여기서 exit 1 을 내면
+    #    run 결론이 failure 가 되고, evidence_builder 의 no_unexplained_failure 가
+    #    그 결론을 보고 **그 거래일 전체를 FAIL 로 만든다**(실측 확인).
+    #    consensus_aux 를 분리한 이유와 같은 범주다 — 보조 자료의 실패가 주 산출물의
+    #    판정을 흐리지 않게 한다. 실패는 자체 상태(upload_status.json.gz)와 경고에 남는다.
+    failed = archive()
+    if failed:
+        print(f'::warning::[배지 수집 저하] {failed}건 미전송/불확실 — '
+              '자체 상태에 기록했다. 주 산출물은 정상이므로 초록으로 둔다')
+    raise SystemExit(0)

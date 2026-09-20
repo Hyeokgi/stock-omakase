@@ -67,7 +67,13 @@ jobs:
           CI_CONCLUSION: ${{ env.CI_EVIDENCE }}
         run: python omakase.py
 
-      - name: 배지 조합 관측 보존 (비공개 원자료, 결과와 분리)
+      # 🔴 2026-09-20 — **비차단.** 연구 자료 수집이 주 산출물 판정을 흐리지 않는다.
+      #    여기서 exit 1 을 내면 main.yml run 이 failure 가 되고, evidence_builder 의
+      #    no_unexplained_failure 가 그 결론을 보고 **그 거래일을 FAIL** 로 만든다.
+      #    영수증 생성 회차(EOD 15:00~15:30)와 배지 창(14:20~15:10)이 15:00~15:10 에서
+      #    겹치므로 실제로 닿는 경로다. consensus_aux 분리와 같은 범주의 규율이다.
+      #    실패는 배지 자체 상태(upload_status.json.gz)와 ::warning:: 에 남는다.
+      - name: 배지 조합 관측 보존 (비공개 원자료 · 비차단 · 결과와 분리)
         if: always()
         run: python badge_observations.py --upload
 
