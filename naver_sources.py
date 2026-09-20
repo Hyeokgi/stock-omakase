@@ -7,6 +7,8 @@ import re
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+import krx_code            # KRX 단축코드 규칙 정본 — 이 파일에 복사하지 않는다
+
 
 class SourceError(RuntimeError):
     pass
@@ -53,9 +55,10 @@ def get_json(url, referer="https://stock.naver.com/"):
 def exact_code(payload, name):
     if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
         raise SourceError("Search schema changed")
-    codes = {str(i.get("code", "")) for i in payload["items"]
+    # 같은 규칙을 공유한다(위 주석 참조). 정규화한 코드를 담는다.
+    codes = {krx_code.normalize(i.get("code")) for i in payload["items"]
              if isinstance(i, dict) and i.get("name") == name
-             and re.fullmatch(r"\d{6}", str(i.get("code", "")))}
+             and krx_code.is_code(i.get("code"))}
     return next(iter(codes)) if len(codes) == 1 else None
 
 
@@ -110,7 +113,12 @@ def parse_consensus(payload):
 
 
 def consensus_estimates(code):
-    if not re.fullmatch(r"\d{6}", code):
+    # 🔴 2026-09-20 — 여기가 `\d{6}` 이었다. KRX 단축코드는 전부 숫자가 아니다.
+    #    생산 로그가 찾았다: `컨센서스 원천 실패 0015N0: Invalid stock code`.
+    #    같은 결함을 2026-08-28(스냅샷)·2026-09-15(계좌 2곳)에 이미 고쳤는데
+    #    규칙이 **복사돼** 있어서 이 파일만 남았다. 이제 정본을 공유한다.
+    code = krx_code.normalize(code)
+    if not code:
         raise SourceError("Invalid stock code")
     page = f"https://navercomp.wisereport.co.kr/v3/company/c1050001.aspx?cmp_cd={code}&theme=light&cn="
     source = read(page)

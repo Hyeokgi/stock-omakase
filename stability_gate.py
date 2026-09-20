@@ -40,6 +40,9 @@ FAIL = "FAIL"
 #    ⚠️ 데이터 자동 커밋으로 매일 달라지는 저장소 전체 SHA 를 쓰지 않는다.
 #       **핵심 생산 코드·워크플로·스키마/계약 모듈**만 본다(사용자 지시 ⑥).
 FINGERPRINT_FILES = [
+    # 🔴 2026-09-20 — naver_sources 는 종목코드 규칙을 krx_code 에 위임한다.
+    #    위임한 모듈이 지문에 없으면 규칙이 바뀌어도 지문이 그대로다(3차 교차검증과 같은 계열).
+    "krx_code.py",
     "naver_sources.py", "after_market_quotes.py", "telegram_target.py",
     "hyeoks_performance_memory.py", "hyeoks_data_quality.py",
     "hyeoks_run_freeze.py",
@@ -87,6 +90,14 @@ def fingerprint(root=".", files=None):
     return h.hexdigest()[:12]
 GATE_DIR = "data/stability_gate"
 GATE_LOG = os.path.join(GATE_DIR, "runs.csv")
+
+# 🔴 2026-09-20 — 운영 연속 기록(`runs.csv`)에 **역순 행을 끼워 넣지 않는다.**
+#    v3 의 streak() 는 이력이 단조 증가라고 가정한다. 그런데 finalizer 의
+#    `workflow_dispatch` 로 빠진 과거 거래일을 뒤늦게 판정하면 역순 행이 생기고,
+#    그것이 append-only 라 **복구 경로 없이** 연속 계산을 망가뜨렸다(재현 확인).
+#    그래서 뒤늦은 과거 판정은 버리지도, 본 기록에 섞지도 않고 여기 남긴다.
+#    이 파일은 감사용이며 **연속 카운트의 근거가 아니다.**
+AUDIT_LOG = os.path.join(GATE_DIR, "backfill_audit.csv")
 REQUIRED_STREAK = 3
 
 # 기준 7개. 키는 증거 딕셔너리의 이름이고 값은 사람이 읽을 설명이다.
@@ -136,6 +147,30 @@ def is_trading_day(date):
     return bool(scheduled_session(date))
 
 
+def _audit(cycle_date, run_id, source, evidence, note="", path=AUDIT_LOG,
+           fp="", aux_state=""):
+    """뒤늦은 과거 판정을 **감사 기록**으로만 남긴다. 연속 카운트에 쓰지 않는다.
+
+    streak() 는 이 파일을 읽지 않는다. 사람이 "그날은 어땠나" 를 물을 때 쓴다.
+    """
+    try:
+        ok, bad = (evaluate(evidence) if is_trading_day(cycle_date) else (None, []))
+    except EvidenceMissing as e:
+        ok, bad = False, [str(e)]
+    verdict = SKIP if ok is None else (PASS if ok else FAIL)
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    fresh = not os.path.exists(path)
+    with open(path, "a", encoding="utf-8", newline="") as fh:
+        w = csv.writer(fh)
+        if fresh:
+            w.writerow(HEADER)
+        w.writerow([cycle_date, run_id, source, verdict, fp]
+                   + [("-" if verdict == SKIP else ("Y" if evidence.get(k) else "N"))
+                      for k in KEYS]
+                   + [aux_state, note, GATE_VERSION])
+    return verdict, bad
+
+
 def record(cycle_date, run_id, source, evidence, note="", path=GATE_LOG,
            fp=None, aux_state="", root="."):
     """**거래일 사이클 하나**를 append-only 로 남긴다.
@@ -152,6 +187,23 @@ def record(cycle_date, run_id, source, evidence, note="", path=GATE_LOG,
     rows = load(path)
     if any(r["cycle_date"] == cycle_date for r in rows):
         return False, f"이미 기록된 거래일 {cycle_date} — 같은 날을 두 번 세지 않는다"
+
+    # 🔴 2026-09-20 — 운영 기록은 **단조 증가**여야 한다. 역순은 거부하고,
+    #    판정 자체는 감사 기록으로 보존한다(사용자 지시 ①). 조용히 버리지 않는다.
+    prior = [r["cycle_date"] for r in rows if r.get("cycle_date")]
+    if prior and cycle_date < max(prior):
+        why = (f"역순 기록 거부: {cycle_date} 는 마지막 기록 {max(prior)} 보다 이르다. "
+               f"운영 연속 기록에 끼워 넣지 않는다")
+        # 🔴 거부가 본질이고 감사 기록은 부수적이다. 감사 쓰기가 실패해도 **거부는
+        #    성립해야** 한다 — 안 그러면 쓰기 오류가 거부를 예외로 바꿔 finalizer 를
+        #    죽인다(내 첫 구현이 그랬다). 대신 조용히 넘기지도 않는다.
+        try:
+            _audit(cycle_date, run_id, source, evidence, note=why,
+                   path=AUDIT_LOG, fp=fp or fingerprint(root), aux_state=aux_state)
+            why += f" — 감사 기록 {AUDIT_LOG} 에 남겼다"
+        except Exception as e:                    # noqa: BLE001 — 사유를 싣고 계속한다
+            why += f" — ⚠️ 감사 기록 실패({type(e).__name__}) 이 판정은 보존되지 않았다"
+        return False, why
 
     if not is_trading_day(cycle_date):
         verdict, bad = SKIP, []
@@ -182,37 +234,50 @@ def streak(rows=None, path=GATE_LOG, fp=None, root="."):
     """
     rows = load(path) if rows is None else rows
     current = fp or fingerprint(root)
-    n = 0
+    # 🔴 2026-09-20 — v3 는 이력에 이상 행이 하나라도 있으면 `return 0` 이었다.
+    #    `runs.csv` 는 append-only 이고 과거 행을 고치지 않으므로 **영구 0** 이었다.
+    #    3/3 을 달성한 뒤 뒤늦은 과거 판정 한 번으로 영구히 0 이 됐다(재현 확인).
+    #
+    #    그래서 **앞에서부터** 걸어 마지막 이상 지점을 찾고, **그보다 뒤의 행만** 센다.
+    #    · 이상 행을 무시해 앞뒤를 잇지 않는다 — 연속성은 그 지점에서 끊긴다
+    #    · 그보다 뒤에 정상 거래일이 쌓이면 다시 셀 수 있다 — 회복 경로가 있다
+    #    · 이상 행이 가장 최근 끝에 닿아 있으면 셀 꼬리가 없다 → 0
+    #      (이력 전체가 역순이거나 최신 행이 중복이면 그 자체가 신뢰 불가다)
+    #    과거 행은 지우지 않는다. 읽는 방식만 바꾼다.
+    resume = 0                     # 이 인덱스부터가 신뢰할 수 있는 구간이다
     seen = set()
-    last_day = None
-    # Duplicate/out-of-order dates are ambiguous evidence, not extra cycles.
-    for r in rows:
+    prev = None
+    for i, r in enumerate(rows):
         try:
-            day = datetime.date.fromisoformat(r['cycle_date'])
+            day = datetime.date.fromisoformat(r["cycle_date"])
         except (KeyError, TypeError, ValueError):
-            return 0
-        if day in seen or (last_day is not None and day <= last_day):
-            return 0
+            resume, seen, prev = i + 1, set(), None
+            continue               # 날짜를 못 읽으면 순서를 보증할 수 없다
+        if day in seen or (prev is not None and day <= prev):
+            resume, seen, prev = i + 1, {day}, day
+            continue               # 중복·역순 — 여기까지는 신뢰하지 않는다
         seen.add(day)
-        last_day = day
+        prev = day
+
+    n = 0
     newer = None
-    for r in reversed(rows):
-        day = datetime.date.fromisoformat(r['cycle_date'])
+    for r in reversed(rows[resume:]):
+        day = datetime.date.fromisoformat(r["cycle_date"])
         v = r.get("verdict")
         if v == SKIP:
             if is_trading_day(day.isoformat()):
-                break
-            continue
+                break              # 거래일을 SKIP 으로 적은 것은 성공 근거가 아니다
+            continue               # 비거래일 — 연속을 늘리지도 끊지도 않는다
         if v != PASS:
             break
         if r.get("fingerprint") != current or not is_trading_day(day.isoformat()):
-            break            # 파이프라인이 바뀌었다 — 여기부터는 다른 시스템이다
+            break                  # 파이프라인이 바뀌었다 — 여기부터는 다른 시스템이다
         if newer is not None:
             expected = newer - datetime.timedelta(days=1)
             while not is_trading_day(expected.isoformat()):
                 expected -= datetime.timedelta(days=1)
             if day != expected:
-                break
+                break              # 평일 결측 — 연속이 아니다
         n += 1
         newer = day
     return n
