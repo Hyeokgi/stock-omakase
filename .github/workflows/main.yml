@@ -75,7 +75,13 @@ jobs:
       #    실패는 배지 자체 상태(upload_status.json.gz)와 ::warning:: 에 남는다.
       - name: 배지 조합 관측 보존 (비공개 원자료 · 비차단 · 결과와 분리)
         if: always()
-        run: python badge_observations.py --upload
+        # 셸 가드는 **마지막 한 겹**이다. 모듈 로드 실패(문법 오류·의존성 부재)는
+        # 파이썬 코드가 돌기 전이라 모듈 안에서 막을 수 없다. 그 경우까지 덮는다.
+        # 조용히 삼키지 않는다 — 경고를 남기고 스텝만 초록으로 둔다.
+        run: |
+          if ! python badge_observations.py --upload; then
+            echo "::warning::[배지 수집 실패] 수집기가 기동하지 못했다(모듈 로드 등) — 배지 실패만으로 주 시스템을 실패 처리하지 않는다"
+          fi
 
       - name: 데이터 품질표 연결 검사 (원장 읽기 전용)
         if: always()

@@ -248,7 +248,10 @@ def archive(root=ROOT, uploader=None):
             print(f'::warning::badge archive failed or uncertain: {type(exc).__name__}; no automatic retry')
             _note_failure(folder, 'FAILED', f'{type(exc).__name__}; no automatic retry')
             failures += 1
-    return 1 if failures else 0
+    # 🔴 2026-09-20 — 예전에는 `1 if failures else 0` 이었다. 종료코드로 쓰던 잔재다.
+    #    그 값을 요약 메시지에 "N건" 으로 실었더니 **5건이 실패해도 1건으로 보고**됐다.
+    #    종료코드로 더는 쓰지 않으므로 실제 건수를 돌려준다. `if archive():` 는 그대로다.
+    return failures
 
 
 def select_predecision(bundles, day):
@@ -283,8 +286,21 @@ if __name__ == '__main__':
     #    그 결론을 보고 **그 거래일 전체를 FAIL 로 만든다**(실측 확인).
     #    consensus_aux 를 분리한 이유와 같은 범주다 — 보조 자료의 실패가 주 산출물의
     #    판정을 흐리지 않게 한다. 실패는 자체 상태(upload_status.json.gz)와 경고에 남는다.
-    failed = archive()
+    # 🔴 ① 처리한 실패 경로뿐 아니라 **예기치 못한 예외**도 주 시스템을 막지 않는다.
+    #    (이전 판은 archive() 내부의 미포착 예외가 그대로 올라가 CLI 가 죽었다.
+    #     모듈 로드 자체의 실패는 이 코드가 돌기 전이라 여기서 막을 수 없다 —
+    #     그 마지막 한 겹은 main.yml 의 셸 가드가 맡는다.)
+    try:
+        failed = archive()
+    except Exception as exc:                       # noqa: BLE001 — 연구 수집은 생산을 막지 않는다
+        print(f'::warning::[배지 수집 실패] 처리되지 않은 예외 {type(exc).__name__}: {exc} — '
+              '배지 실패만으로 주 시스템을 실패 처리하지 않는다')
+        raise SystemExit(0)
     if failed:
-        print(f'::warning::[배지 수집 저하] {failed}건 미전송/불확실 — '
-              '자체 상태에 기록했다. 주 산출물은 정상이므로 초록으로 둔다')
+        # 🔴 ③ 이 코드는 주 산출물의 정상 여부를 **확인하지 않는다.** 확인하지 않은 것을
+        #    주장하지 않는다. 말할 수 있는 것은 "배지 실패만으로 떨어뜨리지 않는다" 뿐이다.
+        #    주 산출물 자체의 판정은 evidence_builder 의 7기준이 따로 본다.
+        print(f'::warning::[배지 수집 저하] {failed}건 미전송/불확실 — 자체 상태에 기록했다. '
+              '배지 실패만으로 주 시스템을 실패 처리하지 않는다'
+              '(주 산출물의 정상 여부는 Gate 기준이 따로 판정한다)')
     raise SystemExit(0)

@@ -131,6 +131,101 @@ class TheStepNeverBlocksTheMainSystemTests(unittest.TestCase):
         self.assertEqual(self.run_cli(seeded=False).returncode, 0)
 
 
+class HonestReportingTests(unittest.TestCase):
+    """2026-09-20 코덱스 지적 3건 — 말이 동작보다 앞서지 않게 한다.
+
+    ① "항상 exit 0" 은 과한 표현이었다. 처리한 실패 경로만 비차단이었고
+       미포착 예외는 그대로 올라갔다(실측 확인).
+    ② "N건" 이 실제 건수가 아니었다. `archive()` 가 `1 if failures else 0` 이라
+       **5건이 실패해도 1건으로 보고**됐다.
+    ③ "주 산출물은 정상" 은 이 코드가 확인하지 않는 사실이다.
+    """
+
+    def setUp(self):
+        self.tmp = __import__("tempfile").TemporaryDirectory()
+        self.root = pathlib.Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    # ② 건수
+    def test_the_failure_count_is_the_real_count(self):
+        for i in range(5):
+            seed(self.root / f"2026092{i}T150000000000")
+        self.assertEqual(B.archive(root=self.root, uploader=lambda n, d: None), 5,
+                         "요약에 싣는 값이므로 실제 건수여야 한다")
+
+    def test_a_single_failure_still_reports_one(self):
+        seed(self.root / "20260921T150000000000")
+        self.assertEqual(B.archive(root=self.root, uploader=lambda n, d: None), 1)
+
+    def test_no_failure_is_falsy(self):
+        seed(self.root / "20260921T150000000000")
+        self.assertFalse(B.archive(root=self.root, uploader=lambda n, d: "id"))
+
+    # ① 미포착 예외
+    def test_an_unhandled_exception_inside_archive_does_not_block(self):
+        """`archive()` 첫 줄의 `import hyeoks_run_freeze` 는 폴더 루프 **밖**이라
+        per-bundle try/except 가 덮지 않는다. 실제로 미포착인 그 경로를 쓴다.
+
+        (`__main__` 으로 돌아가는 모듈은 `import badge_observations` 와 다른 객체라
+         모듈 속성 패치로는 이 경로에 닿지 못한다 — 첫 시도가 그래서 헛통과했다.)
+        """
+        tmp = __import__("tempfile").TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        work = pathlib.Path(tmp.name)
+        # 깨진 대역 모듈을 **cwd** 에 둔다. `-c` 로 띄우면 sys.path[0] 이 cwd 라
+        # 저장소본보다 먼저 잡힌다(스크립트를 직접 실행하면 스크립트 디렉터리가
+        # sys.path[0] 이라 저장소본이 이긴다 — 두 번째 시도가 그래서 헛통과했고,
+        # 그때 실제 네트워크 업로드까지 나갔다).
+        (work / "hyeoks_run_freeze.py").write_text(
+            "raise RuntimeError('freeze module broken')\n", encoding="utf-8")
+        seed(work / "data/research_private/badge_observations" / "20260921T150200000000")
+        env = dict(os.environ, PYTHONPATH=str(ROOT))
+        launcher = ("import runpy, sys; sys.argv = ['badge_observations.py', '--upload']; "
+                    f"runpy.run_path(r'{ROOT / 'badge_observations.py'}', run_name='__main__')")
+        p = subprocess.run([sys.executable, "-c", launcher],
+                           cwd=str(work), capture_output=True, text=True, timeout=60, env=env)
+        out = p.stdout + p.stderr
+        self.assertNotIn("ProxyError", out, "시험이 실제 네트워크를 타면 안 된다")
+        self.assertEqual(p.returncode, 0, f"미포착 예외가 스텝을 죽이면 안 된다:\n{out[-600:]}")
+        self.assertIn("처리되지 않은 예외", out, "조용히 삼키지 않는다")
+
+    # ③ 확인하지 않은 것을 주장하지 않는다
+    def test_it_does_not_claim_the_main_output_is_healthy(self):
+        src = (ROOT / "badge_observations.py").read_text(encoding="utf-8")
+        live = "\n".join(l for l in src.splitlines() if not l.lstrip().startswith("#"))
+        self.assertNotIn("주 산출물은 정상이므로", live,
+                         "이 코드는 주 산출물의 정상 여부를 확인하지 않는다")
+        self.assertIn("배지 실패만으로 주 시스템을 실패 처리하지 않는다", live)
+
+
+class ShellGuardTests(unittest.TestCase):
+    """모듈 로드 실패는 파이썬 코드가 돌기 전이라 모듈 안에서 막을 수 없다.
+
+    그 마지막 한 겹은 워크플로의 셸 가드가 맡는다. GitHub 은 `bash -e` 로 돌린다.
+    """
+
+    def run_block(self):
+        import yaml
+        d = yaml.safe_load((ROOT / ".github/workflows/main.yml").read_text(encoding="utf-8"))
+        for s in d["jobs"]["build"]["steps"]:
+            if "배지" in str(s.get("name", "")):
+                return s["run"]
+        self.fail("배지 스텝을 찾지 못했다")
+
+    def test_the_step_survives_a_collector_that_cannot_start(self):
+        script = self.run_block().replace("python badge_observations.py --upload",
+                                          'python -c "import nope_xyz_module"')
+        tmp = __import__("tempfile").NamedTemporaryFile("w", suffix=".sh", delete=False)
+        self.addCleanup(os.unlink, tmp.name)
+        tmp.write(script); tmp.close()
+        p = subprocess.run(["bash", "-e", tmp.name], capture_output=True, text=True, timeout=60)
+        self.assertEqual(p.returncode, 0,
+                         f"bash -e 에서도 스텝이 초록이어야 한다:\n{p.stdout}{p.stderr}")
+        self.assertIn("::warning::", p.stdout + p.stderr, "조용히 삼키지 않는다")
+
+
 class SeparationFromTheMainJudgementTests(unittest.TestCase):
     """배지 상태가 Gate 판정의 **입력이 아니다** — 구조로 확인한다."""
 
