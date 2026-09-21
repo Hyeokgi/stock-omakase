@@ -1,6 +1,6 @@
 {
   "status": "verified",
-  "evidence": "krx-scheduled-2026h2-v1 (checked_at=2026-09-13, scope=2026-08-01~2026-12-31) 예정 휴장 목록과 관측 거래일이 2026-08-28~2026-09-15 전 구간 일치. 출처: https://www.kasi.re.kr/kor/post/newsMaterial/32031; https://regulation.krx.co.kr/contents/RGL/03/03020401/RGL03020401.jsp",
+  "evidence": "krx-scheduled-2026h2-v1 (checked_at=2026-09-13, scope=2026-08-01~2026-12-31) 예정 휴장 목록과 관측 거래일이 2026-08-28~2026-09-21 전 구간 일치. 출처: https://www.kasi.re.kr/kor/post/newsMaterial/32031; https://regulation.krx.co.kr/contents/RGL/03/03020401/RGL03020401.jsp",
   "sessions": [
     "2026-08-28",
     "2026-08-31",
@@ -14,7 +14,11 @@
     "2026-09-10",
     "2026-09-11",
     "2026-09-14",
-    "2026-09-15"
+    "2026-09-15",
+    "2026-09-16",
+    "2026-09-17",
+    "2026-09-18",
+    "2026-09-21"
   ],
   "establishes": "예정 휴장 달력(외부 출처)과 관측 거래일이 일치한다",
   "does_not_establish": "실제 장 운영 인증이 아니다. 임시휴장·시스템 장애로 예정과 실제가 다를 수 있고, 등록 달력 자체가 'scheduled_closures_only' 라고 밝히고 있다"
