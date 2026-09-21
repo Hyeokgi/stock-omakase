@@ -16,6 +16,16 @@ TELEMETRY = feature_telemetry.Telemetry()
 # 🔴 2026-09-18 P0-3 — 이전 영수증은 V3 를 읽은 **직후**(약 808행)에 떨어졌다.
 #    그 뒤로 후보선정·AI·PDF·발송·원장 적재가 전부 남아 있으므로 그건 완료의 증거가
 #    아니었다. 이제 상태를 모아 두었다가 **끝에서 한 번** 최종 영수증을 발행한다.
+# 🔴 2026-09-22 P0 — `KST` 를 여기서 쓰는데 정의가 **29줄 아래**(옛 48행)에 있었다.
+#    `734098e` 에서 RECEIPT_STATE 를 최상단에 추가하며 생긴 순서 오류다.
+#        NameError: name 'KST' is not defined   (hyeoks_analyst.py:19)
+#    모듈 로드 중 즉사라 리포트가 **9/21 07:07 부터 7회 연속 전멸**했다.
+#    `import sys` 누락(7f123c5)과 같은 계열 — 640건이 통과하고 CI 가 초록인데
+#    생산 진입점이 죽는다. 시험이 이 파일을 **실행하지 않기 때문**이다
+#    (gspread·pdfkit·genai 를 최상단에서 import 해서 import 자체가 무겁다).
+#    정의를 쓰기 전으로 올린다.
+KST = datetime.timezone(datetime.timedelta(hours=9))
+
 RECEIPT_STATE = {"started_at": datetime.datetime.now(KST),   # 영수증 거래일 고정
                  "v3": {}, "v1_parsed": 0, "v2_parsed": 0,
                  "ledger_expected": [], "ledger_found": [], "ledger_verified": None,
@@ -45,7 +55,6 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 from telegram_target import chat_id as _chat_id
 TELEGRAM_CHAT_ID = _chat_id()
 GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxyuSEjPmg8rZPjLlG-YKck07QYxmZm0HtxvWAumvV2zp7RRpVaKDo6D-CiQ6pLqKFm/exec"
-KST = datetime.timezone(datetime.timedelta(hours=9))
  
 KIS_APP_KEY = os.environ.get("KIS_APP_KEY")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET")

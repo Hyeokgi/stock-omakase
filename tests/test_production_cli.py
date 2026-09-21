@@ -15,6 +15,7 @@
          (이 검사 하나면 이번 NameError 는 코드를 돌리지 않고도 잡힌다)
 """
 import ast
+import builtins
 import datetime
 import json
 import os
@@ -110,6 +111,129 @@ class UndefinedModuleUseTests(unittest.TestCase):
         """
         scanned = {p.name for p in self.scanned()}
         self.assertIn("workflow_states.py", scanned)
+
+
+class ModuleLevelNameOrderTests(unittest.TestCase):
+    """🔴 2026-09-22 P0 — **모듈 최상단에서 정의보다 먼저 쓴 이름**을 잡는다.
+
+        hyeoks_analyst.py:19  RECEIPT_STATE = {"started_at": datetime.datetime.now(KST) ...}
+        hyeoks_analyst.py:48  KST = datetime.timezone(...)
+        → NameError: name 'KST' is not defined  (모듈 로드 중 즉사)
+
+    리포트가 9/21 07:07 부터 **7회 연속 전멸**했다. 640건이 통과하고 CI 는 초록이었다.
+
+    왜 기존 검사가 못 봤나 — `UndefinedModuleUseTests` 는 `모듈.속성` 형태의
+    **속성 접근만** 본다. `datetime.datetime.now(KST)` 의 `KST` 는 맨이름 인자라
+    그 검사에 안 걸린다. 그리고 `hyeoks_analyst.py` 는 gspread·pdfkit·genai 를
+    최상단에서 import 해서 **아무 시험도 이 파일을 실행하지 않는다.**
+
+    그래서 실행하지 않고 **순서만** 본다. 모듈 최상위 문장을 차례로 걸으며
+    그 시점까지 묶인 이름을 모으고, 아직 안 묶인 이름을 쓰면 잡는다.
+    함수·클래스 **본문은 건너뛴다** — 나중에 호출되므로 순서 규칙이 다르다.
+    """
+
+    SCOPE_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+
+    def top_level_bindings(self, tree):
+        """모듈 **최상위에 직접** 묶이는 이름 → 그 줄번호(가장 이른 것).
+
+        `if __name__ == ...:` 같은 블록 **안**의 바인딩은 세지 않는다.
+        그 안의 이름은 같은 블록 안에서만 쓰이므로 순서 문제가 아니다.
+        """
+        out = {}
+
+        def put(name, line):
+            if name not in out:
+                out[name] = line
+
+        for stmt in tree.body:
+            if isinstance(stmt, ast.Import):
+                for a in stmt.names:
+                    put(a.asname or a.name.split(".")[0], stmt.lineno)
+            elif isinstance(stmt, ast.ImportFrom):
+                for a in stmt.names:
+                    put(a.asname or a.name, stmt.lineno)
+            elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                put(stmt.name, stmt.lineno)
+            elif isinstance(stmt, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+                tgts = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
+                for t in tgts:
+                    for n in ast.walk(t):
+                        if isinstance(n, ast.Name):
+                            put(n.id, stmt.lineno)
+        return out
+
+    def loads_in(self, node):
+        """이 문장이 **최상위에서 즉시** 읽는 이름들. 함수/클래스 본문은 제외."""
+        out = []
+
+        def walk(n):
+            if isinstance(n, self.SCOPE_NODES):
+                # 데코레이터·기반클래스·기본값은 지금 평가된다. 본문은 아니다.
+                for d in getattr(n, "decorator_list", []):
+                    walk(d)
+                for b in getattr(n, "bases", []):
+                    walk(b)
+                args = getattr(n, "args", None)
+                for d in (list(getattr(args, "defaults", [])) +
+                          [x for x in getattr(args, "kw_defaults", []) if x]):
+                    walk(d)
+                return
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
+                out.append((n.id, n.lineno))
+            for c in ast.iter_child_nodes(n):
+                walk(c)
+
+        walk(node)
+        return out
+
+    def check(self, path):
+        """최상위에서 **자기보다 뒤에 정의되는** 최상위 이름을 쓰면 잡는다.
+
+        이 규칙만 본다 — 그게 `KST` 사고의 정확한 모양이고, 중첩 블록의
+        순서까지 흉내 내면 오탐이 쏟아진다(첫 구현이 1,106건을 냈다).
+        """
+        tree = ast.parse(pathlib.Path(path).read_text(encoding="utf-8"))
+        defined = self.top_level_bindings(tree)
+        bad = []
+        for stmt in tree.body:
+            if isinstance(stmt, self.SCOPE_NODES):
+                continue
+            for name, line in self.loads_in(stmt):
+                d = defined.get(name)
+                if d is not None and d > line:
+                    bad.append(f"{pathlib.Path(path).name}:{line} {name} "
+                               f"(정의는 {d}행)")
+        return bad
+
+    def test_no_module_level_name_is_used_before_it_is_defined(self):
+        bad = []
+        for path in scanned_sources():
+            bad += self.check(path)
+        self.assertEqual(bad, [], f"정의 전에 쓰는 최상위 이름: {bad}")
+
+    def test_the_check_catches_the_real_regression(self):
+        """주장만 하는 시험이 아니라는 것 — 실제 결함 모양을 만들어 잡히는지 본다."""
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False,
+                                         encoding="utf-8") as f:
+            f.write("import datetime\n"
+                    "STATE = {'t': datetime.datetime.now(KST)}\n"
+                    "KST = datetime.timezone(datetime.timedelta(hours=9))\n")
+            tmp = f.name
+        self.addCleanup(os.unlink, tmp)
+        bad = self.check(tmp)
+        self.assertTrue(any("KST" in b for b in bad), f"잡지 못했다: {bad}")
+
+    def test_it_does_not_flag_names_defined_later_but_used_inside_functions(self):
+        """함수 본문은 나중에 실행된다 — 오탐을 내면 안 된다."""
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False,
+                                         encoding="utf-8") as f:
+            f.write("def f():\n    return LATER\n\nLATER = 1\n")
+            tmp = f.name
+        self.addCleanup(os.unlink, tmp)
+        self.assertEqual(self.check(tmp), [])
 
 
 class WorkflowStatesCliTests(unittest.TestCase):
