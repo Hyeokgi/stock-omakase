@@ -2798,6 +2798,14 @@ def update_technical_data(df_theme, all_theme_map):
             "기관/외인 누적(5일)", "목표가(AI)", "손절가(AI)", "종목쿼터", AFTER_HEADER, NXT_HEADER, "장구분",
             "V1 차트점수", "V1 표시", "V2 수급점수", "V2 표시", "RS등급"
         ]
+        def _col_letter(n):
+            """1-based 열 번호를 시트 열 문자로. 34 → 'AH'."""
+            out = ""
+            while n:
+                n, rem = divmod(n - 1, 26)
+                out = chr(65 + rem) + out
+            return out
+
         def _row_for_helper_sheet(r):
             # 🆕 [수정] "관망 · 조건미달"류(실제 매매 신호 없음)는 목표가/손절가도 "관망"으로 비워서,
             #    기계적으로 계산된 숫자가 마치 근거 있는 추천처럼 보이지 않도록 함. results 자체는 안 건드림(DB_스캐너 선정에 영향 없게).
@@ -2810,7 +2818,13 @@ def update_technical_data(df_theme, all_theme_map):
         helper_sheet_data = [extended_headers] + [_row_for_helper_sheet(r) for r in results]
         try:
             helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
-            helper_sheet.batch_clear([f"A{len(helper_sheet_data) + 1}:AG"])
+            # 🔴 2026-09-22 — 정리 범위가 **AG(33열)** 로 굳어 있었는데 쓰는 폭은 34열(AH)이다.
+            #    종목 수가 줄어든 날 AH(RS등급)만 남은 잔여 행이 생겼고(9/22 729·730행에
+            #    39·77 이 남아 있었다), analyst 가 그 행을 종목으로 읽어 000000 으로 바꾸며
+            #    V1/V2 변환 오류를 냈다. 이제 **실제 출력 폭에서 끝 열을 계산한다** —
+            #    헤더가 늘어나도 다시 어긋나지 않는다.
+            _last_col = _col_letter(len(extended_headers))
+            helper_sheet.batch_clear([f"A{len(helper_sheet_data) + 1}:{_last_col}"])
             apply_change_rate_formatting(doc, helper_sheet, len(helper_sheet_data), col_index=3,
                                           extra_numeric_rules=[(33, 90, {"red": 0.1, "green": 0.6, "blue": 0.2})])  # 🆕 등락률 색상 + RS등급 90↑ 초록 강조
         except Exception as e: print(f"⚠️ [helper_sheet update Error] {e}")

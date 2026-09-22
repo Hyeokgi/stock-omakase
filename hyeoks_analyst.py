@@ -9,6 +9,8 @@ import xml.etree.ElementTree as ET
 import concurrent.futures
 import earnings_schema
 import feature_telemetry
+import krx_code
+import krx_amount
 
 # 분류 근거: docs/silent_exception_분류_2026-09-18.md
 TELEMETRY = feature_telemetry.Telemetry()
@@ -28,6 +30,8 @@ KST = datetime.timezone(datetime.timedelta(hours=9))
 
 RECEIPT_STATE = {"started_at": datetime.datetime.now(KST),   # 영수증 거래일 고정
                  "v3": {}, "v1_parsed": 0, "v2_parsed": 0,
+                 # 2026-09-22 — 제외한 행과 결측은 **건수와 사유를 남긴다**(조용히 버리지 않는다)
+                 "invalid_rows": 0, "invalid_reasons": {}, "theme_money_missing": 0,
                  "ledger_expected": [], "ledger_found": [], "ledger_verified": None,
                  "pdf": "", "stage": "start"}
 # 🏷️ 타점 해석은 의존성 없는 별도 모듈로 뺐다(F01, 2026-09-07).
@@ -785,12 +789,20 @@ try:
                 if len(row) > max(date_idx, theme_idx, val_idx):
                     r_date = str(row[date_idx]).strip()
                     r_theme = str(row[theme_idx]).split(' (대장:')[0].strip()
-                    try:
-                        r_val = int(str(row[val_idx]).replace(',', '').strip())
+                    # 🔴 2026-09-22 — 쉼표만 지우고 int() 하면 **전부 실패**한다.
+                    #    시트는 표시 형식이 적용된 `1,938억원` 을 돌려준다.
+                    #    9/22 영수증의 theme_money ValueError 4,132건이 이것이었다.
+                    #    빈 칸이 아니라 정상 표기를 못 읽은 것이므로 단위를 명시적으로 읽는다.
+                    r_val, _st = krx_amount.parse(row[val_idx])
+                    if _st == krx_amount.OK:
                         raw_theme_daily_map[(r_date, r_theme)] = raw_theme_daily_map.get((r_date, r_theme), 0) + r_val
-                    except Exception as _e:
-                        # 🔇 ⑤ 테마 일별 대금 — **대장 판정 근거**
-                        TELEMETRY.note('theme_money', type(_e).__name__, feature_telemetry.CRITICAL)
+                    elif _st == krx_amount.MISSING:
+                        # 빈 칸은 결측이다. 0 으로 더하지 않고 세기만 한다.
+                        RECEIPT_STATE["theme_money_missing"] += 1
+                    else:
+                        # 🔇 ⑤ 테마 일별 대금 — **대장 판정 근거**. 값이 있는데 못 읽으면 오류다.
+                        TELEMETRY.note('theme_money', 'UnreadableAmount',
+                                       feature_telemetry.CRITICAL, str(row[val_idx])[:24])
 
     except Exception as e:
         print(f"⚠️ 역사적 주도 테마 대금 연산 보조맵 생성 누락: {e}")
@@ -828,9 +840,21 @@ try:
     RECEIPT_STATE["v3_read_ok"] = not _v3_stats.get("reason")
 
     cands_list = []
+    _rows_seen = len(tech_data)
     for r in tech_data:
         if len(r) < 21: continue
-        name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
+        # 🔴 2026-09-22 — 종목이 줄어든 날 `주가데이터_보조` 에 **RS등급만 남은 잔여 행**이
+        #    생긴다(omakase 가 34열을 쓰는데 정리 범위는 AG=33열까지였다).
+        #    그 행은 종목코드가 비어 zfill(6) 이 `000000` 을 만들고, 그대로 후보로 읽혀
+        #    V1/V2 변환 오류까지 냈다(9/22 v1·v2 각 2건).
+        #    저장소의 공유 규칙으로 종목 여부를 먼저 판정한다 — 몇 점을 줄지의 문제가 아니다.
+        code = krx_code.normalize(r[1])
+        name = str(r[0]).strip()
+        if not code:
+            RECEIPT_STATE["invalid_rows"] += 1
+            RECEIPT_STATE["invalid_reasons"]["종목코드아님"] = (
+                RECEIPT_STATE["invalid_reasons"].get("종목코드아님", 0) + 1)
+            continue
         curr_p, chg = str(r[2]).strip(), str(r[3]).strip()
         tajeom_raw = str(r[8]).strip()
         theme_name = str(r[19]).strip()
@@ -893,7 +917,14 @@ try:
             # 📊 계측용 원본 타점. clean 된 값은 위험 문구가 잘려 나가 판정에 쓸 수 없다.
             'tajeom_raw': tajeom_raw,
         })
- 
+
+    # 2026-09-22 — 제외한 행은 조용히 사라지지 않는다. 건수와 사유를 남긴다.
+    if RECEIPT_STATE["invalid_rows"]:
+        print(f"ℹ️ [후보 제외] {_rows_seen}행 중 {RECEIPT_STATE['invalid_rows']}행 — "
+              f"{RECEIPT_STATE['invalid_reasons']} (종목코드가 아닌 잔여 행)")
+    if RECEIPT_STATE["theme_money_missing"]:
+        print(f"ℹ️ [테마 대금 결측] {RECEIPT_STATE['theme_money_missing']}행 — 빈 칸은 0 으로 더하지 않았다")
+
     high_score_cands = [c for c in cands_list if c['score'] >= 30]
     if len(high_score_cands) < 15:
         cands_list.sort(key=lambda x: x['score'], reverse=True)
@@ -1647,6 +1678,11 @@ try:
                            "out_of_range": _v3.get("out_of_range", 0),
                            "schema_reason": _v3.get("reason", "")},
                 },
+                # 2026-09-22 — 후보에서 뺀 행과 결측은 **건수와 사유를 남긴다**.
+                #    조용히 버리지 않는다. Gate 기준에는 들어가지 않는 참고 기록이다.
+                "excluded": {"invalid_rows": RECEIPT_STATE.get("invalid_rows", 0),
+                             "reasons": dict(RECEIPT_STATE.get("invalid_reasons") or {}),
+                             "theme_money_missing": RECEIPT_STATE.get("theme_money_missing", 0)},
                 # P0-3 — 리포트 원장도 Gate 검증 대상이다
                 "ledger": {"expected_trade_ids": _led_exp,
                            "found_trade_ids": RECEIPT_STATE.get("ledger_found") or [],
