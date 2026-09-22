@@ -1,0 +1,9 @@
+{
+  "schema": "cycle-rejection-v1",
+  "state": "BLOCKED_CYCLE_UNRESOLVED",
+  "observed_at": "2026-09-23T00:24:29.536120+09:00",
+  "phase": "primary",
+  "cycle_date": null,
+  "sheet_access_started": false,
+  "recovery": "Review intended cycle; dispatch explicitly. Do not backdate observations."
+}
