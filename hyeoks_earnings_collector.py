@@ -505,8 +505,13 @@ if __name__ == "__main__":
     import production_receipt
     _RUN_STARTED_AT = datetime.datetime.now(KST)   # 영수증 거래일을 여기서 고정한다
     # Resolve before any sheet access/writes; ambiguous delays need an explicit cycle.
-    _PRODUCTION_CYCLE = production_receipt.collector_cycle(
-        _RUN_STARTED_AT, os.environ.get('PRODUCTION_CYCLE_DATE'))
+    try:
+        _PRODUCTION_CYCLE = production_receipt.collector_cycle(
+            _RUN_STARTED_AT, os.environ.get('PRODUCTION_CYCLE_DATE'))
+    except ValueError:
+        _saved, _where = production_receipt.record_cycle_rejection(_RUN_STARTED_AT, PHASE)
+        print(f'::error::production cycle unresolved; no sheet access; incident_saved={_saved} {_where}')
+        raise
     doc = get_doc()
     corp_map = load_or_build_corp_code_map(doc) if RUN_PRIMARY else {}
     target_map, _sheet_health = get_target_stocks(doc)

@@ -113,6 +113,31 @@ def collector_cycle(started_at, explicit=None):
     return cycle_date_now(started_at)
 
 
+def record_cycle_rejection(started_at, phase, root=RECEIPT_DIR):
+    """Persist a rejected attempt, never invent a cycle or a success receipt.
+
+    Only allowlisted operational fields go to the public repository. The
+    _incidents directory is not a trading-date receipt directory.
+    """
+    import uuid
+    folder = pathlib.Path(root) / '_incidents'
+    payload = {
+        'schema': 'cycle-rejection-v1', 'state': 'BLOCKED_CYCLE_UNRESOLVED',
+        'observed_at': started_at.astimezone(KST).isoformat(),
+        'phase': phase if phase in ('primary', 'aux', 'all') else 'unknown',
+        'cycle_date': None, 'sheet_access_started': False,
+        'recovery': 'Review intended cycle; dispatch explicitly. Do not backdate observations.',
+    }
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / (uuid.uuid4().hex + '.json')
+        with path.open('x', encoding='utf-8') as stream:
+            json.dump(payload, stream, ensure_ascii=False, indent=2)
+        return True, str(path)
+    except OSError as exc:
+        return False, type(exc).__name__
+
+
 def dir_for(day, root=RECEIPT_DIR):
     return os.path.join(root, str(day))
 

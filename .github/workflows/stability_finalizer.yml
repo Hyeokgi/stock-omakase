@@ -24,6 +24,9 @@ on:
   schedule:
     # 21:30 UTC(월~금) = 06:30 KST(화~토). 직전 거래일을 판정한다.
     - cron: '30 21 * * 1-5'
+    # 08:30 KST Tue-Sat: retry the same previous session; duplicate days do not count twice.
+    # This shares GitHub's scheduler and is NOT an independent liveness guarantee.
+    - cron: '30 23 * * 1-5'
   workflow_dispatch:
     inputs:
       cycle_date:
