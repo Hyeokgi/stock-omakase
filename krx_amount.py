@@ -30,9 +30,10 @@
 받아 주면 1억 배 틀린 값을 조용히 더하게 된다. 모르는 단위는 `bad` 다.
 단위 환산은 하지 않는다 — 숫자 부분을 열의 단위 그대로 돌려준다.
 """
+import math
 import re
 
-RULE_VERSION = "krx-amount-v1"
+RULE_VERSION = "krx-amount-v2"
 
 # 열이 선언한 단위. 이것 말고는 받지 않는다.
 ALLOWED_SUFFIXES = ("억원", "억")
@@ -49,7 +50,23 @@ def parse(raw):
     값은 **열의 단위 그대로**다(거래대금(억원) 이면 억원 단위의 정수).
     소수는 버림한다 — 쓰는 쪽이 `int()` 로 쓰므로 소수는 표시 반올림의 흔적이다.
     """
-    text = str(raw or "").strip()
+    # 🔴 2026-09-23 — `str(raw or "")` 는 **숫자 0 을 결측으로** 만들었다(코덱스 재현).
+    #    `0 or ""` 가 `""` 이기 때문이다. 0.0 도 같았다. 결측은 None 과 빈 문자열뿐이다.
+    if raw is None:
+        return None, MISSING
+    if isinstance(raw, bool):
+        # bool 은 int 의 하위형이라 그냥 두면 True 가 1억원이 된다. 금액이 아니다.
+        return None, BAD
+    if isinstance(raw, int):
+        return raw, OK
+    if isinstance(raw, float):
+        if not math.isfinite(raw):
+            return None, BAD
+        return int(raw), OK                  # 문자열 경로와 같이 0 쪽으로 버림
+    if not isinstance(raw, str):
+        return None, BAD                     # 목록·사전·객체는 금액 칸의 값이 아니다
+
+    text = raw.strip()
     if not text:
         return None, MISSING
 
@@ -110,8 +127,21 @@ def _selftest():
     chk("단위가 앞에 오면 오류", parse("억원1938")[1] == BAD)
     chk("쉼표 자리가 틀리면 오류", parse("1,93,8억원")[1] == BAD)
 
+    # ── 숫자 입력: 0 은 결측이 아니다 (v1 결함, 코덱스 재현)
+    chk("숫자 0 은 값이다 — v1 은 결측으로 읽었다", parse(0) == (0, OK))
+    chk("숫자 0.0 도 값이다", parse(0.0) == (0, OK))
+    chk("문자열 '0' 과 숫자 0 이 같은 답을 낸다", parse("0") == parse(0))
+    chk("정수는 그대로", parse(1938) == (1938, OK) and parse(-1938) == (-1938, OK))
+    chk("실수는 문자열 경로와 같이 버림", parse(1938.7) == (1938, OK)
+        and parse(-1938.7) == parse("-1,938.7억원"))
+    chk("NaN·무한대는 오류", parse(float("nan"))[1] == BAD and parse(float("inf"))[1] == BAD)
+    chk("bool 은 금액이 아니다 — True 가 1억원이 되면 안 된다",
+        parse(True)[1] == BAD and parse(False)[1] == BAD)
+    chk("목록·사전·객체는 오류(v1 은 빈 목록을 결측으로 읽었다)",
+        all(parse(v)[1] == BAD for v in ([], {}, object(), [1938])))
+
     # ── 어떤 입력에도 예외를 내지 않는다(계측이 죽으면 안 된다)
-    for weird in (object(), [], {}, 3.14, True):
+    for weird in (object(), [], {}, 3.14, True, float("nan"), b"1938", (1, 2)):
         parse(weird)
     chk("이상한 입력에도 예외를 내지 않는다", True)
 

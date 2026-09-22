@@ -78,6 +78,45 @@ class 거래대금표시형식(unittest.TestCase):
         self.assertEqual(total, 2841)
 
 
+class 숫자입력(unittest.TestCase):
+    """2026-09-23 — v1 은 `str(raw or "")` 때문에 숫자 0 을 결측으로 읽었다(코덱스 재현).
+
+    지금 생산 경로는 `get_all_values()` 라 문자열만 오지만, 공용 함수이므로
+    값을 숫자로 넘기는 호출부가 생기는 순간 0억원이 조용히 사라진다.
+    """
+
+    def test_숫자_0_은_결측이_아니다(self):
+        self.assertEqual(krx_amount.parse(0), (0, krx_amount.OK))
+        self.assertEqual(krx_amount.parse(0.0), (0, krx_amount.OK))
+
+    def test_문자열과_숫자가_같은_답을_낸다(self):
+        for s_val, n_val in (("0", 0), ("1938", 1938), ("-1938", -1938)):
+            self.assertEqual(krx_amount.parse(s_val), krx_amount.parse(n_val), n_val)
+
+    def test_결측은_None_과_빈_문자열뿐이다(self):
+        for blank in (None, "", "   "):
+            self.assertEqual(krx_amount.parse(blank)[1], krx_amount.MISSING, repr(blank))
+        for not_blank in (0, 0.0, [], {}, False):
+            self.assertNotEqual(krx_amount.parse(not_blank)[1], krx_amount.MISSING,
+                                f"{not_blank!r} 는 결측이 아니다")
+
+    def test_bool_은_금액이_아니다(self):
+        """bool 은 int 의 하위형이다. 그냥 두면 True 가 1억원으로 더해진다."""
+        self.assertEqual(krx_amount.parse(True)[1], krx_amount.BAD)
+        self.assertEqual(krx_amount.parse(False)[1], krx_amount.BAD)
+
+    def test_유한하지_않은_실수는_오류다(self):
+        for v in (float("nan"), float("inf"), float("-inf")):
+            self.assertEqual(krx_amount.parse(v)[1], krx_amount.BAD, v)
+
+    def test_실수는_문자열_경로와_같이_버린다(self):
+        self.assertEqual(krx_amount.parse(1938.7), krx_amount.parse("1,938.7억원"))
+        self.assertEqual(krx_amount.parse(-1938.7), krx_amount.parse("-1,938.7억원"))
+
+    def test_규칙_버전이_올라갔다(self):
+        self.assertEqual(krx_amount.RULE_VERSION, "krx-amount-v2")
+
+
 class 실제블록실행(unittest.TestCase):
     """소스에 그 호출이 있는지가 아니라, **그 블록을 실제로 돌려** 결과를 본다.
 
