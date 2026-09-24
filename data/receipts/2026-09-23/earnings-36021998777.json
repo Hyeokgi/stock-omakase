@@ -1,0 +1,53 @@
+{
+ "code_sha": "4e46feaf",
+ "cycle_date": "2026-09-23",
+ "emitted_at": "2026-09-25T01:17:47.542441+09:00",
+ "fingerprint": "bfb421d66cb9",
+ "kind": "earnings",
+ "payload": {
+  "dart_success": 154,
+  "expected_state": "reached",
+  "features": {
+   "v3": {
+    "errors": 0,
+    "measured": true,
+    "out_of_range": 0,
+    "schema_reason": "",
+    "unparsable": 0,
+    "used": 170
+   }
+  },
+  "missing_corp_codes": [
+   "005935"
+  ],
+  "newest_stamp": "2026-09-25 00:41:35",
+  "oldest_stamp": "2026-09-20 23:28:15",
+  "outcomes": {
+   "allowed_insufficient_data": 10,
+   "allowed_missing_corp_code": 1,
+   "circuit_breaker_unprocessed": 0,
+   "hard_error": 0,
+   "success": 154,
+   "time_budget_unprocessed": 0
+  },
+  "rows_final": 170,
+  "schema_reason": "",
+  "schema_version": "earnings-v2",
+  "sheet_health": {
+   "DB_스캐너": "ok",
+   "DB_중장기": "ok",
+   "기업정보": "ok"
+  },
+  "target_source_health": "ok",
+  "targets": 165,
+  "time_budget_hit": false,
+  "unaccounted": 0,
+  "v3_blank": 0,
+  "v3_out_of_range": 0,
+  "v3_unparsable": 0,
+  "v3_used": 170,
+  "write_blocked": ""
+ },
+ "receipt_version": "receipt-v2",
+ "run_id": "36021998777"
+}
