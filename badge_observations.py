@@ -14,6 +14,13 @@ import krx_code
 from hyeoks_trading_calendar import scheduled_session, load_nontrading, next_trading_day
 
 VERSION = 'badge-observations-v1'
+# 🔴 2026-09-25 — 조건값 해석 규칙의 버전. 번들 스키마(VERSION)와 따로 둔다.
+#    v1: `isinstance(v, bool)` 만 참·거짓으로 인정 → pandas 비교로 나온 `numpy.bool_`
+#        (예: current_price >= ma20) 이 **결측(None)으로 사라졌다.** v1 기록의 None 은
+#        "계산 안 됨" 과 "NumPy 참·거짓" 이 섞여 있다 — 결측률로 해석하지 않는다.
+#    v2: NumPy 참·거짓은 그대로 보존. None 은 결측, 그 밖의 타입(0/1·문자열 등)은
+#        **거짓으로 바꾸지 않고** 결측 + 사유(bad_type)로 남긴다. 배지별 건수를 기록한다.
+CONDITIONS_VERSION = 'badge-conditions-v2'
 ROOT = Path('data/research_private/badge_observations')
 KST = dt.timezone(dt.timedelta(hours=9))
 # These are independent computed conditions, NOT the priority-suppressed display badges.
@@ -43,7 +50,37 @@ def in_window(now):
             and scheduled_session(now.date().isoformat()))
 
 
+def _numpy_scalar(value):
+    """NumPy 스칼라면 (True, 파이썬 값). numpy 를 import 하지 않고 모듈 이름으로 판별한다."""
+    if type(value).__module__ != 'numpy' or not hasattr(value, 'item'):
+        return False, None
+    try:
+        return True, value.item()
+    except (TypeError, ValueError):
+        return False, None
+
+
+def condition(value):
+    """(값, 사유) — 참·거짓만 참·거짓으로 인정한다. 모르는 것을 False 로 만들지 않는다.
+
+    bool / numpy.bool_  → (bool, None)
+    None                → (None, 'missing')
+    그 밖(0·1·문자열 등) → (None, 'bad_type:<타입명>')
+    """
+    if isinstance(value, bool):
+        return value, None
+    if value is None:
+        return None, 'missing'
+    is_np, item = _numpy_scalar(value)
+    if is_np and isinstance(item, bool):
+        return item, None
+    return None, 'bad_type:' + type(value).__name__
+
+
 def clean(value):
+    is_np, item = _numpy_scalar(value)
+    if is_np:
+        value = item
     if value is None or isinstance(value, (str, bool, int)):
         return value
     if isinstance(value, float):
@@ -100,14 +137,19 @@ def capture(code, context):
     if not _active:
         return
     try:
-        flags = {k: context.get(k) if isinstance(context.get(k), bool) else None
-                 for k in FLAGS}
+        flags, issues = {}, {}
+        for k in FLAGS:
+            flags[k], why = condition(context.get(k))
+            if why:
+                issues[k] = why
         diagnostic = context.get('minervini_diag') or {}
         if not diagnostic.get('has_data'):
             flags['is_minervini_template'] = None
+            issues['is_minervini_template'] = 'no_data'
         metrics = {k: context.get(k) for k in METRICS}
         value = clean({'computed_at': dt.datetime.now(KST).isoformat(),
-                       'conditions': flags, 'metrics': metrics,
+                       'conditions_version': CONDITIONS_VERSION,
+                       'conditions': flags, 'condition_issues': issues, 'metrics': metrics,
                        'minervini_diagnostic': {k: diagnostic.get(k)
                                                for k in ('has_data', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6')}})
         with _lock:
@@ -115,6 +157,32 @@ def capture(code, context):
                 _features[krx_code.normalize(code)] = value
     except Exception as exc:
         print(f'::warning::badge condition capture failed: {type(exc).__name__}')
+
+
+def condition_counts(rows):
+    """배지별 참·거짓·결측 건수. 계산된 행(independent_conditions 있음)만 센다.
+
+    결측 중 타입 이상은 bad_type 으로 따로 센다(결측 건수에도 포함).
+    수집 실패 행은 여기 넣지 않는다 — missing_or_failed 가 따로 센다.
+    """
+    counts = {k: {'true': 0, 'false': 0, 'missing': 0, 'bad_type': 0} for k in FLAGS}
+    for row in rows:
+        ev = row.get('independent_conditions')
+        if not isinstance(ev, dict):
+            continue
+        conds = ev.get('conditions') or {}
+        issues = ev.get('condition_issues') or {}
+        for k in FLAGS:
+            v = conds.get(k)
+            if v is True:
+                counts[k]['true'] += 1
+            elif v is False:
+                counts[k]['false'] += 1
+            else:
+                counts[k]['missing'] += 1
+                if str(issues.get(k, '')).startswith('bad_type'):
+                    counts[k]['bad_type'] += 1
+    return counts
 
 
 def build(targets, results, features, started, available, unresolved=(), market=None):
@@ -155,6 +223,8 @@ def build(targets, results, features, started, available, unresolved=(), market=
         'timing_ok': timing, 'scope': 'scanner_targets_NOT_entire_market',
         'expected': len(targets), 'returned': len(indexed),
         'missing_or_failed': sum(r['status'] == 'MISSING_OR_FAILED' for r in rows),
+        'conditions_version': CONDITIONS_VERSION,
+        'condition_counts': condition_counts(rows),
         'unresolved_names': sorted(unresolved), 'market_context': market or {},
         'run_id': os.getenv('GITHUB_RUN_ID', ''),
         'run_attempt': os.getenv('GITHUB_RUN_ATTEMPT', ''),
@@ -184,9 +254,15 @@ def finish(targets, results, unresolved=(), market=None, now=None):
         save_once(folder / 'completed.json.gz', {
             'state': 'COMPLETE', 'sha256': digest, 'expected': payload['expected'],
             'missing_or_failed': payload['missing_or_failed'],
-            'timing_ok': payload['timing_ok'], 'version': VERSION})
+            'timing_ok': payload['timing_ok'], 'version': VERSION,
+            'conditions_version': payload['conditions_version'],
+            'condition_counts': payload['condition_counts']})
         print(f"Badge observations: {payload['expected']} targets, "
-              f"{payload['missing_or_failed']} missing/failed; timing_ok={payload['timing_ok']}")
+              f"{payload['missing_or_failed']} missing/failed; timing_ok={payload['timing_ok']}; "
+              f"{payload['conditions_version']}")
+        for k, c in payload['condition_counts'].items():
+            print(f"  {k}: T={c['true']} F={c['false']} 결측={c['missing']}"
+                  + (f" (타입이상 {c['bad_type']})" if c['bad_type'] else ''))
     except Exception as exc:
         print(f'::warning::badge observation finish failed: {type(exc).__name__}: {exc}')
 
