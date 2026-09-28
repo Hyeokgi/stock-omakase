@@ -1,0 +1,50 @@
+{
+ "code_sha": "890dc6a5",
+ "cycle_date": "2026-09-28",
+ "emitted_at": "2026-09-28T15:06:26.413560+09:00",
+ "fingerprint": "1af4a5c8d3a5",
+ "kind": "analyst",
+ "payload": {
+  "excluded": {
+   "invalid_rows": 0,
+   "reasons": {},
+   "theme_money_missing": 0
+  },
+  "expected_state": "reached",
+  "features": {
+   "v1": {
+    "errors": 0,
+    "measured": true,
+    "parsed": 740
+   },
+   "v2": {
+    "errors": 0,
+    "measured": true,
+    "parsed": 740
+   },
+   "v3": {
+    "errors": 0,
+    "measured": true,
+    "out_of_range": 0,
+    "schema_reason": "",
+    "unparsable": 0,
+    "used": 170
+   }
+  },
+  "ledger": {
+   "expected_trade_ids": [],
+   "expected_zero_reason": "그날 리포트 픽 없음",
+   "found_trade_ids": []
+  },
+  "pdf": "HYEOKS_Daily_20260928.pdf",
+  "stage": "final",
+  "telemetry": {
+   "by_feature": {},
+   "gate_blocking_total": 0,
+   "reasons": {},
+   "samples": {}
+  }
+ },
+ "receipt_version": "receipt-v2",
+ "run_id": "36384349769"
+}
