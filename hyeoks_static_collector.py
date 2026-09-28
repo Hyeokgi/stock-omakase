@@ -103,6 +103,21 @@ def health(counts, errors=()):
     return dead, html_ok, json_ok, msg
 
 
+def notify_degraded(dead, json_ok):
+    """대체 진행 경보를 **텔레그램으로** 보낼지. 로그에는 늘 남는다.
+
+    🔴 2026-09-28 — 구 HTML 다섯 곳은 사이트 개편으로 표가 사라졌다(9/16 부터 매일 전부 0건).
+       JSON 단일 소스가 정상인 이 상태가 **평상시**가 됐는데, 같은 ⚠️ 가 매일 아침 왔다.
+       매일 오는 경보는 읽히지 않는다 — 진짜 🚨 가 묻힌다.
+
+    보내지 않는 것은 딱 하나: HTML 전부 사망 + JSON 정상(= 알려진 평상 상태).
+    그 밖은 그대로 보낸다 — HTML 일부만 죽음·일부 부활(상태 변화), JSON 이상.
+    JSON 까지 죽으면 main() 의 🚨 수집 비정상 경로가 따로 알린다(이 함수와 무관).
+    """
+    all_html_dead = len(dead) == len(MIN_BY_SOURCE)
+    return not (all_html_dead and json_ok)
+
+
 def fetch_junk_from_json():
     """신규 JSON API 전종목 스캔에서 위험종목만 골라 {code: name} 반환."""
     out = {}
@@ -258,7 +273,11 @@ def main():
 
     # 🆕 한쪽 소스만 죽은 경우는 계속 진행하되 반드시 알린다(조용히 열화되는 것 방지).
     if degraded_msg:
-        telegram_warn(degraded_msg)
+        print(degraded_msg)
+        if notify_degraded(dead, json_ok):
+            telegram_warn(degraded_msg)
+        else:
+            print("ℹ️ 구 HTML 전부 미달 + JSON 정상 = 알려진 평상 상태 — 텔레그램 생략(로그만)")
     if not json_ok:
         print(f"⚠️ JSON 소스 이상(위험종목 {counts.get('JSON',0)}건) — HTML {counts.get('관리종목',0)}건으로 진행.")
 

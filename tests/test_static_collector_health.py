@@ -6,6 +6,8 @@
 
 네트워크·시트 없이 `health()` 순수 함수만 건다.
 """
+import contextlib
+import io
 import sys
 import types
 import unittest
@@ -89,6 +91,27 @@ class HealthTests(unittest.TestCase):
         self.assertFalse(html_ok)
 
 
+class NotifyPolicyTests(unittest.TestCase):
+    """2026-09-28 — 대체 진행 경보의 텔레그램 발송 여부. 생략은 딱 한 경우뿐이다."""
+
+    ALL = ["관리종목", "거래정지", "투자주의", "투자경고"]
+
+    def test_known_steady_state_is_silent(self):
+        self.assertFalse(C.notify_degraded(self.ALL, json_ok=True))
+
+    def test_all_html_dead_and_json_bad_is_not_silenced(self):
+        self.assertTrue(C.notify_degraded(self.ALL, json_ok=False))
+
+    def test_partial_html_death_alerts(self):
+        for dead in (["거래정지"], ["거래정지", "투자주의", "투자경고"]):
+            with self.subTest(dead=dead):
+                self.assertTrue(C.notify_degraded(dead, json_ok=True))
+
+    def test_policy_tracks_source_list_size(self):
+        """소스가 늘면 '전부' 의 뜻도 따라간다 — 숫자 4 를 박지 않는다."""
+        self.assertEqual(len(self.ALL), len(C.MIN_BY_SOURCE))
+
+
 class MainSmokeTests(unittest.TestCase):
     """`main()` 을 실제로 돌린다.
 
@@ -115,15 +138,41 @@ class MainSmokeTests(unittest.TestCase):
         finally:
             C.fetch_junk_universe, C.telegram_warn = orig_fetch, orig_warn
 
-    def test_degraded_path_runs_and_alerts(self):
-        """9/16 실제 상황 — 죽지 않고 돌면서 경보를 보낸다."""
+    def test_degraded_path_runs_and_logs_without_telegram(self):
+        """9/16 실제 상황(HTML 전부 사망 + JSON 정상) — 죽지 않고 돈다.
+
+        🔴 2026-09-28 사용자 결정: 이 상태가 9/16 부터 매일 반복되는 평상 상태가 됐다.
+           텔레그램은 보내지 않고 **로그에는 같은 문구를 그대로** 남긴다.
+        """
         counts = {"관리종목": 0, "거래정지": 0, "투자주의": 0, "투자경고": 0,
                   "투자위험": 0, "JSON": 244, "JSON스캔": 2873}
-        sent, code = self.run_main(counts, 244)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            sent, code = self.run_main(counts, 244)
         self.assertIsNone(code, "정상 종료해야 한다")
+        self.assertEqual(sent, [], "평상 상태는 텔레그램을 보내지 않는다")
+        log = out.getvalue()
+        self.assertIn("4/4 소스 미달", log)        # 경보 문구는 로그에 그대로
+        self.assertIn("전부", log)
+        self.assertIn("텔레그램 생략", log)
+
+    def test_partial_html_death_still_alerts(self):
+        """HTML 일부만 죽거나 일부 부활 = 상태 변화 — 지금처럼 텔레그램을 보낸다."""
+        counts = {"관리종목": 220, "거래정지": 0, "투자주의": 0, "투자경고": 0,
+                  "투자위험": 0, **JSON_OK}
+        sent, code = self.run_main(counts, 244)
+        self.assertIsNone(code)
         self.assertEqual(len(sent), 1)
-        self.assertIn("4/4 소스 미달", sent[0])
-        self.assertIn("전부", sent[0])
+        self.assertIn("3/4 소스 미달", sent[0])
+
+    def test_html_dead_and_json_below_floor_still_aborts_with_alarm(self):
+        """JSON 까지 기준 미달이면 생략 대상이 아니다 — 🚨 로 중단한다."""
+        counts = {"관리종목": 0, "거래정지": 0, "투자주의": 0, "투자경고": 0,
+                  "투자위험": 0, "JSON": 30, "JSON스캔": 2873}
+        sent, code = self.run_main(counts, 30)
+        self.assertEqual(code, 1)
+        self.assertEqual(len(sent), 1)
+        self.assertIn("수집 비정상", sent[0])
 
     def test_healthy_path_sends_nothing(self):
         sent, code = self.run_main({**HEALTHY_HTML, **JSON_OK}, 244)
