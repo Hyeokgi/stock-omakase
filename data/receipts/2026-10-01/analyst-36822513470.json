@@ -1,0 +1,56 @@
+{
+ "code_sha": "8f689e67",
+ "cycle_date": "2026-10-01",
+ "emitted_at": "2026-10-01T15:09:56.006884+09:00",
+ "fingerprint": "1af4a5c8d3a5",
+ "kind": "analyst",
+ "payload": {
+  "excluded": {
+   "invalid_rows": 0,
+   "reasons": {},
+   "theme_money_missing": 0
+  },
+  "expected_state": "reached",
+  "features": {
+   "v1": {
+    "errors": 0,
+    "measured": true,
+    "parsed": 746
+   },
+   "v2": {
+    "errors": 0,
+    "measured": true,
+    "parsed": 746
+   },
+   "v3": {
+    "errors": 0,
+    "measured": true,
+    "out_of_range": 0,
+    "schema_reason": "",
+    "unparsable": 0,
+    "used": 210
+   }
+  },
+  "ledger": {
+   "expected_trade_ids": [
+    "2026-10-01_리포트TOP2_단기_080220",
+    "2026-10-01_리포트TOP2_장기_005950"
+   ],
+   "expected_zero_reason": "",
+   "found_trade_ids": [
+    "2026-10-01_리포트TOP2_단기_080220",
+    "2026-10-01_리포트TOP2_장기_005950"
+   ]
+  },
+  "pdf": "HYEOKS_Daily_20261001.pdf",
+  "stage": "final",
+  "telemetry": {
+   "by_feature": {},
+   "gate_blocking_total": 0,
+   "reasons": {},
+   "samples": {}
+  }
+ },
+ "receipt_version": "receipt-v2",
+ "run_id": "36822513470"
+}
