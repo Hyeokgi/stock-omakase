@@ -656,12 +656,18 @@ def main():
         print(f"ℹ️ 이미 존재 — {dup} (중복 실행으로 보고 종료)")
         return 0
 
+    # 🔴 2026-10-01 코덱스 교차점검 — capturedAt 은 **실행 시작** 시각이다(15:05 슬롯 실측 ~15:02:48).
+    #    전 종목 가격은 아래 한 번의 요청으로 온다. 그 요청의 앞뒤 시각을 따로 남긴다.
+    #    capturedAt 의 뜻은 바꾸지 않는다 — 시간창 판정·결측 감시·계좌 어댑터가 그 뜻으로 읽는다.
+    #    ⚠️ 수신 시각도 '네이버가 그 값을 만든 시각'·'체결 가능 시각'의 인증이 아니다.
+    price_requested = datetime.datetime.now(KST)
     try:
         r = SESSION.get(MARKET_URL, verify=False, timeout=30)
         rows = r.json() if r.status_code == 200 else []
     except Exception as e:
         print(f"❌ 시장 조회 실패: {e}")
         return 1
+    price_received = datetime.datetime.now(KST)
 
     if not isinstance(rows, list) or len(rows) < MIN_ROWS:
         # ⚠️ 이 API 계열은 잘린 응답에도 200 을 준다. 건수로 판정해야 한다.
@@ -707,7 +713,11 @@ def main():
         w.writerow(["#meta", f"capturedAt={now.isoformat()}", f"slot={a.slot}",
                     f"total={len(rows)}", f"kept={len(top)}",
                     f"KOSPI={idx['KOSPI'][0]}({idx['KOSPI'][1]})",
-                    f"KOSDAQ={idx['KOSDAQ'][0]}({idx['KOSDAQ'][1]})"])
+                    f"KOSDAQ={idx['KOSDAQ'][0]}({idx['KOSDAQ'][1]})",
+                    # 뒤에 붙인다 — 앞 키의 순서를 바꾸지 않는다(key=value 로 읽지만 혹시 모를 위치 의존 대비)
+                    f"priceRequestedAt={price_requested.isoformat()}",
+                    f"priceReceivedAt={price_received.isoformat()}",
+                    f"writtenAt={datetime.datetime.now(KST).isoformat()}"])
         w.writerow(FIELDS + THEME_COLS + SECTOR_COLS)
         up_belong = sectors.get("upjong", ([], {}))[1]
         gr_belong = sectors.get("group", ([], {}))[1]

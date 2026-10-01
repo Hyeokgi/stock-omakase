@@ -41,6 +41,7 @@ import sys
 from hyeoks_closing_bet import (SNAP_DIR, KST, MIN_TURNOVER, PILOT_DAYS, COST,
                                 PRICE_LIMIT, LIMIT_TOL, ADJ_TOL,
                                 read_snapshot, scan_dates, exit_open, _f)
+from hyeoks_trading_calendar import load_nontrading, next_trading_day
 
 # ── 사전등록 정의 — 데이터를 보고 바꾸지 않는다 ─────────────────────────
 LEADER_POOL     = 5      # B: 테마 내 거래대금 상위 N — omakase.py:604 `[:5]`
@@ -296,8 +297,11 @@ def layer_diffs(daily):
     return out
 
 
-def build_day(date, snap_dir, with_returns):
+def build_day(date, snap_dir, with_returns, nontrading=None, dates=None):
     """하루치 A/B/C 분해. `with_returns=False` 면 **수익률을 계산하지 않는다.**"""
+    nt = _calendar(snap_dir) if nontrading is None else nontrading
+    if _is_closed(date, nt):
+        return {"date": date, "skip": "휴장일파일"}
     p15 = os.path.join(snap_dir, f"{date}_1505.csv.gz")
     p13 = os.path.join(snap_dir, f"{date}_1300.csv.gz")
     if not (os.path.exists(p15) and os.path.exists(p13)):
@@ -330,10 +334,12 @@ def build_day(date, snap_dir, with_returns):
         return day
 
     # ── Stage 1 — 익일 시가 수익률 (위 사전등록 사양 그대로) ──────────
-    nxt = next_trading_snapshots(date, snap_dir)
+    exit_date, why = session_link(date, scan_dates(snap_dir) if dates is None else dates, nt)
+    day["exit_date"] = exit_date
+    nxt = {} if why else next_trading_snapshots(date, snap_dir, nt, dates)
     if not nxt:
         day["returns"] = None
-        day["returns_note"] = "익일 스냅샷 없음"
+        day["returns_note"] = why or "익일 스냅샷 없음"
         return day
     res, drops = {}, {}
     for name, items in (("A", A), ("B", Bc), ("C", C)):
@@ -346,19 +352,51 @@ def build_day(date, snap_dir, with_returns):
     return day
 
 
-def next_trading_snapshots(date, snap_dir):
-    """`date` **다음** 관측 거래일의 슬롯들. 없으면 빈 dict.
+def _calendar(snap_dir):
+    """Q5(`hyeoks_closing_bet.collect`)와 **같은 휴장 달력**을 쓴다."""
+    return load_nontrading(snap_dir)
 
-    관측된 스냅샷 달력을 그대로 쓴다 — 휴장 달력을 여기서 새로 해석하지 않는다.
-    `scan_dates` 가 곧 '우리가 실제로 관측한 거래일' 이다.
+
+def _is_closed(date, nontrading):
+    """등록 휴장일·주말에 생긴 파일. 거래일로 세지 않는다(Q5 `휴장일파일` 과 같은 규칙)."""
+    try:
+        weekend = datetime.date.fromisoformat(date).weekday() >= 5
+    except ValueError:
+        return True
+    return weekend or date in nontrading
+
+
+def session_link(date, dates, nontrading):
+    """(청산일, 사유) — 진입일 `date` 를 **달력상 다음 거래일**에 잇는다. 사유가 빈 문자열이면 성숙.
+
+    🔴 2026-10-01 코덱스 교차점검 — 이전 판은 '관측 파일 목록의 다음 날짜' 를 익일로 썼다.
+       스냅샷이 하루 빠지면 이틀치 수익률이 '익일 시가' 로 계산되고, 그날도 성숙으로 셌다.
+       현재 자료(8/28~9/30, 22일)에는 빈 날이 없어 실제 오염은 없었다 — 구조적 위험이었다.
+       Q5(`hyeoks_closing_bet.build_day`)가 이미 쓰는 규칙으로 맞춘다:
+         · 진입일이 휴장일·주말 파일이면 → `휴장일파일`
+         · 다음 거래일은 **검증된 휴장 달력**으로 정한다(`next_trading_day`)
+         · 그날 15:05 파일이 없으면 → 아직 안 왔으면 `익일미성숙`, 지났으면 `익일달력결측`
+       결측일을 건너뛰어 그 다음 파일에 붙이지 않는다.
     """
-    dates = scan_dates(snap_dir)
-    if date not in dates:
+    if _is_closed(date, nontrading):
+        return None, "휴장일파일"
+    try:
+        nd = next_trading_day(date, nontrading)
+    except ValueError:
+        return None, "달력범위밖"
+    if nd is None or nd not in dates:
+        last = dates[-1] if dates else ""
+        return nd, ("익일미성숙" if (nd and nd > last) else "익일달력결측")
+    return nd, ""
+
+
+def next_trading_snapshots(date, snap_dir, nontrading=None, dates=None):
+    """`date` 의 **달력상 다음 거래일** 슬롯들. 그날 자료가 없으면 빈 dict — 다른 날로 대체하지 않는다."""
+    nt = _calendar(snap_dir) if nontrading is None else nontrading
+    ds = scan_dates(snap_dir) if dates is None else dates
+    nxt, why = session_link(date, ds, nt)
+    if why:
         return {}
-    i = dates.index(date)
-    if i + 1 >= len(dates):
-        return {}
-    nxt = dates[i + 1]
     out = {}
     for slot in ("1300", "1505"):
         path = os.path.join(snap_dir, f"{nxt}_{slot}.csv.gz")
@@ -370,12 +408,34 @@ def next_trading_snapshots(date, snap_dir):
 def collect(snap_dir=SNAP_DIR, with_returns=False):
     """관측된 거래일 전부. 기본값은 **수익률 없음**이다. 기본값이 안전한 쪽이어야 한다."""
     dates = scan_dates(snap_dir)
-    return [build_day(d, snap_dir, with_returns) for d in dates], dates
+    nt = _calendar(snap_dir)
+    return [build_day(d, snap_dir, with_returns, nt, dates) for d in dates], dates
 
 
-def stage_of(dates):
-    """성숙 거래일 수로 단계를 정한다. 진입일은 **다음 거래일이 있어야** 성숙한다."""
-    matured = max(0, len(dates) - 1)
+def matured_dates(dates, nontrading, snap_dir=None):
+    """익일 시가를 실제로 붙일 수 있는 진입일. 파일 개수가 아니라 **청산 자료가 있는 날**만.
+
+    `snap_dir` 를 주면 진입일 13:00 슬롯까지 확인한다(`build_day` 가 둘 다 요구한다).
+    """
+    out = []
+    for d in dates:
+        if session_link(d, dates, nontrading)[1]:
+            continue
+        if snap_dir and not os.path.exists(os.path.join(snap_dir, f"{d}_1300.csv.gz")):
+            continue
+        out.append(d)
+    return out
+
+
+def stage_of(dates, nontrading=None, snap_dir=None):
+    """성숙 거래일 수로 단계를 정한다. 진입일은 **달력상 다음 거래일 자료가 있어야** 성숙한다.
+
+    🔴 2026-10-01 — 이전 판은 `len(dates) - 1` 이었다. 날짜가 비어도 성숙으로 세서
+       결측이 생기면 Stage 1 에 일찍 들어갈 수 있었다(코덱스 교차점검).
+    """
+    import hyeoks_trading_calendar as cal
+    nt = cal.load_nontrading() if nontrading is None else nontrading
+    matured = len(matured_dates(dates, nt, snap_dir))
     return (STAGE1 if matured >= PILOT_DAYS else STAGE0), matured
 
 
@@ -394,13 +454,13 @@ def stage1_eta(dates, nontrading=None):
     **평일로 추정하지 않는다.** 그 fail-closed 가 `hyeoks_trading_calendar` 의 기본 동작이다.
     """
     import hyeoks_trading_calendar as cal
-    stage, matured = stage_of(dates)
+    nt = cal.load_nontrading() if nontrading is None else nontrading
+    stage, matured = stage_of(dates, nt)
     if stage == STAGE1:
         return None, 0, "이미 Stage 1"
     need = PILOT_DAYS - matured
     if not dates:
         return None, need, "관측 거래일이 없어 기산점이 없다"
-    nt = cal.load_nontrading() if nontrading is None else nontrading
     d = dates[-1]
     try:
         for _ in range(need):
@@ -411,17 +471,17 @@ def stage1_eta(dates, nontrading=None):
 
 
 def report(snap_dir=SNAP_DIR, today=None):
-    stage, matured = stage_of(scan_dates(snap_dir))
+    stage, matured = stage_of(scan_dates(snap_dir), _calendar(snap_dir), snap_dir)
     #  🔒 Stage 가 수익률 계산 여부를 정한다. 하드코딩하지 않는다.
     #     이전 판은 `with_returns=False` 가 박혀 있어 Stage 1 이 돼도 구조만 냈다.
     days, dates = collect(snap_dir, with_returns=(stage == STAGE1))
     today = today or datetime.datetime.now(KST).strftime("%Y-%m-%d")
     L = [f"# 🏴 테마 대장 A/B/C 분해 — {today}", ""]
-    L.append(f"관측 거래일 **{len(dates)}일** · 성숙(익일 존재) **{matured}일** / "
+    L.append(f"관측 거래일 **{len(dates)}일** · 성숙(달력상 익일 자료 존재) **{matured}일** / "
              f"파일럿 문턱 {PILOT_DAYS}일 → **Stage {stage}**")
     L.append("")
     if stage == STAGE0:
-        eta, need, why = stage1_eta(dates)
+        eta, need, why = stage1_eta(dates, _calendar(snap_dir))
         L += ["> 🔒 **Stage 0 — 수익률을 계산하지 않았다.**",
               f"> 성숙 거래일이 {matured}일로 파일럿 문턱 {PILOT_DAYS}일에 못 미친다.",
               "> 여기서 수익률을 내면 그 숫자를 보고 A·B·C 정의를 고치게 된다.",
@@ -457,6 +517,13 @@ def report(snap_dir=SNAP_DIR, today=None):
               "> 비용 0.35%는 §3-4-2 값이며 계층 평균에서 일괄 차감한 참고값이다.",
               "> **판정이 아니다.** 20일은 파일럿이고 유의성 검정은 별도 사전등록이 필요하다.",
               ""]
+        _pilot = matured_dates(dates, _calendar(snap_dir), snap_dir)[:PILOT_DAYS]
+        if _pilot:
+            L += [f"> 🔎 **탐색(파일럿) 구간 {_pilot[0]} ~ {_pilot[-1]} ({len(_pilot)}일).** "
+                  "이 구간을 보고 A·B·C 정의나 C 조건을 고치면 사후 맞춤이다(운영대전제 §5). "
+                  "조건 효과는 **이 구간을 쓰지 않은** 이후 자료에서 확인한다. "
+                  "위 평균에는 파일럿 이후 날짜도 섞여 있다 — 미사용 검증 구간으로 부르지 않는다.",
+                  ""]
 
     L += ["## A → B → C 퍼널 (단계별로 센다)", "",
           "| 날짜 | A | 테마소속 | 테마 | **B** 대장 | 5배배제 | +거래대금100억 | **C** +단타 | B_시장 | 일치 |",
@@ -689,18 +756,45 @@ def self_test():
         "C_THRESHOLD" not in src and "C_MIN" not in src and "C_CUT" not in src)
 
     print("🧪 🔒 단계 잠금 — 성숙 전에는 수익률을 계산하지 않는다")
+    import hyeoks_trading_calendar as cal
+    _nt = cal.load_nontrading()
+
+    def _seq(start, n, nt=_nt):
+        """검증된 휴장 달력상 연속 거래일 n개. 손으로 날짜를 적지 않는다."""
+        out = [start]
+        while len(out) < n:
+            out.append(cal.next_trading_day(out[-1], nt))
+        return out
+    _s = _seq("2026-08-28", PILOT_DAYS + 1)
     chk(f"{PILOT_DAYS}일 미만이면 Stage 0",
-        stage_of(["d"] * PILOT_DAYS)[0] == STAGE0, f"성숙 {PILOT_DAYS-1}일")
-    chk(f"{PILOT_DAYS}일 이상이면 Stage 1",
-        stage_of(["d"] * (PILOT_DAYS + 1))[0] == STAGE1)
-    chk("진입일은 다음 거래일이 있어야 성숙한다", stage_of(["d"] * 13)[1] == 12)
-    chk("거래일 0이면 성숙 0 (음수가 되지 않는다)", stage_of([])[1] == 0)
+        stage_of(_s[:PILOT_DAYS], _nt)[0] == STAGE0, f"성숙 {PILOT_DAYS-1}일")
+    chk(f"{PILOT_DAYS}일 이상이면 Stage 1", stage_of(_s, _nt)[0] == STAGE1)
+    chk("진입일은 다음 거래일이 있어야 성숙한다", stage_of(_s[:13], _nt)[1] == 12)
+    chk("거래일 0이면 성숙 0 (음수가 되지 않는다)", stage_of([], _nt)[1] == 0)
+
+    print("🧪 🔴 익일 = 달력상 다음 거래일 (2026-10-01 코덱스 교차점검 회귀)")
+    #  9/23 → 추석 9/24·25 · 주말 → 9/28. 9/28 파일이 빠졌다고 9/29 에 붙이면 이틀치다.
+    _gap = ["2026-09-22", "2026-09-23", "2026-09-29", "2026-09-30"]
+    chk("추석 건너 9/23 의 익일은 9/28", session_link("2026-09-23", _seq("2026-09-23", 2), _nt)
+        == ("2026-09-28", ""))
+    nd, why = session_link("2026-09-23", _gap, _nt)
+    chk("9/28 파일이 없으면 9/29 로 대체하지 않는다", nd == "2026-09-28" and why == "익일달력결측",
+        f"{nd} {why}")
+    chk("빠진 날의 앞날은 성숙으로 세지 않는다",
+        matured_dates(_gap, _nt) == ["2026-09-22", "2026-09-29"], str(matured_dates(_gap, _nt)))
+    chk("마지막 날은 익일미성숙(결측과 구분)",
+        session_link("2026-09-30", _gap, _nt)[1] == "익일미성숙")
+    _hol = ["2026-09-23", "2026-09-24", "2026-09-28"]          # 9/24 는 추석 — 휴장일 파일
+    chk("휴장일 파일은 진입일이 아니다", session_link("2026-09-24", _hol, _nt)[1] == "휴장일파일")
+    chk("휴장일 파일은 익일 자리를 차지하지 못한다",
+        session_link("2026-09-23", _hol, _nt) == ("2026-09-28", ""))
+    chk("휴장일 파일이 있어도 성숙 수는 거래일로만 센다",
+        matured_dates(_hol, _nt) == ["2026-09-23"], str(matured_dates(_hol, _nt)))
+    chk("주말 파일도 휴장일 파일이다", session_link("2026-09-26", ["2026-09-26"], _nt)[1] == "휴장일파일")
     chk("collect 의 기본값이 수익률 없음 — 기본값이 안전한 쪽이어야 한다",
         collect.__defaults__[1] is False)
 
     print("🧪 Stage 1 예정일 — 손계산을 없앤다 (2026-09-15 추석 누락 재발 방지)")
-    import hyeoks_trading_calendar as cal
-    _nt = cal.load_nontrading()
     # 9/15 까지 13일 관측(성숙 12) → 8거래일 뒤. 추석 9/24·25 를 건너뛰어야 한다.
     _obs = ["2026-08-28", "2026-08-31", "2026-09-01", "2026-09-02", "2026-09-03",
             "2026-09-04", "2026-09-07", "2026-09-08", "2026-09-09", "2026-09-10",
@@ -710,7 +804,7 @@ def self_test():
     chk("추석(9/24·25)을 건너뛴 2026-09-29 이어야 한다", _eta == "2026-09-29", str(_eta))
     chk("9/25 는 답이 아니다 — 추석이라 거래일이 아니다", _eta != "2026-09-25")
     chk("이미 Stage 1 이면 예정일 없음",
-        stage1_eta(["d"] * (PILOT_DAYS + 1), _nt) == (None, 0, "이미 Stage 1"))
+        stage1_eta(_s, _nt) == (None, 0, "이미 Stage 1"))
     chk("관측이 없으면 기산점이 없다고 말한다", "기산점" in stage1_eta([], _nt)[2])
     _far, _, _w = stage1_eta(["2026-12-30"], _nt)   # 2027 달력 미검증 구간으로 넘어간다
     chk("달력 범위를 넘으면 None 이고 사유를 말한다 (평일 추정 금지)",
@@ -729,7 +823,11 @@ def self_test():
                 for r in rows:
                     f.write(",".join(str(x) for x in r) + "\n")
         #  21 거래일 → 성숙 20일 → Stage 1. 매일 같은 3종목(한 테마), 익일 시가 +10%.
-        days = [f"2026-1{m}-{d:02d}" for m in (0, 1) for d in range(1, 12)][:21]
+        #  🔴 2026-10-01 — 이전 판은 10/1~10/11·11/1~ 을 적었다(주말·빈 날 포함). 파일 개수로
+        #     성숙을 세던 결함이 그 합성 자료를 통과시켰다. 이제 **생산 휴장 달력**으로 만든다.
+        for fn in ("nontrading.txt", "calendar_scope.json"):
+            shutil.copy(os.path.join(SNAP_DIR, fn), os.path.join(tmp, fn))
+        days = _seq("2026-10-06", PILOT_DAYS + 1, load_nontrading(tmp))
         for i, day in enumerate(days):
             #  1505: 진입가 1000 / 1300: 절반 거래대금 / 익일 시가는 1100(= +10%)
             rows15 = [[f"s{j}", f"s{j}", MIN_TURNOVER * (30 - j), 1000, 1100, 1000,
@@ -737,7 +835,7 @@ def self_test():
             write(day, "1505", rows15)
             write(day, "1300", [[r[0], r[1], MIN_TURNOVER * 10, 1000, 1100, 1000,
                                  5.0, "T1", "T1", "N", "0", "00"] for r in rows15])
-        st, matured = stage_of(scan_dates(tmp))
+        st, matured = stage_of(scan_dates(tmp), load_nontrading(tmp), tmp)
         chk("합성 21일이면 Stage 1", st == STAGE1, f"성숙 {matured}일")
         got, _ = collect(tmp, with_returns=True)
         rets = [d for d in got if d.get("returns")]
@@ -753,11 +851,31 @@ def self_test():
             "대장을 고른 효과" in txt and "추가 조건의 효과" in txt)
         chk("연구 대용값임을 밝힌다", "연구 대용값" in txt)
         chk("판정이 아니라고 밝힌다", "판정이 아니다" in txt)
+        chk("탐색(파일럿) 구간을 날짜로 밝힌다",
+            f"탐색(파일럿) 구간 {days[0]} ~ {days[PILOT_DAYS - 1]}" in txt)
+        #  🔴 날짜 하나가 빠지면 그 앞날은 수익률을 내지 않는다(이틀치를 익일로 쓰지 않는다)
+        for slot in ("1300", "1505"):
+            os.remove(os.path.join(tmp, f"{days[10]}_{slot}.csv.gz"))
+        got2, _ = collect(tmp, with_returns=True)
+        by = {d["date"]: d for d in got2}
+        chk("빠진 날의 앞날은 수익률 없음 + 사유 익일달력결측",
+            by[days[9]].get("returns") is None and by[days[9]].get("returns_note") == "익일달력결측",
+            str(by[days[9]].get("returns_note")))
+        chk("그 앞날의 청산일은 빠진 날 그대로(다음 파일로 바꾸지 않는다)",
+            by[days[9]].get("exit_date") == days[10], str(by[days[9]].get("exit_date")))
+        chk("빠진 날 다음 날부터는 정상", by[days[11]].get("returns") is not None)
+        chk("성숙 수가 둘 준다(20→18: 빠진 날과 그 앞날)",
+            stage_of(scan_dates(tmp), load_nontrading(tmp), tmp)[1] == PILOT_DAYS - 2,
+            str(stage_of(scan_dates(tmp), load_nontrading(tmp), tmp)[1]))
+
         #  Stage 0 이면 여전히 계산하지 않는다(잠금이 살아 있는가)
         for day in days[5:]:
             for slot in ("1300", "1505"):
-                os.remove(os.path.join(tmp, f"{day}_{slot}.csv.gz"))
-        chk("거래일이 줄면 다시 Stage 0", stage_of(scan_dates(tmp))[0] == STAGE0)
+                fp_ = os.path.join(tmp, f"{day}_{slot}.csv.gz")
+                if os.path.exists(fp_):          # days[10] 은 위 결측 시험에서 이미 지웠다
+                    os.remove(fp_)
+        chk("거래일이 줄면 다시 Stage 0",
+            stage_of(scan_dates(tmp), load_nontrading(tmp), tmp)[0] == STAGE0)
         chk("🔒 Stage 0 이면 리포트가 수익률을 안 낸다",
             "Stage 1 — 익일 시가 수익률" not in report(tmp, today="2026-11-30"))
     finally:
