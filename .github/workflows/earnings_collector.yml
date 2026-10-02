@@ -5,9 +5,13 @@ name: 📊 HYEOKS 실적 PRIMARY (DART → DB_실적)
 #    죽었는지 로그를 열어봐야 했다. 이제 **이름으로** 구분된다.
 
 on:
-  schedule:
-    - cron: '0 11 * * *'   # 매일 20:00 KST (11:00 UTC) — 새벽 시간대(04:00)에 DART 접속이 계속 실패해서 저녁으로 이동해봄
-  workflow_dispatch:        # 수동으로 바로 돌려서 테스트하고 싶을 때
+  # 🔴 2026-10-02 — GitHub cron 삭제(사용자 지시). 발사는 GAS triggerEarningsCollector(20:40 KST) 전용.
+  #    cron 은 매일 2~7시간 늦게 와서 새벽 01~03시에 도착했다. 거래일 새벽은 collector_cycle 이
+  #    거부(_incidents)했지만, **휴장 전날**(금요일·연휴 전) 새벽 도착분은 거부되지 않고 직전 거래일에
+  #    붙어 마지막 영수증이 될 수 있었다(9/24 관측). 실패하면 그날이 FAIL. 정시 발사가 있으니 지운다.
+  #    GAS 가 실패하면 cron 이 대신 메워 주던 경로도 없어진다 — dispatchCollector_ 는 비204 에서
+  #    throw 하므로 GAS 실행 실패 메일로 드러난다. 그날은 cycle_date 를 넣어 수동 실행한다.
+  workflow_dispatch:        # GAS 정시 발사 + 수동 재실행
     inputs:
       cycle_date:
         description: '지연 실행의 명시적 거래일 YYYY-MM-DD (평시 비움)'

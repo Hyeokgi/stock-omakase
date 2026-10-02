@@ -289,10 +289,17 @@ class WorkflowSeparationTests(unittest.TestCase):
         b = self.load("consensus_aux.yml")["concurrency"]["group"]
         self.assertNotEqual(a, b)
 
-    def test_schedules_do_not_collide(self):
-        def cron(name):
-            return self.load(name)[True]["schedule"][0]["cron"]
-        self.assertNotEqual(cron("earnings_collector.yml"), cron("consensus_aux.yml"))
+    def test_gas_only_dispatch_no_cron(self):
+        """2026-10-02 — cron 삭제. 두 수집은 GAS 정시 발사(20:40·21:20) 전용이다.
+
+        이전 시험은 두 cron 시각이 겹치지 않는지 봤다. cron 이 없어진 지금 지킬 성질은
+        '늦게 오는 예약 실행이 다시 생기지 않는다' 와 'GAS 가 부를 입구가 남아 있다' 다.
+        """
+        for name in ("earnings_collector.yml", "consensus_aux.yml"):
+            on = self.load(name)[True]
+            self.assertNotIn("schedule", on, f"{name} 에 cron 이 되살아났다")
+            self.assertIn("workflow_dispatch", on, f"{name} 에 GAS 발사 입구가 없다")
+            self.assertIn("cycle_date", on["workflow_dispatch"]["inputs"])
 
     def test_phase_values_are_validated(self):
         src = pathlib.Path("hyeoks_earnings_collector.py").read_text(encoding="utf-8")
