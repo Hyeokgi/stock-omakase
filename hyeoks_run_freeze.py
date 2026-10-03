@@ -28,10 +28,24 @@ import gzip
 import hashlib
 import json
 import os
+import time
 
 KST = datetime.timezone(datetime.timedelta(hours=9))
 FREEZE_VERSION = "run-freeze-v1"
 STATUS_FILE = "freeze_status.json"
+LOCAL_DIR = "data/run_freeze"       # freeze(local_dir=...) 가 러너에 남기는 사본. .gitignore 대상이다
+
+# 🔴 2026-10-03 — 일시 오류 재시도.
+#    10/2 15:02 동결 업로드가 비JSON 응답 **한 번**으로 실패했고, 그 하나로 워크플로가 빨개져
+#    그날 Gate 가 FAIL 로 박제됐다. 같은 창구가 3분 뒤(15:05:33)에는 배지 보관을 4초 만에
+#    받았다 — 일시 오류였다. 재시도는 두 단계로 나눈다.
+#      · 호출 중(inline): 짧게. 리포트 생성보다 앞서 호출되므로 길게 기다리면 리포트가 늦어진다.
+#      · 리포트를 다 보낸 뒤(late): 길게. 워크플로의 별도 단계가 러너에 남은 사본을 다시 올린다.
+#    한 번 더 올린 파일은 이름이 내용 해시를 포함해 이름·바이트가 같다. 응답만 잃고 서버에는
+#    저장된 경우 드라이브에 같은 이름의 같은 파일이 둘 생길 수 있다 — 내용은 동일하다.
+UPLOAD_BACKOFF_INLINE = (5, 15)       # 최대 3회 시도
+UPLOAD_BACKOFF_LATE = (20, 45, 90)    # 최대 4회 시도
+LATE_BUDGET_SECONDS = 300             # 후속 재시도 전체 상한 — 잡 timeout-minutes 안에서 끝낸다
 
 # 드라이브 업로드 창구. PDF 업로드가 쓰던 것과 **같은 웹앱**이라 경로가 이미 검증돼 있다.
 # ⚠️ 이 URL 은 원래 hyeoks_analyst.py 에 하드코딩돼 있었고 저장소가 공개라 이미
@@ -104,7 +118,7 @@ def bundle_name(bundle):
     return f"freeze_{bundle['trade_date']}_{t}_{bundle['kind']}_{digest}.json.gz"
 
 
-def write_status(ok, name=None, detail="", path=STATUS_FILE, required=True):
+def write_status(ok, name=None, detail="", path=STATUS_FILE, required=True, **extra):
     """보존 결과를 파일로 남긴다. 워크플로가 이걸 읽어 실패를 드러낸다.
 
     `required=False` 는 **이 회차가 동결 대상이 아니다**는 뜻이다. 리포트 픽을
@@ -114,24 +128,55 @@ def write_status(ok, name=None, detail="", path=STATUS_FILE, required=True):
     """
     st = {"ok": bool(ok), "required": bool(required), "file": name, "detail": detail,
           "at": datetime.datetime.now(KST).isoformat()}
+    st.update(extra)       # retryable·attempts — 후속 재시도 단계가 읽는다
     with open(path, "w", encoding="utf-8") as f:
         json.dump(st, f, ensure_ascii=False)
     return st
 
 
-def upload(gas_url, name, data, timeout=60):
+class NoFileId(RuntimeError):
+    """응답은 왔는데 파일 id 가 없다 — 저장됐다고 믿을 근거가 없다."""
+
+
+def upload(gas_url, name, data, timeout=60, *, backoff=(), sleep=time.sleep,
+           trace=None, deadline=None, clock=time.monotonic):
     """GAS 웹앱으로 드라이브 업로드. PDF 업로드와 **같은 경로**를 쓴다.
 
     실패하면 예외를 그대로 올린다 — 조용히 성공한 척하지 않는다.
+
+    `backoff` 가 비어 있으면(기본값) **딱 한 번**만 시도한다. 배지 보관
+    (`badge_observations.archive`)이 "애매한 업로드는 자동 재시도하지 않는다" 는 정책으로
+    이 함수를 그대로 부르므로 기본값을 바꾸면 그 정책이 조용히 깨진다.
+    동결 경로만 `backoff` 를 줘서 재시도한다.
+
+    재시도하는 실패: 네트워크 오류·시간 초과·JSON 이 아닌 응답(오류 페이지·빈 응답)·파일 id 없는 응답.
+    그 밖의 예외(코드 결함 등)는 첫 번에 그대로 올라간다.
+    `deadline`(clock 기준 절대값)이 있으면 다음 대기가 그 시각을 넘길 때 재시도를 멈춘다.
+    `trace` 리스트에는 회차별 결과가 쌓인다 — 몇 번 만에 됐는지·왜 실패했는지 남기려는 것이다.
     """
     import requests
     b64 = base64.b64encode(data).decode("utf-8")
-    res = requests.post(gas_url, json={"filename": name, "base64": b64},
-                        timeout=timeout).json()
-    fid = res.get("id")
-    if not fid:
-        raise RuntimeError(f"업로드 응답에 파일 id 가 없다: {res}")
-    return fid
+    attempts = len(backoff) + 1
+    n = 0
+    while True:
+        n += 1
+        try:
+            res = requests.post(gas_url, json={"filename": name, "base64": b64},
+                                timeout=timeout).json()
+            fid = res.get("id") if isinstance(res, dict) else None
+            if not fid:
+                raise NoFileId(f"업로드 응답에 파일 id 가 없다: {res}")
+            if trace is not None:
+                trace.append(f"{n}회차 성공")
+            return fid
+        except (requests.exceptions.RequestException, ValueError, NoFileId) as e:
+            if trace is not None:
+                trace.append(f"{n}회차 실패 {type(e).__name__}: {str(e)[:100]}")
+            wait = backoff[n - 1] if n <= len(backoff) else None
+            if wait is None or (deadline is not None and clock() + wait >= deadline):
+                raise
+            print(f"   ↻ 업로드 {n}/{attempts}회차 실패({type(e).__name__}) — {wait}초 뒤 다시 시도")
+            sleep(wait)
 
 
 def bundle_is_empty(bundle):
@@ -150,11 +195,16 @@ def bundle_is_empty(bundle):
     return False
 
 
-def freeze(gas_url=None, bundle=None, local_dir=None, status_path=STATUS_FILE):
+def freeze(gas_url=None, bundle=None, local_dir=None, status_path=STATUS_FILE,
+           backoff=UPLOAD_BACKOFF_INLINE, sleep=time.sleep):
     """묶음을 만들어 올리고 결과를 기록한다. **예외를 삼키지 않는다.**
 
     반환 (ok, name, detail). 호출자는 리포트 발송을 멈추지 않되,
     실패를 **반드시 드러내야** 한다.
+
+    업로드는 일시 오류에 대비해 짧게 재시도한다(`backoff`). 그래도 실패하면 상태 파일에
+    `retryable`·`attempts` 를 남긴다 — 리포트를 다 보낸 뒤 워크플로의 별도 단계가
+    `retry_pending()` 으로 러너에 남은 사본을 다시 올린다.
     """
     gas_url = DEFAULT_GAS_URL if gas_url is None else gas_url
     name = bundle_name(bundle)
@@ -172,15 +222,76 @@ def freeze(gas_url=None, bundle=None, local_dir=None, status_path=STATUS_FILE):
         d = "GAS_WEB_APP_URL 이 없어 업로드하지 않았다 — 잡이 끝나면 사라진다"
         write_status(False, name, d, status_path)
         return False, name, d
+    trace = []
     try:
-        fid = upload(gas_url, name, data)
+        fid = upload(gas_url, name, data, backoff=backoff, sleep=sleep, trace=trace)
     except Exception as e:
-        d = f"업로드 실패: {e}"
-        write_status(False, name, d, status_path)
+        tried = len(trace)
+        d = f"업로드 실패: {str(e)[:400]}" + (f" — {tried}회 시도" if tried > 1 else "")
+        # 사본이 러너에 있어야 나중에 다시 올릴 수 있다
+        write_status(False, name, d, status_path, retryable=bool(local_dir), attempts=tried)
         return False, name, d
-    d = f"드라이브 저장 완료 id={fid} ({len(data):,}바이트)"
-    write_status(True, name, d, status_path)
+    tried = len(trace)
+    d = (f"드라이브 저장 완료 id={fid} ({len(data):,}바이트)"
+         + (f" — {tried}회째 시도에서 성공" if tried > 1 else ""))
+    write_status(True, name, d, status_path, attempts=tried)
     return True, name, d
+
+
+def retry_pending(status_path=STATUS_FILE, local_dir=LOCAL_DIR, gas_url=None,
+                  backoff=UPLOAD_BACKOFF_LATE, budget_seconds=LATE_BUDGET_SECONDS,
+                  sleep=time.sleep, clock=time.monotonic):
+    """동결이 **업로드 실패** 로 끝난 회차만, 러너에 남은 사본을 다시 올린다.
+
+    리포트를 다 보낸 뒤 워크플로의 별도 단계에서 부른다. 호출 중의 짧은 재시도로는
+    못 넘긴 몇 분짜리 일시 오류를 넘기려는 것이다(10/2 는 3분 뒤 창구가 정상이었다).
+
+    반환 (행동, 사유) — 행동은 "none"(할 일 없음) · "recovered"(보존됨) · "failed"(끝내 실패).
+    다시 올리지 않는 경우: 상태 파일이 없거나, 동결 대상이 아니거나, 이미 성공했거나,
+    업로드 실패가 아니거나(빈 묶음·코드 예외 등), 사본이 없거나, 사본이 이름과 맞지 않을 때.
+    사본이 이름과 맞는지 보는 이유 — 이름은 내용 해시를 품고 있어 엉뚱한 파일을 올리지 않게 한다.
+    """
+    try:
+        with open(status_path, encoding="utf-8") as f:
+            st = json.load(f)
+    except (OSError, ValueError):
+        return "none", "상태 파일을 읽지 못했다 — 확인 단계가 잡는다"
+    if not st.get("required", True):
+        return "none", "이 회차는 동결 대상이 아니다"
+    if st.get("ok"):
+        return "none", "이미 보존됐다"
+    if not st.get("retryable"):
+        return "none", f"재시도 대상이 아니다 — {str(st.get('detail'))[:120]}"
+    name = st.get("file")
+    path = os.path.join(local_dir, name) if name else None
+    if not path or not os.path.isfile(path):
+        return "none", "러너에 사본이 없다 — 다시 올릴 수 없다"
+    with open(path, "rb") as f:
+        data = f.read()
+    try:
+        same = bundle_name(json.loads(gzip.decompress(data).decode("utf-8"))) == name
+    except Exception:                                    # noqa: BLE001 — 깨진 사본은 올리지 않는다
+        same = False
+    if not same:
+        return "none", "사본이 이름과 맞지 않는다 — 올리지 않는다"
+    gas_url = DEFAULT_GAS_URL if gas_url is None else gas_url
+    if not gas_url:
+        return "none", "GAS URL 이 없다 — 다시 올릴 수 없다"
+    before = int(st.get("attempts") or 0)
+    trace = []
+    try:
+        fid = upload(gas_url, name, data, backoff=backoff, sleep=sleep, trace=trace,
+                     deadline=clock() + budget_seconds, clock=clock)
+    except Exception as e:
+        total = before + len(trace)
+        d = f"업로드 실패: {str(e)[:400]} — 후속 재시도 포함 총 {total}회 시도"
+        write_status(False, name, d, status_path, retryable=True, attempts=total)
+        return "failed", d
+    total = before + len(trace)
+    d = (f"드라이브 저장 완료 id={fid} ({len(data):,}바이트) — 후속 재시도로 보존(총 {total}회째 시도). "
+         f"앞선 실패: {str(st.get('detail'))[:120]}")
+    write_status(True, name, d, status_path, attempts=total)
+    return "recovered", d
 
 
 def self_test():
@@ -247,7 +358,7 @@ def self_test():
         st = json.load(open(sp, encoding="utf-8"))
         chk("상태 파일에 ok=false 가 적힌다", st["ok"] is False, st["detail"])
         okf2, nm2, det2 = freeze("http://127.0.0.1:9/none", b,
-                                 local_dir=tmp, status_path=sp)
+                                 local_dir=tmp, status_path=sp, backoff=())
         chk("업로드가 터져도 예외로 죽지 않고 실패를 기록한다", okf2 is False)
         # 🚨 빈 묶음을 성공으로 세지 않는다 — 실측에서 실제로 있었던 상태다
         empty_p2 = build_bundle("phase2", extra={"horizon": 20, "rows": []}, now=now)
@@ -283,4 +394,14 @@ def self_test():
 
 if __name__ == "__main__":
     import sys
+    if "--retry-pending" in sys.argv:
+        # 워크플로 단계용. 결과는 freeze_status.json 에 반영되고, 이어지는 '동결 확인' 단계가 판정한다.
+        # 이 단계는 실패해도 잡을 죽이지 않는다 — 어떤 경우에도 0 으로 끝낸다.
+        try:
+            action, why = retry_pending()
+        except Exception as e:                           # noqa: BLE001
+            action, why = "none", f"재시도 단계 자체가 예외 {type(e).__name__}: {e}"
+        print({"recovered": "🧊 후속 재시도로 보존했다", "failed": "❌ 후속 재시도도 실패했다",
+               "none": "ℹ️ 후속 재시도 대상 아님"}[action] + f" — {why}")
+        sys.exit(0)
     sys.exit(self_test())

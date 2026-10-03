@@ -100,6 +100,10 @@ GATE_LOG = os.path.join(GATE_DIR, "runs.csv")
 #    이 파일은 감사용이며 **연속 카운트의 근거가 아니다.**
 AUDIT_LOG = os.path.join(GATE_DIR, "backfill_audit.csv")
 REQUIRED_STREAK = 3
+# 🔴 2026-10-03 — 워크플로 결론 조회가 일시 오류로 끝내 확정되지 않았을 때의 보류 표지.
+#    10/2 에는 외부 창구의 일시 오류 하나가 그날을 FAIL 로 박제했다. 모르는 것은 FAIL 도 PASS 도 아니다.
+LOOKUP_HOLD_TAG = "조회 보류"
+HOLD_EXIT_CODE = 75                # EX_TEMPFAIL — finalizer 가 빨개져 사람이 본다(다음 슬롯이 다시 시도한다)
 
 # 기준 7개. 키는 증거 딕셔너리의 이름이고 값은 사람이 읽을 설명이다.
 # 순서를 바꾸지 않는다 — 기록된 행과 대조해야 한다.
@@ -512,7 +516,8 @@ def ready(cycle_date, root=None, now=None):
 
 
 def record_cycle(cycle_date, source="cycle", root=".", path=GATE_LOG,
-                 receipts_root=None, workflow_states=None, now=None, fp=None):
+                 receipts_root=None, workflow_states=None, now=None, fp=None,
+                 workflow_pending=None):
     """🔴 2026-09-18 지시 ② — **증거를 사람이 넣지 않는다.**
 
     Evidence Builder 가 영수증에서 7개 기준을 기계적으로 만들고, 그걸 그대로 기록한다.
@@ -527,6 +532,16 @@ def record_cycle(cycle_date, source="cycle", root=".", path=GATE_LOG,
     ok_ready, why_ready = ready(cycle_date, receipts_root, now=now)
     if not ok_ready:
         return False, why_ready          # 기록하지 않는다 — 다음 실행에서 다시 본다
+    # 🔴 2026-10-03 — 워크플로 결론 조회가 일시 오류로 끝내 확정되지 않았으면 **기록하지 않는다.**
+    #    그대로 두면 Builder 가 "결론없음" 을 FAIL 로 읽고, 같은 거래일을 두 번 기록하지 않으므로
+    #    일시 오류 하나가 그날을 영구 FAIL 로 박제한다(10/2). PASS 로도 세지 않는다 — 보류다.
+    #    예외: 이미 확정된 실패 결론이 있으면 그날은 어차피 FAIL 이므로 보류할 이유가 없다.
+    pending = sorted({str(w) for w in (workflow_pending or ())})
+    decided_bad = sorted(w for w, c in (workflow_states or {}).items() if c != "success")
+    if pending and not decided_bad:
+        return False, (f"{LOOKUP_HOLD_TAG} — {pending} 실행 결론을 GitHub 에서 확정하지 못했다"
+                       "(재시도 후에도 일시 오류). FAIL 로 박제하지도 PASS 로 세지도 않고 기록하지 않는다. "
+                       "다음 판정 실행이나 수동 실행(cycle_date 지정)에서 다시 본다")
     ev, detail = evidence_builder.build(
         cycle_date, fp, root=receipts_root or production_receipt.RECEIPT_DIR,
         workflow_states=workflow_states)
@@ -535,9 +550,36 @@ def record_cycle(cycle_date, source="cycle", root=".", path=GATE_LOG,
             cycle_date, receipts_root or production_receipt.RECEIPT_DIR)[0]
         if r.get("run_id")})) or f"norun-{cycle_date}"
     note = "; ".join(f"{k}:{v}" for k, v in detail["reasons"].items() if not ev[k])
+    if pending:                       # 확정된 실패가 있어 기록은 하지만, 조회가 불확정이었던 것은 남긴다
+        note += f"; 조회불확정={pending}"
     print(evidence_builder.render(ev, detail))
     return record(cycle_date, run_id[:200], source, ev, note=note[:900],
                   path=path, fp=fp, root=root, aux_state=detail["aux_state"])
+
+
+def _cli_record(argv):
+    """`--record 거래일 [--workflows JSON] [--workflows-pending JSON]` → 종료 코드.
+
+    조회 보류면 `HOLD_EXIT_CODE` 로 끝난다 — 잡이 빨개져 사람이 보게 하되 runs.csv 는 건드리지 않는다.
+    """
+    import json
+    i = argv.index("--record")
+    if i + 1 >= len(argv):
+        print("❌ --record 다음에 거래일(YYYY-MM-DD)이 필요하다")
+        return 2
+    wf = None
+    if "--workflows" in argv:
+        wf = json.loads(argv[argv.index("--workflows") + 1] or "{}")
+    pending = None
+    if "--workflows-pending" in argv:
+        pending = json.loads(argv[argv.index("--workflows-pending") + 1] or "[]")
+    done, why = record_cycle(argv[i + 1], workflow_states=wf, workflow_pending=pending)
+    print(f"\n{'기록' if done else '무시'}: {why}")
+    print(report())
+    if not done and why.startswith(LOOKUP_HOLD_TAG):
+        print(f"::error::판정 보류 — {why}")
+        return HOLD_EXIT_CODE
+    return 0
 
 
 if __name__ == "__main__":
@@ -564,16 +606,5 @@ if __name__ == "__main__":
         print(f"근거: {why}")
         sys.exit(0)
     if "--record" in sys.argv:
-        import json
-        i = sys.argv.index("--record")
-        if i + 1 >= len(sys.argv):
-            print("❌ --record 다음에 거래일(YYYY-MM-DD)이 필요하다")
-            sys.exit(2)
-        wf = None
-        if "--workflows" in sys.argv:
-            wf = json.loads(sys.argv[sys.argv.index("--workflows") + 1] or "{}")
-        done, why = record_cycle(sys.argv[i + 1], workflow_states=wf)
-        print(f"\n{'기록' if done else '무시'}: {why}")
-        print(report())
-        sys.exit(0)
+        sys.exit(_cli_record(sys.argv))
     print(report())

@@ -30,11 +30,14 @@
 
 usage: workflow_states.py <repo> <YYYY-MM-DD>   (GH_TOKEN 환경변수 필요)
 출력: WORKFLOW_STATES={"main.yml": "success", ...}
+      WORKFLOW_PENDING=["main.yml", ...]   (조회가 일시 오류로 끝내 확정되지 않은 것 — 기록 보류 근거)
 """
+import http.client
 import json
 import os
 import pathlib
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -63,6 +66,19 @@ KIND_TO_WORKFLOW = {
 }
 RUN_API = "https://api.github.com/repos/{repo}/actions/runs/{run_id}"
 
+# 🔴 2026-10-03 — 조회 한 번의 일시 오류가 그날을 FAIL 로 박제하지 못하게 한다.
+#    이전 판은 GitHub API 를 **한 번** 불러 URLError·5xx·JSON 깨짐이면 그 워크플로의 결론을 비워 두었고,
+#    Builder 가 그것을 "결론없음" 으로 읽어 `no_unexplained_failure` 를 거짓으로 만들었다.
+#    runs.csv 는 append-only 이고 같은 거래일을 두 번 기록하지 않으므로 그 FAIL 은 고칠 길이 없었다.
+#    이제 일시 오류만 짧게 재시도하고, 끝내 확정하지 못하면 **불확정**으로 표시해
+#    판정을 보류한다(stability_gate.record_cycle). 모르는 것을 FAIL 로도 PASS 로도 세지 않는다.
+RETRY_WAITS = (3, 10, 30)          # 최대 4회 시도
+LOOKUP_TIMEOUT = 20
+LOOKUP_BUDGET_SECONDS = 240        # 세 조회 전체의 상한 — finalizer timeout-minutes(10) 안에서 끝낸다
+TRANSIENT_HTTP = frozenset({403, 408, 425, 429, 500, 502, 503, 504})
+# 403 은 GitHub 의 rate limit 응답이기도 하다. 끝내 풀리지 않으면 보류가 되고, 보류는 잡을 빨갛게 한다.
+_LOOKUP_ERRORS = (urllib.error.URLError, ValueError, OSError, http.client.HTTPException)
+
 
 def run_conclusion(repo, run_id, token, expect_path):
     """그 run 하나의 결론. 없거나 미완료거나 **다른 워크플로면** 빈 문자열.
@@ -74,7 +90,7 @@ def run_conclusion(repo, run_id, token, expect_path):
         headers={"Authorization": f"Bearer {token}",
                  "Accept": "application/vnd.github+json",
                  "User-Agent": "hyeoks-stability-gate"})
-    with urllib.request.urlopen(req, timeout=20) as r:
+    with urllib.request.urlopen(req, timeout=LOOKUP_TIMEOUT) as r:
         d = json.load(r)
     got_path = d.get("path") or ""
     if got_path != expect_path:
@@ -85,6 +101,57 @@ def run_conclusion(repo, run_id, token, expect_path):
     return (d.get("conclusion") or ""), ""
 
 
+def is_transient(exc):
+    """다시 물어보면 나을 수 있는 오류인가.
+
+    · HTTP 응답이 있으면 상태 코드로 가른다(5xx·429·408·403(rate limit)만 일시적, 404·401 등은 확정).
+    · 응답 본문이 깨졌으면(잘림·HTML 오류 페이지·바이너리) 일시적이다.
+    · 그 밖의 ValueError 는 요청을 만들다 난 코드 결함류라 재시도로 낫지 않는다.
+    · 연결·DNS·시간 초과·잘린 응답(URLError·OSError·HTTPException)은 일시적이다.
+    """
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in TRANSIENT_HTTP
+    if isinstance(exc, (json.JSONDecodeError, UnicodeDecodeError)):
+        return True
+    if isinstance(exc, ValueError):
+        return False
+    return True
+
+
+def _describe(exc):
+    code = getattr(exc, "code", None) if isinstance(exc, urllib.error.HTTPError) else None
+    return type(exc).__name__ + (f" {code}" if code else "")
+
+
+def lookup_with_retry(repo, run_id, token, expect_path, *, waits=RETRY_WAITS, sleep=time.sleep,
+                      clock=time.monotonic, deadline=None, fetch=None):
+    """(결론, 사유, 불확정) — **일시 오류만** 재시도한다.
+
+    · 불확정 False: `run_conclusion` 이 답을 줬다(결론이 비어도 '왜 인정하지 않는지' 가 확정된 것이다),
+      또는 재시도해도 낫지 않는 오류(404·401 등)라 이전처럼 '결론 없음' 으로 둔다.
+    · 불확정 True: 재시도 끝에도 일시 오류가 이어졌다. 호출자는 이것을 FAIL 로 기록하지 않고 보류한다.
+    `deadline`(clock 기준 절대값)을 넘기게 되는 대기는 하지 않는다 — 전체 시간에 상한을 둔다.
+    """
+    fetch = fetch or run_conclusion
+    tries = len(waits) + 1
+    last, made = None, 0
+    for i in range(tries):
+        made = i + 1
+        try:
+            c, why = fetch(repo, run_id, token, expect_path)
+            return c, why, False
+        except _LOOKUP_ERRORS as e:
+            if not is_transient(e):
+                return "", f"조회 실패(재시도로 낫지 않는 오류) {_describe(e)}", False
+            last = e
+            if i == tries - 1 or (deadline is not None and clock() + waits[i] >= deadline):
+                break
+            print(f"   ↻ run {run_id} 결론 조회 {made}/{tries}회차 실패({_describe(e)}) "
+                  f"— {waits[i]}초 뒤 다시", file=sys.stderr)
+            sleep(waits[i])
+    return "", f"일시 오류가 이어졌다({made}회 시도): {_describe(last)}", True
+
+
 def main():
     repo, day = sys.argv[1], sys.argv[2]
     token = os.environ.get("GH_TOKEN", "")
@@ -92,7 +159,8 @@ def main():
     #    workflow 증거가 서로 다른 실행을 가리킬 수 있다.
     fp = stability_gate.fingerprint()
     print(f"지문 {fp} 의 영수증만 본다", file=sys.stderr)
-    out = {}
+    out, pending = {}, []
+    deadline = time.monotonic() + LOOKUP_BUDGET_SECONDS
     for kind, wf in KIND_TO_WORKFLOW.items():
         rec = production_receipt.latest(day, kind, fingerprint=fp)
         if not rec:
@@ -105,21 +173,25 @@ def main():
                   file=sys.stderr)
             continue
         expect = f".github/workflows/{wf}"
-        try:
-            c, why = run_conclusion(repo, run_id, token, expect)
-        except (urllib.error.URLError, ValueError, OSError) as e:
-            print(f"::warning::{wf} run {run_id} 조회 실패: {type(e).__name__}", file=sys.stderr)
-            c, why = "", type(e).__name__
+        c, why, inconclusive = lookup_with_retry(repo, run_id, token, expect, deadline=deadline)
+        if inconclusive:
+            print(f"::warning::{wf} run {run_id} 결론 조회를 끝내 확정하지 못했다 — {why}. "
+                  "판정을 보류한다(FAIL 로 기록하지 않는다)", file=sys.stderr)
+            pending.append(wf)
+            continue
         if c:
             out[wf] = c
             print(f"{wf} ← {kind} receipt(지문 {fp}) run {run_id}: {c}", file=sys.stderr)
         else:
             print(f"::warning::{wf} run {run_id} 인정 안 함: {why}", file=sys.stderr)
     # Builder 가 REQUIRED_WORKFLOWS 를 기준으로 빠진 것을 거짓으로 본다
-    missing = [w for w in evidence_builder.REQUIRED_WORKFLOWS if w not in out]
+    missing = [w for w in evidence_builder.REQUIRED_WORKFLOWS
+               if w not in out and w not in pending]
     if missing:
         print(f"::warning::결론을 못 얻은 워크플로: {missing}", file=sys.stderr)
     print("WORKFLOW_STATES=" + json.dumps(out, ensure_ascii=False))
+    # 조회가 끝내 확정되지 않은 워크플로. 다음 스텝이 이것을 보고 기록을 보류한다.
+    print("WORKFLOW_PENDING=" + json.dumps(sorted(pending), ensure_ascii=False))
     return 0
 
 

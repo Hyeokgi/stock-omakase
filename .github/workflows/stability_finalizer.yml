@@ -84,7 +84,11 @@ jobs:
 
       - name: 🚦 사이클 판정 + 기록
         run: |
-          python stability_gate.py --record "$CYCLE_DATE" --workflows "$WORKFLOW_STATES"
+          # 🔴 2026-10-03 — 결론 조회가 일시 오류로 끝내 확정되지 않으면 FAIL 로 박제하지 않고 **보류**한다.
+          #    10/2 는 외부 창구의 일시 오류 하나가 그날을 영구 FAIL 로 만들었다. 보류하면 종료 코드 75 로
+          #    이 스텝이 빨개져 사람이 보고, runs.csv 는 그대로이며, 다음 슬롯(08:30)이 같은 거래일을 다시 본다.
+          #    워크플로가 환경 변수를 못 받은 옛 호출과도 호환되도록 기본값은 빈 목록이다.
+          python stability_gate.py --record "$CYCLE_DATE" --workflows "$WORKFLOW_STATES" --workflows-pending "${WORKFLOW_PENDING:-[]}"
 
       - name: 💾 runs.csv 보존
         if: always()
