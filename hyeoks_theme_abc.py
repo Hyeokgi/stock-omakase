@@ -422,22 +422,73 @@ def max_drawdown(rets):
     return mdd
 
 
-def quality_check(window_days):
+def expected_trading_days(start, end, nontrading):
+    """`start`~`end`(포함) 사이의 **예정 거래일**. 검증된 휴장 달력으로 센다. 달력 범위를 넘으면 거기서 멈춘다.
+
+    관측 파일 목록이 아니라 달력으로 세는 이유: 하루치 파일이 통째로 없으면 관측 목록에는 그날이 아예 나타나지 않는다.
+    """
+    out, d = [], start
+    while d is not None and d <= end:
+        out.append(d)
+        try:
+            d = next_trading_day(d, nontrading)
+        except ValueError:
+            break
+    return out
+
+
+# 성숙 후 익일 자료가 없는 날의 `returns_note` — 미성숙(`익일미성숙`)과 구분한다.
+MATURED_MISSING_NOTES = ("익일달력결측", "익일 스냅샷 없음")
+
+
+def quality_check(window_days, expected_days=None):
     """평가 표본 구간의 가격 결측·가드 제외 비율. (결과 dict, 보류 여부, 사유 목록)
 
-    분모는 **후보 종목-일**(H 와 B100c 각각), 분자는 익일 수익률을 못 붙인 종목-일이다. 후보가 있었으나 수익률이
-    전부 없어 무효가 된 날도 분모·분자에 들어간다(그런 날을 조용히 빼면 불리한 사례가 사라진다).
+    분모는 **후보 종목-일**(H 와 B100c 각각), 분자는 익일 수익률을 못 붙인 종목-일이다. 날을 다섯 갈래로 가른다:
+      · 정상(수익률 계산됨)        — 가드 제외분이 분자에 들어간다.
+      · **성숙 후 익일 자료 결측** — 달력상 익일이 지났는데 익일 파일이 없다. 진입일의 후보가 확인되므로
+                                     **후보 전부가 분모와 분자(시가 결측)에 들어간다.** 조용히 빼면 불리한 사례가 사라진다.
+      · 미성숙(`익일미성숙`)       — 익일이 아직 오지 않았다. 결측이 아니다. 분모·분자에서 뺀다(날짜만 기록).
+      · **진입 자료 결측**         — 예정 거래일인데 진입일 스냅샷이 없다. 후보 분모를 알 수 없다 →
+                                     **정상 품질로 취급하지 않는다.** 날짜를 기록하고, 예정 거래일 대비 비율이 임계를 넘으면 보류한다.
+      · 판정 불가(달력 범위 밖 등) — 분류할 수 없다. 보수적으로 보류 사유가 된다.
+    `expected_days` 가 없으면 관측된 날만 예정 거래일로 본다(진입 자료 결측은 탐지할 수 없다).
     """
+    dmap = {d["date"]: d for d in window_days}
+    exp = list(expected_days) if expected_days is not None else sorted(
+        k for k, v in dmap.items() if v.get("skip") != "휴장일파일")
+    stat = {layer: {"cand": 0, "miss": 0, "guard": 0} for layer in ("H", "B100")}
+    entry_missing, matured_missing, immature, unclassified = [], [], [], []
+    for date in exp:
+        d = dmap.get(date)
+        if d is None or d.get("skip") == "스냅샷없음":
+            entry_missing.append(date)
+        elif d.get("skip"):
+            continue                                           # 휴장일 파일 — 예정 거래일이 아니다
+        elif d.get("returns_hold") is not None:
+            for layer in ("H", "B100"):
+                dr = d["ret_drop_hold"][layer]
+                st = stat[layer]
+                st["cand"] += d["hold"][layer]
+                st["miss"] += dr.get("익일시가없음", 0) + dr.get("익일소멸", 0)
+                st["guard"] += sum(dr.values())
+        else:
+            note = d.get("returns_note") or "수익률미계산"
+            if note == "익일미성숙":
+                immature.append(date)
+            elif note in MATURED_MISSING_NOTES:
+                matured_missing.append(date)
+                for layer in ("H", "B100"):
+                    n = d["hold"][layer]                       # 진입일 후보는 확인된다 — 전부 결측으로 센다
+                    stat[layer]["cand"] += n
+                    stat[layer]["miss"] += n
+                    stat[layer]["guard"] += n
+            else:
+                unclassified.append((date, note))
     out, reasons = {}, []
     for layer in ("H", "B100"):
-        cand = miss = guard = 0
-        for d in window_days:
-            if d.get("returns_hold") is None:
-                continue
-            cand += d["hold"][layer]
-            dr = d["ret_drop_hold"][layer]
-            miss += dr.get("익일시가없음", 0) + dr.get("익일소멸", 0)
-            guard += sum(dr.values())
+        st = stat[layer]
+        cand, miss, guard = st["cand"], st["miss"], st["guard"]
         out[layer] = {"후보": cand, "시가결측": miss, "가드제외": guard,
                       "시가결측률": (miss / cand) if cand else None,
                       "가드제외율": (guard / cand) if cand else None}
@@ -445,6 +496,13 @@ def quality_check(window_days):
             reasons.append(f"{layer} 익일 시가 결측 {miss}/{cand}")
         if cand and guard / cand > QUALITY_GUARD_MAX:
             reasons.append(f"{layer} 가드 제외 {guard}/{cand}")
+    out["일별"] = {"예정거래일": len(exp), "진입결측일": entry_missing, "성숙후결측일": matured_missing,
+                 "미성숙일": immature, "판정불가": unclassified,
+                 "진입결측률": (len(entry_missing) / len(exp)) if exp else None}
+    if exp and len(entry_missing) / len(exp) > QUALITY_MISSING_MAX:
+        reasons.append(f"진입 자료 결측 거래일 {len(entry_missing)}/{len(exp)}")
+    if unclassified:
+        reasons.append(f"판정 불가 {len(unclassified)}일 {[u[0] for u in unclassified][:3]}")
     return out, bool(reasons), reasons
 
 
@@ -491,7 +549,7 @@ def valid_hold_days(days, confirm_from=CONFIRM_FROM, cap_date=None):
     return ok, bad
 
 
-def evaluate_hold(valid, all_days=None):
+def evaluate_hold(valid, all_days=None, nontrading=None):
     """첫 `EVAL_VALID_DAYS` 개 유효 비교일로 주 평가 한 번. 부족하면 None — 숫자를 내지 않는다."""
     if len(valid) < EVAL_VALID_DAYS:
         return None
@@ -519,7 +577,9 @@ def evaluate_hold(valid, all_days=None):
     # 품질 점검 표본 = 확증 시작일부터 60번째 유효일까지의 **모든** 날(무효일 포함)
     window = [x for x in (all_days if all_days is not None else v)
               if x["date"] >= CONFIRM_FROM and x["date"] <= out["끝날"]]
-    out["품질"], out["품질보류"], out["품질사유"] = quality_check(window)
+    expected = (expected_trading_days(CONFIRM_FROM, out["끝날"], nontrading)
+                if nontrading is not None else None)       # 달력이 있으면 파일이 통째로 없는 날도 잡는다
+    out["품질"], out["품질보류"], out["품질사유"] = quality_check(window, expected)
     out["분류"] = classify_hold(out["D"], out["D_lo"], out["H_비용후"], out["H_최고일제외"], out["품질보류"])
     return out
 
@@ -755,7 +815,7 @@ def hold_section(days, snap_dir, confirm_from, cap_days=CAP_TRADING_DAYS):
     L.append(f"- 종료 상한: 시작 후 {cap_days}거래일 = " +
              (f"**{cap}**" if cap else f"산정 불가 ({cap_why}) — 평일로 추정하지 않는다"))
     last = max((d["date"] for d in conf), default=None)
-    ev = evaluate_hold(valid, conf)
+    ev = evaluate_hold(valid, [d for d in days if d['date'] >= confirm_from], _calendar(snap_dir))
     if ev is None:
         L.append(f"- 🔒 **확증 구간 수익률은 유효 비교일이 {EVAL_VALID_DAYS}일이 되기 전에는 열람하지 않는다.** "
                  "이 보고서도 숫자를 내지 않았다.")
@@ -783,10 +843,16 @@ def hold_section(days, snap_dir, confirm_from, cap_days=CAP_TRADING_DAYS):
         q = ev["품질"][layer]
         L.append(f"| 품질: {label} 후보 {q['후보']} · 익일 시가 결측 {q['시가결측']} · 가드 제외 {q['가드제외']} | "
                  f"{pct(q['시가결측률'], 2)} / {pct(q['가드제외율'], 2)} |")
+    dq = ev["품질"]["일별"]
+    L.append(f"| 품질: 예정 거래일 {dq['예정거래일']} · 진입 자료 결측 {len(dq['진입결측일'])}일 · "
+             f"성숙 후 익일 파일 결측 {len(dq['성숙후결측일'])}일 · 미성숙 제외 {len(dq['미성숙일'])}일 · 판정 불가 {len(dq['판정불가'])}일 | "
+             f"{pct(dq['진입결측률'], 2)} |")
+    if dq["진입결측일"] or dq["성숙후결측일"]:
+        L.append(f"| 결측 날짜 | 진입 {', '.join(dq['진입결측일']) or '—'} · 익일 {', '.join(dq['성숙후결측일']) or '—'} |")
     L += ["",
           f"**분류: {ev['분류']}** — 자동 승인이 아니다. 주문·자금 배분을 허가하지 않는다.",
-          *([f"> ⚠️ **품질 보류** — {' · '.join(ev['품질사유'])}. 임계 시가 결측 {QUALITY_MISSING_MAX*100:g}% · 가드 제외 "
-             f"{QUALITY_GUARD_MAX*100:g}% 초과. 격상도 폐기도 말하지 않는다. 같은 표본을 다시 판단하지 않는다."]
+          *([f"> ⚠️ **품질 보류** — {' · '.join(ev['품질사유'])}. 임계 시가 결측·진입 자료 결측 {QUALITY_MISSING_MAX*100:g}% · 가드 제외 "
+             f"{QUALITY_GUARD_MAX*100:g}% 초과(또는 판정 불가). 격상도 폐기도 말하지 않는다. 같은 표본을 다시 판단하지 않는다."]
            if ev["품질보류"] else []),
           "> 60일은 큰 효과(≈0.3%/일)만 확인할 수 있다. 불확정은 효과가 없다는 뜻이 아니다. "
           "이후 날짜는 이 평가에 넣지 않는다.", ""]

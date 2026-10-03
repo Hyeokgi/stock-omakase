@@ -206,6 +206,88 @@ class QualityHold(unittest.TestCase):
             self.assertEqual(T.classify_hold(*args, quality_hold=True), "품질 보류")
 
 
+def missing_next_day(date, h=10, b=12, note="익일달력결측"):
+    """진입일 후보는 확인되지만 익일 자료가 없어 수익률 계산이 안 된 하루 (build_day 가 만드는 모양)."""
+    return {"date": date, "hold": {"H": h, "B100": b, "H2": min(h, 2), "B100raw": b, "Hraw": h,
+                                   "risk_excl": {}, "H_고가결측": 0},
+            "returns": None, "returns_hold": None, "returns_note": note, "exit_date": "2027-01-04"}
+
+
+class MaturedMissingQuality(unittest.TestCase):
+    """코덱스 회귀: 정상일 후보 10 + 익일달력결측일 후보 10 → 이전 구현은 후보 10 · 결측 0 · 보류 False 였다."""
+
+    def test_codex_reproduction_case(self):
+        days = [fake_day("2027-01-04", h=10, b=12), missing_next_day("2027-01-05", h=10, b=12)]
+        q, hold, reasons = T.quality_check(days)
+        self.assertEqual((q["H"]["후보"], q["H"]["시가결측"]), (20, 10), "결측일 후보가 분모·분자에 들어가야 한다")
+        self.assertEqual((q["B100"]["후보"], q["B100"]["시가결측"]), (24, 12))
+        self.assertTrue(hold, "50% 결측은 보류여야 한다")
+        self.assertEqual(q["일별"]["성숙후결측일"], ["2027-01-05"])
+
+    def test_every_matured_missing_note_is_counted(self):
+        for note in T.MATURED_MISSING_NOTES:
+            with self.subTest(note=note):
+                q, hold, _ = T.quality_check([missing_next_day("2027-01-05", note=note)])
+                self.assertEqual((q["H"]["후보"], q["H"]["시가결측"], hold), (10, 10, True))
+
+    def test_immature_day_is_not_a_missing_day(self):
+        days = [fake_day("2027-01-04"), missing_next_day("2027-01-05", note="익일미성숙")]
+        q, hold, _ = T.quality_check(days)
+        self.assertEqual((q["H"]["후보"], q["H"]["시가결측"], hold), (10, 0, False))
+        self.assertEqual(q["일별"]["미성숙일"], ["2027-01-05"])
+        self.assertEqual(q["일별"]["성숙후결측일"], [])
+
+    def test_small_matured_gap_inside_a_big_clean_sample_does_not_hold(self):
+        days = [fake_day(f"2027-01-{i + 1:02d}") for i in range(30)] + [missing_next_day("2027-02-01", h=2, b=3)]
+        q, hold, _ = T.quality_check(days)
+        self.assertEqual((q["H"]["후보"], q["H"]["시가결측"]), (302, 2))
+        self.assertFalse(hold)
+
+    def test_unclassifiable_day_holds_instead_of_passing_as_normal(self):
+        for note in ("달력범위밖", "수익률미계산"):
+            with self.subTest(note=note):
+                q, hold, reasons = T.quality_check([fake_day("2027-01-04"), missing_next_day("2027-01-05", note=note)])
+                self.assertTrue(hold)
+                self.assertTrue(any("판정 불가" in r for r in reasons))
+                self.assertEqual(q["H"]["후보"], 10, "분류할 수 없는 날은 분모에 넣지도 않는다")
+
+    # ── 진입 자료 자체가 없는 날 ───────────────────────────────────────
+    def test_entry_data_missing_days_are_recorded_separately(self):
+        exp = [f"2027-01-{i + 4:02d}" for i in range(20)]
+        days = [fake_day(d) for d in exp[:-1]]                       # 마지막 하루는 관측 자체가 없다
+        q, hold, _ = T.quality_check(days, exp)
+        self.assertEqual(q["일별"]["진입결측일"], [exp[-1]])
+        self.assertEqual(q["일별"]["예정거래일"], 20)
+        self.assertFalse(hold, "1/20 = 5.0% 는 임계와 같으므로 보류하지 않는다")
+
+    def test_entry_data_missing_above_threshold_holds(self):
+        exp = [f"2027-01-{i + 4:02d}" for i in range(20)]
+        days = [fake_day(d) for d in exp[:-2]]
+        q, hold, reasons = T.quality_check(days, exp)
+        self.assertTrue(hold)
+        self.assertTrue(any("진입 자료 결측 거래일 2/20" in r for r in reasons), reasons)
+        self.assertEqual((q["H"]["후보"], q["H"]["시가결측"]), (180, 0),
+                         "후보 분모를 모르므로 가격 결측률의 분모·분자에 섞지 않는다")
+
+    def test_snapshot_missing_skip_row_counts_as_entry_missing(self):
+        exp = ["2027-01-04", "2027-01-05"]
+        days = [fake_day("2027-01-04"), {"date": "2027-01-05", "skip": "스냅샷없음"}]
+        q, _, _ = T.quality_check(days, exp)
+        self.assertEqual(q["일별"]["진입결측일"], ["2027-01-05"])
+
+    def test_closed_day_file_is_not_an_expected_trading_day(self):
+        days = [fake_day("2027-01-04"), {"date": "2027-01-09", "skip": "휴장일파일"}]
+        q, hold, _ = T.quality_check(days)
+        self.assertEqual((q["일별"]["예정거래일"], q["일별"]["진입결측일"], hold), (1, [], False))
+
+    def test_expected_trading_days_follow_the_calendar_not_the_files(self):
+        nt = load_nontrading()
+        self.assertEqual(T.expected_trading_days("2026-10-06", "2026-10-13", nt),
+                         ["2026-10-06", "2026-10-07", "2026-10-08", "2026-10-12", "2026-10-13"])
+        self.assertEqual(T.expected_trading_days("2026-12-29", "2027-01-05", nt), ["2026-12-29", "2026-12-30"],
+                         "달력 범위를 넘으면 평일로 추정하지 않고 멈춘다")
+
+
 # ── 합성 스냅샷 ───────────────────────────────────────────────────────
 HDR = ("itemcode,itemname,tradeAmount,nowPrice,openPrice,highPrice,"
        "prevChangeRate,topThemeNo,themeNos,tradeStopYn,manageStatusGb,marketAlertType")
@@ -401,6 +483,84 @@ class SyntheticStudy(unittest.TestCase):
 
     def test_calendar_scope_of_the_synthetic_dir_is_not_production(self):
         self.assertEqual(scan_dates(self.tmp)[0], "2026-09-28")
+
+
+class SyntheticGaps(unittest.TestCase):
+    """실제 스냅샷 파일을 지웠을 때 — build_day → valid_hold_days → evaluate_hold 전체 경로."""
+    N_CONFIRM = 80
+
+    @classmethod
+    def setUpClass(cls):
+        cls.base = tempfile.mkdtemp()
+        snap = os.path.join(ROOT, "data", "market_snapshot")
+        shutil.copy(os.path.join(snap, "nontrading.txt"), cls.base)
+        with open(os.path.join(snap, "calendar_scope.json"), encoding="utf-8") as f:
+            meta = json.load(f)
+        meta["end"] = "2027-12-31"
+        with open(os.path.join(cls.base, "calendar_scope.json"), "w", encoding="utf-8") as f:
+            json.dump(meta, f)
+        nt = load_nontrading(cls.base)
+        days = ["2026-09-28"]
+        while len(days) < 5 + cls.N_CONFIRM:
+            days.append(next_trading_day(days[-1], nt))
+        cls.days = days
+        cls.ci = days.index(T.CONFIRM_FROM)
+        for i, d in enumerate(days):
+            write_day(cls.base, d, day_rows(1100 if i <= cls.ci else 1123))
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.base, ignore_errors=True)
+
+    def variant(self, drop_idx):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        for fn in os.listdir(self.base):
+            shutil.copy(os.path.join(self.base, fn), tmp)
+        for i in drop_idx:
+            for slot in ("1505", "1300"):
+                os.remove(os.path.join(tmp, f"{self.days[self.ci + i]}_{slot}.csv.gz"))
+        return tmp
+
+    def evaluate(self, tmp):
+        days, _ = T.collect(tmp, with_returns=True)
+        valid, _ = T.valid_hold_days(days)
+        ev = T.evaluate_hold(valid, [d for d in days if d["date"] >= T.CONFIRM_FROM], load_nontrading(tmp))
+        return ev, valid
+
+    def test_complete_data_has_no_quality_findings(self):
+        ev, valid = self.evaluate(self.variant([]))
+        self.assertEqual(len(valid), self.N_CONFIRM - 1)
+        self.assertFalse(ev["품질보류"])
+        dq = ev["품질"]["일별"]
+        self.assertEqual((dq["진입결측일"], dq["성숙후결측일"], dq["판정불가"]), ([], [], []))
+
+    def test_one_missing_day_is_counted_on_both_sides_without_holding(self):
+        tmp = self.variant([10])
+        ev, valid = self.evaluate(tmp)
+        dq = ev["품질"]["일별"]
+        self.assertEqual(dq["진입결측일"], [self.days[self.ci + 10]])
+        self.assertEqual(dq["성숙후결측일"], [self.days[self.ci + 9]], "지운 날의 앞날은 익일 파일이 없다")
+        self.assertEqual(ev["품질"]["H"]["시가결측"], 2, "앞날 후보 2종목이 결측으로 센다")
+        self.assertFalse(ev["품질보류"])
+        self.assertEqual(len(valid), self.N_CONFIRM - 1 - 2)
+
+    def test_many_missing_days_hold_the_verdict_and_say_why(self):
+        tmp = self.variant([10, 20, 30, 40, 50])
+        ev, _ = self.evaluate(tmp)
+        self.assertEqual(len(ev["품질"]["일별"]["진입결측일"]), 5)
+        self.assertEqual(len(ev["품질"]["일별"]["성숙후결측일"]), 5)
+        self.assertEqual(ev["품질"]["H"]["시가결측"], 10)
+        self.assertTrue(ev["품질보류"])
+        self.assertEqual(ev["분류"], "품질 보류")
+        self.assertTrue(any("진입 자료 결측 거래일 5/" in r for r in ev["품질사유"]), ev["품질사유"])
+
+    def test_report_prints_the_dates_and_the_hold(self):
+        out = T.report(self.variant([10, 20, 30, 40, 50]), today="2027-03-01")
+        self.assertIn("분류: 품질 보류", out)
+        self.assertIn(self.days[self.ci + 10], out)
+        self.assertIn("진입 자료 결측 5일", out)
+        self.assertIn("성숙 후 익일 파일 결측 5일", out)
 
 
 if __name__ == "__main__":
