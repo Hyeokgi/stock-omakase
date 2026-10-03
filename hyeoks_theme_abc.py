@@ -37,6 +37,7 @@ import argparse
 import datetime
 import os
 import sys
+from statistics import median
 
 from hyeoks_closing_bet import (SNAP_DIR, KST, MIN_TURNOVER, PILOT_DAYS, COST,
                                 PRICE_LIMIT, LIMIT_TOL, ADJ_TOL,
@@ -297,6 +298,189 @@ def layer_diffs(daily):
     return out
 
 
+# ══════════════════════════════════════════════════════════════════════
+# 대장 유지형 종베 `leader-hold-v1` — 사전등록 `docs/사전등록_2026-10-03_대장유지형종베_v1.md`
+# ══════════════════════════════════════════════════════════════════════
+# 이 블록의 상수는 사전등록 문서의 값이다. 결과를 보고 바꾸지 않는다. 바꾸려면 v2 를 새로 쓴다.
+#   · 비교군 B100c = B_현행 ∩ 거래대금 ≥ 100억 ∩ **공통 위험·거래가능성 기준**
+#   · H            = B100c ∩ 고가유지율 ≥ 98%         (공통 기준은 H 와 비교군에 **똑같이** 적용한다)
+#   · 위험 제외가 H 에만 붙으면 좋은 결과가 고가유지 때문인지 위험종목 제외 때문인지 가를 수 없다
+# 결과 접근 통제 — 확증 구간(진입일 ≥ CONFIRM_FROM)의 수익률은 유효 비교일이
+#   EVAL_VALID_DAYS 에 이르기 전까지 어떤 출력에도 내지 않는다(리포트·로그·아티팩트·수동 실행 공통).
+#   이 통제는 실수로 보는 것을 막는 장치다. 공개 저장소의 원자료를 직접 계산하는 것까지 막지는 못한다.
+STUDY_ID         = "leader-hold-v1"
+CONFIRM_FROM     = "2026-10-06"       # 확증 시작일(첫 거래일). 이 날짜 이전은 전부 탐색 취급
+HOLD_PCT         = 98                 # 고가유지율 ≥ 98%  — 임시 문턱, 코덱스 제안. 정수 비교(부동소수 경계 회피)
+RISK_RATE_CAP    = DANTA_HI           # 등락률 ≥ 29.5% 제외 — 체결 불가 대용 (기존 시스템 상수)
+EVAL_VALID_DAYS  = 60                 # 유효 비교일 60일에 주 평가 한 번
+CAP_TRADING_DAYS = 120                # 시작 후 120거래일 안에 60유효일을 못 모으면 자료 부족 종료
+TOPK             = 2                  # 보조 실행 지표 — 거래대금 상위 K (탐색 구간에서 미계산)
+BOOT_BLOCK, BOOT_N, BOOT_SEED = 5, 10_000, 20261006
+
+RISK_REASONS = ("경보미확인", "시장경보", "상한가근접")
+
+
+def risk_filter(items):
+    """공통 위험·거래가능성 기준. 종목은 처음 걸린 사유 하나로만 센다.
+
+    · `marketAlertType` 가 비어 있으면 **미확인** — 정상으로 가정하지 않고 양쪽에서 뺀다.
+    · `00` 이 아니면(01 주의·02 경고·03 위험, `docs/네이버개편_대응.md`) 뺀다.
+    · 등락률 ≥ 29.5% 는 체결 불가 대용으로 뺀다. 체결 가능성을 보장하는 기준이 아니다.
+    거래정지·관리종목·가격 결측은 이미 A 에서 빠졌다.
+    """
+    kept, excl = [], {k: 0 for k in RISK_REASONS}
+    for it in items:
+        alert = (it.get("alert") or "").strip()
+        if not alert:
+            excl["경보미확인"] += 1
+        elif alert != "00":
+            excl["시장경보"] += 1
+        elif it["rate"] / 100.0 >= RISK_RATE_CAP:
+            excl["상한가근접"] += 1
+        else:
+            kept.append(it)
+    return kept, excl
+
+
+def build_B100(leaders, apply_risk=True):
+    """B100c — B_현행 중 거래대금 ≥ 100억(`is_true_theme_leader` 근사)에 공통 위험 기준을 더한다.
+
+    `apply_risk=False` 는 **민감도용 원안**(위험 제외 없음)이다. 판단에 쓰지 않는다.
+    """
+    tv_ok = [x for x in leaders if x["amt"] >= MIN_BREAKOUT_TV]
+    if not apply_risk:
+        return tv_ok, {k: 0 for k in RISK_REASONS}
+    return risk_filter(tv_ok)
+
+
+def build_H(b100):
+    """H — 비교군 중 고가유지율 ≥ 98%. 고가가 없으면(≤ 0) 판단할 수 없으니 뺀다(센다)."""
+    out, no_high = [], 0
+    for it in b100:
+        if it["high"] <= 0:
+            no_high += 1
+        elif it["P"] * 100 >= it["high"] * HOLD_PCT:
+            out.append(it)
+    return out, no_high
+
+
+def top_k(items, k=TOPK):
+    """거래대금 내림차순, 동률은 종목코드 오름차순."""
+    return sorted(items, key=lambda x: (-x["amt"], x["code"]))[:k]
+
+
+def trading_day_n(start, n, nontrading):
+    """`start` 를 1일째로 센 n번째 거래일. 달력 범위를 넘으면 (None, 사유) — 평일로 추정하지 않는다."""
+    d = start
+    try:
+        for _ in range(n - 1):
+            d = next_trading_day(d, nontrading)
+            if d is None:
+                return None, "다음 거래일을 찾지 못함"
+    except ValueError as e:
+        return None, f"달력 범위 밖 — {e}"
+    return d, ""
+
+
+def block_bootstrap_ci(xs, block=BOOT_BLOCK, n_boot=BOOT_N, seed=BOOT_SEED):
+    """이동 블록 부트스트랩 95% 구간. 날짜순 리스트를 받는다.
+
+    고정한 것: 블록 시작은 [0, n−block] 균등, ⌈n/block⌉ 블록을 이어 붙여 n 개로 자름, 평균을 n_boot 번,
+    정렬 후 `[int(0.025·N)]`, `[int(0.975·N)]`. 난수는 `random.Random(seed)` — 같은 입력은 같은 구간.
+    유효 비교일만 이어 붙인다(빠진 날을 건너뛴 인접은 그대로 이웃으로 본다).
+    """
+    import random
+    n = len(xs)
+    if n == 0:
+        return None, None
+    if n <= block:
+        block = max(1, n)
+    rng = random.Random(seed)
+    nb = -(-n // block)
+    means = []
+    for _ in range(n_boot):
+        s = []
+        for _ in range(nb):
+            i = rng.randrange(0, n - block + 1)
+            s.extend(xs[i:i + block])
+        means.append(sum(s[:n]) / n)
+    means.sort()
+    return means[int(0.025 * n_boot)], means[min(n_boot - 1, int(0.975 * n_boot))]
+
+
+def max_drawdown(rets):
+    """일별 수익률(소수)을 곱해 만든 경로의 최대낙폭(양수 비율)."""
+    peak, level, mdd = 1.0, 1.0, 0.0
+    for r in rets:
+        level *= 1.0 + r
+        peak = max(peak, level)
+        mdd = max(mdd, 1.0 - level / peak)
+    return mdd
+
+
+def classify_hold(d_mean, d_lo, h_net_mean, h_net_ex_best):
+    """사전등록 §7 — 자동 승인이 아니다. 어느 분류도 주문·배분을 허가하지 않는다."""
+    if d_mean is None:
+        return "불확정"
+    if d_mean <= 0:
+        return "폐기"
+    if d_lo is not None and d_lo > 0 and h_net_mean > 0 and h_net_ex_best > 0:
+        return "후보 격상 검토 가능"
+    return "불확정"
+
+
+def valid_hold_days(days, confirm_from=CONFIRM_FROM):
+    """확증 구간의 유효 비교일. (유효 목록, 사유별 무효 수). 수익률 숫자는 밖으로 내지 않는다.
+
+    유효 = 진입일이 확증 구간이고, 익일 자료가 있으며, H 에서 가드를 통과한 수익률이 하나 이상 있는 날.
+    (H ⊂ B100c 이므로 H 가 있으면 비교군도 있다.)
+    """
+    ok, bad = [], {}
+    for d in sorted((x for x in days if x["date"] >= confirm_from), key=lambda x: x["date"]):
+        if d.get("skip"):
+            why = d["skip"]
+        elif d.get("returns_hold") is None:
+            why = d.get("returns_note") or "수익률미계산"
+        elif not d["hold"]["H"]:
+            why = "H무신호"
+        elif d["returns_hold"]["H"]["평균"] is None or d["returns_hold"]["B100"]["평균"] is None:
+            why = "가드로전부제외"
+        else:
+            ok.append(d)
+            continue
+        bad[why] = bad.get(why, 0) + 1
+    return ok, bad
+
+
+def evaluate_hold(valid):
+    """첫 `EVAL_VALID_DAYS` 개 유효 비교일로 주 평가 한 번. 부족하면 None — 숫자를 내지 않는다."""
+    if len(valid) < EVAL_VALID_DAYS:
+        return None
+    v = valid[:EVAL_VALID_DAYS]
+    h = [x["returns_hold"]["H"]["평균"] for x in v]
+    b = [x["returns_hold"]["B100"]["평균"] for x in v]
+    diff = [x - y for x, y in zip(h, b)]
+    d_mean = mean(diff)
+    lo, hi = block_bootstrap_ci(diff)
+    h_net = [x - COST for x in h]
+    ex_best = sorted(h_net)[:-1]
+    h2 = [x["returns_hold"]["H2"]["평균"] for x in v if x["returns_hold"]["H2"]["평균"] is not None]
+    raw = [(x["returns_hold"]["Hraw"]["평균"], x["returns_hold"]["B100raw"]["평균"]) for x in v]
+    raw_d = [a - c for a, c in raw if a is not None and c is not None]
+    srt = sorted(h_net)
+    out = {"n": len(v), "첫날": v[0]["date"], "끝날": v[-1]["date"],
+           "D": d_mean, "D_lo": lo, "D_hi": hi,
+           "D_양수일": sum(1 for x in diff if x > 0),
+           "H_비용후": mean(h_net), "H_중앙": median(h_net),
+           "H_최고일제외": mean(ex_best), "H_양수일": sum(1 for x in h_net if x > 0),
+           "H_최악일": srt[0], "H_MDD": max_drawdown(h_net),
+           "H2_비용후": (mean(h2) - COST) if h2 else None, "H2_n": len(h2),
+           "민감도_D_위험제외없음": mean(raw_d), "민감도_n": len(raw_d),
+           "H_종목수": [x["hold"]["H"] for x in v]}
+    out["분류"] = classify_hold(out["D"], out["D_lo"], out["H_비용후"], out["H_최고일제외"])
+    return out
+
+
 def build_day(date, snap_dir, with_returns, nontrading=None, dates=None):
     """하루치 A/B/C 분해. `with_returns=False` 면 **수익률을 계산하지 않는다.**"""
     nt = _calendar(snap_dir) if nontrading is None else nontrading
@@ -313,6 +497,12 @@ def build_day(date, snap_dir, with_returns, nontrading=None, dates=None):
     Bc, dom_excl = build_B_current(A)
     Bm = market_top_proxy(rows1505)   # ⚠️ A 이전 raw 에서. 순환 제거
     C, funnel = build_C(Bc)
+    #  leader-hold-v1 — 비교군 B100c · H · 보조 H2(상위 K) · 위험 제외 없는 민감도 원안. 구조 집계는 항상 낸다.
+    B100, risk_excl = build_B100(Bc)
+    H, h_nohigh = build_H(B100)
+    H2 = top_k(H)
+    B100raw, _ = build_B100(Bc, apply_risk=False)
+    Hraw, _ = build_H(B100raw)
     jac, inter, n1, n2 = agreement(Bc, Bm)
     cap = market_capture(Bm, A, Bc, C)
 
@@ -323,7 +513,9 @@ def build_day(date, snap_dir, with_returns, nontrading=None, dates=None):
            "B_current": len(Bc), "B_market": len(Bm), "C": len(C),
            "funnel": funnel, "dom_excl": dom_excl,
            "agreement": jac, "agree_n": inter, "capture": cap,
-           "drop": drop, "signal": bool(C)}
+           "drop": drop, "signal": bool(C),
+           "hold": {"B100": len(B100), "H": len(H), "H2": len(H2), "risk_excl": risk_excl,
+                    "H_고가결측": h_nohigh, "B100raw": len(B100raw), "Hraw": len(Hraw)}}
 
     # C 후보 변수는 항상 기록한다 — 수익률과 무관하다
     day["C_vals"] = {"B_current": [c_values(x, rows1300) for x in Bc],
@@ -331,6 +523,7 @@ def build_day(date, snap_dir, with_returns, nontrading=None, dates=None):
                      "C":         [c_values(x, rows1300) for x in C]}
     if not with_returns:
         day["returns"] = None      # 🔒 단계 잠금 — 여기서 끝난다
+        day["returns_hold"] = None
         return day
 
     # ── Stage 1 — 익일 시가 수익률 (위 사전등록 사양 그대로) ──────────
@@ -339,6 +532,7 @@ def build_day(date, snap_dir, with_returns, nontrading=None, dates=None):
     nxt = {} if why else next_trading_snapshots(date, snap_dir, nt, dates)
     if not nxt:
         day["returns"] = None
+        day["returns_hold"] = None
         day["returns_note"] = why or "익일 스냅샷 없음"
         return day
     res, drops = {}, {}
@@ -349,6 +543,13 @@ def build_day(date, snap_dir, with_returns, nontrading=None, dates=None):
         drops[name] = d
     day["returns"] = res
     day["ret_drop"] = drops
+    hold, hdrops = {}, {}
+    for name, items in (("B100", B100), ("H", H), ("H2", H2), ("B100raw", B100raw), ("Hraw", Hraw)):
+        r, d = layer_returns(items, nxt)
+        hold[name] = {"n": len(r), "평균": mean(r)}
+        hdrops[name] = d
+    day["returns_hold"] = hold
+    day["ret_drop_hold"] = hdrops
     return day
 
 
@@ -470,7 +671,77 @@ def stage1_eta(dates, nontrading=None):
     return d, need, ""
 
 
-def report(snap_dir=SNAP_DIR, today=None):
+def hold_section(days, snap_dir, confirm_from):
+    """`leader-hold-v1` 보고. 탐색 구간은 보이되, 확증 구간은 **유효 60일 전까지 수익률 숫자를 내지 않는다.**"""
+    L = [f"## 🧭 대장 유지형 종베 `{STUDY_ID}` — 사전등록 `docs/사전등록_2026-10-03_대장유지형종베_v1.md`", "",
+         f"> 비교군 **B100c** = B_현행 ∩ 거래대금 ≥ {MIN_BREAKOUT_TV//100_000_000}억 ∩ 공통 위험 기준"
+         f"(경보 미확인·`00` 아님·등락률 ≥ {RISK_RATE_CAP*100:g}% 제외). **H** = B100c ∩ 고가유지율 ≥ {HOLD_PCT}%. "
+         "공통 기준은 두 쪽에 똑같이 적용한다.",
+         f"> 확증 시작 **{confirm_from}**. 그 전은 전부 **탐색 구간**이며 {HOLD_PCT}% 는 이 구간을 보고 제안된 값이다 — "
+         "여기 숫자는 검증이 아니다.", ""]
+    exp = [d for d in days if not d.get("skip") and d["date"] < confirm_from]
+    conf = [d for d in days if not d.get("skip") and d["date"] >= confirm_from]
+
+    # ── 탐색 구간: 수익률 허용 ──
+    rows = [d for d in exp if d.get("returns_hold")]
+    L += [f"### 탐색 구간 (진입일 < {confirm_from}, 수익률 계산 {len(rows)}일)", "",
+          "| 계층 | 날짜 수 | 평균(비용 전) | 평균(비용 후) |", "|---|--:|--:|--:|"]
+    names = (("B100", "B100c (비교군)"), ("H", "H"), ("H2", f"H 상위 {TOPK} (보조)"),
+             ("B100raw", "B100 위험제외 없음 (민감도)"), ("Hraw", "H 위험제외 없음 (민감도)"))
+    for k, label in names:
+        vals = [d["returns_hold"][k]["평균"] for d in rows if d["returns_hold"][k]["평균"] is not None]
+        m = mean(vals)
+        L.append(f"| {label} | {len(vals)} | {pct(m)} | {pct(m - COST) if m is not None else '—'} |")
+    dl = [{"B100": d["returns_hold"]["B100"]["평균"], "H": d["returns_hold"]["H"]["평균"],
+           "B100raw": d["returns_hold"]["B100raw"]["평균"], "Hraw": d["returns_hold"]["Hraw"]["평균"]} for d in rows]
+    for label, hi, lo in (("**H − B100c** (주 질문)", "H", "B100"), ("H − B100 위험제외 없음 (민감도)", "Hraw", "B100raw")):
+        x = [r[hi] - r[lo] for r in dl if r[hi] is not None and r[lo] is not None]
+        L.append(f"| {label} | {len(x)} | {pct(mean(x))} | (차이는 비용이 상쇄) |")
+    L += ["", "> 탐색 구간의 평균이다. 위험 제외를 양쪽에 똑같이 적용한 값과 안 한 값을 함께 낸다 — "
+          "차이가 크면 고가유지 효과가 아니라 **위험종목 제외 효과**일 수 있다.", ""]
+
+    # ── 확증 구간: 숫자 없이 상태만 ──
+    valid, bad = valid_hold_days(days, confirm_from)
+    L += [f"### 확증 구간 (진입일 ≥ {confirm_from})", ""]
+    cap, cap_why = trading_day_n(confirm_from, CAP_TRADING_DAYS, _calendar(snap_dir))
+    L.append(f"- 관측 {len(conf)}일 · **유효 비교일 {len(valid)} / {EVAL_VALID_DAYS}** · "
+             f"무효 사유: {', '.join(f'{k} {v}' for k, v in sorted(bad.items())) or '없음'}")
+    hs = [d["hold"]["H"] for d in conf]
+    if hs:
+        L.append(f"- H 후보 수(구조 집계): 최소 {min(hs)} · 중앙 {sorted(hs)[len(hs)//2]} · 최대 {max(hs)}")
+    L.append(f"- 종료 상한: 시작 후 {CAP_TRADING_DAYS}거래일 = " +
+             (f"**{cap}**" if cap else f"산정 불가 ({cap_why}) — 평일로 추정하지 않는다"))
+    last = max((d["date"] for d in conf), default=None)
+    ev = evaluate_hold(valid)
+    if ev is None:
+        L.append(f"- 🔒 **확증 구간 수익률은 유효 비교일이 {EVAL_VALID_DAYS}일이 되기 전에는 열람하지 않는다.** "
+                 "이 보고서도 숫자를 내지 않았다.")
+        if len(valid) >= 20:
+            L.append("- P1(유효 20일) 도달 — 수집 상태·결측·후보 수만 점검한다. 성과 열람 없음.")
+        if cap and last and last >= cap:
+            L.append(f"- ⛔ **자료 부족 종료** — 상한({cap})까지 유효 비교일 {len(valid)}일. 평가하지 않는다.")
+        L.append("")
+        return L
+    L += ["", f"#### 🔓 주 평가 (유효 비교일 첫 {ev['n']}일: {ev['첫날']} ~ {ev['끝날']}) — 한 번, 고정 표본", "",
+          "| 항목 | 값 |", "|---|--:|",
+          f"| **D = H − B100c 날짜 평균 (비용 전)** | **{pct(ev['D'])}** |",
+          f"| D 의 95% 구간 (이동 블록 {BOOT_BLOCK}일 · {BOOT_N:,}회 · 시드 {BOOT_SEED}) | {pct(ev['D_lo'])} ~ {pct(ev['D_hi'])} |",
+          f"| D 가 양(+)인 날 | {ev['D_양수일']} / {ev['n']} |",
+          f"| H 비용 후 평균 | {pct(ev['H_비용후'])} |",
+          f"| H 비용 후 중앙값 | {pct(ev['H_중앙'])} |",
+          f"| H 비용 후, 최고일 제외 평균 | {pct(ev['H_최고일제외'])} |",
+          f"| H 비용 후 양(+)인 날 | {ev['H_양수일']} / {ev['n']} |",
+          f"| H 최악의 날 | {pct(ev['H_최악일'])} |",
+          f"| H 일별 경로 최대낙폭 | {ev['H_MDD']*100:.2f}% |",
+          f"| 보조: H 상위 {TOPK} 비용 후 ({ev['H2_n']}일) | {pct(ev['H2_비용후'])} |",
+          f"| 민감도: D 위험제외 없음 ({ev['민감도_n']}일) | {pct(ev['민감도_D_위험제외없음'])} |", "",
+          f"**분류: {ev['분류']}** — 자동 승인이 아니다. 주문·자금 배분을 허가하지 않는다.",
+          "> 60일은 큰 효과(≈0.3%/일)만 확인할 수 있다. 불확정은 효과가 없다는 뜻이 아니다. "
+          "이후 날짜는 이 평가에 넣지 않는다.", ""]
+    return L
+
+
+def report(snap_dir=SNAP_DIR, today=None, confirm_from=CONFIRM_FROM):
     stage, matured = stage_of(scan_dates(snap_dir), _calendar(snap_dir), snap_dir)
     #  🔒 Stage 가 수익률 계산 여부를 정한다. 하드코딩하지 않는다.
     #     이전 판은 `with_returns=False` 가 박혀 있어 Stage 1 이 돼도 구조만 냈다.
@@ -499,9 +770,12 @@ def report(snap_dir=SNAP_DIR, today=None):
         daily = [{"date": d["date"],
                   **{k: (d["returns"][k]["평균"] if d.get("returns") else None)
                      for k in RET_LAYERS}}
-                 for d in days if not d.get("skip")]
+                 for d in days if not d.get("skip") and d["date"] < confirm_from]
         diffs = layer_diffs(daily)
+        _n_conf = sum(1 for d in days if not d.get("skip") and d["date"] >= confirm_from)
         L += ["## 📈 Stage 1 — 익일 시가 수익률 (사전등록 사양)", "",
+              f"> 🔒 **탐색 구간만 집계한다** (진입일 < {confirm_from}). 확증 구간 {_n_conf}일은 아래 평균에 "
+              "**넣지 않았다** — 사전등록 `leader-hold-v1` 의 결과 접근 통제다.", "",
               "| 계층 | 날짜 수 | 평균(비용 전) | 평균(비용 후) |", "|---|--:|--:|--:|"]
         for k in RET_LAYERS:
             vals = [r[k] for r in daily if r[k] is not None]
@@ -524,6 +798,9 @@ def report(snap_dir=SNAP_DIR, today=None):
                   "조건 효과는 **이 구간을 쓰지 않은** 이후 자료에서 확인한다. "
                   "위 평균에는 파일럿 이후 날짜도 섞여 있다 — 미사용 검증 구간으로 부르지 않는다.",
                   ""]
+
+    if stage == STAGE1:
+        L += hold_section(days, snap_dir, confirm_from)
 
     L += ["## A → B → C 퍼널 (단계별로 센다)", "",
           "| 날짜 | A | 테마소속 | 테마 | **B** 대장 | 5배배제 | +거래대금100억 | **C** +단타 | B_시장 | 일치 |",
