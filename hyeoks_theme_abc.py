@@ -316,6 +316,10 @@ EVAL_VALID_DAYS  = 60                 # 유효 비교일 60일에 주 평가 한
 CAP_TRADING_DAYS = 120                # 시작 후 120거래일 안에 60유효일을 못 모으면 자료 부족 종료
 TOPK             = 2                  # 보조 실행 지표 — 거래대금 상위 K (탐색 구간에서 미계산)
 BOOT_BLOCK, BOOT_N, BOOT_SEED = 5, 10_000, 20261006
+# 품질 보류 — 출구 가격이 없는 종목을 빼고 남은 것만 계산하면 거래정지 같은 불리한 사례가 사라진다.
+#   결측을 **기록**하는 것과 결측 때문에 **판정을 보류**하는 것은 다르다. 임계값은 잠금 전 사용자 승인 대상이다 [제안].
+QUALITY_MISSING_MAX = 0.05   # 익일 시가 결측(익일시가없음+익일소멸) 비율 상한 — H 와 B100c 각각
+QUALITY_GUARD_MAX   = 0.10   # 가드 제외 전체(위 둘 + 제한폭이탈 + 기업행사 의심) 비율 상한 — 각각
 
 RISK_REASONS = ("경보미확인", "시장경보", "상한가근접")
 
@@ -418,8 +422,39 @@ def max_drawdown(rets):
     return mdd
 
 
-def classify_hold(d_mean, d_lo, h_net_mean, h_net_ex_best):
-    """사전등록 §7 — 자동 승인이 아니다. 어느 분류도 주문·배분을 허가하지 않는다."""
+def quality_check(window_days):
+    """평가 표본 구간의 가격 결측·가드 제외 비율. (결과 dict, 보류 여부, 사유 목록)
+
+    분모는 **후보 종목-일**(H 와 B100c 각각), 분자는 익일 수익률을 못 붙인 종목-일이다. 후보가 있었으나 수익률이
+    전부 없어 무효가 된 날도 분모·분자에 들어간다(그런 날을 조용히 빼면 불리한 사례가 사라진다).
+    """
+    out, reasons = {}, []
+    for layer in ("H", "B100"):
+        cand = miss = guard = 0
+        for d in window_days:
+            if d.get("returns_hold") is None:
+                continue
+            cand += d["hold"][layer]
+            dr = d["ret_drop_hold"][layer]
+            miss += dr.get("익일시가없음", 0) + dr.get("익일소멸", 0)
+            guard += sum(dr.values())
+        out[layer] = {"후보": cand, "시가결측": miss, "가드제외": guard,
+                      "시가결측률": (miss / cand) if cand else None,
+                      "가드제외율": (guard / cand) if cand else None}
+        if cand and miss / cand > QUALITY_MISSING_MAX:
+            reasons.append(f"{layer} 익일 시가 결측 {miss}/{cand}")
+        if cand and guard / cand > QUALITY_GUARD_MAX:
+            reasons.append(f"{layer} 가드 제외 {guard}/{cand}")
+    return out, bool(reasons), reasons
+
+
+def classify_hold(d_mean, d_lo, h_net_mean, h_net_ex_best, quality_hold=False):
+    """사전등록 §7 — 자동 승인이 아니다. 어느 분류도 주문·배분을 허가하지 않는다.
+
+    품질 보류는 다른 모든 분류보다 앞선다: 결측이 많으면 격상도 폐기도 말하지 않는다.
+    """
+    if quality_hold:
+        return "품질 보류"
     if d_mean is None:
         return "불확정"
     if d_mean <= 0:
@@ -429,15 +464,19 @@ def classify_hold(d_mean, d_lo, h_net_mean, h_net_ex_best):
     return "불확정"
 
 
-def valid_hold_days(days, confirm_from=CONFIRM_FROM):
+def valid_hold_days(days, confirm_from=CONFIRM_FROM, cap_date=None):
     """확증 구간의 유효 비교일. (유효 목록, 사유별 무효 수). 수익률 숫자는 밖으로 내지 않는다.
 
     유효 = 진입일이 확증 구간이고, 익일 자료가 있으며, H 에서 가드를 통과한 수익률이 하나 이상 있는 날.
     (H ⊂ B100c 이므로 H 가 있으면 비교군도 있다.)
+    `cap_date`(시작 후 120거래일째) 가 주어지면 그 **뒤의 진입일은 평가 대상이 아니다** — 나중에 60 유효일을 채워도
+    '자료 부족 종료' 를 되살리지 않는다.
     """
     ok, bad = [], {}
     for d in sorted((x for x in days if x["date"] >= confirm_from), key=lambda x: x["date"]):
-        if d.get("skip"):
+        if cap_date and d["date"] > cap_date:
+            why = "상한초과"
+        elif d.get("skip"):
             why = d["skip"]
         elif d.get("returns_hold") is None:
             why = d.get("returns_note") or "수익률미계산"
@@ -452,7 +491,7 @@ def valid_hold_days(days, confirm_from=CONFIRM_FROM):
     return ok, bad
 
 
-def evaluate_hold(valid):
+def evaluate_hold(valid, all_days=None):
     """첫 `EVAL_VALID_DAYS` 개 유효 비교일로 주 평가 한 번. 부족하면 None — 숫자를 내지 않는다."""
     if len(valid) < EVAL_VALID_DAYS:
         return None
@@ -477,7 +516,11 @@ def evaluate_hold(valid):
            "H2_비용후": (mean(h2) - COST) if h2 else None, "H2_n": len(h2),
            "민감도_D_위험제외없음": mean(raw_d), "민감도_n": len(raw_d),
            "H_종목수": [x["hold"]["H"] for x in v]}
-    out["분류"] = classify_hold(out["D"], out["D_lo"], out["H_비용후"], out["H_최고일제외"])
+    # 품질 점검 표본 = 확증 시작일부터 60번째 유효일까지의 **모든** 날(무효일 포함)
+    window = [x for x in (all_days if all_days is not None else v)
+              if x["date"] >= CONFIRM_FROM and x["date"] <= out["끝날"]]
+    out["품질"], out["품질보류"], out["품질사유"] = quality_check(window)
+    out["분류"] = classify_hold(out["D"], out["D_lo"], out["H_비용후"], out["H_최고일제외"], out["품질보류"])
     return out
 
 
@@ -671,7 +714,7 @@ def stage1_eta(dates, nontrading=None):
     return d, need, ""
 
 
-def hold_section(days, snap_dir, confirm_from):
+def hold_section(days, snap_dir, confirm_from, cap_days=CAP_TRADING_DAYS):
     """`leader-hold-v1` 보고. 탐색 구간은 보이되, 확증 구간은 **유효 60일 전까지 수익률 숫자를 내지 않는다.**"""
     L = [f"## 🧭 대장 유지형 종베 `{STUDY_ID}` — 사전등록 `docs/사전등록_2026-10-03_대장유지형종베_v1.md`", "",
          f"> 비교군 **B100c** = B_현행 ∩ 거래대금 ≥ {MIN_BREAKOUT_TV//100_000_000}억 ∩ 공통 위험 기준"
@@ -701,25 +744,26 @@ def hold_section(days, snap_dir, confirm_from):
           "차이가 크면 고가유지 효과가 아니라 **위험종목 제외 효과**일 수 있다.", ""]
 
     # ── 확증 구간: 숫자 없이 상태만 ──
-    valid, bad = valid_hold_days(days, confirm_from)
+    cap, cap_why = trading_day_n(confirm_from, cap_days, _calendar(snap_dir))
+    valid, bad = valid_hold_days(days, confirm_from, cap)
     L += [f"### 확증 구간 (진입일 ≥ {confirm_from})", ""]
-    cap, cap_why = trading_day_n(confirm_from, CAP_TRADING_DAYS, _calendar(snap_dir))
     L.append(f"- 관측 {len(conf)}일 · **유효 비교일 {len(valid)} / {EVAL_VALID_DAYS}** · "
              f"무효 사유: {', '.join(f'{k} {v}' for k, v in sorted(bad.items())) or '없음'}")
     hs = [d["hold"]["H"] for d in conf]
     if hs:
         L.append(f"- H 후보 수(구조 집계): 최소 {min(hs)} · 중앙 {sorted(hs)[len(hs)//2]} · 최대 {max(hs)}")
-    L.append(f"- 종료 상한: 시작 후 {CAP_TRADING_DAYS}거래일 = " +
+    L.append(f"- 종료 상한: 시작 후 {cap_days}거래일 = " +
              (f"**{cap}**" if cap else f"산정 불가 ({cap_why}) — 평일로 추정하지 않는다"))
     last = max((d["date"] for d in conf), default=None)
-    ev = evaluate_hold(valid)
+    ev = evaluate_hold(valid, conf)
     if ev is None:
         L.append(f"- 🔒 **확증 구간 수익률은 유효 비교일이 {EVAL_VALID_DAYS}일이 되기 전에는 열람하지 않는다.** "
                  "이 보고서도 숫자를 내지 않았다.")
         if len(valid) >= 20:
             L.append("- P1(유효 20일) 도달 — 수집 상태·결측·후보 수만 점검한다. 성과 열람 없음.")
-        if cap and last and last >= cap:
-            L.append(f"- ⛔ **자료 부족 종료** — 상한({cap})까지 유효 비교일 {len(valid)}일. 평가하지 않는다.")
+        if cap and last and last > cap:
+            L.append(f"- ⛔ **자료 부족 종료** — 상한({cap})까지 유효 비교일 {len(valid)}일. "
+                     "상한 뒤에 유효일이 더 쌓여도 평가하지 않는다.")
         L.append("")
         return L
     L += ["", f"#### 🔓 주 평가 (유효 비교일 첫 {ev['n']}일: {ev['첫날']} ~ {ev['끝날']}) — 한 번, 고정 표본", "",
@@ -734,14 +778,22 @@ def hold_section(days, snap_dir, confirm_from):
           f"| H 최악의 날 | {pct(ev['H_최악일'])} |",
           f"| H 일별 경로 최대낙폭 | {ev['H_MDD']*100:.2f}% |",
           f"| 보조: H 상위 {TOPK} 비용 후 ({ev['H2_n']}일) | {pct(ev['H2_비용후'])} |",
-          f"| 민감도: D 위험제외 없음 ({ev['민감도_n']}일) | {pct(ev['민감도_D_위험제외없음'])} |", "",
+          f"| 민감도: D 위험제외 없음 ({ev['민감도_n']}일) | {pct(ev['민감도_D_위험제외없음'])} |"]
+    for layer, label in (("H", "H"), ("B100", "B100c")):
+        q = ev["품질"][layer]
+        L.append(f"| 품질: {label} 후보 {q['후보']} · 익일 시가 결측 {q['시가결측']} · 가드 제외 {q['가드제외']} | "
+                 f"{pct(q['시가결측률'], 2)} / {pct(q['가드제외율'], 2)} |")
+    L += ["",
           f"**분류: {ev['분류']}** — 자동 승인이 아니다. 주문·자금 배분을 허가하지 않는다.",
+          *([f"> ⚠️ **품질 보류** — {' · '.join(ev['품질사유'])}. 임계 시가 결측 {QUALITY_MISSING_MAX*100:g}% · 가드 제외 "
+             f"{QUALITY_GUARD_MAX*100:g}% 초과. 격상도 폐기도 말하지 않는다. 같은 표본을 다시 판단하지 않는다."]
+           if ev["품질보류"] else []),
           "> 60일은 큰 효과(≈0.3%/일)만 확인할 수 있다. 불확정은 효과가 없다는 뜻이 아니다. "
           "이후 날짜는 이 평가에 넣지 않는다.", ""]
     return L
 
 
-def report(snap_dir=SNAP_DIR, today=None, confirm_from=CONFIRM_FROM):
+def report(snap_dir=SNAP_DIR, today=None, confirm_from=CONFIRM_FROM, cap_days=CAP_TRADING_DAYS):
     stage, matured = stage_of(scan_dates(snap_dir), _calendar(snap_dir), snap_dir)
     #  🔒 Stage 가 수익률 계산 여부를 정한다. 하드코딩하지 않는다.
     #     이전 판은 `with_returns=False` 가 박혀 있어 Stage 1 이 돼도 구조만 냈다.
@@ -800,7 +852,7 @@ def report(snap_dir=SNAP_DIR, today=None, confirm_from=CONFIRM_FROM):
                   ""]
 
     if stage == STAGE1:
-        L += hold_section(days, snap_dir, confirm_from)
+        L += hold_section(days, snap_dir, confirm_from, cap_days)
 
     L += ["## A → B → C 퍼널 (단계별로 센다)", "",
           "| 날짜 | A | 테마소속 | 테마 | **B** 대장 | 5배배제 | +거래대금100억 | **C** +단타 | B_시장 | 일치 |",

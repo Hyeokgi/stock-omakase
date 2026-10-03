@@ -117,6 +117,95 @@ class Statistics(unittest.TestCase):
         self.assertIn("범위 밖", why)
 
 
+def fake_day(date, h=10, b=12, h_ret=0.12, b_ret=0.08, drop_h=None, drop_b=None, n_h=None):
+    """품질 점검 시험용 합성 하루. `n_h` 는 수익률을 붙인 H 종목 수(기본: 후보 − 제외)."""
+    drop_h, drop_b = dict(drop_h or {}), dict(drop_b or {})
+    zero = {"익일시가없음": 0, "익일소멸": 0, "익일제한폭이탈": 0, "기업행사조정의심": 0}
+    dh, db = {**zero, **drop_h}, {**zero, **drop_b}
+    n_h = h - sum(dh.values()) if n_h is None else n_h
+    return {"date": date, "hold": {"H": h, "B100": b, "H2": min(h, 2), "B100raw": b, "Hraw": h,
+                                   "risk_excl": {}, "H_고가결측": 0},
+            "returns_hold": {"H": {"n": n_h, "평균": h_ret if n_h else None},
+                             "B100": {"n": b - sum(db.values()), "평균": b_ret},
+                             "H2": {"n": 2, "평균": h_ret}, "B100raw": {"n": b, "평균": b_ret},
+                             "Hraw": {"n": h, "평균": h_ret}},
+            "ret_drop_hold": {"H": dh, "B100": db}}
+
+
+def sixty(**kw_first):
+    days = []
+    for i in range(T.EVAL_VALID_DAYS):
+        # 날짜 문자열만 필요하다 — CONFIRM_FROM 이상이고 단조 증가하면 된다
+        days.append(fake_day(f"2027-01-{i + 1:02d}" if i < 28 else f"2027-02-{i - 27:02d}"))
+    return days
+
+
+class QualityHold(unittest.TestCase):
+    """출구 가격 결측이 많으면 격상도 폐기도 말하지 않는다."""
+
+    def test_clean_sample_is_classified_normally(self):
+        days = sixty()
+        ev = T.evaluate_hold(days, days)
+        self.assertFalse(ev["품질보류"])
+        self.assertEqual(ev["분류"], "후보 격상 검토 가능")
+
+    def test_exactly_five_percent_missing_exits_is_not_a_hold(self):
+        days = sixty()
+        for k in range(6):                      # 6일 × 5종목 = 30 / 후보 600 = 5.0%
+            days[k] = fake_day(days[k]["date"], drop_h={"익일시가없음": 5})
+        ev = T.evaluate_hold(days, days)
+        self.assertAlmostEqual(ev["품질"]["H"]["시가결측률"], 0.05)
+        self.assertFalse(ev["품질보류"], "상한과 같으면 보류하지 않는다(초과일 때만)")
+
+    def test_above_five_percent_missing_exits_holds_the_verdict(self):
+        days = sixty()
+        for k in range(7):                      # 35 / 600 = 5.83%
+            days[k] = fake_day(days[k]["date"], drop_h={"익일시가없음": 5})
+        ev = T.evaluate_hold(days, days)
+        self.assertTrue(ev["품질보류"])
+        self.assertEqual(ev["분류"], "품질 보류")
+        self.assertTrue(any("H 익일 시가 결측" in r for r in ev["품질사유"]))
+
+    def test_delisted_exits_count_as_missing_too(self):
+        days = sixty()
+        for k in range(7):
+            days[k] = fake_day(days[k]["date"], drop_h={"익일소멸": 5})
+        self.assertTrue(T.evaluate_hold(days, days)["품질보류"])
+
+    def test_comparison_group_gaps_hold_the_verdict_as_well(self):
+        days = sixty()
+        for k in range(8):                      # B100c 720 중 40 = 5.56%
+            days[k] = fake_day(days[k]["date"], drop_b={"익일시가없음": 5})
+        ev = T.evaluate_hold(days, days)
+        self.assertTrue(ev["품질보류"])
+        self.assertTrue(any(r.startswith("B100 ") for r in ev["품질사유"]))
+
+    def test_guard_drops_alone_can_hold_the_verdict(self):
+        days = sixty()
+        for k in range(13):                     # 제한폭 이탈 65 / 600 = 10.8% (시가 결측은 0)
+            days[k] = fake_day(days[k]["date"], drop_h={"익일제한폭이탈": 5})
+        ev = T.evaluate_hold(days, days)
+        self.assertEqual(ev["품질"]["H"]["시가결측"], 0)
+        self.assertTrue(ev["품질보류"])
+        self.assertTrue(any("가드 제외" in r for r in ev["품질사유"]))
+
+    def test_a_day_with_candidates_but_no_returns_is_counted_not_dropped(self):
+        """무효일(후보는 있었으나 수익률이 전부 없음)을 조용히 빼면 불리한 사례가 사라진다."""
+        days = sixty()
+        bad = fake_day("2026-12-31", h=10, drop_h={"익일시가없음": 10})     # 전부 결측 → 무효일
+        window = sorted(days + [bad], key=lambda d: d["date"])
+        valid, why = T.valid_hold_days(window)
+        self.assertEqual(why.get("가드로전부제외"), 1)
+        self.assertEqual(len(valid), 60)
+        ev = T.evaluate_hold(valid, window)
+        self.assertEqual(ev["품질"]["H"]["시가결측"], 10, "무효일의 결측이 분자에 들어가야 한다")
+        self.assertEqual(ev["품질"]["H"]["후보"], 610)
+
+    def test_quality_hold_overrides_every_other_class(self):
+        for args in ((0.003, 0.0005, 0.002, 0.001), (-0.001, -0.002, 0.01, 0.01), (None, None, 0, 0)):
+            self.assertEqual(T.classify_hold(*args, quality_hold=True), "품질 보류")
+
+
 # ── 합성 스냅샷 ───────────────────────────────────────────────────────
 HDR = ("itemcode,itemname,tradeAmount,nowPrice,openPrice,highPrice,"
        "prevChangeRate,topThemeNo,themeNos,tradeStopYn,manageStatusGb,marketAlertType")
@@ -267,6 +356,42 @@ class SyntheticStudy(unittest.TestCase):
         self.assertAlmostEqual(ev["D"], 0.041, places=9)
         self.assertAlmostEqual(ev["H_비용후"], 0.123 - COST, places=9)
         self.assertIsNone(T.evaluate_hold(valid[: T.EVAL_VALID_DAYS - 1]))
+
+    # ── 120 거래일 상한 ──────────────────────────────────────────────
+    def test_cap_excludes_entries_after_the_cap_date(self):
+        days = self.collect()
+        cap, _ = T.trading_day_n(T.CONFIRM_FROM, 40, self.nt)
+        valid, bad = T.valid_hold_days(days, T.CONFIRM_FROM, cap)
+        self.assertEqual(len(valid), 40)
+        self.assertTrue(all(v["date"] <= cap for v in valid))
+        self.assertGreaterEqual(bad.get("상한초과", 0), 20)
+        self.assertIsNone(T.evaluate_hold(valid))
+
+    def test_after_the_cap_the_study_ends_even_if_sixty_valid_days_pile_up_later(self):
+        out = T.report(self.tmp, today="2026-12-31", cap_days=40)
+        self.assertIn("자료 부족 종료", out)
+        self.assertIn("평가하지 않는다", out)
+        for leaked in ("주 평가", "분류:", "+4.100", "12.300"):
+            self.assertNotIn(leaked, out)
+        self.assertIn("유효 비교일 40 / 60", out)
+
+    def test_cap_that_still_contains_sixty_valid_days_evaluates(self):
+        out = T.report(self.tmp, today="2026-12-31", cap_days=60)
+        self.assertIn("주 평가", out)
+        self.assertNotIn("자료 부족 종료", out)
+
+    def test_cap_boundary_day_itself_is_included(self):
+        days = self.collect()
+        cap, _ = T.trading_day_n(T.CONFIRM_FROM, 10, self.nt)
+        valid, _ = T.valid_hold_days(days, T.CONFIRM_FROM, cap)
+        self.assertEqual(valid[-1]["date"], cap)
+        self.assertEqual(len(valid), 10)
+
+    def test_report_shows_quality_rows_on_evaluation(self):
+        out = T.report(self.tmp, today="2026-12-31")
+        self.assertIn("품질: H 후보", out)
+        self.assertIn("품질: B100c 후보", out)
+        self.assertNotIn("품질 보류", out)
 
     def test_default_cli_has_no_override_flag(self):
         with open(os.path.join(ROOT, "hyeoks_theme_abc.py"), encoding="utf-8") as f:
