@@ -157,6 +157,9 @@ def watch(minutes, every):
                     hrefs = sorted(set(h for h in re.findall(r'href="([^"#]+)"', rr.text)
                                        if re.search(r"top30|rank|ymd|theme|date|day", h)))
                     print(f"    · 날짜·상세 링크 후보: {hrefs[:25]}")
+                    clicks = sorted(set(re.findall(r'onclick="([^"]{0,160})"', rr.text)))
+                    keep = [c for c in clicks if re.search(r"20[0-9]{2}|rank|ymd|top30|text|detail", c)]
+                    print(f"    · onclick 후보: {keep[:15]}")
                     print()
                 except Exception as e:
                     print(f"### {path} — 실패 {type(e).__name__}")
