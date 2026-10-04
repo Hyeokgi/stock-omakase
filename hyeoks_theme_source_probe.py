@@ -115,6 +115,48 @@ def rank_state(html):
             "form_fields": forms[:10]}
 
 
+def parse_rank(html):
+    """테마랭킹 페이지 → (기준 시각 문구, [{theme, rate, stocks:[{name, rate, cap_eok, amt_eok}]}]).
+
+    화면 글자 순서로 읽는다: 테마 카드는 '이름 / N% / &nbsp;', 종목은 '이름 / N% / &nbsp;&nbsp;시총 / 숫자 / 억 / &nbsp;거래 N억'.
+    """
+    m = HEADER.search(html)
+    vt = visible_text(html)
+    start = next((i for i, x in enumerate(vt) if HEADER.search(x)), None)
+    cards = []
+    if start is None:
+        return (m.group(0) if m else ""), cards
+    pct = re.compile(r"-?\d+%")
+    i = start + 1
+    while i < len(vt) - 2:
+        name, rate, nxt = vt[i], vt[i + 1], vt[i + 2]
+        if pct.fullmatch(rate) and not name.startswith("&nbsp;"):
+            if nxt == "&nbsp;":                                   # 테마 카드 머리
+                cards.append({"theme": name, "rate": int(rate[:-1]), "stocks": []})
+                i += 3
+                continue
+            if nxt.startswith("&nbsp;&nbsp;시총") and cards:       # 종목 행
+                cap = vt[i + 3].replace(",", "") if i + 3 < len(vt) else ""
+                amt = re.search(r"거래\s*([\d,]+)억", vt[i + 5]) if i + 5 < len(vt) else None
+                cards[-1]["stocks"].append({"name": name, "rate": int(rate[:-1]),
+                                            "cap_eok": int(cap) if cap.isdigit() else None,
+                                            "amt_eok": int(amt.group(1).replace(",", "")) if amt else None})
+                i += 6
+                continue
+        i += 1
+    return (m.group(0) if m else ""), cards
+
+
+def dump():
+    """지금 보이는 테마랭킹을 한 번 읽어 JSON 한 줄로 로그에 남긴다 (저장소에는 저장하지 않는다)."""
+    import json
+    r = requests.get(BASE + "/theme/rank/list", headers={"User-Agent": UA}, timeout=20)
+    header, cards = parse_rank(r.text)
+    print(f"# stockinfo7 테마랭킹 덤프 — {header} · 카드 {len(cards)} · 종목행 {sum(len(c['stocks']) for c in cards)}")
+    print("RANK_JSON " + json.dumps({"header": header, "cards": cards}, ensure_ascii=False))
+    return 0
+
+
 def watch(minutes, every):
     """장중 2차 진단 — 테마랭킹 기준 시각이 언제 바뀌는지 일정 간격으로 기록한다."""
     s = requests.Session()
@@ -178,6 +220,8 @@ def watch(minutes, every):
 
 
 if __name__ == "__main__":
+    if len(sys.argv) >= 2 and sys.argv[1] == "--dump":
+        sys.exit(dump())
     if len(sys.argv) >= 2 and sys.argv[1] == "--watch":
         sys.exit(watch(int(sys.argv[2]), int(sys.argv[3])))
     sys.exit(main())

@@ -19,6 +19,10 @@ on:
         description: '관찰 간격(초). 최소 300'
         required: false
         default: '600'
+      dump:
+        description: '지금 보이는 테마랭킹을 한 번 읽어 로그에 JSON 으로 남긴다(저장소 저장 없음)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -37,7 +41,9 @@ jobs:
       env:
         WATCH: ${{ github.event.inputs.watch_minutes }}
         EVERY: ${{ github.event.inputs.every_seconds }}
+        DUMP: ${{ github.event.inputs.dump }}
       run: |
+        if [ "$DUMP" = "true" ]; then python hyeoks_theme_source_probe.py --dump | tee probe.md; head -c 60000 probe.md >> "$GITHUB_STEP_SUMMARY"; exit 0; fi
         W="${WATCH:-0}"; E="${EVERY:-600}"
         if [ "$E" -lt 300 ]; then E=300; fi          # 원천에 부담을 주지 않도록 하한을 둔다
         if [ "$W" -gt 0 ]; then
