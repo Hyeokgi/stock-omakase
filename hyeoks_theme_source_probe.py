@@ -10,6 +10,7 @@
 # 하지 않는 것: 저장·커밋·반복 수집. 결과는 실행 로그와 Actions 요약에만 남는다.
 #               요청은 페이지당 1회, 사이 간격을 둔다.
 # ==========================================================================
+import collections
 import re
 import sys
 import time
@@ -69,9 +70,21 @@ def main():
         if path == "/robots.txt":
             print("```\n" + r.text[:2000] + "\n```")
         elif vt:
-            print("- 화면 글자 앞부분 (최대 40줄):")
-            for x in vt[:40]:
-                print(f"    {x[:140]}")
+            start = next((i for i, x in enumerate(vt) if x == "정부일정"), 40) + 1   # 공통 메뉴 다음부터
+            n = 220 if path == "/theme/rank/list" else 30
+            print(f"- 메뉴 다음 본문 글자 (최대 {n}줄):")
+            for x in vt[start:start + n]:
+                print(f"    {x[:160]}")
+            if path == "/theme/rank/list":
+                classes = re.findall(r'class="([^"]+)"', r.text)
+                top = collections.Counter(c for cl in classes for c in cl.split()).most_common(25)
+                print(f"- 자주 나오는 class: {top}")
+                signed = re.findall(r"[+-]\d+\.\d+", r.text)
+                links = sorted(set(re.findall(r'href="(/theme/[a-z]+/[^"?]*)', r.text)))[:10]
+                stamps = sorted(set(re.findall(r"(?:기준|업데이트|갱신)[^<]{0,30}", r.text)))[:10]
+                print(f"- 부호 붙은 소수: {len(signed)}개 · 예: {signed[:8]}")
+                print(f"- 링크 패턴: {links}")
+                print(f"- 기준 시각 후보: {stamps}")
         print()
         time.sleep(2)
     return 0
