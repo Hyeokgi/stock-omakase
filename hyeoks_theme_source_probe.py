@@ -154,6 +154,9 @@ def watch(minutes, every):
                     k = next((i for i, x in enumerate(body) if x == "배너/푸시광고"), -1) + 1
                     for x in body[k:k + 60]:
                         print(f"    {x[:160]}")
+                    hrefs = sorted(set(h for h in re.findall(r'href="([^"#]+)"', rr.text)
+                                       if re.search(r"top30|rank|ymd|theme|date|day", h)))
+                    print(f"    · 날짜·상세 링크 후보: {hrefs[:25]}")
                     print()
                 except Exception as e:
                     print(f"### {path} — 실패 {type(e).__name__}")
