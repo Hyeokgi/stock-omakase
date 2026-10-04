@@ -1,12 +1,24 @@
 name: 🔎 외부 테마 자료원 진단 (stockinfo7 · 수동 · 저장 없음)
 
 # 목적: 사용자가 평소 보는 테마 순위 사이트(stockinfo7.com)를 연구 비교 자료로 쓸 수 있는지 진단한다.
-#       Claude 작업 환경에서는 이 도메인이 막혀 있어 GitHub 러너에서 한 번 확인한다. 사용자 지시 2026-10-04.
-# 읽기 전용: 페이지당 1회 요청, 아무것도 저장·커밋하지 않는다. 결과는 로그와 요약에만 남는다.
-# 수동 전용: cron 이 없다.
+#       Claude 작업 환경에서는 이 도메인이 막혀 있어 GitHub 러너에서 확인한다. 사용자 지시 2026-10-04.
+# 읽기 전용: 아무것도 저장·커밋하지 않는다. 결과는 로그와 요약에만 남는다.
+# 수동 전용: cron 이 없다(깃허브 cron 은 몇 시간씩 늦어 장중 시각 진단에 쓸 수 없다).
+#   · watch_minutes = 0  → 1차 진단: 페이지 구조를 한 번 본다.
+#   · watch_minutes > 0 → 장중 2차 진단: 테마랭킹 기준 시각이 언제 바뀌는지 every_seconds 간격으로 기록하고,
+#                          15:10 이후 한 번 재료 후보 페이지(상승률TOP30 뉴스 등) 구조를 본다.
 
 on:
   workflow_dispatch:
+    inputs:
+      watch_minutes:
+        description: '장중 관찰 시간(분). 0 이면 1차 구조 진단'
+        required: false
+        default: '0'
+      every_seconds:
+        description: '관찰 간격(초). 최소 300'
+        required: false
+        default: '600'
 
 permissions:
   contents: read
@@ -14,7 +26,7 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 250
     steps:
     - uses: actions/checkout@v7
     - uses: actions/setup-python@v7
@@ -22,6 +34,15 @@ jobs:
         python-version: '3.10'
     - run: pip install requests
     - name: 🔎 진단
+      env:
+        WATCH: ${{ github.event.inputs.watch_minutes }}
+        EVERY: ${{ github.event.inputs.every_seconds }}
       run: |
-        python hyeoks_theme_source_probe.py | tee probe.md
+        W="${WATCH:-0}"; E="${EVERY:-600}"
+        if [ "$E" -lt 300 ]; then E=300; fi          # 원천에 부담을 주지 않도록 하한을 둔다
+        if [ "$W" -gt 0 ]; then
+          python hyeoks_theme_source_probe.py --watch "$W" "$E" | tee probe.md
+        else
+          python hyeoks_theme_source_probe.py | tee probe.md
+        fi
         cat probe.md >> "$GITHUB_STEP_SUMMARY"

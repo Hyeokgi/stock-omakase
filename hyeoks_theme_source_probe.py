@@ -11,6 +11,8 @@
 #               요청은 페이지당 1회, 사이 간격을 둔다.
 # ==========================================================================
 import collections
+import datetime
+import hashlib
 import re
 import sys
 import time
@@ -19,6 +21,8 @@ import requests
 
 BASE = "https://stockinfo7.com"
 PAGES = ["/robots.txt", "/", "/theme/rank/list", "/theme/list", "/etc/pc/theme"]
+# 장중 2차 진단에서 구조를 볼 페이지 — 상승 이유(재료) 후보
+REASON_PAGES = ["/stock/top30/news/list", "/stock/top30/list", "/stock/real30/ymd/list", "/stock/event/list"]
 UA = "Mozilla/5.0 (research-probe; HYEOKS stock-omakase; contact via GitHub repo)"
 
 
@@ -90,5 +94,84 @@ def main():
     return 0
 
 
+HEADER = re.compile(r"(20\d\d-\d\d-\d\d)\s*(\d{1,2})시\s*테마랭킹")
+
+
+def rank_state(html):
+    """기준 시각 문구 · 카드 수 · 앞 테마 이름. 내용은 저장하지 않고 로그에 요약만 남긴다."""
+    m = HEADER.search(html)
+    vt = visible_text(html)
+    start = next((i for i, x in enumerate(vt) if HEADER.search(x)), None)
+    names = []
+    if start is not None:
+        # 카드 머리: 테마명 다음 줄이 '정수%' 이고 그다음이 '&nbsp;' 인 패턴
+        for i in range(start, len(vt) - 2):
+            if re.fullmatch(r"-?\d+%", vt[i + 1]) and vt[i + 2] in ("&nbsp;",) and not vt[i].startswith("&nbsp;"):
+                if i + 3 < len(vt) and not vt[i + 3].startswith("&nbsp;"):
+                    names.append(f"{vt[i]}({vt[i + 1]})")
+    forms = sorted(set(re.findall(r'<(?:select|input)[^>]+name="([^"]+)"', html)))
+    return {"header": f"{m.group(1)} {m.group(2)}시" if m else "", "cards": html.count("card-header"),
+            "themes": names[:8], "digest": hashlib.sha1("|".join(names).encode()).hexdigest()[:10],
+            "form_fields": forms[:10]}
+
+
+def watch(minutes, every):
+    """장중 2차 진단 — 테마랭킹 기준 시각이 언제 바뀌는지 일정 간격으로 기록한다."""
+    s = requests.Session()
+    s.headers.update({"User-Agent": UA, "Accept-Language": "ko-KR,ko;q=0.9"})
+    kst = datetime.timezone(datetime.timedelta(hours=9))
+    print(f"# stockinfo7 장중 진단 — {minutes}분 동안 {every}초 간격 (저장 없음)\n")
+    print("| 접속 시각 KST | 상태 | 기준 시각 문구 | 카드 | 목록 지문 | 앞 테마 |")
+    print("|---|---|---|--:|---|---|")
+    end = time.time() + minutes * 60
+    prev, changes, reasons_done = None, [], False
+    while True:
+        t = datetime.datetime.now(kst).strftime("%H:%M:%S")
+        try:
+            r = s.get(BASE + "/theme/rank/list", timeout=20)
+            st = rank_state(r.text)
+            flag = "" if prev is None or st["digest"] == prev["digest"] and st["header"] == prev["header"] else " 🔄"
+            if flag:
+                changes.append((t, prev["header"], st["header"]))
+            print(f"| {t}{flag} | {r.status_code} | {st['header'] or '없음'} | {st['cards']} | {st['digest']} | "
+                  f"{', '.join(st['themes'][:5])} |", flush=True)
+            if prev is None:
+                print(f"\n- 폼 필드(날짜 조회 단서): {st['form_fields']}\n")
+            prev = st
+        except Exception as e:
+            print(f"| {t} | 실패 | {type(e).__name__} | | | |", flush=True)
+        now_kst = datetime.datetime.now(kst)
+        if not reasons_done and (now_kst.hour, now_kst.minute) >= (15, 10):
+            reasons_done = True
+            print("\n## 재료 후보 페이지 구조 (15:10 이후 1회)\n")
+            for path in REASON_PAGES:
+                try:
+                    rr = s.get(BASE + path, timeout=20)
+                    info, vt = analyze(path, rr)
+                    print(f"### {path} — {rr.status_code} · {info.get('title', '')} · 로그인폼 {info.get('login_form')}")
+                    i0 = next((i for i, x in enumerate(vt) if x == "정부일정"), 40) + 1
+                    body = [x for x in vt[i0:] if x not in ("-->", "&nbsp;")]
+                    k = next((i for i, x in enumerate(body) if x == "배너/푸시광고"), -1) + 1
+                    for x in body[k:k + 60]:
+                        print(f"    {x[:160]}")
+                    print()
+                except Exception as e:
+                    print(f"### {path} — 실패 {type(e).__name__}")
+                time.sleep(2)
+            print("| 접속 시각 KST | 상태 | 기준 시각 문구 | 카드 | 목록 지문 | 앞 테마 |")
+            print("|---|---|---|--:|---|---|")
+        if time.time() + every > end:
+            break
+        time.sleep(every)
+    print("\n## 바뀐 시점\n")
+    for t, a, b in changes:
+        print(f"- {t} KST: '{a}' → '{b}'")
+    if not changes:
+        print("- 관측 동안 바뀌지 않았다")
+    return 0
+
+
 if __name__ == "__main__":
+    if len(sys.argv) >= 2 and sys.argv[1] == "--watch":
+        sys.exit(watch(int(sys.argv[2]), int(sys.argv[3])))
     sys.exit(main())
