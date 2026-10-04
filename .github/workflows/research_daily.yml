@@ -2,14 +2,19 @@ name: 🧭 HYEOKS 연구 일일 (일봉 · [연구] 보고)
 
 # 목적: 테마·대장 후속 경로 연구(docs/collaboration/2026-10-04_*)의 확정 일봉을 저장소에 쌓고,
 #       기존 텔레그램 채널에 `[연구]` 머리말로 일일 보고를 보낸다. 사용자 지시 2026-10-04.
+# 2026-10-05 개정: Codex 교차 검토 R1~R6 반영 — 종목별 수집 범위·대상일/실행일 분리·묶음 저장·
+#       수집 상태 파일을 보고가 같은 실행 ID 로 읽음·원격 보관 결과를 보고에 표시.
 #
 # 🔒 보고에는 수집 상태와 구조 집계만 담는다. 대장 후보의 이후 수익률은 넣지 않는다 —
 #    잠긴 사전등록 leader-hold-v1 의 확증 구간(진입일 ≥ 2026-10-06)과 겹치기 때문이다.
-# 관측 전용: 주문·시트 쓰기·선정 조건 변경 없음. 이 워크플로는 안정화 지문 대상이 아니다.
+# 관측 전용: 주문·시트 쓰기·선정 조건 변경 없음. 이 워크플로는 안정화 지문 대상이 아니고,
+#    연구 상태(OK/DEGRADED/FAILED)는 생산 Gate 에 연결하지 않는다.
 #
-# 시각: 평일 19:40 KST. 깃허브 cron 이 자정을 넘겨 도착하면 도구가 전날 장을 대상으로 잡는다.
-#       휴장일·달력 범위 밖이면 도구가 스스로 건너뛴다.
-# 첫 실행(저장소에 일봉이 없을 때)은 저장된 모든 스냅샷 날의 대상 종목을 300봉씩 한 번 백필한다.
+# 시각: 평일 19:40 KST 예약 — 깃허브 예약은 늦거나 빠질 수 있다(정시 보장 아님).
+#       대상일 = 실행 시각 기준 가장 최근에 장이 확정된(16:00 이후) 거래일. 빠진 날은 종목별 범위로 다음 실행이 메운다.
+#       평일 휴장일 저녁의 예약 실행은 같은 거래일을 다시 보고하지 않도록 건너뛴다.
+# 종목별로 초기 수집(300봉)을 한 번 하고, 이후에는 마지막 저장 봉부터 대상일까지 메운다.
+# 등록 상태: 첫 실행 미확인(2026-10-05 기준). 원격 저장과 텔레그램 도착을 한 번 확인하기 전에는 '가동 확인' 이라 쓰지 않는다.
 
 on:
   workflow_dispatch:
@@ -35,7 +40,7 @@ concurrency:
 jobs:
   research:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40   # 도구 자체 시간 예산 20분 — 저장·커밋·보고 시간을 남긴다
 
     steps:
     - name: 📥 코드·스냅샷 가져오기
@@ -50,28 +55,37 @@ jobs:
       run: pip install requests
 
     - name: 📈 확정 일봉 수집
+      id: bars
       env:
         TARGET_DATE: ${{ github.event.inputs.date }}
       run: |
         mkdir -p data/daily_bars
         python hyeoks_research_daily.py --bars ${TARGET_DATE:+--date "$TARGET_DATE"}
 
+    # 수집이 FAILED 로 끝나거나 중간에 멈춰도, 그때까지 저장한 봉·상태 파일은 원격에 남긴다(R4).
     - name: 💾 일봉 커밋
+      id: archive
+      if: always()
       run: |
         mkdir -p data/daily_bars
         if [ -z "$(git status --porcelain data/daily_bars)" ]; then
-          echo "ℹ️ 새 일봉 없음 — 커밋 생략"
+          echo "ℹ️ 바뀐 파일 없음 — 커밋 생략"
+          echo "result=변경 없음" >> "$GITHUB_OUTPUT"
           exit 0
         fi
         git config user.name  "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
         git add data/daily_bars
-        git commit -m "data: 연구 일봉 $(TZ=Asia/Seoul date +%Y-%m-%d) [skip ci]"
+        git commit -m "data: 연구 일봉 $(TZ=Asia/Seoul date +%Y-%m-%d) run ${GITHUB_RUN_ID} [skip ci]"
         for i in 1 2 3; do
-          git pull --rebase --autostash origin main && git push origin HEAD:main && exit 0
+          if git pull --rebase --autostash origin main && git push origin HEAD:main; then
+            echo "result=원격 반영 $(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           echo "⚠️ 푸시 재시도 $i/3"
           sleep 5
         done
+        echo "result=원격 반영 실패 (러너에만 있고 사라진다)" >> "$GITHUB_OUTPUT"
         echo "::error::일봉 커밋 푸시 실패"
         exit 1
 
@@ -81,8 +95,11 @@ jobs:
         TARGET_DATE: ${{ github.event.inputs.date }}
         SEND: ${{ github.event_name == 'schedule' || github.event.inputs.send == 'true' }}
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        RESEARCH_ARCHIVE: ${{ steps.archive.outputs.result || '커밋 단계 결과 없음' }}
       run: |
         ARGS="--report"
         if [ "$SEND" = "true" ]; then ARGS="$ARGS --send"; fi
-        python hyeoks_research_daily.py $ARGS ${TARGET_DATE:+--date "$TARGET_DATE"} | tee research_report.txt
+        rc=0   # 기본 셸이 -eo pipefail 이라 실패를 받아 둔 뒤 요약을 쓰고 끝에서 돌려준다
+        python hyeoks_research_daily.py $ARGS ${TARGET_DATE:+--date "$TARGET_DATE"} | tee research_report.txt || rc=$?
         { echo "## 🧭 [연구] 일일 보고"; echo; echo '```'; cat research_report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+        exit $rc
