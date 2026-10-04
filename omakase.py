@@ -21,6 +21,7 @@ TELEMETRY = feature_telemetry.Telemetry()
 import rank_pool
 import feature_store
 import badge_observations
+import price_levels
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -1015,6 +1016,16 @@ def check_target_alerts_and_trailing_stop(doc, bt_sheet):
             except Exception as _e:
                 # 🔇 ② 진입가 파싱 실패 — 트레일링 손절 **발동가**가 틀어진다
                 TELEMETRY.note('entry_price', type(_e).__name__, feature_telemetry.CRITICAL)
+                continue
+
+            # 🔴 2026-10-04 — 목표/손절이 가격을 정한 시점의 기준종가와 맞지 않는 행(10/2 장기 리포트 1건:
+            #    목표가가 기준종가의 1/10 수준)은 첫 조회에서 '목표가 도달' 알림이 잘못 나간다.
+            #    기준은 진입가가 아니라 기준종가(row[14]) — 진입 갭으로 목표/손절을 이미 넘은 정상 행을 거르지 않기 위해서다.
+            #    연구용 값은 그대로 두고(여기서 쓰지 않는다) 알림·트레일링만 건너뛴다.
+            base_raw = row[14] if len(row) > 14 else ""
+            base_p = price_levels.to_int(base_raw)
+            if base_p and not price_levels.is_sane(base_p, target_p, stop_p):
+                print(f"⚠️ [트레일링 스탑] {name}({code}) 목표 {target_p:,.0f}·손절 {stop_p:,.0f} 가 기준종가 {base_p:,} 와 맞지 않아 건너뜀")
                 continue
 
             curr_p = get_current_price_for_backtest(code)
@@ -2774,9 +2785,14 @@ def update_technical_data(df_theme, all_theme_map):
                     #    → 시트 값이 **실제 숫자일 때만** 덮어쓴다. 플레이스홀더면 계산값을 지킨다.
                     #    목표가·손절가는 선정 로직에 쓰이지 않는 연구용 값이므로(§2) 선정은 안 바뀐다.
                     _sheet_t, _sheet_s = existing_data[c_code]["target"], existing_data[c_code]["stop"]
-                    if _parse_price_cell(_sheet_t) != "":
+                    # 🔴 2026-10-04 — 숫자이기만 하면 받았다. AI 브리핑의 JSON 예시값(150000)을 베낀 값,
+                    #    현재가 대비 +50% 를 넘는 값이 이 경로로 백테스트_로그 시스템 채널에 들어갔다.
+                    #    현재가 기준 상식 범위(price_levels) 밖이면 방금 계산한 시스템 값을 지킨다.
+                    _base = price_levels.to_int(r[2])   # float(61000.0) 일 수 있어 parse_price_num 을 쓰지 않는다
+                    _pt, _ps = _parse_price_cell(_sheet_t), _parse_price_cell(_sheet_s)
+                    if _pt != "" and (not _base or price_levels.sane_target(_base, _pt)):
                         r[23] = _sheet_t
-                    if _parse_price_cell(_sheet_s) != "":
+                    if _ps != "" and (not _base or price_levels.sane_stop(_base, _ps)):
                         r[24] = _sheet_s
                 if is_preserve_time and not is_regular_market:
                     if not r[26] and not r[27]:

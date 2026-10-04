@@ -47,6 +47,8 @@ FINGERPRINT_FILES = [
     "naver_sources.py", "after_market_quotes.py", "telegram_target.py",
     "hyeoks_performance_memory.py", "hyeoks_data_quality.py",
     "hyeoks_run_freeze.py",
+    # 🔴 2026-10-04 — 목표가·손절가 검증 규칙. omakase·analyst 가 위임하므로 같이 묶는다.
+    "price_levels.py",
     "data/market_snapshot/nontrading.txt", "data/market_snapshot/calendar_scope.json",
     # 생산 코드
     "omakase.py", "hyeoks_analyst.py", "hyeoks_earnings_collector.py",

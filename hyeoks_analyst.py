@@ -11,6 +11,7 @@ import earnings_schema
 import feature_telemetry
 import krx_code
 import krx_amount
+import price_levels
 
 # 분류 근거: docs/silent_exception_분류_2026-09-18.md
 TELEMETRY = feature_telemetry.Telemetry()
@@ -147,12 +148,13 @@ def parse_ai_json(text):
             b_match = re.search(r'"briefing"\s*:\s*"([^"]+)"', text)
             return {
                 "briefing": b_match.group(1) if b_match else "분석 결과 텍스트 오류",
-                "target_price": int(t_match.group(1)) if t_match else 0,
-                "stop_loss": int(s_match.group(1)) if s_match else 0
+                # 🔴 2026-10-04 — 못 읽은 값은 None. 0 은 AI 가 명시한 '매수 보류(관망)' 뜻이라 섞지 않는다.
+                "target_price": int(t_match.group(1)) if t_match else None,
+                "stop_loss": int(s_match.group(1)) if s_match else None
             }
         except Exception as e:
             print(f"⚠️ [parse_ai_json 폴백 파싱도 실패] {e}")
-            return {"briefing": "응답 오류", "target_price": 0, "stop_loss": 0}
+            return {"briefing": "응답 오류", "target_price": None, "stop_loss": None}
  
 def fetch_stock_news_json(code, limit=3):
     """종목별 뉴스 JSON 대체재 (신규 PC 사이트 경로).
@@ -293,25 +295,26 @@ def generate_deep_report(st_type, best_cand, is_warning_market=False, KIS_TOKEN=
     #    · 중기(스윙): 과매도 반등 확인 후 진입하는 단일 포지션 스윙 — 단기보다 넉넉하되 장기보다는 좁게.
     #    · 장기: 분할매수를 전제로 손절을 가장 넉넉히 두고, 목표도 가장 멀리 잡는다. 손익비 하한도 가장 높게(2.2)
     #      요구해서, 표본이 쌓일수록 승률이 다소 낮아져도 기댓값이 버틸 수 있게 한다.
+    # 🔴 2026-10-04 — 밴드 수치는 price_levels.PRICE_BANDS 한 곳에서만 정의한다(검증도 같은 표를 쓴다).
+    #    수치는 그대로 옮겼다. 원 단위 범위와 손익비 정의를 같이 주는 이유: 10/2 장기 리포트가
+    #    콤마 없는 7자리 현재가를 1/10 로 읽고 목표가를 현재가보다 낮게 냈다.
+    _band_lines = price_levels.band_prompt_lines(st_type, best_cand['curr_p'])
     price_band_instruction = {
         "short": (
             "\n5. 🚨 [목표가·손절가 폭 — 단기 전용 규칙]: 이 픽은 며칠 내 승부를 보는 단기 슈팅입니다.\n"
-            "   · 목표가는 확정 현재가 대비 +7~12% 범위에서 정하십시오. 며칠 안에 닿지 못할 먼 목표는 금지입니다.\n"
-            "   · 손절가는 -6~8% 범위로 잡으십시오. 그보다 더 조이면 국내 증시 일중 변동성에 그냥 잘려 나갑니다.\n"
-            "   · 손익비는 최소 1.2 이상이 되게 맞추십시오."
+            f"{_band_lines}\n"
+            "   · 며칠 안에 닿지 못할 먼 목표는 금지입니다. 손절을 이보다 더 조이면 국내 증시 일중 변동성에 그냥 잘려 나갑니다."
         ),
         "mid": (
             "\n5. 🚨 [목표가·손절가 폭 — 중기 스윙 전용 규칙]: 이 픽은 과매도 반등을 노리는 단일 진입 스윙(며칠~몇 주)입니다.\n"
-            "   · 목표가는 확정 현재가 대비 +12~20% 범위에서 정하십시오.\n"
-            "   · 손절가는 -7~11% 범위로 잡으십시오. 반등 실패 시 빠르게 인정하고 끊어낼 수 있는 폭이어야 합니다.\n"
-            "   · 손익비는 최소 1.8 이상이 되게 맞추십시오."
+            f"{_band_lines}\n"
+            "   · 손절은 반등 실패 시 빠르게 인정하고 끊어낼 수 있는 폭이어야 합니다."
         ),
         "long": (
             "\n5. 🚨 [목표가·손절가 폭 — 장기 추세추종 전용 규칙]: 이 픽은 분할매수로 몇 개월간 끌고 가는 구조적 성장 포지션입니다.\n"
-            "   · 목표가는 확정 현재가 대비 +20~40% 범위에서 정하십시오. 단기 시세가 아니라 실적 뒷받침 추세 목표여야 합니다.\n"
-            "   · 손절가는 -10~18% 범위로 가장 넉넉히 잡으십시오. 차트상 의미 있는 하단(기준봉 시가·60일선·쌍바닥 저점)에 두어\n"
-            "     일상적인 흔들림에 털리지 않게 하십시오.\n"
-            "   · 손익비는 최소 2.2 이상이 되게 맞추십시오 — 장기 포지션은 표본이 적어도 기댓값이 버텨야 하므로 가장 엄격한 기준입니다."
+            f"{_band_lines}\n"
+            "   · 목표는 단기 시세가 아니라 실적 뒷받침 추세 목표여야 합니다. 손절은 차트상 의미 있는 하단(기준봉 시가·60일선·쌍바닥 저점)에 두어\n"
+            "     일상적인 흔들림에 털리지 않게 하십시오. 장기 포지션은 표본이 적어도 기댓값이 버텨야 하므로 손익비 기준이 가장 엄격합니다."
         ),
     }.get(st_type, "")
 
@@ -327,15 +330,16 @@ def generate_deep_report(st_type, best_cand, is_warning_market=False, KIS_TOKEN=
 
 [입력 데이터]
 종목 및 스캐너 판독: {best_cand['info']}
-★확정 현재가: {best_cand['curr_p']}원
+★확정 현재가: {best_cand['curr_p']:,}원
 펀더멘털: {vip}
 최신 뉴스: {news}
 {strategy_instruction}
 
 [HYEOKS 딥리딩 절대 지침 - 명심하십시오]
 1. 분량 및 깊이: 귀하의 최고 수준의 통찰력을 발휘하여 논리적으로 서술하되, 전체 분량이 A4 최대 2페이지를 넘지 않도록 하십시오.
-2. 🚨 [할루시네이션(거짓 정보) 엄격 금지]: 차트를 판독하여 지지/저항선을 제시할 때, 반드시 위 [입력 데이터]에 제공된 ★확정 현재가({best_cand['curr_p']}원)를 기준으로 상/하단 가격을 논리적으로 계산하십시오.
+2. 🚨 [할루시네이션(거짓 정보) 엄격 금지]: 차트를 판독하여 지지/저항선을 제시할 때, 반드시 위 [입력 데이터]에 제공된 ★확정 현재가({best_cand['curr_p']:,}원)를 기준으로 상/하단 가격을 논리적으로 계산하십시오.
 3. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'O' if st_type=='long' else 'X'} 형식으로 숫자로만 출력하십시오.
+   목표가·손절가는 원 단위 정수이며 반드시 손절가 < 확정 현재가({best_cand['curr_p']:,}원) < 목표가 여야 합니다. 시스템이 이 값을 자동 검증합니다.
 {price_band_instruction}{earnings_instruction}
 
 [출력 양식 (마크다운 및 HTML 복합 레이아웃 절대 고수)]
@@ -383,17 +387,28 @@ def generate_deep_report(st_type, best_cand, is_warning_market=False, KIS_TOKEN=
 
     pick_data = None
     if report_txt:
-        match = re.search(r'\[DATA\]\s*목표가:(\d+),\s*손절가:(\d+),\s*분할매수:([OX])', report_txt)
+        # 마지막 [DATA] 줄을 쓴다 — 본문이 양식 예시(00000)를 되풀이해도 끝줄이 실제 값이다.
+        _matches = list(re.finditer(r'\[DATA\]\s*목표가:\s*([\d,]+)\s*원?,\s*손절가:\s*([\d,]+)\s*원?,\s*분할매수:\s*([OX])', report_txt))
+        match = _matches[-1] if _matches else None
         if match:
-            pick_data = {
-                'code': best_cand['code'],
-                'name': best_cand['name'],
-                'curr_p': best_cand['curr_p'],
-                'curr': best_cand['curr_p'],
-                'target': int(match.group(1)),
-                'stop': int(match.group(2)),
-                'split': match.group(3)
-            }
+            # 🔴 2026-10-04 — 검증 없이 그대로 쓰던 값. 손절 < 현재가 < 목표 구조와 상식 범위를 확인하고,
+            #    단위 착오(×10)는 보정 결과가 밴드 안에 들어가고 보정이 하나뿐일 때만 고친다.
+            #    무효면 pick_data 를 만들지 않는다 → DB_스캐너 목표/손절 칸·가상계좌·백테스트_로그 목표/손절을 쓰지 않는다.
+            lv = price_levels.validate_levels(best_cand['curr_p'], match.group(1), match.group(2), st_type)
+            if lv['issues'] or lv['warnings']:
+                print(f"⚠️ [목표가·손절가 검증 {st_type} {best_cand['name']}] ok={lv['ok']} "
+                      f"issues={lv['issues']} warnings={lv['warnings']}")
+            report_txt = report_txt + price_levels.report_note(lv)
+            if lv['ok']:
+                pick_data = {
+                    'code': best_cand['code'],
+                    'name': best_cand['name'],
+                    'curr_p': best_cand['curr_p'],
+                    'curr': best_cand['curr_p'],
+                    'target': lv['target'],
+                    'stop': lv['stop'],
+                    'split': match.group(3)
+                }
             
     return report_txt, pick_data
  
@@ -652,11 +667,15 @@ try:
         
         {guide_text}
         
-        반드시 아래 JSON 형식으로만 대답하십시오.
+        ■ 가격 규칙: target_price·stop_loss 는 위 현재가({curr_p}) 기준 원 단위 정수입니다.
+          매수 가능 판단이면 반드시 stop_loss < 현재가 < target_price 이고, 목표는 현재가 +50% 이내, 손절은 -25% 이내여야 합니다.
+          매수 보류(Veto)일 때만 둘 다 0 입니다. 시스템이 이 값을 자동 검증하며, 규칙을 어긴 값은 버리고 시스템 기준가를 유지합니다.
+
+        반드시 아래 JSON 형식으로만 대답하십시오. target_price·stop_loss 자리의 설명 문구는 계산한 숫자로 바꿔 쓰십시오.
         {{
             "briefing": "여기에 전략 요약 작성",
-            "target_price": 150000,
-            "stop_loss": 135000
+            "target_price": "현재가 기준으로 계산한 목표가(원 단위 정수)",
+            "stop_loss": "현재가 기준으로 계산한 손절가(원 단위 정수)"
         }}
         """
  
@@ -688,11 +707,11 @@ try:
                     if not briefing_text.startswith("✅") and not briefing_text.startswith("⚠️"): 
                         briefing_text = f"✅ [간단 브리핑] {briefing_text}"
                     
-                    raw_target = str(parsed_data.get('target_price', '0')).replace(',', '').replace('원', '')
-                    raw_stop = str(parsed_data.get('stop_loss', '0')).replace(',', '').replace('원', '')
-                    
-                    target_val = f"{int(raw_target):,}원" if raw_target.isdigit() and int(raw_target) > 0 else "관망"
-                    stop_val = f"{int(raw_stop):,}원" if raw_stop.isdigit() and int(raw_stop) > 0 else "관망"
+                    # 🔴 2026-10-04 — 예시값(150000/135000) 복사·단위 착오가 그대로 시트에 들어갔다.
+                    #    검증을 통과한 값만 쓰고, 아니면 목표/손절 칸은 건드리지 않는다(시스템 기준가 유지).
+                    target_val, stop_val, _lv = price_levels.brief_cells(curr_p, parsed_data.get('target_price'), parsed_data.get('stop_loss'))
+                    if target_val is None:
+                        print(f"⚠️ [브리핑 목표가·손절가 무효 — 시스템 기준가 유지] {stock_name}: {_lv['issues']}")
                     
                     current_db_snapshot = db_sheet.get_all_values()
                     real_row_idx = -1
@@ -704,8 +723,9 @@ try:
                         if any(key in str(current_db_snapshot[real_row_idx-1][9]) for key in ["리포트 발송 완료", "리포트 작성 완료"]): continue
                             
                         db_sheet.update_cell(real_row_idx, 10, briefing_text)
-                        db_sheet.update_cell(real_row_idx, 15, target_val)
-                        db_sheet.update_cell(real_row_idx, 16, stop_val)
+                        if target_val is not None:
+                            db_sheet.update_cell(real_row_idx, 15, target_val)
+                            db_sheet.update_cell(real_row_idx, 16, stop_val)
                         
                         try:
                             helper_sheet = doc.worksheet("주가데이터_보조")
@@ -713,8 +733,9 @@ try:
                             for h_idx, h_row in enumerate(helper_snapshot, start=1):
                                 if len(h_row) > 1 and str(h_row[1]).replace("'", "").strip().zfill(6) == code:
                                     helper_sheet.update_cell(h_idx, 10, briefing_text)    
-                                    helper_sheet.update_cell(h_idx, 24, target_val)      
-                                    helper_sheet.update_cell(h_idx, 25, stop_val)        
+                                    if target_val is not None:
+                                        helper_sheet.update_cell(h_idx, 24, target_val)      
+                                        helper_sheet.update_cell(h_idx, 25, stop_val)        
                                     break
                         except Exception as ex:
                             print(f"⚠️ 시간외 주가데이터_보조 보조 타격 실패: {ex}")
@@ -1362,21 +1383,23 @@ try:
                     if not briefing_text.startswith("✅") and not briefing_text.startswith("⚠️"): 
                         briefing_text = f"✅ [간단 브리핑] {briefing_text}"
                     
-                    raw_target = str(parsed_data.get('target_price', '0')).replace(',', '').replace('원', '')
-                    raw_stop = str(parsed_data.get('stop_loss', '0')).replace(',', '').replace('원', '')
-                    target_val = f"{int(raw_target):,}원" if raw_target.isdigit() and int(raw_target) > 0 else "관망"
-                    stop_val = f"{int(raw_stop):,}원" if raw_stop.isdigit() and int(raw_stop) > 0 else "관망"
+                    # 🔴 2026-10-04 — 검증을 통과한 값만 쓴다. 무효면 목표/손절 칸은 그대로 둔다(시스템 기준가 유지).
+                    target_val, stop_val, _lv = price_levels.brief_cells(curr_p, parsed_data.get('target_price'), parsed_data.get('stop_loss'))
+                    if target_val is None:
+                        print(f"⚠️ [브리핑 목표가·손절가 무효 — 시스템 기준가 유지] {stock_name}: {_lv['issues']}")
                     
                     db_sheet.update_cell(real_row_idx, 10, briefing_text)
-                    db_sheet.update_cell(real_row_idx, 15, target_val)
-                    db_sheet.update_cell(real_row_idx, 16, stop_val)
+                    if target_val is not None:
+                        db_sheet.update_cell(real_row_idx, 15, target_val)
+                        db_sheet.update_cell(real_row_idx, 16, stop_val)
                     
                     helper_snapshot = helper_sheet.get_all_values()
                     for h_idx, h_row in enumerate(helper_snapshot, start=1):
                         if len(h_row) > 1 and str(h_row[1]).replace("'", "").strip().zfill(6) == code:
                             helper_sheet.update_cell(h_idx, 10, briefing_text)
-                            helper_sheet.update_cell(h_idx, 24, target_val)
-                            helper_sheet.update_cell(h_idx, 25, stop_val)
+                            if target_val is not None:
+                                helper_sheet.update_cell(h_idx, 24, target_val)
+                                helper_sheet.update_cell(h_idx, 25, stop_val)
                             break
                     time.sleep(3.5)
                 except Exception as e:
@@ -1399,7 +1422,12 @@ try:
         for r in rows[1:]:
             if len(r) < 10 or not r[0]: continue
             name, code = r[0], r[1].replace("'", "").strip().zfill(6)
-            buy_p, amt, t_p, s_p = int(float(r[2].replace(',',''))), int(float(r[3].replace(',',''))), int(float(r[7].replace(',',''))), int(float(r[8].replace(',','')))
+            buy_p, amt = int(float(r[2].replace(',',''))), int(float(r[3].replace(',','')))
+            # 🔴 2026-10-04 — 빈 칸이면 int(float('')) 로 전체가 죽었다. 목표/손절이 매입가와 맞지 않으면
+            #    (10/2 장기 리포트 1건: 목표가가 매입가의 1/10 수준) 다음 실행에서 '목표가 도달' 로 즉시 닫힐 수 있었다.
+            #    → 그런 행은 자동 청산을 하지 않고 경고만 남긴다. 수동매도는 그대로 된다.
+            t_p, s_p = price_levels.to_int(r[7]), price_levels.to_int(r[8])
+            levels_ok = 0 < s_p < buy_p < t_p and t_p <= buy_p * 3 and s_p >= buy_p * 0.3
             try: curr_p = int(requests.get(f"https://m.stock.naver.com/api/stock/{code}/basic", timeout=3).json()['closePrice'].replace(',',''))
             except Exception as e:
                 print(f"⚠️ [보유종목 현재가 조회 실패 {code} — 매입가로 대체] {e}")
@@ -1407,12 +1435,14 @@ try:
             
             rtn = (curr_p - buy_p) / buy_p
             reason = ""
-            if curr_p >= t_p: reason = "목표가 도달"
-            elif curr_p <= s_p: reason = "손절가 이탈"
+            if not levels_ok:
+                print(f"⚠️ [가상계좌 {name}] 목표가 {t_p:,}·손절가 {s_p:,} 가 매입가 {buy_p:,} 와 맞지 않아 자동 청산을 건너뜀 — 시트 확인 필요")
+            if levels_ok and curr_p >= t_p: reason = "목표가 도달"
+            elif levels_ok and curr_p <= s_p: reason = "손절가 이탈"
             elif str(r[9]).strip() == "매도": reason = "수동매도"
             
             if reason: closed_rows.append([name, buy_p, curr_p, f"{rtn*100:.2f}%", today, f"{'승리' if rtn>0 else '패배'} ({reason})"])
-            else: new_rows.append([name, f"'{code}", buy_p, amt, curr_p, f"{rtn*100:.2f}%", r[6], t_p, s_p, ""])
+            else: new_rows.append([name, f"'{code}", buy_p, amt, curr_p, f"{rtn*100:.2f}%", r[6], t_p or "", s_p or "", ""])
  
         for p in picks:
             if not p or p['code'] == "000000": continue
