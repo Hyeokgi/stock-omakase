@@ -1,0 +1,88 @@
+name: 🧭 HYEOKS 연구 일일 (일봉 · [연구] 보고)
+
+# 목적: 테마·대장 후속 경로 연구(docs/collaboration/2026-10-04_*)의 확정 일봉을 저장소에 쌓고,
+#       기존 텔레그램 채널에 `[연구]` 머리말로 일일 보고를 보낸다. 사용자 지시 2026-10-04.
+#
+# 🔒 보고에는 수집 상태와 구조 집계만 담는다. 대장 후보의 이후 수익률은 넣지 않는다 —
+#    잠긴 사전등록 leader-hold-v1 의 확증 구간(진입일 ≥ 2026-10-06)과 겹치기 때문이다.
+# 관측 전용: 주문·시트 쓰기·선정 조건 변경 없음. 이 워크플로는 안정화 지문 대상이 아니다.
+#
+# 시각: 평일 19:40 KST. 깃허브 cron 이 자정을 넘겨 도착하면 도구가 전날 장을 대상으로 잡는다.
+#       휴장일·달력 범위 밖이면 도구가 스스로 건너뛴다.
+# 첫 실행(저장소에 일봉이 없을 때)은 저장된 모든 스냅샷 날의 대상 종목을 300봉씩 한 번 백필한다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      date:
+        description: '대상 거래일 YYYY-MM-DD (비우면 오늘 — 자정 이후 도착이면 전날)'
+        required: false
+        default: ''
+      send:
+        description: '텔레그램 [연구] 보고 발송'
+        type: boolean
+        default: true
+  schedule:
+    - cron: '40 10 * * 1-5'   # 19:40 KST
+
+permissions:
+  contents: write
+
+concurrency:
+  group: research-daily
+  cancel-in-progress: false
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - name: 📥 코드·스냅샷 가져오기
+      uses: actions/checkout@v7
+
+    - name: 🐍 파이썬 세팅
+      uses: actions/setup-python@v7
+      with:
+        python-version: '3.10'
+
+    - name: 📦 의존성
+      run: pip install requests
+
+    - name: 📈 확정 일봉 수집
+      env:
+        TARGET_DATE: ${{ github.event.inputs.date }}
+      run: |
+        mkdir -p data/daily_bars
+        python hyeoks_research_daily.py --bars ${TARGET_DATE:+--date "$TARGET_DATE"}
+
+    - name: 💾 일봉 커밋
+      run: |
+        mkdir -p data/daily_bars
+        if [ -z "$(git status --porcelain data/daily_bars)" ]; then
+          echo "ℹ️ 새 일봉 없음 — 커밋 생략"
+          exit 0
+        fi
+        git config user.name  "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add data/daily_bars
+        git commit -m "data: 연구 일봉 $(TZ=Asia/Seoul date +%Y-%m-%d) [skip ci]"
+        for i in 1 2 3; do
+          git pull --rebase --autostash origin main && git push origin HEAD:main && exit 0
+          echo "⚠️ 푸시 재시도 $i/3"
+          sleep 5
+        done
+        echo "::error::일봉 커밋 푸시 실패"
+        exit 1
+
+    - name: 📨 [연구] 일일 보고
+      if: always()
+      env:
+        TARGET_DATE: ${{ github.event.inputs.date }}
+        SEND: ${{ github.event_name == 'schedule' || github.event.inputs.send == 'true' }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      run: |
+        ARGS="--report"
+        if [ "$SEND" = "true" ]; then ARGS="$ARGS --send"; fi
+        python hyeoks_research_daily.py $ARGS ${TARGET_DATE:+--date "$TARGET_DATE"} | tee research_report.txt
+        { echo "## 🧭 [연구] 일일 보고"; echo; echo '```'; cat research_report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
