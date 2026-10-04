@@ -1,0 +1,27 @@
+name: 🔎 외부 테마 자료원 진단 (stockinfo7 · 수동 · 저장 없음)
+
+# 목적: 사용자가 평소 보는 테마 순위 사이트(stockinfo7.com)를 연구 비교 자료로 쓸 수 있는지 진단한다.
+#       Claude 작업 환경에서는 이 도메인이 막혀 있어 GitHub 러너에서 한 번 확인한다. 사용자 지시 2026-10-04.
+# 읽기 전용: 페이지당 1회 요청, 아무것도 저장·커밋하지 않는다. 결과는 로그와 요약에만 남는다.
+# 수동 전용: cron 이 없다.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.10'
+    - run: pip install requests
+    - name: 🔎 진단
+      run: |
+        python hyeoks_theme_source_probe.py | tee probe.md
+        cat probe.md >> "$GITHUB_STEP_SUMMARY"
