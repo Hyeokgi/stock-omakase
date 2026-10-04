@@ -154,7 +154,78 @@ def dump():
     header, cards = parse_rank(r.text)
     print(f"# stockinfo7 테마랭킹 덤프 — {header} · 카드 {len(cards)} · 종목행 {sum(len(c['stocks']) for c in cards)}")
     print("RANK_JSON " + json.dumps({"header": header, "cards": cards}, ensure_ascii=False))
+    print()
+    print("\n".join(compare(cards, header.replace(" 테마랭킹", ""))))
     return 0
+
+
+def compare(cards, header, snap_dir="data/market_snapshot"):
+    """stockinfo7 테마랭킹 ↔ 같은 날 우리 15:05 스냅샷 구조 비교 (수익률 없음 · 탐색 구간 날짜만)."""
+    import gzip, csv, os
+    import hyeoks_theme_abc as T
+    from hyeoks_closing_bet import read_snapshot
+    day = header[:10]
+    out = [f"## 같은 날 우리 스냅샷과 구조 비교 — stockinfo7 '{header}' ↔ {day} 15:05 슬롯", ""]
+    if not day:
+        return out + ["- 기준 날짜를 읽지 못해 비교하지 않는다"]
+    # 구조만 비교한다(테마·종목 소속·대장 후보). 익일 가격·수익률을 읽지 않으므로 잠긴 연구의 확증 구간과 겹쳐도 결과 열람이 아니다.
+    p15 = os.path.join(snap_dir, f"{day}_1505.csv.gz")
+    if not os.path.exists(p15):
+        return out + [f"- {day} 15:05 스냅샷이 없다"]
+    _, rows, _ = read_snapshot(p15)
+    with gzip.open(os.path.join(snap_dir, f"{day}_1505_theme.csv.gz"), "rt", encoding="utf-8") as fh:
+        trows = list(csv.DictReader(fh.read().splitlines()[1:]))
+    tname = {r["code"]: r["name"] for r in trows}
+    norm = lambda x: re.sub(r"\s+", "", x or "")
+    by_name = {}
+    for code, r in rows.items():
+        by_name.setdefault(norm(r.get("itemname")), code)
+    members = collections.defaultdict(set)
+    for code, r in rows.items():
+        for t in (r.get("themeNos") or "").split("|"):
+            if t:
+                members[t].add(code)
+    # 1) 종목명 매칭
+    names = {st["name"] for c in cards for st in c["stocks"]}
+    matched = {n: by_name.get(norm(n)) for n in names}
+    miss = sorted(n for n, c in matched.items() if not c)
+    out.append(f"- 종목명 매칭: {len(names) - len(miss)}/{len(names)}" + (f" · 못 맞춘 이름 {miss[:10]}" if miss else ""))
+    # 2) 등락률 차이 (stockinfo7 16시 정수% − 우리 15:02 등락률)
+    diffs = []
+    for c in cards:
+        for st in c["stocks"]:
+            code = matched.get(st["name"])
+            if code:
+                diffs.append(st["rate"] - float(rows[code].get("prevChangeRate") or 0))
+    if diffs:
+        ad = sorted(abs(x) for x in diffs)
+        out.append(f"- 등락률 차(16시 정수% − 15:02): |차| 중앙 {ad[len(ad)//2]:.2f}%p · 1%p 넘는 행 {sum(1 for x in ad if x > 1)}/{len(ad)} (반올림 ±0.5 + 시각 차)")
+    # 3) 테마 대응 + 4) 대장 비교
+    A, _ = T.build_A(rows)
+    Bc, _ = T.build_B_current(A)
+    our_lead = {x["theme"]: x["code"] for x in Bc}
+    rate_rank = [r["code"] for r in sorted(trows, key=lambda r: -float(r["changeRate"] or 0))]
+    out += ["", "| stockinfo7 테마 (등락률) | 맞춘 종목 | 가장 많이 겹치는 네이버 테마 (겹침) | 네이버 등락률 순위 | stockinfo7 1위 종목 | 우리 대장 후보(그 테마) |",
+            "|---|--:|---|--:|---|---|"]
+    same_lead = mapped = 0
+    for c in cards:
+        codes = {matched.get(st["name"]) for st in c["stocks"]} - {None}
+        best = max(members.items(), key=lambda kv: (len(kv[1] & codes), -len(kv[1])), default=(None, set()))
+        k = len(best[1] & codes) if best[0] else 0
+        nt = tname.get(best[0], "—") if k else "—"
+        rk = (rate_rank.index(best[0]) + 1) if k and best[0] in rate_rank else "—"
+        top = c["stocks"][0]["name"] if c["stocks"] else "—"
+        ours = our_lead.get(best[0]) if k else None
+        ours_name = rows[ours]["itemname"] if ours else "없음"
+        if k:
+            mapped += 1
+            same_lead += bool(ours and matched.get(top) == ours)
+        out.append(f"| {c['theme']} ({c['rate']}%) | {len(codes)}/{len(c['stocks'])} | {nt} ({k}) | {rk} | {top} | {ours_name} |")
+    out += ["", f"- 대응 테마를 찾은 카드 {mapped}/{len(cards)} · 그중 stockinfo7 1위 종목 = 우리 대장 후보 {same_lead}",
+            f"- 우리 대장 후보 {len(Bc)}개 중 stockinfo7 카드 어디엔가 나오는 종목 "
+            f"{sum(1 for x in Bc if x['code'] in set(matched.values()))}",
+            "- 겹침은 종목 소속 기준 근사다. 테마 이름이 달라도 같은 묶음일 수 있고, 같은 이름이라도 구성이 다를 수 있다"]
+    return out
 
 
 def watch(minutes, every):
