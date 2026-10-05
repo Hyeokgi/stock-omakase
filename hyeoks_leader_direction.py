@@ -236,7 +236,8 @@ def a_nonleader_rows(days, k=PRIMARY_K):
             mkt = (r or {}).get("sosok", "1")
             I0, Ik = day["idx"].get(mkt), fut["idx"].get(mkt)
             if P and Pk and I0 and Ik:
-                out.append({"date": day["date"], f"x{k}": (Pk / P - 1) - (Ik / I0 - 1)})
+                out.append({"date": day["date"], f"x{k}": (Pk / P - 1) - (Ik / I0 - 1),
+                            "f_rate": _f(r.get("prevChangeRate"), 0.0), "f_mkt_breadth": day["mkt_breadth"]})
     return out
 
 
@@ -552,12 +553,97 @@ def report_md(rep):
     return "\n".join(L)
 
 
+# ── 2회차 (사전 고정 §9 — 1회차 결과를 본 뒤 추가한 탐색) ─────────────────
+RATE_BINS = [("<5%", None, 5), ("5~10%", 5, 10), ("10~20%", 10, 20), ("≥20%", 20, None)]
+DD_BINS = [("> −3%", -0.03, None), ("−3 ~ −10%", -0.10, -0.03), ("−10 ~ −20%", -0.20, -0.10), ("≤ −20%", None, -0.20)]
+BREADTH_BINS = [("< 0.4", None, 0.4), ("0.4~0.6", 0.4, 0.6), ("≥ 0.6", 0.6, None)]
+
+
+def _in(v, lo, hi, upper_inclusive=False):
+    if v is None:
+        return False
+    if lo is not None and v < lo:
+        return False
+    if hi is not None and (v > hi if upper_inclusive else v >= hi):
+        return False
+    return True
+
+
+def _mean(rows, key):
+    v = [r[key] for r in rows if r.get(key) is not None]
+    return (float(np.mean(v)), len(v)) if v else (None, 0)
+
+
+def analyze_v2(days):
+    key = f"x{PRIMARY_K}"
+    rows = state_rows(days, episodes(days))
+    t0 = [r for r in rows if r["is_t0"] and r.get(key) is not None]
+    track = [r for r in rows if not r["is_t0"] and r.get(key) is not None]
+    nl = [r for r in a_nonleader_rows(days) if r.get(key) is not None]
+    out = {"v21": {}, "v22": [], "v24": [], "v25": []}
+    for per, sel in (("발견", lambda r: r["date"] <= DISCOVERY_END), ("확인", lambda r: r["date"] > DISCOVERY_END),
+                     ("전체", lambda r: True)):
+        a, b = [r for r in t0 if sel(r)], [r for r in nl if sel(r)]
+        bd = boot_diff(a, b, key)
+        out["v21"][per] = {"leader": up_rate(a, key), "nonleader": up_rate(b, key), "diff": bd,
+                           "mean_leader": _mean(a, key), "mean_nonleader": _mean(b, key)}
+    for name, lo, hi in RATE_BINS:
+        a = [r for r in t0 if _in(r.get("f_rate"), lo, hi)]
+        b = [r for r in nl if _in(r.get("f_rate"), lo, hi)]
+        bd = boot_diff(a, b, key)
+        out["v22"].append({"bin": name, "leader": up_rate(a, key), "leader_mean": _mean(a, key),
+                           "nonleader": up_rate(b, key), "nonleader_mean": _mean(b, key), "diff": bd,
+                           "leader_disc": up_rate([r for r in a if r["date"] <= DISCOVERY_END], key),
+                           "leader_hold": up_rate([r for r in a if r["date"] > DISCOVERY_END], key)})
+    for name, lo, hi in DD_BINS:
+        a = [r for r in track if _in(r.get("f_drawdown"), lo, hi, upper_inclusive=(hi is not None and hi < 0))]
+        out["v24"].append({"bin": name, "all": up_rate(a, key), "mean": _mean(a, key),
+                           "disc": up_rate([r for r in a if r["date"] <= DISCOVERY_END], key),
+                           "hold": up_rate([r for r in a if r["date"] > DISCOVERY_END], key)})
+    for name, lo, hi in BREADTH_BINS:
+        a = [r for r in t0 if _in(r.get("f_mkt_breadth"), lo, hi)]
+        b = [r for r in nl if _in(r.get("f_mkt_breadth"), lo, hi)]
+        out["v25"].append({"bin": name, "leader": up_rate(a, key), "leader_mean": _mean(a, key),
+                           "nonleader": up_rate(b, key), "days": len({r["date"] for r in a})})
+    return out
+
+
+def report_v2(o):
+    def ci(bd):
+        return "—" if not bd else f"{_pct(bd[0])} ({_pct(bd[1])} ~ {_pct(bd[2])})"
+    def mean(t):
+        return "—" if t[0] is None else f"{t[0] * 100:+.2f}%"
+    L = ["## 2회차 결과 (사전 고정 §9 · 1회차 결과를 본 뒤의 탐색 — 더 약한 근거)", "",
+         "### V2-1 t0 대장 − 같은 날 A 비대장 (`x_3 > 0`)", "",
+         "| 구간 | t0 대장 | A 비대장 | 차이 (95% 날짜 부트스트랩) | 평균 x_3 대장 / 비대장 |", "|---|---|---|---|---|"]
+    for per, v in o["v21"].items():
+        L.append(f"| {per} | {_rate(v['leader'])} | {_rate(v['nonleader'])} | {ci(v['diff'])} | "
+                 f"{mean(v['mean_leader'])} / {mean(v['mean_nonleader'])} |")
+    L += ["", "### V2-2·V2-3 t0 당일 등락률 구간별 — 대장 vs 같은 구간 A 비대장", "",
+          "| 등락률 | 대장 `x_3>0` | 대장 평균 x_3 | 비대장 `x_3>0` | 비대장 평균 x_3 | 대장 − 비대장 | 대장 발견 / 확인 |",
+          "|---|---|---|---|---|---|---|"]
+    for v in o["v22"]:
+        L.append(f"| {v['bin']} | {_rate(v['leader'])} | {mean(v['leader_mean'])} | {_rate(v['nonleader'])} | "
+                 f"{mean(v['nonleader_mean'])} | {ci(v['diff'])} | {_rate(v['leader_disc'])} / {_rate(v['leader_hold'])} |")
+    L += ["", "### V2-4 추적 중 고점 대비 낙폭 구간별 (추적일)", "",
+          "| 낙폭 | `x_3>0` | 평균 x_3 | 발견 / 확인 |", "|---|---|---|---|"]
+    for v in o["v24"]:
+        L.append(f"| {v['bin']} | {_rate(v['all'])} | {mean(v['mean'])} | {_rate(v['disc'])} / {_rate(v['hold'])} |")
+    L += ["", "### V2-5 t0 날 시장 확산 구간별", "", "| 시장 확산 | 날짜 수 | 대장 `x_3>0` | 대장 평균 x_3 | 비대장 `x_3>0` |",
+          "|---|--:|---|---|---|"]
+    for v in o["v25"]:
+        L.append(f"| {v['bin']} | {v['days']} | {_rate(v['leader'])} | {mean(v['leader_mean'])} | {_rate(v['nonleader'])} |")
+    L += ["", "> 같은 24관측일을 세 번째로 본 탐색이다. 구간은 날짜 부트스트랩 참고값이며 다중 비교 보정이 없다."]
+    return "\n".join(L)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="")
+    ap.add_argument("--round", type=int, default=1)
     a = ap.parse_args(argv)
-    rep = analyze(load_days())
-    md = report_md(rep)
+    days = load_days()
+    md = report_md(analyze(days)) if a.round == 1 else report_v2(analyze_v2(days))
     print(md)
     if a.out:
         with open(a.out, "w", encoding="utf-8") as fh:
