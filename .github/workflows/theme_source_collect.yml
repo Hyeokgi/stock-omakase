@@ -44,6 +44,14 @@ jobs:
         python-version: '3.10'
     - run: pip install requests
 
+    # 🔴 Codex R10 — 대기하던 실행의 checkout 은 이벤트 시점 커밋이라 앞 실행의 상태 커밋을 못 볼 수 있다.
+    #    중복 판정에 쓰는 공개 요약을 최신 main 으로 맞추고, 읽은 상태 커밋을 남긴다(코드 커밋은 GITHUB_SHA).
+    - name: 🔄 최신 상태 받기
+      run: |
+        git pull --ff-only origin main || echo "⚠️ 최신 main 으로 빨리감기 실패 — 이벤트 시점 상태로 진행"
+        echo "RESEARCH_STATE_COMMIT=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+        echo "코드(이벤트) ${GITHUB_SHA::7} · 상태 $(git rev-parse --short HEAD)"
+
     - name: 🗂️ 수집 (원자료 → 드라이브 비공개)
       env:
         UNTIL: ${{ github.event.inputs.until }}

@@ -11,7 +11,10 @@
 #     매 실행 모든 대상 종목의 최근 300봉을 새로 받는다. 덕분에
 #       - 초기 수집 완료 판정이 필요 없다(Codex 후속 B): 매일 같은 창을 다시 받고, 기간 충족 여부는 실행마다 종목별로 남긴다.
 #       - 오래된 봉의 수정주가 변경도 매일 탐지된다(Codex ②: 최근 5봉 재수집으로는 못 잡던 것).
-#   · 시간 예산을 넘기면 멈춘 위치를 공개 `resume.json`(정수 하나)에 남기고 다음 실행이 거기서 잇는다(Codex 후속 A).
+#   · 시간 예산을 넘기면 멈춘 위치를 공개 `resume.json`(정수 둘)에 남기고 다음 실행이 거기서 잇는다(Codex 후속 A).
+#     2026-10-05 ③ Codex R7: 우선 구간도 회전한다 — '항상 먼저' 와 '모두 매일 확보' 는 다르다.
+#   · 2026-10-05 ③ Codex R9·R11: 비공개 파일마다 영수증(크기·sha256·드라이브 id·접수 상태)을 공개 `private_receipts.csv` 에,
+#     보고 발송 결과를 `report_log.csv` 에 남긴다. 수집은 끝났는데 보고만 실패했으면 백업 실행이 보고만 다시 보낸다.
 #     우선 구간(지수 + 그날 A ∪ 최근 20 관측일 대장 후보)은 항상 먼저 받는다 — 당일 봉이 굶지 않게.
 #
 # 1) 일봉 (`--bars`)
@@ -49,7 +52,9 @@ RUNS_DIR = "data/research_runs"           # 공개 — 건수·상태·파일 �
 PRIVATE_DIR = "data/research_private"     # 러너 사본(.gitignore). 보존은 드라이브가 맡는다
 RUN_COLS = ["runId", "targetDay", "startedAt", "finishedAt", "status", "privateStatus", "plannedCodes", "requested",
             "responded", "covered", "missingTarget", "failed", "notAttempted", "rowsStored", "rejected",
-            "resumeOffset", "nextResumeOffset"]
+            "resumeOffset", "nextResumeOffset", "avgFetchMs", "p95FetchMs", "maxFetchMs"]
+RECEIPT_COLS = ["at", "kind", "runId", "name", "bytes", "sha256", "driveId", "status", "error", "verified"]
+REPORT_COLS = ["day", "runId", "collectRunId", "at", "status", "error"]
 FCHART = "https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count={n}&requestType=0"
 FETCH_N = 300                 # 매 실행 받는 창 — 상태 없는 수집
 LEADER_LOOKBACK = 20          # 우선 구간에 넣는 대장 후보의 관측일 수 (임시 범위)
@@ -196,14 +201,20 @@ def _write_json(path, obj):
 
 
 # ── 수집 순서 (우선 구간 + 이어 받는 나머지) ─────────────────────────────
-def plan_order(day, snap_dir=SNAP_DIR, offset=0):
-    """(우선 목록, 나머지 목록). 나머지는 `offset` 에서 시작하도록 돌린다."""
-    first = list(INDEXES) + universe(day, snap_dir)
+def _rotate(xs, k):
+    if not xs:
+        return xs
+    k %= len(xs)
+    return xs[k:] + xs[:k]
+
+
+def plan_order(day, snap_dir=SNAP_DIR, offset=0, priority_offset=0):
+    """(우선 목록, 나머지 목록). 지수는 맨 앞 고정, 우선 종목은 `priority_offset`, 나머지는 `offset` 부터 돌린다.
+    🔴 Codex R7 — 우선 구간 뒤쪽이 매번 예산에 걸려 영원히 밀리지 않게 우선 구간도 회전한다."""
+    prio = [c for c in universe(day, snap_dir) if c not in INDEXES]
+    first = list(INDEXES) + _rotate(prio, priority_offset)
     seen = set(first)
-    rest = [c for c in backfill_universe(snap_dir, upto=day) if c not in seen]
-    if rest:
-        k = offset % len(rest)
-        rest = rest[k:] + rest[:k]
+    rest = _rotate([c for c in backfill_universe(snap_dir, upto=day) if c not in seen], offset)
     return first, rest
 
 
@@ -257,19 +268,45 @@ def drive_uploader():
     return up
 
 
-def store_private(files, uploader, local_dir=PRIVATE_DIR):
-    """러너 사본을 남기고 드라이브에 올린다. (상태, [{name, bytes, id 또는 error}])."""
+def upload_receipt(kind, run_id, name, data, uploader, local_dir=PRIVATE_DIR):
+    """러너 사본을 남기고 드라이브에 올린다. 영수증 dict.
+    `status` 는 업로드 **접수**(드라이브 id 수신)까지다 — 원격 재다운로드 대조(`verified`)와 구분한다(Codex R9)."""
+    import hashlib
     os.makedirs(local_dir, exist_ok=True)
-    done, ok = [], True
-    for name, data in files:
-        with open(os.path.join(local_dir, name), "wb") as fh:
-            fh.write(data)
-        try:
-            fid = uploader(name, data)
-            done.append({"name": name, "bytes": len(data), "id": fid})
-        except Exception as e:
-            ok = False
-            done.append({"name": name, "bytes": len(data), "error": f"{type(e).__name__}: {str(e)[:80]}"})
+    with open(os.path.join(local_dir, name), "wb") as fh:
+        fh.write(data)
+    rc = {"at": datetime.datetime.now(KST).isoformat(timespec="seconds"), "kind": kind, "runId": run_id,
+          "name": name, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(), "driveId": "",
+          "status": "", "error": "", "verified": ""}
+    try:
+        rc["driveId"] = str(uploader(name, data) or "")
+        rc["status"] = "접수"
+    except Exception as e:
+        rc["status"] = "실패"
+        rc["error"] = f"{type(e).__name__}: {str(e)[:80]}"
+    return rc
+
+
+def append_receipts(rows, runs_dir=RUNS_DIR):
+    """공개 영수증 장부 — 파일 이름·크기·sha256·드라이브 id·상태. 내용은 없다."""
+    if not rows:
+        return
+    os.makedirs(runs_dir, exist_ok=True)
+    path = os.path.join(runs_dir, "private_receipts.csv")
+    new = not os.path.exists(path)
+    with open(path, "a", encoding="utf-8", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=RECEIPT_COLS, extrasaction="ignore", lineterminator="\n")
+        if new:
+            w.writeheader()
+        w.writerows(rows)
+
+
+def store_private(files, uploader, local_dir=PRIVATE_DIR, run_id="", runs_dir=None):
+    """(상태, [영수증]). 영수증은 `runs_dir` 가 주어지면 공개 장부에도 남긴다."""
+    done = [upload_receipt("bars", run_id, name, data, uploader, local_dir) for name, data in files]
+    if runs_dir:
+        append_receipts(done, runs_dir)
+    ok = all(r["status"] == "접수" for r in done)
     return ("보관 완료" if ok else "보관 실패"), done
 
 
@@ -284,14 +321,18 @@ def run_bars(day, get, runs_dir=RUNS_DIR, snap_dir=SNAP_DIR, now=None, pause=0.0
     unsettled = (now.astimezone(KST).hour, now.astimezone(KST).minute) < MARKET_CLOSE_SAFE
     resume = _read_json(os.path.join(runs_dir, "resume.json"), {"offset": 0})
     offset = int(resume.get("offset", 0))
-    first, rest = plan_order(day, snap_dir, offset)
+    poffset = int(resume.get("priorityOffset", 0))
+    first, rest = plan_order(day, snap_dir, offset, poffset)
+    n_idx = len([c for c in first if c in INDEXES])
     order = first + rest
 
     st = {"runId": run_id, "targetDay": day, "startedAt": now.isoformat(timespec="seconds"),
           "plannedCodes": len(order), "priorityCodes": len(first), "requested": 0, "responded": 0, "covered": 0,
           "missingTarget": 0, "failed": 0, "notAttempted": 0, "rejected": {}, "zeroVolume": 0,
           "unsettledSkipped": 0, "completeness": {}, "failSample": {}, "rowsStored": 0,
-          "resumeOffset": offset, "nextResumeOffset": offset}
+          "resumeOffset": offset, "nextResumeOffset": offset,
+          "priorityResumeOffset": poffset, "nextPriorityResumeOffset": poffset}
+    durations = []
     rows, per_code = [], {}
     stopped_at = None
     try:
@@ -299,7 +340,9 @@ def run_bars(day, get, runs_dir=RUNS_DIR, snap_dir=SNAP_DIR, now=None, pause=0.0
             if time.monotonic() - t0 > budget_s:
                 stopped_at = i
                 break
+            tf = time.perf_counter()
             res = fetch(code, FETCH_N, get)
+            durations.append((time.perf_counter() - tf) * 1000)
             bars, err = res[0], res[1]
             info = res[2] if len(res) > 2 else {}
             recv = clock().isoformat(timespec="seconds")
@@ -339,17 +382,30 @@ def run_bars(day, get, runs_dir=RUNS_DIR, snap_dir=SNAP_DIR, now=None, pause=0.0
         # 중단돼도 받은 것은 비공개로 남긴다
         if stopped_at is not None:
             st["notAttempted"] = len(order) - stopped_at
-            done_rest = max(0, stopped_at - len(first))
-            st["nextResumeOffset"] = (offset + done_rest) % len(rest) if rest else 0
+            n_prio = len(first) - n_idx
+            if stopped_at < len(first):
+                # 우선 구간 안에서 멈췄다 — 다음 실행은 우선 구간도 멈춘 곳부터 (Codex R7)
+                done_prio = max(0, stopped_at - n_idx)
+                st["nextPriorityResumeOffset"] = (poffset + done_prio) % n_prio if n_prio else 0
+            else:
+                done_rest = stopped_at - len(first)
+                st["nextResumeOffset"] = (offset + done_rest) % len(rest) if rest else 0
+        if durations:
+            ds = sorted(durations)
+            st["avgFetchMs"] = round(sum(ds) / len(ds))
+            st["p95FetchMs"] = round(ds[min(len(ds) - 1, int(len(ds) * 0.95))])
+            st["maxFetchMs"] = round(ds[-1])
         st["finishedAt"] = clock().isoformat(timespec="seconds")
         st["rowsStored"] = len(rows)
         meta = {k: v for k, v in st.items()}
         files = private_files(day, run_id, rows, {"run": meta, "codes": per_code}) if (rows or per_code) else []
         if files:
-            st["privateStatus"], st["privateFiles"] = store_private(files, uploader or drive_uploader(), private_dir)
+            st["privateStatus"], st["privateFiles"] = store_private(files, uploader or drive_uploader(), private_dir,
+                                                                    run_id, runs_dir)
         else:
             st["privateStatus"], st["privateFiles"] = "보관할 자료 없음", []
-        _write_json(os.path.join(runs_dir, "resume.json"), {"offset": st["nextResumeOffset"]})
+        _write_json(os.path.join(runs_dir, "resume.json"),
+                    {"offset": st["nextResumeOffset"], "priorityOffset": st["nextPriorityResumeOffset"]})
     st["status"] = status_of(st)
     return st
 
@@ -366,7 +422,7 @@ def status_of(st):
 def save_run(st, runs_dir=RUNS_DIR):
     """공개 요약만 — 가격·종목별 상태는 넣지 않는다."""
     public = {k: v for k, v in st.items() if k not in ("failSample",)}
-    public["privateFiles"] = [{k: f[k] for k in ("name", "bytes", "id", "error") if k in f}
+    public["privateFiles"] = [{k: f[k] for k in ("name", "bytes", "sha256", "driveId", "status", "error") if k in f}
                               for f in st.get("privateFiles", [])]
     _write_json(os.path.join(runs_dir, "last_run.json"), public)
     path = os.path.join(runs_dir, "runs.csv")
@@ -390,8 +446,16 @@ def load_run(day, run_id, runs_dir=RUNS_DIR):
     return st
 
 
+DECISION_HM = "15:05"   # 종베 판단 시각 (운영대전제)
+
+
 def theme_obs_summary(day, runs_dir=RUNS_DIR):
-    """stockinfo7 공개 관측 메타(이름 없음)에서 그날 요약 한 줄. 파일이 없으면 None."""
+    """stockinfo7 공개 관측 메타(이름 없음)에서 그날 요약 한 줄. 파일이 없으면 None.
+
+    🔴 2026-10-05 Codex R8 + 사전 고정 규칙(10/6 첫 실측 **전**에 정함):
+      주 분석 화면 = **그날 날짜·15시 기준 화면 중 15:05 까지 수신·파싱이 끝난 가장 최근 관측**. 없으면 결측.
+      14시본은 별도 비교용으로만 남기고 15시본 빈칸에 대신 넣지 않는다. 15:05 뒤에 받은 15시본을 소급 사용하지 않는다.
+      화면 날짜가 그날이 아니면(날짜불일치) 오늘 비교에 넣지 않는다."""
     path = os.path.join(runs_dir, "stockinfo7_obs.csv")
     if not os.path.exists(path):
         return None
@@ -402,11 +466,33 @@ def theme_obs_summary(day, runs_dir=RUNS_DIR):
     kinds = {}
     for r in rows:
         kinds[r["class"]] = kinds.get(r["class"], 0) + 1
-    h15 = [r for r in rows if r.get("header", "").endswith(" 15시")]
-    first15 = min((r["receivedAt"] for r in h15), default="")
-    before = "15:05 전 수신" if first15 and first15[11:16] < "15:05" else ("15:05 이후 처음 수신" if first15 else "15시본 관측 없음")
-    return (f"관측 {len(rows)}회 · 갱신 {kinds.get('갱신', 0)} · 오류 {sum(v for k, v in kinds.items() if k not in ('첫관측', '동일', '갱신'))} · "
-            f"15시본 {first15[11:19] if first15 else '—'} ({before})")
+    valid = [r for r in rows if r.get("class") in ("첫관측", "동일", "갱신")]
+
+    def sday_hour(r):
+        sd, sh = r.get("screenDay", ""), r.get("screenHour", "")
+        if not sd:                      # 이전 형식 행 — 헤더에서 읽는다
+            parts = (r.get("header") or "").replace("시", "").split()
+            sd, sh = (parts[0], parts[1]) if len(parts) == 2 else ("", "")
+        return sd, int(sh) if str(sh).isdigit() else None
+
+    def ready(r):
+        return (r.get("parsedAt") or r.get("receivedAt") or "")[:19]
+
+    cutoff = f"{day}T{DECISION_HM}:00"
+    usable = [r for r in valid if sday_hour(r)[0] == day and ready(r) and ready(r) <= cutoff]
+    latest = max(usable, key=ready) if usable else None
+    if latest and sday_hour(latest)[1] == 15:
+        main_line = f"{DECISION_HM} 판단 화면 15시본 ({ready(latest)[11:19]} 확보)"
+    elif latest:
+        main_line = f"{DECISION_HM} 판단 화면 결측 — 그 시각 최신은 {sday_hour(latest)[1]}시본(대체하지 않음)"
+    else:
+        main_line = f"{DECISION_HM} 판단 화면 결측 — {DECISION_HM} 전 유효 화면 없음"
+    first15 = min((ready(r) for r in valid if sday_hour(r) == (day, 15) and ready(r)), default="")
+    late = f" · 15시본 첫 확보 {first15[11:19]}" if first15 and first15 > cutoff else ""
+    errs = sum(v for k, v in kinds.items() if k not in ("첫관측", "동일", "갱신"))
+    stale = kinds.get("날짜불일치", 0)
+    return (f"관측 {len(rows)}회 · 갱신 {kinds.get('갱신', 0)} · 오류 {errs}" + (f"(날짜불일치 {stale})" if stale else "")
+            + f" · {main_line}{late}")
 
 
 # ── 보고 (구조 집계만) ────────────────────────────────────────────────
@@ -518,6 +604,41 @@ def target_day(now, is_session=None):
     return None
 
 
+def send_status(sent, err):
+    """발송성공 / 발송실패(안 갔다고 볼 수 있음 — 재시도 가능) / 응답불명(갔을 수도 있음 — 자동 재발송 안 함)."""
+    if sent:
+        return "발송성공"
+    if err.startswith("HTTP") or "없음" in err or err in ("ConnectTimeout", "ConnectionError", "NewConnectionError",
+                                                          "ProxyError", "SSLError", "InvalidURL"):
+        return "발송실패"
+    return "응답불명"
+
+
+def log_report(day, run_id, collect_run_id, status, error, runs_dir=RUNS_DIR):
+    os.makedirs(runs_dir, exist_ok=True)
+    path = os.path.join(runs_dir, "report_log.csv")
+    new = not os.path.exists(path)
+    with open(path, "a", encoding="utf-8", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=REPORT_COLS, lineterminator="\n")
+        if new:
+            w.writeheader()
+        w.writerow({"day": day, "runId": run_id, "collectRunId": collect_run_id,
+                    "at": datetime.datetime.now(KST).isoformat(timespec="seconds"), "status": status, "error": error})
+
+
+def report_state(day, runs_dir=RUNS_DIR):
+    """그날 보고의 가장 나은 상태: 발송성공 > 응답불명 > 발송실패 > ''."""
+    path = os.path.join(runs_dir, "report_log.csv")
+    if not os.path.exists(path):
+        return ""
+    with open(path, encoding="utf-8") as fh:
+        seen = {r["status"] for r in csv.DictReader(fh) if r.get("day") == day}
+    for s in ("발송성공", "응답불명", "발송실패"):
+        if s in seen:
+            return s
+    return ""
+
+
 def main(argv=None, now=None, env=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--bars", action="store_true")
@@ -528,6 +649,7 @@ def main(argv=None, now=None, env=None):
     env = os.environ if env is None else env
     now = now or datetime.datetime.now(KST)
     run_id = env.get("GITHUB_RUN_ID", "")
+    reuse = None
     if a.date:
         day = a.date
         ok, why = trading_day(day)
@@ -546,31 +668,43 @@ def main(argv=None, now=None, env=None):
             return 0
         # GAS 발사(주) + 깃허브 예약(백업)이 둘 다 오면 같은 대상일을 두 번 수집·보고하지 않는다.
         # 다른 실행이 이미 OK/DEGRADED 로 끝냈으면 생략. FAILED 였으면 다시 한다. 날짜를 지정한 수동 실행은 항상 한다.
+        # 🔴 Codex R11 — 수집 완료와 보고 완료를 나눈다. 보고만 실패했으면 수집은 반복하지 않고 보고만 다시 보낸다.
         last = _read_json(os.path.join(RUNS_DIR, "last_run.json"), None)
         if (last and last.get("targetDay") == day and last.get("runId") != run_id
                 and last.get("status") in ("OK", "DEGRADED")):
-            print(f"ℹ️ {day} 은 실행 {last.get('runId')} 이 이미 수집·보고했다({last.get('status')}) — 중복 실행 생략. "
-                  "다시 하려면 date 를 지정해 수동 실행")
-            return 0
+            rep = report_state(day, RUNS_DIR)
+            if a.bars and not a.report:
+                print(f"ℹ️ {day} 일봉은 실행 {last.get('runId')} 이 이미 수집했다({last.get('status')}) — 수집 생략")
+                return 0
+            if rep in ("발송성공", "응답불명"):
+                print(f"ℹ️ {day} 은 수집·보고가 이미 끝났다(수집 {last.get('runId')}, 보고 {rep}) — 중복 실행 생략. "
+                      "응답불명은 중복 발송을 피하려고 자동 재발송하지 않는다. 다시 하려면 date 를 지정해 수동 실행")
+                return 0
+            print(f"ℹ️ {day} 일봉은 실행 {last.get('runId')} 수집분을 쓰고, 보고만 다시 보낸다(이전 보고 상태: {rep or '기록 없음'})")
+            a.bars = False
+            reuse = last
     code = 0
     bars = None
     if a.bars:
         import requests
         bars = run_bars(day, requests.get, runs_dir=RUNS_DIR, now=now, run_id=run_id)
+        bars["stateCommit"] = env.get("RESEARCH_STATE_COMMIT", "")
         save_run(bars, RUNS_DIR)
         print("📈 일봉 " + json.dumps({k: v for k, v in bars.items() if k != "privateFiles"}, ensure_ascii=False))
         print("🔒 비공개 보관: " + bars["privateStatus"] + " · " + ", ".join(f["name"] for f in bars["privateFiles"]))
         if bars["status"] == "FAILED":
             code = 1
     if a.report:
-        bars = bars or load_run(day, run_id, RUNS_DIR)
+        bars = bars or reuse or load_run(day, run_id, RUNS_DIR)
         text = report_text(day, bars, structure_today(day), locked_status(),
                            archive=env.get("RESEARCH_ARCHIVE", ""), theme_obs=theme_obs_summary(day, RUNS_DIR))
         print(text)
         if a.send:
             import requests
             sent, err = send(text, requests.post, env.get("TELEGRAM_BOT_TOKEN"))
-            print("✅ [연구] 보고 발송 (HTTP 200 — 도착은 채널에서 확인)" if sent else f"⚠️ [연구] 보고 발송 실패: {err}")
+            status = send_status(sent, err)
+            log_report(day, run_id, (bars or {}).get("runId", ""), status, err, RUNS_DIR)
+            print("✅ [연구] 보고 발송 (HTTP 200 — 도착은 채널에서 확인)" if sent else f"⚠️ [연구] 보고 {status}: {err}")
             if not sent:
                 code = 1
     return code

@@ -58,6 +58,14 @@ jobs:
     - name: 📦 의존성
       run: pip install requests
 
+    # 🔴 Codex R10 — 대기하던 실행의 checkout 은 이벤트 시점 커밋이라 앞 실행의 상태 커밋을 못 볼 수 있다.
+    #    중복 판정에 쓰는 공개 요약을 최신 main 으로 맞추고, 읽은 상태 커밋을 남긴다(코드 커밋은 GITHUB_SHA).
+    - name: 🔄 최신 상태 받기
+      run: |
+        git pull --ff-only origin main || echo "⚠️ 최신 main 으로 빨리감기 실패 — 이벤트 시점 상태로 진행"
+        echo "RESEARCH_STATE_COMMIT=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+        echo "코드(이벤트) ${GITHUB_SHA::7} · 상태 $(git rev-parse --short HEAD)"
+
     - name: 📈 확정 일봉 수집 (원자료 → 드라이브 비공개)
       id: bars
       env:
@@ -107,3 +115,21 @@ jobs:
         python hyeoks_research_daily.py $ARGS ${TARGET_DATE:+--date "$TARGET_DATE"} | tee research_report.txt || rc=$?
         { echo "## 🧭 [연구] 일일 보고"; echo; echo '```'; cat research_report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
         exit $rc
+
+    # 🔴 Codex R11 — 보고 발송 결과(report_log.csv)도 남겨야 백업 실행이 '보고만 실패' 를 알고 다시 보낸다.
+    - name: 💾 보고 상태 커밋
+      if: always()
+      run: |
+        mkdir -p data/research_runs
+        if [ -z "$(git status --porcelain data/research_runs)" ]; then
+          echo "ℹ️ 바뀐 파일 없음 — 커밋 생략"; exit 0
+        fi
+        git config user.name  "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add data/research_runs
+        git commit -m "data: 연구 보고 상태 $(TZ=Asia/Seoul date +%Y-%m-%d) run ${GITHUB_RUN_ID} [skip ci]"
+        for i in 1 2 3; do
+          git pull --rebase --autostash origin main && git push origin HEAD:main && exit 0
+          echo "⚠️ 푸시 재시도 $i/3"; sleep 5
+        done
+        echo "::error::보고 상태 커밋 푸시 실패"; exit 1

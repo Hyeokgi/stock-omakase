@@ -9,6 +9,7 @@ import os
 import shutil
 import tempfile
 import unittest
+import unittest.mock
 
 import hyeoks_theme_source_collect as C
 
@@ -123,6 +124,48 @@ class CollectTests(unittest.TestCase):
             os.chdir(cwd)
         self.assertEqual(code, 0)
         self.assertFalse(os.path.exists(os.path.join(self.d, C.RUNS_DIR)))
+
+    def test_R8_other_date_screen_is_flagged_and_not_archived(self):
+        out, up, meta = self.run_collect([Resp(page("A", "2026-10-02 15시 테마랭킹"))], start=(15, 0), until=(15, 5))
+        self.assertEqual(meta[0]["class"], "날짜불일치")
+        self.assertEqual((meta[0]["screenDay"], meta[0]["screenHour"]), ("2026-10-02", "15"))
+        self.assertEqual(up.files, {})
+        self.assertEqual(out["valid"], 0)
+
+    def test_R9_unchanged_rows_point_to_the_archived_original_and_receipts_have_sha256(self):
+        out, up, meta = self.run_collect([Resp(page("A"))] * 3, start=(15, 10), until=(15, 35))
+        self.assertEqual([m["class"] for m in meta], ["첫관측", "동일", "동일"])
+        self.assertTrue(meta[0]["privateFile"])
+        self.assertEqual({m["privateFile"] for m in meta}, {meta[0]["privateFile"]}, "동일 관측도 같은 원본을 가리킨다")
+        with open(os.path.join(self.d, "private_receipts.csv"), encoding="utf-8") as fh:
+            rc = list(csv.DictReader(fh))
+        self.assertEqual(len(rc), 1)
+        self.assertEqual((rc[0]["kind"], rc[0]["status"], rc[0]["driveId"]), ("stockinfo7", "접수", "id"))
+        self.assertEqual(len(rc[0]["sha256"]), 64)
+        self.assertTrue(all(m["parsedAt"] >= m["receivedAt"] for m in meta))
+
+    def test_R10_backup_skips_only_when_another_run_completed(self):
+        C._append(os.path.join(self.d, "stockinfo7_runs.csv"), C.RUNLOG_COLS,
+                  [{"day": "2026-10-06", "runId": "primary", "status": "부분"}])
+        fake = {"observations": 1, "valid": 1, "updates": 0, "errors": 0, "uploads": [], "uploadFailed": 0,
+                "stopReason": "", "windowDone": True}
+        t = datetime.datetime(2026, 10, 6, 16, 28, tzinfo=KST)
+        with unittest.mock.patch.object(C, "collect", return_value=fake) as col:
+            self.assertEqual(C.main([], env={"GITHUB_RUN_ID": "backup"}, now=t, get=object(), runs_dir=self.d), 0)
+            self.assertEqual(col.call_count, 1, "앞 실행이 부분이면 남은 시간을 이어 관측한다")
+            self.assertEqual(C.main([], env={"GITHUB_RUN_ID": "backup2"}, now=t, get=object(), runs_dir=self.d), 0)
+            self.assertEqual(col.call_count, 1, "다른 실행이 완료했으면 다시 하지 않는다")
+
+    def test_stop_on_access_denied_or_rate_limit(self):
+        for code, why in ((403, "접근거부"), (429, "요청제한")):
+            with self.subTest(code):
+                d = os.path.join(self.d, str(code))
+                clock = Clock(13, 0)
+                out = C.collect("2026-10-06", lambda *a, **k: Resp("", code), now=clock.now, sleep=clock.sleep,
+                                until=(16, 35), uploader=Up(), runs_dir=d, private_dir=os.path.join(d, "p"))
+                self.assertIn(why, out["stopReason"])
+                self.assertEqual(out["observations"], 1, "우회하지 않고 바로 멈춘다")
+                self.assertEqual(C.run_status(out), "보류")
 
 
 if __name__ == "__main__":

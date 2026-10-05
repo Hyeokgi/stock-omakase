@@ -50,6 +50,8 @@ class Up:
         if self.fail:
             raise RuntimeError("synthetic upload failure")
         self.files[name] = data
+        self.raw = getattr(self, "raw", {})
+        self.raw[name] = data
         return f"id-{len(self.files)}"
 
     def bars(self):
@@ -304,6 +306,107 @@ class CodexReviewR1toR6(TmpDir):
         self.assertEqual(got["valid"], 0, "120거래일 상한(또는 달력 끝) 뒤의 날은 세지 않는다")
 
 
+class CodexR7toR11(TmpDir):
+    """Codex 2026-10-05 진행 계획 §3 재현 다섯 건 — 기대 동작으로 통과해야 한다."""
+
+    def test_R7_priority_segment_rotates_under_repeated_budget_stops(self):
+        calls = []
+        def fetch(code, n, get):
+            calls.append(code)
+            return [bar()], ""
+        for i in range(2):
+            t = iter([0, 0, 2, 2, 2])
+            with mock.patch.object(R.time, "monotonic", side_effect=lambda: next(t)):
+                out, _ = self.run_bars(fetch_fn=fetch, codes=("000001", "000002"), rest=["000003"], budget_s=1,
+                                       run_id=str(i))
+        self.assertEqual(calls, ["000001", "000002"], "우선 구간 뒤쪽도 다음 실행에 받는다")
+        self.assertEqual(R._read_json(os.path.join(self.d, "resume.json"), {})["priorityOffset"], 0)
+
+    def test_R7_fetch_timing_is_recorded(self):
+        out, _ = self.run_bars(fetch_fn=lambda c, n, g: ([bar()], ""))
+        self.assertTrue({"avgFetchMs", "p95FetchMs", "maxFetchMs"} <= set(out))
+
+    def test_R8_other_date_screen_is_not_todays_1500(self):
+        path = os.path.join(self.d, "stockinfo7_obs.csv")
+        import hyeoks_theme_source_collect as C
+        C.append_obs([{"day": "2026-10-06", "runId": "r", "requestedAt": "2026-10-06T15:02:00+09:00",
+                       "receivedAt": "2026-10-06T15:02:01+09:00", "parsedAt": "2026-10-06T15:02:01+09:00",
+                       "http": 200, "class": "날짜불일치", "header": "2026-10-02 15시", "screenDay": "2026-10-02",
+                       "screenHour": 15, "cards": 1, "rows": 1, "digest": "a", "privateFile": ""}], self.d)
+        s = R.theme_obs_summary("2026-10-06", self.d)
+        self.assertIn("결측", s)
+        self.assertIn("날짜불일치 1", s)
+        self.assertTrue(os.path.exists(path))
+
+    def test_R8_14h_screen_is_not_substituted_and_late_15h_is_not_backdated(self):
+        import hyeoks_theme_source_collect as C
+        def row(t, hour, cls):
+            return {"day": "2026-10-06", "runId": "r", "requestedAt": t, "receivedAt": t, "parsedAt": t, "http": 200,
+                    "class": cls, "header": f"2026-10-06 {hour}시", "screenDay": "2026-10-06", "screenHour": hour,
+                    "cards": 1, "rows": 1, "digest": str(hour), "privateFile": "f"}
+        C.append_obs([row("2026-10-06T14:55:00+09:00", 14, "첫관측"), row("2026-10-06T15:06:00+09:00", 15, "갱신")], self.d)
+        s = R.theme_obs_summary("2026-10-06", self.d)
+        self.assertIn("15:05 판단 화면 결측 — 그 시각 최신은 14시본(대체하지 않음)", s)
+        self.assertIn("15시본 첫 확보 15:06:00", s)
+
+    def test_R9_bar_receipts_have_sha256_and_drive_id(self):
+        out, up = self.run_bars(fetch_fn=lambda c, n, g: ([bar()], ""))
+        rows = list(csv.DictReader(open(os.path.join(self.d, "private_receipts.csv"), encoding="utf-8")))
+        self.assertEqual({r["kind"] for r in rows}, {"bars"})
+        import hashlib
+        for r in rows:
+            self.assertEqual(r["sha256"], hashlib.sha256(up.raw[r["name"]]).hexdigest())
+            self.assertTrue(r["driveId"] and r["status"] == "접수" and r["verified"] == "")
+
+    def test_R11_report_only_retry_after_collection_succeeded(self):
+        R.save_run(dict(Report.BARS, runId="primary", targetDay="2026-10-06"), self.d)
+        R.log_report("2026-10-06", "primary", "primary", "발송실패", "HTTP 502", self.d)
+        calls = []
+        with mock.patch.object(R, "RUNS_DIR", self.d), mock.patch.object(R, "structure_today", return_value=None), \
+                mock.patch.object(R, "locked_status", return_value=None), \
+                mock.patch.object(R, "run_bars", side_effect=AssertionError("수집을 반복하면 안 된다")), \
+                mock.patch.object(R, "send", side_effect=lambda *a: (calls.append(1), (True, ""))[1]), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(R.main(["--bars"], now=AFTER, env={"GITHUB_RUN_ID": "backup"}), 0)
+            self.assertEqual(R.main(["--report", "--send"], now=AFTER, env={"GITHUB_RUN_ID": "backup"}), 0)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(R.report_state("2026-10-06", self.d), "발송성공")
+
+    def test_R11_ambiguous_send_is_not_auto_resent(self):
+        R.save_run(dict(Report.BARS, runId="primary", targetDay="2026-10-06"), self.d)
+        R.log_report("2026-10-06", "primary", "primary", "응답불명", "ReadTimeout", self.d)
+        with mock.patch.object(R, "RUNS_DIR", self.d), \
+                mock.patch.object(R, "send", side_effect=AssertionError("응답불명은 자동 재발송 안 함")), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(R.main(["--report", "--send"], now=AFTER, env={"GITHUB_RUN_ID": "backup"}), 0)
+        self.assertIn("응답불명", out.getvalue())
+
+    def test_R11_send_outcomes_are_classified(self):
+        with mock.patch.object(R, "RUNS_DIR", self.d), mock.patch.object(R, "structure_today", return_value=None), \
+                mock.patch.object(R, "locked_status", return_value=None), contextlib.redirect_stdout(io.StringIO()):
+            R.save_run(dict(Report.BARS, runId="a", targetDay="2026-10-06"), self.d)
+            with mock.patch.object(R, "send", return_value=(False, "ReadTimeout")):
+                R.main(["--report", "--send", "--date", "2026-10-06"], env={"GITHUB_RUN_ID": "a"})
+        self.assertEqual(R.report_state("2026-10-06", self.d), "응답불명")
+
+    def test_R11_connection_failure_is_retryable_but_timeout_is_ambiguous(self):
+        self.assertEqual(R.send_status(False, "HTTP 502"), "발송실패")
+        self.assertEqual(R.send_status(False, "ConnectionError"), "발송실패")
+        self.assertEqual(R.send_status(False, "TELEGRAM_BOT_TOKEN 없음 — 보내지 않았다"), "발송실패")
+        self.assertEqual(R.send_status(False, "ReadTimeout"), "응답불명")
+        self.assertEqual(R.send_status(True, ""), "발송성공")
+
+    def test_R10_workflows_read_latest_state_before_running(self):
+        root = pathlib.Path(__file__).resolve().parent.parent
+        for wf in ("research_daily.yml", "theme_source_collect.yml"):
+            txt = (root / ".github/workflows" / wf).read_text(encoding="utf-8")
+            with self.subTest(wf):
+                self.assertIn("git pull --ff-only origin main", txt)
+                self.assertIn("RESEARCH_STATE_COMMIT", txt)
+        txt = (root / ".github/workflows/research_daily.yml").read_text(encoding="utf-8")
+        self.assertIn("보고 상태 커밋", txt)
+
+
 class Report(TmpDir):
     BARS = {"status": "OK", "plannedCodes": 400, "requested": 400, "responded": 398, "covered": 397,
             "missingTarget": 1, "failed": 2, "notAttempted": 0, "rejected": {}, "zeroVolume": 0, "rowsStored": 119400,
@@ -346,7 +449,7 @@ class Report(TmpDir):
         self.assertIn("관측 3회", s)
         self.assertIn("갱신 1", s)
         self.assertIn("오류 1", s)
-        self.assertIn("15:03:02 (15:05 전 수신)", s)
+        self.assertIn("15:05 판단 화면 15시본 (15:03:02 확보)", s)
         self.assertEqual(R.theme_obs_summary("2026-10-07", self.d), "")
         self.assertIsNone(R.theme_obs_summary("2026-10-06", os.path.join(self.d, "none")))
 
@@ -389,6 +492,7 @@ class Report(TmpDir):
     def test_second_scheduled_run_for_the_same_day_is_skipped(self):
         """GAS(주) + 깃허브 예약(백업)이 둘 다 와도 같은 대상일을 두 번 수집·보고하지 않는다."""
         R.save_run({"runId": "1", "targetDay": "2026-10-06", "status": "OK", "plannedCodes": 1}, self.d)
+        R.log_report("2026-10-06", "1", "1", "발송성공", "", self.d)
         out = io.StringIO()
         with mock.patch.object(R, "RUNS_DIR", self.d), contextlib.redirect_stdout(out):
             code = R.main(["--bars", "--report", "--send"], now=AFTER, env={"GITHUB_RUN_ID": "2"})
