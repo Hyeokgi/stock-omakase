@@ -1,0 +1,2 @@
+runId,targetDay,startedAt,finishedAt,status,privateStatus,plannedCodes,requested,responded,covered,missingTarget,failed,notAttempted,rowsStored,rejected,resumeOffset,nextResumeOffset,avgFetchMs,p95FetchMs,maxFetchMs
+37362926165,2026-10-02,2026-10-06T04:22:41+09:00,2026-10-06T04:34:41+09:00,OK,보관 완료,857,857,857,854,3,0,0,246052,397,0,0,788,963,1675
