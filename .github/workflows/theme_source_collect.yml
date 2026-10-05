@@ -1,0 +1,67 @@
+name: 🗂️ 외부 테마 자료원 병행 수집 (stockinfo7 · 연구)
+
+# 사용자 지시(2026-10-05): "stockinfo7는 그대로 수집해. 상용화 할 생각은 없어." — 개인 비영리 연구.
+# 화면 원자료(파싱 결과·원본 HTML)는 구글 드라이브 비공개로 올린다(동결 번들과 같은 쓰기 전용 창구).
+# 공개 저장소에는 data/research_runs/stockinfo7_obs.csv 의 구조 메타(시각·상태·건수·지문)만 커밋한다.
+# 로그에도 테마·종목 이름을 찍지 않는다.
+#
+# 시각: 평일 12:30 KST 예약 → 16:35 KST 까지 10분 간격(약 24회). 깃허브 예약은 늦을 수 있다 —
+#       늦게 시작하면 그만큼 관측이 줄 뿐 끝 시각은 같다. 휴장일이면 도구가 스스로 건너뛴다.
+# 연구 전용: 선정 조건·주문·시트·운영 Gate 와 무관. 지문 대상 파일이 아니다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      until:
+        description: '관측 끝 시각 KST (HH:MM)'
+        required: false
+        default: '16:35'
+      every_seconds:
+        description: '관측 간격(초). 최소 300'
+        required: false
+        default: '600'
+  schedule:
+    - cron: '30 3 * * 1-5'   # 12:30 KST
+
+permissions:
+  contents: write
+
+concurrency:
+  group: theme-source-collect
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.10'
+    - run: pip install requests
+
+    - name: 🗂️ 수집 (원자료 → 드라이브 비공개)
+      env:
+        UNTIL: ${{ github.event.inputs.until }}
+        EVERY: ${{ github.event.inputs.every_seconds }}
+      run: |
+        python hyeoks_theme_source_collect.py --until "${UNTIL:-16:35}" --every "${EVERY:-600}"
+
+    - name: 💾 공개 메타 커밋
+      if: always()
+      run: |
+        mkdir -p data/research_runs
+        if [ -z "$(git status --porcelain data/research_runs)" ]; then
+          echo "ℹ️ 바뀐 파일 없음 — 커밋 생략"; exit 0
+        fi
+        git config user.name  "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add data/research_runs
+        git commit -m "data: stockinfo7 관측 메타 $(TZ=Asia/Seoul date +%Y-%m-%d) run ${GITHUB_RUN_ID} [skip ci]"
+        for i in 1 2 3; do
+          git pull --rebase --autostash origin main && git push origin HEAD:main && exit 0
+          echo "⚠️ 푸시 재시도 $i/3"; sleep 5
+        done
+        echo "::error::관측 메타 커밋 푸시 실패"; exit 1

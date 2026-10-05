@@ -2,8 +2,11 @@ name: 🧭 HYEOKS 연구 일일 (일봉 · [연구] 보고)
 
 # 목적: 테마·대장 후속 경로 연구(docs/collaboration/2026-10-04_*)의 확정 일봉을 저장소에 쌓고,
 #       기존 텔레그램 채널에 `[연구]` 머리말로 일일 보고를 보낸다. 사용자 지시 2026-10-04.
-# 2026-10-05 개정: Codex 교차 검토 R1~R6 반영 — 종목별 수집 범위·대상일/실행일 분리·묶음 저장·
-#       수집 상태 파일을 보고가 같은 실행 ID 로 읽음·원격 보관 결과를 보고에 표시.
+# 2026-10-05 개정: Codex 교차 검토 R1~R6 반영(018042b).
+# 2026-10-05 개정②: Codex 후속 권고 + 사용자 지시 — **가격 원자료는 공개 저장소에 커밋하지 않는다.**
+#       봉·종목별 상태는 구글 드라이브(비공개, 동결 번들과 같은 쓰기 전용 창구)로 올리고,
+#       공개 저장소에는 data/research_runs/ 의 건수·상태·파일 이름 요약만 커밋한다.
+#       드라이브는 읽을 수 없어 매 실행 300봉 창을 새로 받는 상태 없는 수집이다.
 #
 # 🔒 보고에는 수집 상태와 구조 집계만 담는다. 대장 후보의 이후 수익률은 넣지 않는다 —
 #    잠긴 사전등록 leader-hold-v1 의 확증 구간(진입일 ≥ 2026-10-06)과 겹치기 때문이다.
@@ -13,7 +16,7 @@ name: 🧭 HYEOKS 연구 일일 (일봉 · [연구] 보고)
 # 시각: 평일 19:40 KST 예약 — 깃허브 예약은 늦거나 빠질 수 있다(정시 보장 아님).
 #       대상일 = 실행 시각 기준 가장 최근에 장이 확정된(16:00 이후) 거래일. 빠진 날은 종목별 범위로 다음 실행이 메운다.
 #       평일 휴장일 저녁의 예약 실행은 같은 거래일을 다시 보고하지 않도록 건너뛴다.
-# 종목별로 초기 수집(300봉)을 한 번 하고, 이후에는 마지막 저장 봉부터 대상일까지 메운다.
+# 시간 예산을 넘기면 멈춘 위치를 data/research_runs/resume.json 에 남기고 다음 실행이 잇는다.
 # 등록 상태: 첫 실행 미확인(2026-10-05 기준). 원격 저장과 텔레그램 도착을 한 번 확인하기 전에는 '가동 확인' 이라 쓰지 않는다.
 
 on:
@@ -54,29 +57,29 @@ jobs:
     - name: 📦 의존성
       run: pip install requests
 
-    - name: 📈 확정 일봉 수집
+    - name: 📈 확정 일봉 수집 (원자료 → 드라이브 비공개)
       id: bars
       env:
         TARGET_DATE: ${{ github.event.inputs.date }}
       run: |
-        mkdir -p data/daily_bars
+        mkdir -p data/research_runs
         python hyeoks_research_daily.py --bars ${TARGET_DATE:+--date "$TARGET_DATE"}
 
-    # 수집이 FAILED 로 끝나거나 중간에 멈춰도, 그때까지 저장한 봉·상태 파일은 원격에 남긴다(R4).
-    - name: 💾 일봉 커밋
+    # 수집이 FAILED 로 끝나도 공개 요약(건수·상태·파일 이름 — 가격 없음)은 남긴다.
+    - name: 💾 공개 요약 커밋
       id: archive
       if: always()
       run: |
-        mkdir -p data/daily_bars
-        if [ -z "$(git status --porcelain data/daily_bars)" ]; then
+        mkdir -p data/research_runs
+        if [ -z "$(git status --porcelain data/research_runs)" ]; then
           echo "ℹ️ 바뀐 파일 없음 — 커밋 생략"
           echo "result=변경 없음" >> "$GITHUB_OUTPUT"
           exit 0
         fi
         git config user.name  "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        git add data/daily_bars
-        git commit -m "data: 연구 일봉 $(TZ=Asia/Seoul date +%Y-%m-%d) run ${GITHUB_RUN_ID} [skip ci]"
+        git add data/research_runs
+        git commit -m "data: 연구 수집 요약 $(TZ=Asia/Seoul date +%Y-%m-%d) run ${GITHUB_RUN_ID} [skip ci]"
         for i in 1 2 3; do
           if git pull --rebase --autostash origin main && git push origin HEAD:main; then
             echo "result=원격 반영 $(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
@@ -85,8 +88,8 @@ jobs:
           echo "⚠️ 푸시 재시도 $i/3"
           sleep 5
         done
-        echo "result=원격 반영 실패 (러너에만 있고 사라진다)" >> "$GITHUB_OUTPUT"
-        echo "::error::일봉 커밋 푸시 실패"
+        echo "result=원격 반영 실패 (요약만 — 원자료는 드라이브)" >> "$GITHUB_OUTPUT"
+        echo "::error::공개 요약 커밋 푸시 실패"
         exit 1
 
     - name: 📨 [연구] 일일 보고

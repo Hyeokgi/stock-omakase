@@ -3,27 +3,28 @@
 # 🧭 테마·대장 경로 연구 — 확정 일봉 수집 + [연구] 일일 보고
 # --------------------------------------------------------------------------
 # 사용자 지시(2026-10-04): "일봉은 깃허브에, 연구보고는 켜줘".
-# 2026-10-05 개정: Codex 교차 검토(docs/collaboration/2026-10-05_Codex_테마대장경로_인계검토_회신.md)
-#   R1~R6 반영. 첫 예약 실행(10/6) 전이다 — 실제 원천 응답·원격 보관·텔레그램 도착은 아직 확인되지 않았다.
+# 2026-10-05 ① Codex 교차 검토 R1~R6 반영(018042b).
+# 2026-10-05 ② Codex 후속 권고 + 사용자 지시("코덱스의 제안을 보고 적용해보자"):
+#   · **가격 원자료는 공개 저장소에 커밋하지 않는다** → 구글 드라이브 비공개(동결 번들과 같은 쓰기 전용 창구).
+#     공개 저장소에는 코드·시험·**집계 요약**(건수·상태·파일 이름)만 남긴다.
+#   · 드라이브 창구는 쓰기 전용이라 러너가 지난 자료를 읽을 수 없다 → **상태 없는 수집**으로 바꿨다.
+#     매 실행 모든 대상 종목의 최근 300봉을 새로 받는다. 덕분에
+#       - 초기 수집 완료 판정이 필요 없다(Codex 후속 B): 매일 같은 창을 다시 받고, 기간 충족 여부는 실행마다 종목별로 남긴다.
+#       - 오래된 봉의 수정주가 변경도 매일 탐지된다(Codex ②: 최근 5봉 재수집으로는 못 잡던 것).
+#   · 시간 예산을 넘기면 멈춘 위치를 공개 `resume.json`(정수 하나)에 남기고 다음 실행이 거기서 잇는다(Codex 후속 A).
+#     우선 구간(지수 + 그날 A ∪ 최근 20 관측일 대장 후보)은 항상 먼저 받는다 — 당일 봉이 굶지 않게.
 #
 # 1) 일봉 (`--bars`)
-#    · 대상: 그날 15:05 스냅샷의 A(거래대금 ≥ 50억, 거래정지·관리종목 제외) ∪ 최근 20 관측일의 대장 후보
-#      ∪ 지난 실행에서 끝내지 못한 종목(미처리). 20 관측일은 임시 범위다 — 연구 종료 기간이 아니다.
+#    · 대상: 우선 = 지수 + 그날 15:05 스냅샷의 A ∪ 최근 20 관측일의 대장 후보,
+#            나머지 = 저장된 모든 스냅샷 날의 A(배지가 사라진 과거 후보도 계속 추적).
 #    · 원천: 네이버 fchart 일봉 (`omakase.get_daily_bars` 와 같은 엔드포인트). **수정주가 여부는 확인되지 않았다.**
-#    · 저장: `data/daily_bars/YYYY-MM.csv.gz` — (date, code) 당 처음 받은 값을 보존한다.
-#      나중에 다른 값이 오면 덮어쓰지 않고 `revisions.csv.gz` 에 남긴다(기업행사 조정 탐지).
-#      숫자는 원천 그대로(유효숫자 반올림 없이) 적는다. `fetchedAt` = 그 종목 응답을 **받은** 시각(KST).
-#    · 종목별 수집 범위(`coverage.json`): 초기 300봉을 받은 적이 있는지, 마지막 저장 봉 날짜, 마지막 오류.
-#      → 요청량은 파일 존재가 아니라 **종목별 필요 기간**으로 정한다(R1).
-#    · 날짜 셋을 나눈다(R2): 대상 거래일 · 실제 실행 시각 · 봉 날짜 · 수신 시각.
-#      대상일 **뒤** 봉은 저장하지 않는다(과거 복구가 이후 자료를 섞지 않게). 미확정 제외는 **실제 오늘** 봉에만 적용한다.
-#    · 묶음마다 저장하고 시간 예산을 넘기면 멈춘다(R4). 못 한 종목은 다음 실행이 이어서 한다.
-#    · 실행 상태(`last_run.json`, `runs.csv`): 실행 ID·대상일·요청/응답/대상일 확보/실패/미처리·품질 제외·상태(R3).
+#    · 날짜 셋을 나눈다: 대상 거래일 · 실제 실행 시각 · 봉 날짜 · 수신 시각.
+#      대상일 **뒤** 봉은 넣지 않는다. 미확정 제외는 **실제 오늘** 봉에만 적용한다.
+#    · 비공개 파일: `research_bars_<대상일>_<실행ID>[_partN].csv.gz` (봉) + `..._status.json.gz` (종목별 상태).
+#    · 공개 요약: `data/research_runs/last_run.json`, `runs.csv`, `resume.json` — 가격 없음.
 # 2) 보고 (`--report [--send]`)
-#    · 텔레그램 기존 채널에 `[연구]` 머리말로 보낸다. 수집 상태와 **구조 집계만** 담는다.
-#    · 보고는 **같은 실행 ID** 의 수집 상태만 읽는다. 오래된 상태를 오늘 성공으로 쓰지 않는다.
-#    · 🔒 가격 수익률·대장 후보의 이후 성과는 담지 않는다 — 잠긴 사전등록 `leader-hold-v1` 의
-#      확증 구간(진입일 ≥ 2026-10-06)과 겹치기 때문이다. 잠긴 연구는 유효 비교일 '수' 만 적는다.
+#    · 텔레그램 기존 채널에 `[연구]` 머리말. 수집 상태와 **구조 집계만**. 같은 실행 ID 의 상태만 읽는다.
+#    · 🔒 대장 후보의 이후 수익률·가격 경로는 담지 않는다(잠긴 `leader-hold-v1` 확증 구간 ≥ 2026-10-06).
 #
 # 하지 않는 것: 주문, 시트 쓰기, 선정 조건 변경. 지문 대상 파일이 아니다.
 # 연구 상태(OK/DEGRADED/FAILED)는 생산 안정화 판정(Gate)에 연결하지 않는다.
@@ -44,20 +45,19 @@ import xml.etree.ElementTree as ET
 import hyeoks_theme_abc as T
 from hyeoks_closing_bet import SNAP_DIR, KST, read_snapshot
 
-BARS_DIR = "data/daily_bars"
-BAR_COLS = ["date", "code", "open", "high", "low", "close", "volume", "fetchedAt"]
-REV_COLS = ["date", "code", "field", "old", "new", "oldFetchedAt", "newFetchedAt"]
-RUN_COLS = ["runId", "targetDay", "startedAt", "finishedAt", "status", "requested", "responded", "covered",
-            "missingTarget", "failed", "notAttempted", "rejected", "added", "revised", "backfilledCodes", "plannedCodes"]
-FIELDS = ("open", "high", "low", "close", "volume")
+RUNS_DIR = "data/research_runs"           # 공개 — 건수·상태·파일 이름만
+PRIVATE_DIR = "data/research_private"     # 러너 사본(.gitignore). 보존은 드라이브가 맡는다
+RUN_COLS = ["runId", "targetDay", "startedAt", "finishedAt", "status", "privateStatus", "plannedCodes", "requested",
+            "responded", "covered", "missingTarget", "failed", "notAttempted", "rowsStored", "rejected",
+            "resumeOffset", "nextResumeOffset"]
 FCHART = "https://fchart.stock.naver.com/sise.nhn?symbol={code}&timeframe=day&count={n}&requestType=0"
-BACKFILL_N, DAILY_N = 300, 5
-LEADER_LOOKBACK = 20          # 대장 배지가 사라진 뒤에도 이만큼의 관측일 동안 계속 받는다 (임시 범위)
+FETCH_N = 300                 # 매 실행 받는 창 — 상태 없는 수집
+LEADER_LOOKBACK = 20          # 우선 구간에 넣는 대장 후보의 관측일 수 (임시 범위)
 INDEXES = ("KOSPI", "KOSDAQ")
-MARKET_CLOSE_SAFE = (16, 0)   # 이 시각(KST) 전에는 실제 오늘 봉을 미확정으로 보고 저장하지 않는다
-CHUNK = 50                    # 이만큼 받을 때마다 저장한다
-TIME_BUDGET_S = 20 * 60       # 워크플로 제한(40분)보다 넉넉히 짧게 — 저장·커밋·보고 시간을 남긴다
+MARKET_CLOSE_SAFE = (16, 0)   # 이 시각(KST) 전에는 실제 오늘 봉을 미확정으로 보고 넣지 않는다
+TIME_BUDGET_S = 20 * 60       # 워크플로 제한(40분)보다 넉넉히 짧게 — 업로드·커밋·보고 시간을 남긴다
 DEGRADED_COVER = 0.9          # 대상일 봉 확보 비율이 이보다 낮으면 DEGRADED
+PART_LIMIT_BYTES = 3_000_000  # 드라이브 업로드 한 파일의 gz 크기 상한(넘으면 종목 단위로 나눈다)
 TAG = "[연구]"
 
 
@@ -177,25 +177,7 @@ def backfill_universe(snap_dir=SNAP_DIR, upto=None):
     return sorted(codes)
 
 
-# ── 파일 ─────────────────────────────────────────────────────────────
-def _read_gz(path):
-    if not os.path.exists(path):
-        return []
-    with gzip.open(path, "rt", encoding="utf-8") as fh:
-        return list(csv.DictReader(fh))
-
-
-def _write_gz(path, cols, rows):
-    buf = io.StringIO()
-    w = csv.DictWriter(buf, fieldnames=cols, lineterminator="\n")
-    w.writeheader()
-    w.writerows(rows)
-    tmp = path + ".tmp"
-    with gzip.open(tmp, "wt", encoding="utf-8") as fh:   # mtime 고정은 하지 않는다 — 내용이 같으면 커밋 안 함은 git 이 판단
-        fh.write(buf.getvalue())
-    os.replace(tmp, path)
-
-
+# ── 공개 요약 파일 ────────────────────────────────────────────────────
 def _read_json(path, default):
     try:
         with open(path, encoding="utf-8") as fh:
@@ -205,6 +187,7 @@ def _read_json(path, default):
 
 
 def _write_json(path, obj):
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(obj, fh, ensure_ascii=False, indent=1, sort_keys=True)
@@ -212,214 +195,218 @@ def _write_json(path, obj):
     os.replace(tmp, path)
 
 
-def load_coverage(bars_dir=BARS_DIR):
-    return _read_json(os.path.join(bars_dir, "coverage.json"), {"version": 1, "codes": {}})
+# ── 수집 순서 (우선 구간 + 이어 받는 나머지) ─────────────────────────────
+def plan_order(day, snap_dir=SNAP_DIR, offset=0):
+    """(우선 목록, 나머지 목록). 나머지는 `offset` 에서 시작하도록 돌린다."""
+    first = list(INDEXES) + universe(day, snap_dir)
+    seen = set(first)
+    rest = [c for c in backfill_universe(snap_dir, upto=day) if c not in seen]
+    if rest:
+        k = offset % len(rest)
+        rest = rest[k:] + rest[:k]
+    return first, rest
 
 
-def save_coverage(cov, bars_dir=BARS_DIR):
-    os.makedirs(bars_dir, exist_ok=True)
-    _write_json(os.path.join(bars_dir, "coverage.json"), cov)
+def completeness(n_bars, rejects, has_target):
+    """종목별 기간 충족 분류(Codex 후속 B). 짧은 응답은 '상장이 짧음' 으로 인증하지 않는다."""
+    if not has_target:
+        return "대상일없음"
+    if rejects:
+        return "검사탈락"
+    if n_bars < FETCH_N:
+        return "짧은응답"
+    return "완전"
 
 
-# ── 저장 (처음 값 보존 · 수정 기록) ───────────────────────────────────
-def store(bars_by_code, fetched_at, bars_dir=BARS_DIR, target=None, now=None):
-    """새 (date, code) 는 추가, 기존과 값이 다르면 덮어쓰지 않고 수정 기록.
+# ── 비공개 보관 ───────────────────────────────────────────────────────
+def private_files(day, run_id, rows, status):
+    """[(파일 이름, gz 바이트)]. 봉 CSV 가 크면 종목 단위로 나눈다."""
+    def bars_gz(chunk):
+        buf = io.StringIO()
+        w = csv.writer(buf, lineterminator="\n")
+        w.writerow(["date", "code", "open", "high", "low", "close", "volume", "fetchedAt"])
+        w.writerows(chunk)
+        return gzip.compress(buf.getvalue().encode("utf-8"), mtime=0)
 
-    `target` = 대상 거래일. 그 **뒤** 봉은 버린다(과거 복구가 이후 자료를 섞지 않게).
-    `now` = 실제 실행 시각. **실제 오늘** 봉은 장 마감 확정 시각 전이면 버린다.
-    `fetched_at` = 문자열 하나 또는 {code: 수신 시각}.
-    반환 (추가 수, 수정 수, 미확정 제외 수)."""
-    os.makedirs(bars_dir, exist_ok=True)
-    now = now or datetime.datetime.now(KST)
-    run_today = now.astimezone(KST).strftime("%Y-%m-%d")
-    unsettled = (now.astimezone(KST).hour, now.astimezone(KST).minute) < MARKET_CLOSE_SAFE
-    by_month = {}
-    skipped = 0
-    for code, bars in bars_by_code.items():
-        fa = fetched_at.get(code, "") if isinstance(fetched_at, dict) else fetched_at
-        for (d, o, h, l, c, v) in bars:
-            if target and d > target:
-                continue
-            if d == run_today and unsettled:
-                skipped += 1
-                continue
-            by_month.setdefault(d[:7], []).append({"date": d, "code": code, "open": num(o), "high": num(h),
-                                                   "low": num(l), "close": num(c), "volume": num(v),
-                                                   "fetchedAt": fa})
-    added = revised = 0
-    revs = []
-    for month, new_rows in sorted(by_month.items()):
-        path = os.path.join(bars_dir, f"{month}.csv.gz")
-        old = {(r["date"], r["code"]): r for r in _read_gz(path)}
-        changed = False
-        for r in new_rows:
-            k = (r["date"], r["code"])
-            if k not in old:
-                old[k] = r
-                added += 1
-                changed = True
-                continue
-            diff = [f for f in FIELDS if float(old[k][f]) != float(r[f])]
-            for f in diff:
-                revs.append({"date": r["date"], "code": r["code"], "field": f, "old": old[k][f], "new": r[f],
-                             "oldFetchedAt": old[k]["fetchedAt"], "newFetchedAt": r["fetchedAt"]})
-            if diff:
-                revised += 1
-        if changed:
-            _write_gz(path, BAR_COLS, sorted(old.values(), key=lambda x: (x["date"], x["code"])))
-    if revs:
-        rp = os.path.join(bars_dir, "revisions.csv.gz")
-        _write_gz(rp, REV_COLS, _read_gz(rp) + revs)
-    return added, revised, skipped
+    base = f"research_bars_{day}_{run_id or 'local'}"
+    codes = sorted({r[1] for r in rows})
+    parts = [codes] if codes else []
+    while True:
+        blobs = [bars_gz([r for r in rows if r[1] in set(p)]) for p in parts]
+        big = [i for i, b in enumerate(blobs) if len(b) > PART_LIMIT_BYTES and len(parts[i]) > 1]
+        if not big:
+            break
+        i = big[0]
+        p = parts.pop(i)
+        parts[i:i] = [p[:len(p) // 2], p[len(p) // 2:]]
+    out = []
+    for i, b in enumerate(blobs):
+        name = f"{base}.csv.gz" if len(blobs) == 1 else f"{base}_part{i + 1}of{len(blobs)}.csv.gz"
+        out.append((name, b))
+    out.append((f"{base}_status.json.gz",
+                gzip.compress(json.dumps(status, ensure_ascii=False).encode("utf-8"), mtime=0)))
+    return out
 
 
-def stored_dates(bars_dir=BARS_DIR):
-    return sorted({r["date"] for p in glob.glob(os.path.join(bars_dir, "20*.csv.gz")) for r in _read_gz(p)})
+def drive_uploader():
+    """동결 번들과 같은 드라이브 쓰기 전용 창구. 실패하면 예외를 올린다."""
+    from hyeoks_run_freeze import upload, DEFAULT_GAS_URL, UPLOAD_BACKOFF_LATE
+
+    def up(name, data):
+        return upload(DEFAULT_GAS_URL, name, data, backoff=UPLOAD_BACKOFF_LATE)
+    return up
+
+
+def store_private(files, uploader, local_dir=PRIVATE_DIR):
+    """러너 사본을 남기고 드라이브에 올린다. (상태, [{name, bytes, id 또는 error}])."""
+    os.makedirs(local_dir, exist_ok=True)
+    done, ok = [], True
+    for name, data in files:
+        with open(os.path.join(local_dir, name), "wb") as fh:
+            fh.write(data)
+        try:
+            fid = uploader(name, data)
+            done.append({"name": name, "bytes": len(data), "id": fid})
+        except Exception as e:
+            ok = False
+            done.append({"name": name, "bytes": len(data), "error": f"{type(e).__name__}: {str(e)[:80]}"})
+    return ("보관 완료" if ok else "보관 실패"), done
 
 
 # ── 수집 ─────────────────────────────────────────────────────────────
-def request_size(entry, target):
-    """종목별 요청 봉 수. 초기 수집 전이면 300, 아니면 마지막 저장 봉부터 대상일까지 메울 만큼."""
-    if not entry or not entry.get("backfilled"):
-        return BACKFILL_N
-    last = entry.get("last")
-    if not last:
-        return BACKFILL_N
-    gap = (datetime.date.fromisoformat(target) - datetime.date.fromisoformat(last)).days
-    return min(BACKFILL_N, max(DAILY_N, gap + DAILY_N))
-
-
-def pending_codes(cov):
-    """지난 실행이 끝내지 못한 종목 — 초기 수집 미완료 또는 마지막 시도 실패."""
-    return sorted(c for c, e in cov.get("codes", {}).items()
-                  if not e.get("backfilled") or e.get("last_error"))
-
-
-def plan_codes(day, cov, snap_dir=SNAP_DIR):
-    """이번 실행 대상. 초기 수집 기록이 없으면 저장된 모든 스냅샷 날의 A 를 넣는다."""
-    codes = set(universe(day, snap_dir)) | set(pending_codes(cov))
-    if not any(e.get("backfilled") for c, e in cov.get("codes", {}).items() if c not in INDEXES):
-        codes |= set(backfill_universe(snap_dir, upto=day))
-    return sorted(codes)
-
-
-def run_bars(day, get, bars_dir=BARS_DIR, snap_dir=SNAP_DIR, now=None, pause=0.05, sleep=time.sleep,
-             clock=None, budget_s=TIME_BUDGET_S, run_id=""):
-    """대상 거래일 `day` 의 일봉 수집. 묶음마다 저장하고 예산을 넘기면 멈춘다. 상태 dict 를 돌려준다."""
+def run_bars(day, get, runs_dir=RUNS_DIR, snap_dir=SNAP_DIR, now=None, pause=0.05, sleep=time.sleep,
+             clock=None, budget_s=TIME_BUDGET_S, run_id="", uploader=None, private_dir=PRIVATE_DIR):
+    """대상 거래일 `day` 의 일봉 수집 → 비공개 보관. 공개용 상태 dict 를 돌려준다(가격 없음)."""
     now = now or datetime.datetime.now(KST)
     clock = clock or (lambda: datetime.datetime.now(KST))
     t0 = time.monotonic()
-    cov = load_coverage(bars_dir)
-    cov.setdefault("codes", {})
-    codes = plan_codes(day, cov, snap_dir)
-    order = list(codes) + list(INDEXES)
-    for c in order:
-        cov["codes"].setdefault(c, {"backfilled": False})
-    save_coverage(cov, bars_dir)
+    run_today = now.astimezone(KST).strftime("%Y-%m-%d")
+    unsettled = (now.astimezone(KST).hour, now.astimezone(KST).minute) < MARKET_CLOSE_SAFE
+    resume = _read_json(os.path.join(runs_dir, "resume.json"), {"offset": 0})
+    offset = int(resume.get("offset", 0))
+    first, rest = plan_order(day, snap_dir, offset)
+    order = first + rest
 
     st = {"runId": run_id, "targetDay": day, "startedAt": now.isoformat(timespec="seconds"),
-          "requested": 0, "responded": 0, "covered": 0, "missingTarget": 0, "failed": 0, "notAttempted": 0,
-          "rejected": {}, "zeroVolume": 0, "added": 0, "revised": 0, "unsettledSkipped": 0,
-          "failSample": {}, "missingSample": [], "backfillRequests": 0, "plannedCodes": len(order)}
-    got, fetched = {}, {}
-
-    def flush():
-        if not got:
-            return
-        a, r, s = store(got, dict(fetched), bars_dir, day, now)
-        st["added"] += a
-        st["revised"] += r
-        st["unsettledSkipped"] += s
-        got.clear()
-        fetched.clear()
-        save_coverage(cov, bars_dir)
-
+          "plannedCodes": len(order), "priorityCodes": len(first), "requested": 0, "responded": 0, "covered": 0,
+          "missingTarget": 0, "failed": 0, "notAttempted": 0, "rejected": {}, "zeroVolume": 0,
+          "unsettledSkipped": 0, "completeness": {}, "failSample": {}, "rowsStored": 0,
+          "resumeOffset": offset, "nextResumeOffset": offset}
+    rows, per_code = [], {}
+    stopped_at = None
     try:
         for i, code in enumerate(order):
             if time.monotonic() - t0 > budget_s:
-                st["notAttempted"] = len(order) - i
+                stopped_at = i
                 break
-            entry = cov["codes"][code]
-            n = request_size(entry, day)
-            res = fetch(code, n, get)
+            res = fetch(code, FETCH_N, get)
             bars, err = res[0], res[1]
             info = res[2] if len(res) > 2 else {}
             recv = clock().isoformat(timespec="seconds")
             sleep(pause)                              # 원천에 부담을 주지 않도록 종목 사이를 띄운다
             st["requested"] += 1
-            st["backfillRequests"] += n == BACKFILL_N
+            rej = sum((info.get("rejects") or {}).values())
             for k, v in (info.get("rejects") or {}).items():
                 st["rejected"][k] = st["rejected"].get(k, 0) + v
             st["zeroVolume"] += info.get("zero_volume", 0)
-            entry["lastAttempt"] = recv
             if err:
                 st["failed"] += 1
-                entry["last_error"] = err
+                per_code[code] = {"err": err, "recv": recv}
                 if len(st["failSample"]) < 3:
                     st["failSample"][code] = err
                 continue
             st["responded"] += 1
-            usable = [b for b in bars if b[0] <= day]
-            if n == BACKFILL_N:
-                entry["backfilled"] = True
-                entry["shortHistory"] = len(bars) < BACKFILL_N
-            if usable:
-                entry["last"] = max(entry.get("last") or "", usable[-1][0])
-                entry["first"] = min(entry.get("first") or "9999", usable[0][0])
-            if any(b[0] == day for b in usable):
+            kept = 0
+            for (d, o, h, l, c, v) in bars:
+                if d > day:
+                    continue                          # 과거 복구가 대상일 뒤 자료를 섞지 않게
+                if d == run_today and unsettled:
+                    st["unsettledSkipped"] += 1
+                    continue
+                rows.append([d, code, num(o), num(h), num(l), num(c), num(v), recv])
+                kept += 1
+            has_target = any(b[0] == day for b in bars) and not (day == run_today and unsettled)
+            kind = completeness(len(bars), rej, has_target)
+            st["completeness"][kind] = st["completeness"].get(kind, 0) + 1
+            if has_target:
                 st["covered"] += 1
-                entry["last_error"] = ""
             else:
                 st["missingTarget"] += 1
-                entry["last_error"] = "대상일 봉 없음"
-                if len(st["missingSample"]) < 5:
-                    st["missingSample"].append(code)
-            got[code] = bars
-            fetched[code] = recv
-            if len(got) >= CHUNK:
-                flush()
+            per_code[code] = {"bars": len(bars), "kept": kept, "first": bars[0][0], "last": bars[-1][0],
+                              "rejects": info.get("rejects") or {}, "zeroVolume": info.get("zero_volume", 0),
+                              "class": kind, "recv": recv}
     finally:
-        flush()                                       # 중단돼도 받은 것은 남긴다(R4)
-        save_coverage(cov, bars_dir)
-
-    st["finishedAt"] = clock().isoformat(timespec="seconds")
-    st["backfilledCodes"] = sum(1 for c, e in cov["codes"].items() if e.get("backfilled"))
-    st["pendingAfter"] = len(pending_codes(cov))
+        # 중단돼도 받은 것은 비공개로 남긴다
+        if stopped_at is not None:
+            st["notAttempted"] = len(order) - stopped_at
+            done_rest = max(0, stopped_at - len(first))
+            st["nextResumeOffset"] = (offset + done_rest) % len(rest) if rest else 0
+        st["finishedAt"] = clock().isoformat(timespec="seconds")
+        st["rowsStored"] = len(rows)
+        meta = {k: v for k, v in st.items()}
+        files = private_files(day, run_id, rows, {"run": meta, "codes": per_code}) if (rows or per_code) else []
+        if files:
+            st["privateStatus"], st["privateFiles"] = store_private(files, uploader or drive_uploader(), private_dir)
+        else:
+            st["privateStatus"], st["privateFiles"] = "보관할 자료 없음", []
+        _write_json(os.path.join(runs_dir, "resume.json"), {"offset": st["nextResumeOffset"]})
     st["status"] = status_of(st)
     return st
 
 
 def status_of(st):
     planned = st["plannedCodes"]
-    if planned and st["responded"] == 0:
+    if (planned and st["responded"] == 0) or st.get("privateStatus") == "보관 실패":
         return "FAILED"
     if st["failed"] or st["notAttempted"] or (planned and st["covered"] / planned < DEGRADED_COVER):
         return "DEGRADED"
     return "OK"
 
 
-def save_run(st, bars_dir=BARS_DIR):
-    os.makedirs(bars_dir, exist_ok=True)
-    _write_json(os.path.join(bars_dir, "last_run.json"), st)
-    path = os.path.join(bars_dir, "runs.csv")
+def save_run(st, runs_dir=RUNS_DIR):
+    """공개 요약만 — 가격·종목별 상태는 넣지 않는다."""
+    public = {k: v for k, v in st.items() if k not in ("failSample",)}
+    public["privateFiles"] = [{k: f[k] for k in ("name", "bytes", "id", "error") if k in f}
+                              for f in st.get("privateFiles", [])]
+    _write_json(os.path.join(runs_dir, "last_run.json"), public)
+    path = os.path.join(runs_dir, "runs.csv")
     new = not os.path.exists(path)
     with open(path, "a", encoding="utf-8", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=RUN_COLS, extrasaction="ignore", lineterminator="\n")
         if new:
             w.writeheader()
-        row = dict(st)
+        row = dict(public)
         row["rejected"] = sum(st.get("rejected", {}).values())
         w.writerow(row)
 
 
-def load_run(day, run_id, bars_dir=BARS_DIR):
+def load_run(day, run_id, runs_dir=RUNS_DIR):
     """보고용 — 같은 실행 ID·같은 대상일의 수집 상태만. 아니면 None (오래된 상태를 쓰지 않는다)."""
-    st = _read_json(os.path.join(bars_dir, "last_run.json"), None)
+    st = _read_json(os.path.join(runs_dir, "last_run.json"), None)
     if not st or st.get("targetDay") != day:
         return None
     if run_id and st.get("runId") != run_id:
         return None
     return st
+
+
+def theme_obs_summary(day, runs_dir=RUNS_DIR):
+    """stockinfo7 공개 관측 메타(이름 없음)에서 그날 요약 한 줄. 파일이 없으면 None."""
+    path = os.path.join(runs_dir, "stockinfo7_obs.csv")
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as fh:
+        rows = [r for r in csv.DictReader(fh) if r.get("day") == day]
+    if not rows:
+        return ""
+    kinds = {}
+    for r in rows:
+        kinds[r["class"]] = kinds.get(r["class"], 0) + 1
+    h15 = [r for r in rows if r.get("header", "").endswith(" 15시")]
+    first15 = min((r["receivedAt"] for r in h15), default="")
+    before = "15:05 전 수신" if first15 and first15[11:16] < "15:05" else ("15:05 이후 처음 수신" if first15 else "15시본 관측 없음")
+    return (f"관측 {len(rows)}회 · 갱신 {kinds.get('갱신', 0)} · 오류 {sum(v for k, v in kinds.items() if k not in ('첫관측', '동일', '갱신'))} · "
+            f"15시본 {first15[11:19] if first15 else '—'} ({before})")
 
 
 # ── 보고 (구조 집계만) ────────────────────────────────────────────────
@@ -459,24 +446,26 @@ def locked_status(snap_dir=SNAP_DIR):
     return {"observed": len(conf), "valid": len(valid), "bad": bad, "cap": cap, "capWhy": cap_why}
 
 
-def report_text(day, bars, struct, locked, bars_dir=BARS_DIR, archive=""):
+def report_text(day, bars, struct, locked, archive="", theme_obs=None):
     """허용된 상태 필드만 쓴다. 수익률·승률·후보별 가격 경로는 넣지 않는다."""
     L = [f"{TAG} 테마·대장 경로 연구 일일 보고 · 대상일 {day}"]
     if bars:
-        L.append(f"· 수집 상태 {bars['status']} · 실행 {bars.get('startedAt', '?')} ~ {bars.get('finishedAt', '?')}")
+        L.append(f"· 일봉 수집 {bars['status']} · 실행 {bars.get('startedAt', '?')} ~ {bars.get('finishedAt', '?')}")
         L.append(f"· 일봉: 계획 {bars['plannedCodes']} · 요청 {bars['requested']} · 응답 {bars['responded']} · "
                  f"대상일 확보 {bars['covered']} · 대상일 봉 없음 {bars['missingTarget']} · 실패 {bars['failed']} · "
                  f"미처리 {bars['notAttempted']}")
-        L.append(f"· 저장: 새 행 {bars['added']} · 값 변경 기록 {bars['revised']} · "
-                 f"품질 제외 {sum(bars.get('rejected', {}).values())} · 무거래 봉 {bars.get('zeroVolume', 0)} · "
-                 f"초기 수집 완료 {bars.get('backfilledCodes', 0)}/{bars['plannedCodes']} · 다음 실행 미처리 {bars.get('pendingAfter', 0)}")
+        c = bars.get("completeness", {})
+        L.append(f"· 기간 충족: 완전 {c.get('완전', 0)} · 짧은 응답 {c.get('짧은응답', 0)} · 검사 탈락 포함 {c.get('검사탈락', 0)} · "
+                 f"품질 제외 봉 {sum(bars.get('rejected', {}).values())} · 무거래 봉 {bars.get('zeroVolume', 0)}")
+        L.append(f"· 비공개 보관(드라이브): {bars.get('privateStatus', '?')} · 파일 {len(bars.get('privateFiles', []))}개 · "
+                 f"봉 {bars.get('rowsStored', 0)}행")
         if bars.get("unsettledSkipped"):
-            L.append(f"  (장 마감 전 실제 오늘 봉 {bars['unsettledSkipped']}건은 미확정이라 저장 안 함)")
+            L.append(f"  (장 마감 전 실제 오늘 봉 {bars['unsettledSkipped']}건은 미확정이라 넣지 않음)")
     else:
-        L.append("· 수집 상태: 이번 실행의 수집 기록 없음 — 수집이 돌지 않았거나 다른 실행의 기록이다")
-    L.append(f"· 원격 보관: {archive or '확인 안 됨'}")
-    sd = stored_dates(bars_dir)
-    L.append(f"· 저장된 일봉 날짜: {sd[0] if sd else '—'} ~ {sd[-1] if sd else '—'} ({len(sd)}일)")
+        L.append("· 일봉 수집: 이번 실행의 수집 기록 없음 — 수집이 돌지 않았거나 다른 실행의 기록이다")
+    L.append(f"· 공개 요약 커밋: {archive or '확인 안 됨'}")
+    if theme_obs is not None:
+        L.append("· stockinfo7: " + (theme_obs or "오늘 관측 기록 없음"))
     if struct:
         L.append(f"· 오늘 대장 후보 {struct['leaders']}개 (현재 정의의 표시 — 실제 주도권 판정 아님)")
         if struct.get("prev"):
@@ -549,7 +538,7 @@ def main(argv=None, now=None, env=None):
         # 예약 실행이 휴장일(평일 공휴일) 저녁에 오면 같은 거래일을 다시 보고하지 않는다.
         today = now.astimezone(KST).strftime("%Y-%m-%d")
         if (now.astimezone(KST).hour >= 8) and not trading_day(today)[0]:
-            print(f"ℹ️ 오늘({today})은 예정 거래일이 아니다 — 수집·보고 생략 (빠진 봉은 다음 실행이 메운다)")
+            print(f"ℹ️ 오늘({today})은 예정 거래일이 아니다 — 수집·보고 생략 (다음 실행이 300봉 창으로 다시 받는다)")
             return 0
         day = target_day(now)
         if not day:
@@ -559,15 +548,16 @@ def main(argv=None, now=None, env=None):
     bars = None
     if a.bars:
         import requests
-        bars = run_bars(day, requests.get, bars_dir=BARS_DIR, now=now, run_id=run_id)
-        save_run(bars, BARS_DIR)
-        print(f"📈 일봉 {json.dumps(bars, ensure_ascii=False)}")
+        bars = run_bars(day, requests.get, runs_dir=RUNS_DIR, now=now, run_id=run_id)
+        save_run(bars, RUNS_DIR)
+        print("📈 일봉 " + json.dumps({k: v for k, v in bars.items() if k != "privateFiles"}, ensure_ascii=False))
+        print("🔒 비공개 보관: " + bars["privateStatus"] + " · " + ", ".join(f["name"] for f in bars["privateFiles"]))
         if bars["status"] == "FAILED":
             code = 1
     if a.report:
-        bars = bars or load_run(day, run_id, BARS_DIR)
-        text = report_text(day, bars, structure_today(day), locked_status(), bars_dir=BARS_DIR,
-                           archive=env.get("RESEARCH_ARCHIVE", ""))
+        bars = bars or load_run(day, run_id, RUNS_DIR)
+        text = report_text(day, bars, structure_today(day), locked_status(),
+                           archive=env.get("RESEARCH_ARCHIVE", ""), theme_obs=theme_obs_summary(day, RUNS_DIR))
         print(text)
         if a.send:
             import requests
