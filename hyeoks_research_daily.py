@@ -544,6 +544,14 @@ def main(argv=None, now=None, env=None):
         if not day:
             print("ℹ️ 대상 거래일을 달력으로 정할 수 없다 — 수집·보고 생략")
             return 0
+        # GAS 발사(주) + 깃허브 예약(백업)이 둘 다 오면 같은 대상일을 두 번 수집·보고하지 않는다.
+        # 다른 실행이 이미 OK/DEGRADED 로 끝냈으면 생략. FAILED 였으면 다시 한다. 날짜를 지정한 수동 실행은 항상 한다.
+        last = _read_json(os.path.join(RUNS_DIR, "last_run.json"), None)
+        if (last and last.get("targetDay") == day and last.get("runId") != run_id
+                and last.get("status") in ("OK", "DEGRADED")):
+            print(f"ℹ️ {day} 은 실행 {last.get('runId')} 이 이미 수집·보고했다({last.get('status')}) — 중복 실행 생략. "
+                  "다시 하려면 date 를 지정해 수동 실행")
+            return 0
     code = 0
     bars = None
     if a.bars:

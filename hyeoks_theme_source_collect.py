@@ -138,20 +138,26 @@ def collect(day, get, now=None, sleep=time.sleep, until=UNTIL, every=EVERY_S, ru
     return out
 
 
-def main(argv=None, env=None):
+def main(argv=None, env=None, now=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--every", type=int, default=EVERY_S)
     ap.add_argument("--until", default="16:35")
     a = ap.parse_args(argv)
     env = os.environ if env is None else env
-    today = datetime.datetime.now(KST).strftime("%Y-%m-%d")
+    now = now or datetime.datetime.now(KST)
+    today = now.strftime("%Y-%m-%d")
     from hyeoks_research_daily import trading_day
     ok, why = trading_day(today)
     if not ok:
         print(f"ℹ️ {today} 은 예정 거래일이 아니다{(' — ' + why) if why else ''}. 수집 생략")
         return 0
-    import requests
     hh, mm = (int(x) for x in a.until.split(":"))
+    # GAS 발사(주)와 깃허브 예약(백업)이 둘 다 오면 concurrency 그룹이 뒤 실행을 대기시킨다.
+    # 앞 실행이 끝 시각까지 돈 뒤 시작한 실행은 할 일이 없다 — 파일을 건드리지 않고 정상 종료한다.
+    if (now.hour, now.minute) >= (hh, mm):
+        print(f"ℹ️ 관측 끝 시각({a.until}) 이후 시작 — 오늘 수집은 이미 끝났거나 창이 지났다. 아무것도 하지 않는다")
+        return 0
+    import requests
     out = collect(today, requests.get, until=(hh, mm), every=a.every, run_id=env.get("GITHUB_RUN_ID", ""))
     print("📊 " + json.dumps(out, ensure_ascii=False))
     return 0 if out["valid"] and not out["uploadFailed"] else 1

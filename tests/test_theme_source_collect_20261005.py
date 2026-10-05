@@ -113,6 +113,17 @@ class CollectTests(unittest.TestCase):
                   runs_dir=self.d, private_dir=os.path.join(self.d, "p"))
         self.assertTrue(slept and min(slept) >= C.MIN_EVERY_S)
 
+    def test_late_backup_run_does_nothing(self):
+        """GAS 실행이 16:35 까지 돈 뒤 대기하던 깃허브 예약 실행이 시작하면 아무것도 쓰지 않고 0 으로 끝난다."""
+        cwd = os.getcwd()
+        os.chdir(self.d)
+        try:
+            code = C.main(["--until", "16:35"], env={}, now=datetime.datetime(2026, 10, 6, 16, 40, tzinfo=KST))
+        finally:
+            os.chdir(cwd)
+        self.assertEqual(code, 0)
+        self.assertFalse(os.path.exists(os.path.join(self.d, C.RUNS_DIR)))
+
 
 if __name__ == "__main__":
     unittest.main()

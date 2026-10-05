@@ -386,6 +386,29 @@ class Report(TmpDir):
         self.assertEqual(code, 0)
         self.assertIn("예정 거래일이 아니다", out.getvalue())
 
+    def test_second_scheduled_run_for_the_same_day_is_skipped(self):
+        """GAS(주) + 깃허브 예약(백업)이 둘 다 와도 같은 대상일을 두 번 수집·보고하지 않는다."""
+        R.save_run({"runId": "1", "targetDay": "2026-10-06", "status": "OK", "plannedCodes": 1}, self.d)
+        out = io.StringIO()
+        with mock.patch.object(R, "RUNS_DIR", self.d), contextlib.redirect_stdout(out):
+            code = R.main(["--bars", "--report", "--send"], now=AFTER, env={"GITHUB_RUN_ID": "2"})
+        self.assertEqual(code, 0)
+        self.assertIn("중복 실행 생략", out.getvalue())
+
+    def test_failed_first_run_is_retried_by_the_backup(self):
+        R.save_run({"runId": "1", "targetDay": "2026-10-06", "status": "FAILED", "plannedCodes": 1}, self.d)
+        with mock.patch.object(R, "RUNS_DIR", self.d), mock.patch.object(R, "structure_today", return_value=None), \
+                mock.patch.object(R, "locked_status", return_value=None), contextlib.redirect_stdout(io.StringIO()) as out:
+            R.main(["--report"], now=AFTER, env={"GITHUB_RUN_ID": "2"})
+        self.assertNotIn("중복 실행 생략", out.getvalue())
+
+    def test_same_run_report_step_is_not_skipped(self):
+        R.save_run(dict(self.BARS, runId="7", targetDay="2026-10-06"), self.d)
+        with mock.patch.object(R, "RUNS_DIR", self.d), mock.patch.object(R, "structure_today", return_value=None), \
+                mock.patch.object(R, "locked_status", return_value=None), contextlib.redirect_stdout(io.StringIO()) as out:
+            R.main(["--report"], now=AFTER, env={"GITHUB_RUN_ID": "7"})
+        self.assertNotIn("중복 실행 생략", out.getvalue())
+
     def test_status_rules(self):
         base = dict(self.BARS, failed=0, notAttempted=0, covered=400)
         self.assertEqual(R.status_of(base), "OK")
