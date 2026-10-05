@@ -15,12 +15,15 @@
   · 상식 범위: 목표 +SANE_MAX_UP 이하, 손절 -SANE_MAX_DOWN 이내. 밖이면 무효.
   · 단위 착오(×10 / ÷10): 보정한 쌍이 **밴드 안에 들어가고 그런 보정이 하나뿐일 때만**
     보정한다. 애매하면 보정하지 않고 무효로 둔다.
-  · 손익비 하한 미달은 경고만 한다 — 차단 기준이 아니다.
+  · 손익비 하한 미달(소수 둘째 자리 반올림 기준)은 **무효** — 사용자 결정 2026-10-05.
+    그 픽은 가상계좌·백테스트_로그 목표/손절에 쓰지 않는다(리포트 발송과 선정 기록은 그대로).
+    밴드 안에서도 손익비를 못 맞추는 조합(예: 단기 +7%/-8%)이 있어 둘 다 지켜야 한다.
+    밴드가 없는 경로(간단 브리핑)에는 손익비 하한이 없다.
 
 밴드 수치 자체는 2026-10-04 이전 프롬프트의 수치를 그대로 옮긴 것이다. 바꾸지 않았다.
 """
 
-LEVELS_VERSION = "price-levels-v1"
+LEVELS_VERSION = "price-levels-v2"   # v2: 손익비 미달 무효 (2026-10-05)
 
 # 보유기간별 (목표 상승률 % 범위, 손절 하락률 % 범위, 최소 손익비)
 PRICE_BANDS = {
@@ -91,8 +94,8 @@ def validate_levels(curr, target, stop, st_type=None):
       ok       — 써도 되는가 (구조·상식 범위 통과, 필요하면 단위 보정 후)
       target, stop — 쓸 값 (보정됐으면 보정값, 무효면 None)
       scale    — (목표 배율, 손절 배율). 보정이 없으면 (1, 1)
-      issues   — 무효 사유
-      warnings — 값은 쓰되 사람이 봐야 할 것 (밴드 이탈·손익비 미달·단위 보정)
+      issues   — 무효 사유 (구조·상식 범위·손익비 미달)
+      warnings — 값은 쓰되 사람이 봐야 할 것 (밴드 이탈·단위 보정)
       up, down, rr — 최종 값 기준 비율 (무효면 None)
     """
     out = {"ok": False, "target": None, "stop": None, "scale": (1, 1),
@@ -139,8 +142,9 @@ def validate_levels(curr, target, stop, st_type=None):
         if not in_band(c, ft, fs, st_type):
             out["warnings"].append(
                 f"밴드 이탈: 목표 +{up:.1f}% (기준 +{ulo}~{uhi}%), 손절 -{down:.1f}% (기준 -{dlo}~{dhi}%)")
-        if rr is not None and rr < min_rr:
-            out["warnings"].append(f"손익비 {rr:.2f} < 기준 {min_rr}")
+        if rr is None or round(rr, 2) < min_rr:
+            out.update(ok=False, target=None, stop=None)
+            out["issues"].append(f"손익비 {rr:.2f} < 기준 {min_rr} (목표 +{up:.1f}% / 손절 -{down:.1f}%)")
     return out
 
 
@@ -175,7 +179,8 @@ def band_prompt_lines(st_type, curr):
     return (f"   · 목표가: 확정 현재가 {c:,}원 대비 +{ulo}~{uhi}% → {t_lo:,}~{t_hi:,}원\n"
             f"   · 손절가: -{dlo}~{dhi}% → {s_lo:,}~{s_hi:,}원\n"
             f"   · 손익비 = (목표가 − 현재가) ÷ (현재가 − 손절가), 최소 {min_rr} 이상. "
-            f"밴드 안의 조합이라도 손익비가 모자라면 목표를 올리거나 손절을 좁히십시오.")
+            f"밴드 안의 조합이라도 손익비가 모자라면 목표를 올리거나 손절을 좁히십시오.\n"
+            f"   · 손익비가 {min_rr} 에 못 미치면 시스템이 이 픽의 목표가·손절가를 무효로 처리해 가상계좌·백테스트에 기록하지 않습니다.")
 
 
 def report_note(result):
@@ -184,7 +189,7 @@ def report_note(result):
         return ""
     lines = ["", "---", "", "**⚠️ 시스템 검증 (목표가·손절가)**", ""]
     if not result["ok"]:
-        lines.append("- 리포트의 목표가·손절가가 확정 현재가와 맞지 않아 **가상계좌·백테스트 기록에 쓰지 않았습니다**: "
+        lines.append("- 리포트의 목표가·손절가가 시스템 검증을 통과하지 못해 **가상계좌·백테스트 목표/손절에 쓰지 않았습니다**: "
                      + "; ".join(result["issues"]))
         lines.append("- 본문의 가격 수치는 참고하지 마십시오.")
     else:

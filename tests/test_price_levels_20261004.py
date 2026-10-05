@@ -36,6 +36,7 @@ class ValidateLevelsTests(unittest.TestCase):
         lv = P.validate_levels(100000, 110000, 93000, "short")
         self.assertTrue(lv["ok"])
         self.assertEqual((lv["target"], lv["stop"]), (110000, 93000))
+        self.assertGreaterEqual(lv["rr"], 1.2)
         self.assertEqual(lv["warnings"], [])
 
     def test_out_of_band_but_sane_is_kept_with_warning(self):
@@ -44,11 +45,27 @@ class ValidateLevelsTests(unittest.TestCase):
         self.assertEqual(lv["target"], 125000)
         self.assertTrue(any("밴드 이탈" in w for w in lv["warnings"]))
 
-    def test_low_reward_risk_is_a_warning_not_a_block(self):
+    def test_low_reward_risk_is_invalid(self):
+        """사용자 결정 2026-10-05 — 손익비 미달은 무효(가상계좌·백테스트 목표/손절에 쓰지 않는다)."""
         # 밴드 안의 조합(+7% / -8%)이지만 손익비 0.88 < 1.2
         lv = P.validate_levels(100000, 107000, 92000, "short")
-        self.assertTrue(lv["ok"])
-        self.assertTrue(any("손익비" in w for w in lv["warnings"]))
+        self.assertFalse(lv["ok"])
+        self.assertIsNone(lv["target"])
+        self.assertTrue(any("손익비" in i for i in lv["issues"]))
+        self.assertIn("쓰지 않았습니다", P.report_note(lv))
+        # 중기 +12% / -11% = 1.09 < 1.8, 장기 +20% / -18% = 1.11 < 2.2
+        self.assertFalse(P.validate_levels(100000, 112000, 89000, "mid")["ok"])
+        self.assertFalse(P.validate_levels(100000, 120000, 82000, "long")["ok"])
+
+    def test_reward_risk_at_the_minimum_passes_after_rounding(self):
+        # 단기 +9% / -7.5% = 1.2 정확히, 호가 반올림으로 1.196 이 돼도 소수 둘째 자리 기준 1.20
+        self.assertTrue(P.validate_levels(100000, 109000, 92500, "short")["ok"])
+        self.assertTrue(P.validate_levels(61000, 66500, 56400, "short")["ok"])
+        self.assertFalse(P.validate_levels(61000, 66400, 56400, "short")["ok"])   # 1.17
+
+    def test_briefing_has_no_reward_risk_floor(self):
+        """시스템 채널(간단 브리핑)은 손절이 좁든 손익비가 낮든 AI 값을 그대로 쓴다 — 사용자 결정 2026-10-05."""
+        self.assertEqual(P.brief_cells("100000", 103000, 97000)[:2], ("103,000원", "97,000원"))
 
     def test_missing_values(self):
         self.assertFalse(P.validate_levels(100000, None, 93000, "short")["ok"])
@@ -111,6 +128,7 @@ class PromptAndWiringTests(unittest.TestCase):
         self.assertIn("1,500,000원", txt)
         self.assertIn("1,800,000~2,100,000원", txt)
         self.assertIn("최소 2.2", txt)
+        self.assertIn("무효로 처리", txt)
         self.assertEqual(P.band_prompt_lines("other", 1500000), "")
 
     def test_deep_report_prompt_formats_price_with_commas(self):
