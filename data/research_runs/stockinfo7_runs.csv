@@ -1,0 +1,2 @@
+day,runId,startedAt,finishedAt,status,observations,valid,updates,errors,uploads,uploadFailed,stopReason,stateCommit
+2026-10-06,37408390478,2026-10-06T12:19:03+09:00,2026-10-06T16:29:31+09:00,완료,26,3,0,23,1,0,,1a8bfd1
