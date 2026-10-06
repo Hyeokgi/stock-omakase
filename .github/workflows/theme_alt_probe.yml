@@ -1,0 +1,27 @@
+name: 🔎 대체 테마 자료원 1차 진단 (증권플러스 · 씽크풀 · 수동 · 저장 없음)
+
+# 사용자 지시 2026-10-07: stockinfo7 웹이 장중 시간본을 내지 않아(10/6 실측) 대안 후보를 진단한다.
+# Claude 작업 환경에서는 이 도메인들이 막혀 있어 GitHub 러너에서 확인한다.
+# 읽기 전용: robots 금지 경로·내부 API·차단 우회는 요청하지 않는다. 아무것도 저장·커밋하지 않는다.
+# 로그에는 구조 수치와 약관의 수집 관련 문구만 남긴다(공개 저장소의 로그는 공개다).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.10'
+    - run: pip install requests
+    - name: 🔎 진단
+      run: |
+        python hyeoks_theme_alt_probe.py | tee probe.md
+        cat probe.md >> "$GITHUB_STEP_SUMMARY"
