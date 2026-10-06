@@ -489,6 +489,23 @@ class Report(TmpDir):
         self.assertEqual(code, 0)
         self.assertIn("예정 거래일이 아니다", out.getvalue())
 
+    def test_holiday_evening_run_delayed_past_midnight_is_still_skipped(self):
+        """2026-10-06 실측 — 10/5 휴장일 19:40 깃허브 예약이 다음 날 04:22 에 왔다. 전날(휴장일) 예약으로 보고 생략한다."""
+        out = io.StringIO()
+        with mock.patch.object(R, "RUNS_DIR", self.d), mock.patch.object(R, "run_bars", side_effect=AssertionError("수집하면 안 된다")), \
+                contextlib.redirect_stdout(out):
+            code = R.main(["--bars", "--report", "--send"], now=datetime.datetime(2026, 10, 6, 4, 22, tzinfo=KST), env={})
+        self.assertEqual(code, 0)
+        self.assertIn("예약일(2026-10-05)은 예정 거래일이 아니다", out.getvalue())
+
+    def test_trading_day_evening_run_delayed_past_midnight_still_runs(self):
+        """거래일 저녁 예약이 자정을 넘겨 와도(금 → 토 새벽) 그 거래일을 수집한다 — 휴장 방어에 걸리지 않는다."""
+        out = io.StringIO()
+        with mock.patch.object(R, "RUNS_DIR", self.d), mock.patch.object(R, "run_bars", side_effect=RuntimeError("수집 시도")), \
+                contextlib.redirect_stdout(out), self.assertRaisesRegex(RuntimeError, "수집 시도"):
+            R.main(["--bars"], now=datetime.datetime(2026, 10, 3, 4, 0, tzinfo=KST), env={})
+        self.assertNotIn("예정 거래일이 아니다", out.getvalue())
+
     def test_second_scheduled_run_for_the_same_day_is_skipped(self):
         """GAS(주) + 깃허브 예약(백업)이 둘 다 와도 같은 대상일을 두 번 수집·보고하지 않는다."""
         R.save_run({"runId": "1", "targetDay": "2026-10-06", "status": "OK", "plannedCodes": 1}, self.d)

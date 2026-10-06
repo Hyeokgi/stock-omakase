@@ -658,9 +658,13 @@ def main(argv=None, now=None, env=None):
             return 0
     else:
         # 예약 실행이 휴장일(평일 공휴일) 저녁에 오면 같은 거래일을 다시 보고하지 않는다.
-        today = now.astimezone(KST).strftime("%Y-%m-%d")
-        if (now.astimezone(KST).hour >= 8) and not trading_day(today)[0]:
-            print(f"ℹ️ 오늘({today})은 예정 거래일이 아니다 — 수집·보고 생략 (다음 실행이 300봉 창으로 다시 받는다)")
+        # 08시 전 실행은 전날 저녁 예약이 늦게 온 것으로 보고 **전날**로 판단한다
+        # (2026-10-06 실측: 10/5 휴장일 19:40 예약이 8시간 42분 늦은 04:22 에 와 10/2 를 보고했다).
+        local = now.astimezone(KST)
+        sched = (local - datetime.timedelta(days=1)) if local.hour < 8 else local
+        sched_day = sched.strftime("%Y-%m-%d")
+        if not trading_day(sched_day)[0]:
+            print(f"ℹ️ 예약일({sched_day})은 예정 거래일이 아니다 — 수집·보고 생략 (다음 실행이 300봉 창으로 다시 받는다)")
             return 0
         day = target_day(now)
         if not day:
