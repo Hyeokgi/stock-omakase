@@ -1,0 +1,34 @@
+{
+ "code_sha": "71f71ace",
+ "cycle_date": "2026-10-06",
+ "emitted_at": "2026-10-06T21:38:59.872317+09:00",
+ "fingerprint": "ced06ffb5659",
+ "kind": "consensus",
+ "payload": {
+  "attempted": 168,
+  "empty": 21,
+  "expected_state": "reached",
+  "failed": 56,
+  "preflight": [
+   {
+    "code": "005930",
+    "secs": 3.1,
+    "state": "ok",
+    "why": ""
+   },
+   {
+    "code": "000660",
+    "secs": 12.6,
+    "state": "fail",
+    "why": "SourceError: Source unavailable: URLError: timed out"
+   }
+  ],
+  "preflight_ok": true,
+  "state": "DEGRADED",
+  "success": 91,
+  "targets": 168,
+  "unprocessed": 0
+ },
+ "receipt_version": "receipt-v2",
+ "run_id": "37462690659"
+}
