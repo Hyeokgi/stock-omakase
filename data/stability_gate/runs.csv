@@ -8,3 +8,4 @@ cycle_date,run_id,source,verdict,fingerprint,ci_green,earnings_schema_ok,dart_co
 2026-09-30,36676032713+36676142658+36709951195+36714207196,cycle,PASS,1af4a5c8d3a5,Y,Y,Y,Y,Y,Y,Y,DEGRADED,,stability-gate-v3
 2026-10-01,36822513470+36822622317+36856804815+36861261558,cycle,PASS,1af4a5c8d3a5,Y,Y,Y,Y,Y,Y,Y,DEGRADED,,stability-gate-v3
 2026-10-02,36971472870+36971578964+37002264489+37006219696,cycle,FAIL,a560a863a0c4,Y,Y,Y,Y,Y,Y,N,SKIPPED,no_unexplained_failure:영수증없음=[] 기대상태미달=[] 최종아님=[] workflow=['ai_report.yml=failure'] 깨진파일=0,stability-gate-v3
+2026-10-06,37421379336+37421498320+37457928512+37462690659,cycle,PASS,ced06ffb5659,Y,Y,Y,Y,Y,Y,Y,DEGRADED,,stability-gate-v3
