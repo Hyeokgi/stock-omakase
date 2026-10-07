@@ -532,7 +532,36 @@ def locked_status(snap_dir=SNAP_DIR):
     return {"observed": len(conf), "valid": len(valid), "bad": bad, "cap": cap, "capWhy": cap_why}
 
 
-def report_text(day, bars, struct, locked, archive="", theme_obs=None):
+def materials_summary(day, runs_dir=RUNS_DIR):
+    """재료 층 한 줄 — DART 공시·한투 뉴스 제목의 그날 건수(이름·제목 없음). 넘침 의심이 있으면 ⚠️ 로 알린다."""
+    def rows(name):
+        path = os.path.join(runs_dir, name)
+        if not os.path.exists(path):
+            return []
+        with open(path, encoding="utf-8") as fh:
+            return [r for r in csv.DictReader(fh) if r.get("day") == day]
+
+    def n(r, k):
+        try:
+            return int(float(r.get(k) or 0))
+        except ValueError:
+            return 0
+    parts = []
+    dart = rows("dart_runs.csv")
+    if dart:
+        best = max(dart, key=lambda r: n(r, "polls"))
+        parts.append(f"DART 공시 {n(best, 'disclosures')}건(15:05까지 {n(best, 'seenBy1505')} · "
+                     f"15:05 범위 {best.get('coverage1505') or '?'} · {best.get('status') or '?'})")
+    news = rows("kis_news_runs.csv")
+    if news:
+        best = max(news, key=lambda r: n(r, "polls"))
+        over = sum(n(r, "overflowPolls") for r in news)
+        parts.append(f"한투 뉴스 {n(best, 'news')}건(15:05까지 {n(best, 'publishedBy1505')} · 종목코드 {n(best, 'withStockCode')} · "
+                     f"{best.get('status') or '?'})" + (f" ⚠️ 넘침 의심 {over}회 — 최신 40건만 받음" if over else ""))
+    return " · ".join(parts)
+
+
+def report_text(day, bars, struct, locked, archive="", theme_obs=None, materials=None):
     """허용된 상태 필드만 쓴다. 수익률·승률·후보별 가격 경로는 넣지 않는다."""
     L = [f"{TAG} 테마·대장 경로 연구 일일 보고 · 대상일 {day}"]
     if bars:
@@ -552,6 +581,8 @@ def report_text(day, bars, struct, locked, archive="", theme_obs=None):
     L.append(f"· 공개 요약 커밋: {archive or '확인 안 됨'}")
     if theme_obs is not None:
         L.append("· stockinfo7: " + (theme_obs or "오늘 관측 기록 없음"))
+    if materials is not None:
+        L.append("· 재료: " + (materials or "오늘 수집 기록 없음"))
     if struct:
         L.append(f"· 오늘 대장 후보 {struct['leaders']}개 (현재 정의의 표시 — 실제 주도권 판정 아님)")
         if struct.get("prev"):
@@ -701,7 +732,8 @@ def main(argv=None, now=None, env=None):
     if a.report:
         bars = bars or reuse or load_run(day, run_id, RUNS_DIR)
         text = report_text(day, bars, structure_today(day), locked_status(),
-                           archive=env.get("RESEARCH_ARCHIVE", ""), theme_obs=theme_obs_summary(day, RUNS_DIR))
+                           archive=env.get("RESEARCH_ARCHIVE", ""), theme_obs=theme_obs_summary(day, RUNS_DIR),
+                           materials=materials_summary(day, RUNS_DIR))
         print(text)
         if a.send:
             import requests
