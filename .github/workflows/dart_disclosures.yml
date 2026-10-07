@@ -1,0 +1,67 @@
+name: 🗞️ OpenDART 공시 재료 수집 (연구 · 처음 본 시각)
+
+# 사전 고정: docs/사전고정_2026-10-08_DART공시수집_v1.md — 사용자 지시 2026-10-08.
+# 거래일 09:10~15:08 KST 10분 간격으로 공시 목록을 조회해 접수번호를 처음 본 시각을 남긴다.
+# 원시 목록은 구글 드라이브 비공개, 공개 저장소에는 data/research_runs/ 의 건수·영수증만.
+# 깃허브 예약은 몇 시간씩 늦을 수 있어 09:10·11:10·13:10 세 번 건다 — 같은 그룹에서 대기하다
+# 15:08 이후 시작한 실행은 아무것도 하지 않고 끝난다. 휴장일이면 도구가 스스로 건너뛴다.
+# 연구 전용: 선정 조건·주문·시트·운영 Gate 와 무관. 지문 대상 파일이 아니다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      until:
+        description: '조회 끝 시각 KST (HH:MM)'
+        required: false
+        default: '15:08'
+  schedule:
+    - cron: '10 0 * * 1-5'   # 09:10 KST
+    - cron: '10 2 * * 1-5'   # 11:10 KST (백업)
+    - cron: '10 4 * * 1-5'   # 13:10 KST (백업)
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dart-disclosures
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.10'
+    - run: pip install requests
+
+    - name: 🔄 최신 상태 받기
+      run: |
+        git pull --ff-only origin main || echo "⚠️ 최신 main 으로 빨리감기 실패 — 이벤트 시점 상태로 진행"
+
+    - name: 🗞️ 수집 (원시 목록 → 드라이브 비공개)
+      env:
+        DART_API_KEY: ${{ secrets.DART_API_KEY }}
+        UNTIL: ${{ github.event.inputs.until }}
+      run: |
+        python hyeoks_dart_disclosures.py --until "${UNTIL:-15:08}"
+
+    - name: 💾 공개 건수 커밋
+      if: always()
+      run: |
+        mkdir -p data/research_runs
+        if [ -z "$(git status --porcelain data/research_runs)" ]; then
+          echo "ℹ️ 바뀐 파일 없음 — 커밋 생략"; exit 0
+        fi
+        git config user.name  "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add data/research_runs
+        git commit -m "data: DART 공시 수집 건수 $(TZ=Asia/Seoul date +%Y-%m-%d) run ${GITHUB_RUN_ID} [skip ci]"
+        for i in 1 2 3; do
+          git pull --rebase --autostash origin main && git push origin HEAD:main && exit 0
+          echo "⚠️ 푸시 재시도 $i/3"; sleep 5
+        done
+        echo "::error::공개 건수 커밋 푸시 실패"; exit 1

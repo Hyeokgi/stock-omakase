@@ -1,0 +1,28 @@
+name: 🔎 한투 시황·공시 제목 시험 호출 (수동 · 1회 · 저장 없음)
+
+# 사용자 지시 2026-10-08. 접근토큰 1회 발급 + 시황·공시 제목 1회 조회 → 응답 구조만 로그에 남긴다.
+# 제목·종목명·토큰을 찍지 않는다. 시트를 읽거나 쓰지 않는다. 아무것도 커밋하지 않는다.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.10'
+    - run: pip install requests
+    - name: 🔎 시험 호출
+      env:
+        KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+        KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+      run: |
+        python hyeoks_kis_news_probe.py | tee probe.md
+        cat probe.md >> "$GITHUB_STEP_SUMMARY"
