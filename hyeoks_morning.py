@@ -158,6 +158,50 @@ def get_us_market_summary():
         print(f"::warning::모닝 뉴스 수집 실패: {error}")
         return "⚠️ 뉴스 수집 실패", "뉴스 원천 미확보: 뉴스가 없다는 뜻이 아니며 관련 사실을 추측하지 마십시오."
 
+
+def _previous_session(today):
+    """장전 관측값이 속해야 할 직전 예정 거래일."""
+    from hyeoks_trading_calendar import load_nontrading
+    closures = load_nontrading()
+    day = today - datetime.timedelta(days=1)
+    for _ in range(12):
+        closures.check(day.isoformat())
+        if day.weekday() < 5 and day.isoformat() not in closures:
+            return day.isoformat()
+        day -= datetime.timedelta(days=1)
+    return None
+
+
+def _morning_after_text(unknown_market, nxt, expected_day):
+    """시장·시각을 검증할 수 없는 값으로 시가 갭을 계산하지 않는다."""
+    def verified(value):
+        value = str(value or "").strip()
+        if not value or value.startswith(("미확인", "미수집", "기록없음")):
+            return "미확인(관측 없음)"
+        match = re.search(r"\[(?:시장 미확인 / |조회 )(\d{4}-\d{2}-\d{2})\s", value)
+        if not expected_day or not match or match.group(1) != expected_day:
+            return "미확인(직전 거래일·관측시각 검증 불가)"
+        return value
+
+    return f"시장 미확인: {verified(unknown_market)} / NXT 확인값: {verified(nxt)}"
+
+
+def _morning_program_text(value):
+    """원천 조회 실패와 실제 0을 구분할 수 없는 0.0억은 미확인으로 표시한다."""
+    value = str(value or "").strip()
+    if not value:
+        return "미확인(프로그램 원자료 없음)"
+    return re.sub(r"프로그램:\s*[+-]?0(?:\.0+)?억\b",
+                  "프로그램:미확인(원본 0.0억·실제 0 여부 미검증)", value)
+
+
+def _guard_morning_claims(text):
+    """AI가 결측을 '변화 없음' 또는 검증된 0으로 바꿔 쓴 문구를 차단한다."""
+    text = re.sub(r"(🌙야간/시간외:\s*)(?:특이사항 없음|특이 변화 없음)",
+                  r"\1미확인(원자료 대조 필요)", text)
+    return re.sub(r"(🤖프로그램:\s*)[+-]?0(?:\.0+)?억\b",
+                  r"\1미확인(실제 0 여부 미검증)", text)
+
 def get_yesterday_korean_context():
     print("🇰🇷 어제 한국장 퀀트 타겟 종목 및 심층 데이터 수집 중...")
     try:
@@ -191,6 +235,12 @@ def get_yesterday_korean_context():
 
     if not scanner_data or len(scanner_data[0]) < 21: return "구글 시트 데이터가 비어있습니다."
 
+    try:
+        expected_day = _previous_session(datetime.datetime.now(KST).date())
+    except ValueError as e:
+        print(f"::warning::장전 기준 거래일 확인 실패: {e}")
+        expected_day = None
+
     valid_candidates = []
     for r in scanner_data:
         if len(r) > 31 and r[0]:
@@ -222,8 +272,8 @@ def get_yesterday_korean_context():
             valid_candidates.append({
                 'name': name, 'code': code_str, 'price': current_price, 'theme': theme,
                 'tajeom': tajeom, 'score_str': score_str, 'num_score': num_score,
-                'vol_status': vol_status, 'program_text': program_text,
-                'krx_after': krx_after, 'nxt_after': nxt_after
+                'vol_status': vol_status, 'program_text': _morning_program_text(program_text),
+                'after_text': _morning_after_text(krx_after, nxt_after, expected_day)
             })
 
     if not valid_candidates:
@@ -239,7 +289,7 @@ def get_yesterday_korean_context():
             vip_data = get_vip_deep_dive_data(code, kis_token)
 
         # 💡 [프롬프트 주입] 야간장 가격 변동을 AI가 볼 수 있도록 추가
-        picks_info.append(f"▪️ [{cand['name']}] 정규종가: {cand['price']}원 | 테마: {cand['theme']}\n  [야간/시간외] KRX: {cand['krx_after']} / NXT: {cand['nxt_after']}\n  [마스터타점] {cand['tajeom']} ({cand['score_str']})\n  [프로그램] {cand['program_text']}\n  [거래량] {cand['vol_status']}\n  [펀더멘털] {vip_data}")
+        picks_info.append(f"▪️ [{cand['name']}] 정규종가: {cand['price']}원 | 테마: {cand['theme']}\n  [야간/시간외] {cand['after_text']}\n  [마스터타점] {cand['tajeom']} ({cand['score_str']})\n  [프로그램] {cand['program_text']}\n  [거래량] {cand['vol_status']}\n  [펀더멘털] {vip_data}")
 
     return "\n\n".join(picks_info)
 
@@ -291,6 +341,12 @@ def get_report_picks_context():
     except Exception as e:
         print(f"⚠️ [모닝] 시간외 데이터 매핑 실패(생략하고 진행): {e}")
 
+    try:
+        expected_day = _previous_session(datetime.datetime.now(KST).date())
+    except ValueError as e:
+        print(f"::warning::장전 기준 거래일 확인 실패: {e}")
+        expected_day = None
+
     out = [f"[리포트 발행일: {latest}]"]
     for r in picks:
         code = str(r[4]).replace("'", "").strip().zfill(6)
@@ -300,9 +356,9 @@ def get_report_picks_context():
         out.append(
             f"▪️ [{kind}] {str(r[3]).strip()} ({code}) | 테마: {str(r[5]).strip()}\n"
             f"  [리포트 제시가] 목표가 {str(r[32]).strip() or '-'} / 손절가 {str(r[33]).strip() or '-'} (기준종가 {str(r[14]).strip()})\n"
-            f"  [야간/시간외] KRX: {a.get('krx') or '-'} / NXT: {a.get('nxt') or '-'}\n"
+            f"  [야간/시간외] {_morning_after_text(a.get('krx'), a.get('nxt'), expected_day)}\n"
             f"  [마스터타점] {a.get('tajeom') or '-'}\n"
-            f"  [프로그램] {a.get('program') or '-'}\n"
+            f"  [프로그램] {_morning_program_text(a.get('program'))}\n"
             f"  [펀더멘털] {vip}"
         )
     return "\n\n".join(out)
@@ -318,19 +374,20 @@ def generate_morning_briefing(market_data, news_data, kor_context, liquidity_dat
         stock_prompt_instruction = """
    [파트 2: 어제 리포트 종목 후속 점검 (파란색 뱃지)]
    🚨 핵심 지시: 아래 '[어제 리포트로 발행한 종목]'은 이미 리포트를 받아본 종목입니다. 새 종목을 발굴하지
-   말고, 이 종목들이 지금 어떤 상태인지 이어서 점검하십시오. 제공된 [리포트 제시가]의 목표가·손절가와
-   [야간/시간외] KRX·NXT 가격을 반드시 대조해, 오늘 시가 갭을 예측하고 그에 맞는 대응을 제시하십시오.
+   말고, 이 종목들이 지금 어떤 상태인지 이어서 점검하십시오. 제공된 [리포트 제시가]의 목표가·손절가를 확인하고
+   [야간/시간외]에 직전 거래일의 유효한 관측이 있을 때만 참고하십시오. 시장이 미확인인 가격을 KRX·NXT 가격으로
+   단정하거나, 전일종가 대비 등락률을 당일 정규장 종가 대비 수익률로 해석하지 마십시오.
    각 종목마다 아래 형식을 지키십시오.
 
    🟦 [종목명] (단기 또는 중기)
    🔹 밤사이 변화
-   ▫️ [🌙야간/시간외: KRX·NXT 요약] [🤖프로그램] [🎯타점]
-   ▫️ (리포트 발행 이후 무엇이 달라졌는지. 달라진 게 없으면 '특이 변화 없음'이라고 그대로 쓰십시오.)
+   ▫️ [🌙야간/시간외: 확인된 관측만] [🤖프로그램] [🎯타점]
+   ▫️ (비교 가능한 관측이 있을 때만 달라진 점을 쓰고, 없으면 '시간외 변화 미확인'이라고 쓰십시오.)
    🔹 목표가·손절가 대비 현재 위치
-   ▫️ (야간 가격이 목표가/손절가 중 어느 쪽에 얼마나 가까운지 수치로. 이미 이탈했다면 명확히 지적하십시오.)
+   ▫️ (비교 가능한 가격이 있을 때만 목표가/손절가와 수치로 대조하십시오. 없으면 위치 미확인이라고 쓰십시오.)
    🔹 오늘의 대응
    ▫️ 보유 중이라면: (홀딩/분할익절/손절 중 무엇을, 어느 가격에)
-   ▫️ 미진입이라면: (시초가 갭을 감안한 진입 가부와 타점. 진입 부적합이면 '오늘은 진입 보류'라고 쓰십시오.)
+   ▫️ 미진입이라면: (관측된 가격이 있으면 참고하고, 없으면 시초가 확인 후 판단. 진입 부적합이면 '오늘은 진입 보류'라고 쓰십시오.)
 
    🚨 낙관 편향 금지: 손절가에 근접했거나 논리가 깨졌으면 반드시 그렇게 쓰십시오. 억지로 홀딩을 권하지 마십시오.
 """
@@ -344,15 +401,16 @@ def generate_morning_briefing(market_data, news_data, kor_context, liquidity_dat
         stock_prompt_instruction = """
    [파트 2: 당일 주도주 능동 선정 및 심층 분석 (파란색 뱃지)]
    🚨 (핵심 지시: 귀하에게 제공된 '[어제 포착된 퀀트 필터 통과 후보 풀]'을 분석하십시오. 
-   특히 **[야간/시간외] (KRX 및 NXT)** 가격 변동 데이터를 반드시 읽고, 오늘 정규장 개장 시 발생할 '시가 갭(Gap)'을 예측하여 그에 따른 진입 시나리오를 구체적으로 제시해야 합니다.
+   [야간/시간외] 관측은 시장·기준·시각이 확인된 범위에서만 사용하십시오. 확인되지 않은 가격으로 시가 갭을
+   예측하지 말고, 데이터가 없으면 '시간외 변화 미확인'이라고 명시하십시오.
    단기/스윙 상관없이 가장 완벽한 1개~3개만 '엄선'하십시오.)
    
    🟦 [귀하가 엄선한 종목명]
    🔹 핵심 모멘텀 & 수급 딥리딩
-   ▫️ [🤖프로그램: 제공된 데이터] [🌙야간/시간외: KRX/NXT 데이터 요약] [🎯타점: 제공된 마스터타점]
-   ▫️ (왜 이 종목을 선정했는지, 정규장 수급과 야간장 흐름을 연결하여 날카롭게 분석하십시오.)
+   ▫️ [🤖프로그램: 제공된 데이터] [🌙야간/시간외: 확인된 관측만] [🎯타점: 제공된 마스터타점]
+   ▫️ (정규장 수급과 시간외 관측의 연결은 둘 다 확인됐을 때만 분석하십시오.)
    🔹 시가 갭 대응 및 실전 액션 플랜
-   ▫️ 진입: (야간장 변동분(상승/하락)을 고려한 시초가 갭 대응 전략 및 매수 타점 제시)
+   ▫️ 진입: (확인된 시간외 변동이 있으면 참고하고, 없으면 시초가 확인 전 진입 판단을 보류하십시오.)
    ▫️ 대응: (리스크 관리 및 비중 조절 팁)
 """
 
@@ -373,6 +431,9 @@ def generate_morning_briefing(market_data, news_data, kor_context, liquidity_dat
 
 [HYEOKS 리서치 작성 지침]
 1. 별표 기호(**) 전면 금지.
+1-1. [프로그램] 값은 입력에 있는 숫자만 그대로 쓰십시오. '미확인'을 0.0억으로 바꾸지 마십시오.
+     [야간/시간외] 값이 미확인이면 '특이사항 없음'으로 바꾸지 마십시오. 제공되지 않은 NXT·KRX 가격과
+     당일 정규장 종가 대비 수익률 또는 시가 갭을 만들어내지 마십시오.
 2. 🚨 파트 1은 '간략하게'. 유동성·뉴스는 각각 2~3문장으로 압축하고, 오늘 매매에 실제로 영향을 주는
    내용만 남기십시오. 원론적 설명("분산투자가 중요합니다" 등)이나 같은 말 반복은 금지입니다.
    이 브리핑의 본론은 파트 2(종목)이며, 분량도 파트 2가 더 많아야 합니다.
@@ -575,7 +636,7 @@ if __name__ == "__main__":
         final_briefing = f"{head}\n\n{briefing_text}"
     
     print("📲 텔레그램 발송 중...")
-    clean_briefing = final_briefing.replace('**', '')       
+    clean_briefing = _guard_morning_claims(final_briefing).replace('**', '')
     clean_briefing = clean_briefing.replace('### ', '▶️ ')  
     clean_briefing = clean_briefing.replace('## ', '▶️ ')   
     clean_briefing = re.sub(r'<([^>]+)>', r'[\1]', clean_briefing)
