@@ -1,0 +1,2 @@
+day,runId,version,startedAt,finishedAt,polls,pollFailures,news,withStockCode,publishedBy1505,overflowPolls,overflowWindows,status,stopReason,privateFile,privateStatus
+2026-10-08,37734681966,kis-news-v1,2026-10-08T14:53:49+09:00,2026-10-08T15:03:50+09:00,2,0,80,20,80,1,14:52:52~15:01:06,완료,,research_kisnews_2026-10-08_37734681966.json.gz,접수
