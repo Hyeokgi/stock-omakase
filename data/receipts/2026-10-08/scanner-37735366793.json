@@ -1,0 +1,83 @@
+{
+ "code_sha": "2fcb371d",
+ "cycle_date": "2026-10-08",
+ "emitted_at": "2026-10-08T15:06:06.212304+09:00",
+ "fingerprint": "ced06ffb5659",
+ "kind": "scanner",
+ "payload": {
+  "ci_conclusion": "success",
+  "cycle_date_matches": true,
+  "expected_state": "reached",
+  "feature_store": {
+   "date": "2026-10-08",
+   "dropped": 0,
+   "fingerprint": "ced06ffb5659",
+   "rows": 748,
+   "run_id": "37735366793"
+  },
+  "features": {
+   "v1": {
+    "errors": 0,
+    "measured": true,
+    "parsed": 3
+   },
+   "v2": {
+    "errors": 0,
+    "measured": true,
+    "parsed": 3
+   },
+   "v3": {
+    "errors": 0,
+    "measured": true,
+    "out_of_range": 0,
+    "schema_reason": "",
+    "unparsable": 0,
+    "used": 247
+   }
+  },
+  "ledger": {
+   "expected_trade_ids": [
+    "2026-10-08_차트TOP2_352820",
+    "2026-10-08_차트TOP2_005830",
+    "2026-10-08_랜덤2_201490",
+    "2026-10-08_랜덤2_099750",
+    "2026-10-08_랜덤2_배지_340810",
+    "2026-10-08_지수벤치_KOSPI",
+    "2026-10-08_지수벤치_KOSDAQ"
+   ],
+   "expected_zero_reason": "",
+   "found_trade_ids": [
+    "2026-10-08_차트TOP2_352820",
+    "2026-10-08_차트TOP2_005830",
+    "2026-10-08_랜덤2_201490",
+    "2026-10-08_랜덤2_099750",
+    "2026-10-08_랜덤2_배지_340810",
+    "2026-10-08_지수벤치_KOSPI",
+    "2026-10-08_지수벤치_KOSDAQ"
+   ]
+  },
+  "rank_pool": {
+   "by_channel_dropped": {
+    "수급TOP2": 0,
+    "차트TOP2": 0
+   },
+   "date": "2026-10-08",
+   "fingerprint": "ced06ffb5659",
+   "rows": 3,
+   "total_dropped": 0
+  },
+  "scanned": 748,
+  "telemetry": {
+   "by_feature": {},
+   "gate_blocking_total": 0,
+   "reasons": {},
+   "samples": {}
+  },
+  "today_str": "2026-10-08",
+  "v1_parse_errors": 0,
+  "v2_parse_errors": 0,
+  "v3_parse_errors": 0
+ },
+ "receipt_version": "receipt-v2",
+ "run_id": "37735366793"
+}
