@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 # ==========================================================================
-# 📰 한투 시황·공시 제목 수집 `kis-news-v1` — 10분 간격 · 최근 40건 · 넘침 의심 알림
+# 📰 한투 시황·공시 제목 수집 `kis-news-v2` — 5분 간격 · 최근 40건 · 넘침 의심 알림
 # --------------------------------------------------------------------------
 # 사전 고정: docs/사전고정_2026-10-08_한투뉴스제목수집_v1.md (이 코드보다 먼저 커밋).
 # 사용자 지시: "우선 10분간격으로 40건이라도 적용해보자. 오버되면 최신순으로 자르고 도입하고 그런경우가 있다면 알려줘."
+#   2026-10-09 사용자: "한투 뉴스 간격은 5분으로 바꿔줘" → v2 (10/8 첫날 넘침 의심 1회). 넘침 판정·저장은 v1 과 같다.
 #   → 40건이 꽉 찼는데 이미 본 것이 하나도 없으면 '넘침 의심'. 받은 최신 40건만 두고, 놓쳤을 수 있는 구간을 기록한다.
 # 저장: 원본은 구글 드라이브 비공개, 공개는 건수만(kis_news_runs.csv · private_receipts.csv). 로그에 제목·종목명 없음.
 # 운영 KIS 토큰(구글 시트 칸)은 읽지도 쓰지도 않는다 — 실행당 토큰을 따로 1회 발급한다.
@@ -21,7 +22,7 @@ import time
 
 import hyeoks_research_daily as R
 
-VERSION = "kis-news-v1"
+VERSION = "kis-news-v2"
 BASE = "https://openapi.koreainvestment.com:9443"
 PATH = "/uapi/domestic-stock/v1/quotations/news-title"
 TR_ID = "FHKST01011800"
@@ -150,7 +151,7 @@ def log_run(st, runs_dir=R.RUNS_DIR):
 def main(argv=None, env=None, get=None, post=None, clock=None, sleep=time.sleep, uploader=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--until", default="15:08")
-    ap.add_argument("--every", type=int, default=600)
+    ap.add_argument("--every", type=int, default=300)
     a = ap.parse_args(argv)
     env = os.environ if env is None else env
     clock = clock or (lambda: datetime.datetime.now(KST))

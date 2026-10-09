@@ -77,5 +77,13 @@ class KisNews(unittest.TestCase):
         self.assertEqual(out, 0)
 
 
+
+class IntervalV2Test(unittest.TestCase):
+    def test_default_interval_is_five_minutes(self):
+        """2026-10-09 사용자 지시 — 10분 → 5분(kis-news-v2)."""
+        import inspect
+        self.assertEqual(N.VERSION, "kis-news-v2")
+        self.assertIn('add_argument("--every", type=int, default=300)', inspect.getsource(N.main))
+
 if __name__ == "__main__":
     unittest.main()
