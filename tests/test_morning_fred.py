@@ -212,5 +212,47 @@ class MorningObservationTests(unittest.TestCase):
             self.assertNotIn("KRX·NXT 요약", prompt)
 
 
+class ClosedDayTests(unittest.TestCase):
+    """휴장일 — 해외 시황만, 머리에 휴장 표시(사용자 결정 2026-10-09)."""
+
+    def test_registered_holiday_and_weekend_are_closed(self):
+        self.assertEqual(M._market_closed_today(datetime.date(2026, 10, 9)), ("한글날", "2026-10-12"))
+        self.assertEqual(M._market_closed_today(datetime.date(2026, 10, 5)), ("개천절 대체공휴일", "2026-10-06"))
+        self.assertEqual(M._market_closed_today(datetime.date(2026, 10, 10)), ("주말", "2026-10-12"))
+
+    def test_trading_day_and_out_of_scope_send_normally(self):
+        self.assertIsNone(M._market_closed_today(datetime.date(2026, 10, 12)))
+        self.assertIsNone(M._market_closed_today(datetime.date(2030, 1, 2)))   # 달력 범위 밖 — 판단 안 함
+
+    def test_notice_names_reason_and_next_session(self):
+        line = M._closed_notice(("한글날", "2026-10-12"))
+        self.assertIn("휴장(한글날)", line)
+        self.assertIn("10월 12일 월", line)
+        self.assertIn("날짜 미확인", M._closed_notice(("휴장", None)))
+
+    def test_closed_prompt_has_no_stock_part_or_same_day_action(self):
+        captured = []
+        original = M.genai.Client
+
+        class FakeClient:
+            def __init__(self, **kwargs):
+                self.models = self
+
+            def generate_content(self, **kwargs):
+                captured.append(kwargs["contents"])
+                return types.SimpleNamespace(text="검사 완료")
+        M.genai.Client = FakeClient
+        try:
+            M.generate_morning_briefing("시장", "뉴스", "", "유동성", "", closed=("한글날", "2026-10-12"))
+        finally:
+            M.genai.Client = original
+        prompt = captured[0]
+        self.assertIn("휴장일(한글날)", prompt)
+        self.assertIn("2026-10-12", prompt)
+        self.assertIn("시초가·시가 갭·당일 매매 대응", prompt)
+        for absent in ("파트 2", "오늘의 대응", "어제 리포트로 발행한 종목", "후보 풀"):
+            self.assertNotIn(absent, prompt)
+
+
 if __name__ == "__main__":
     unittest.main()

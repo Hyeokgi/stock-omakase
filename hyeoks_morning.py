@@ -202,6 +202,52 @@ def _guard_morning_claims(text):
     return re.sub(r"(🤖프로그램:\s*)[+-]?0(?:\.0+)?억\b",
                   r"\1미확인(실제 0 여부 미검증)", text)
 
+
+# 🔴 2026-10-09 — 한글날(휴장)에도 "금일 시초가 갭하락"·"오늘은 진입 보류" 를 보냈다.
+#    브리핑은 평일 07:45 마다 오는데 장이 열리는지는 보지 않았다(9/24·9/25·10/5·10/9 모두 발송).
+#    사용자 결정(10/9): 휴장일에는 해외 시황만 보내고 머리에 휴장을 표시한다. 종목 점검은 다음 거래일.
+_WEEKDAY_KO = "월화수목금토일"
+
+
+def _market_closed_today(today, snap_dir=None):
+    """오늘이 예정 휴장일이면 (사유, 다음 거래일 ISO 또는 None), 거래일이면 None.
+    달력 범위 밖이면 판단하지 않는다 — None(평소 브리핑)으로 두고 로그에 경고만 남긴다."""
+    from hyeoks_trading_calendar import DEFAULT_DIR, load_nontrading, next_trading_day
+    root = snap_dir or DEFAULT_DIR
+    day = today.isoformat()
+    try:
+        closures = load_nontrading(root)
+        closures.check(day)
+    except ValueError as e:
+        print(f"::warning::장전 휴장 확인 불가 — 평소대로 보낸다: {e}")
+        return None
+    if today.weekday() < 5 and day not in closures:
+        return None
+    reason = "주말" if today.weekday() >= 5 else "휴장"
+    if day in closures:
+        with open(os.path.join(str(root), "nontrading.txt"), encoding="utf-8") as fh:
+            for line in fh:
+                d, _, note = line.partition("#")
+                if d.strip() == day and note.strip():
+                    reason = note.strip()
+    try:
+        nxt = next_trading_day(day, closures)
+    except ValueError:
+        nxt = None
+    return reason, nxt
+
+
+def _closed_notice(closed):
+    """휴장일 머리말 한 줄."""
+    reason, nxt = closed
+    if nxt:
+        d = datetime.date.fromisoformat(nxt)
+        when = f"다음 거래일({d.month}월 {d.day}일 {_WEEKDAY_KO[d.weekday()]})"
+    else:
+        when = "다음 거래일(달력 범위 밖 — 날짜 미확인)"
+    return f"🔕 오늘은 국내 증시 휴장({reason}) — 해외 시황만 보냅니다. 종목 점검은 {when} 브리핑에서."
+
+
 def get_yesterday_korean_context():
     print("🇰🇷 어제 한국장 퀀트 타겟 종목 및 심층 데이터 수집 중...")
     try:
@@ -364,10 +410,42 @@ def get_report_picks_context():
     return "\n\n".join(out)
 
 
-def generate_morning_briefing(market_data, news_data, kor_context, liquidity_data, report_context=""):
+def _closed_day_prompt(liquidity_data, news_data, closed):
+    """휴장일 — 해외 시황만. 국내 당일 매매·종목 대응을 쓰지 않게 한다."""
+    reason, nxt = closed
+    return f"""너는 대한민국 최상위 1% 실전 트레이더를 위한 HYEOKS 리서치 센터의 헤드 퀀트 매니저야.
+오늘은 국내 증시 휴장일({reason})이다. 다음 거래일은 {nxt or '미확인'}이다.
+아래 데이터로 해외 시황만 짧게 정리해라.
+
+[글로벌 매크로 유동성 지표 (FRED)]
+{liquidity_data}
+
+[밤사이 글로벌/국내 주요 뉴스]
+{news_data}
+
+[HYEOKS 리서치 작성 지침]
+1. 별표 기호(**) 전면 금지.
+2. 오늘은 국내 장이 열리지 않습니다. 오늘의 국내 개장·시초가·시가 갭·당일 매매 대응·종목 진입이나
+   보유 판단을 쓰지 마십시오. 종목 분석 파트를 만들지 마십시오.
+3. 국내 시장 영향은 '다음 거래일 참고'로만 쓰십시오. 유동성·뉴스는 각각 2~3문장으로 압축하십시오.
+4. 아래 형식을 지키십시오.
+
+   🟩 [HYEOKS 매크로 & 뉴스 종합 시황]
+   🟢 유동성·해외 증시 (2~3문장)
+   ▫️ (내용)
+   🟢 밤사이 핵심 뉴스 (2~3문장, 다음 거래일에 참고할 것만)
+   ▫️ (내용)
+"""
+
+
+def generate_morning_briefing(market_data, news_data, kor_context, liquidity_data, report_context="",
+                              closed=None):
     print("🤖 AI 매크로 분석 및 능동형 리포트 작성 중...")
     client = genai.Client(api_key=GEMINI_API_KEY)
-    
+    if closed:
+        prompt = _closed_day_prompt(liquidity_data, news_data, closed)
+        return _generate_with_retry(client, prompt)
+
     # 🆕 [모닝브리핑 개편] 어제 리포트로 나간 종목이 있으면 그 후속 분석을 본론으로 삼는다.
     #    (없을 때만 예전 방식 — 스캐너 후보 풀에서 AI가 새로 고르는 흐름 — 으로 폴백)
     if report_context.strip():
@@ -447,6 +525,10 @@ def generate_morning_briefing(market_data, news_data, kor_context, liquidity_dat
    ▫️ (내용)
    {stock_prompt_instruction}
 """
+    return _generate_with_retry(client, prompt)
+
+
+def _generate_with_retry(client, prompt):
     for i in range(10):
         try:
             response = client.models.generate_content(model='gemini-2.5-pro', contents=prompt)
@@ -593,8 +675,14 @@ if __name__ == "__main__":
     print("🚀 HYEOKS 능동형 모닝 브리핑 시스템 가동 시작...")
     liquidity_data, fred_failures = get_global_liquidity_data()
     market_data, news_data = get_us_market_summary()
-    kor_context = get_yesterday_korean_context()
-    report_context = get_report_picks_context()
+    closed = _market_closed_today(now_obj.date())
+    if closed:
+        # 휴장일 — 종목 점검은 다음 거래일로 미룬다. 시트·KIS 를 읽지 않는다.
+        print(f"🔕 휴장({closed[0]}) — 해외 시황만 보낸다. 다음 거래일 {closed[1] or '미확인'}")
+        kor_context, report_context = "", ""
+    else:
+        kor_context = get_yesterday_korean_context()
+        report_context = get_report_picks_context()
     
     # 🔴 2026-09-17 — 원래는 유동성 5개 중 **하나만** 실패해도 브리핑 전체가
     #    경고문으로 대체됐다. 9/17 에 FRED 2계열이 실패하자 나머지 3계열·뉴스·
@@ -611,24 +699,28 @@ if __name__ == "__main__":
     kor_failed = ("파싱 오류" in kor_context) or ("비어있습니다" in kor_context)
     market_failed = "수집 실패" in market_data
     fred_all_failed = len(fred_failures) >= len(FRED_SERIES)
+    if closed:
+        kor_failed = fred_all_failed      # 휴장일의 두 축은 뉴스와 유동성이다
 
     today_str = now_obj.strftime('%Y년 %m월 %d일')
     if market_failed and kor_failed:
         # 핵심 두 축이 모두 죽었을 때만 경고문으로 대체한다
         final_briefing = ("🚨 [HYEOKS 시스템 경고] 모닝 데이터 수집 에러\n\n[에러 내용]\n"
                           f"- 유동성(FRED): {liquidity_data}\n- 뉴스 수집: {market_data}\n"
-                          f"- 한국장: {kor_context}\n\n※ 문제를 수정해주세요.")
+                          f"- 한국장: {kor_context or '휴장 — 조회 안 함'}\n\n※ 문제를 수정해주세요.")
     else:
         briefing_text = generate_morning_briefing(market_data, news_data, kor_context,
-                                                  liquidity_data, report_context)
+                                                  liquidity_data, report_context, closed=closed)
         warn = []
         if fred_failures:
             warn.append("FRED " + ", ".join(f"{sid}({why})" for sid, why in fred_failures))
         if market_failed:
             warn.append("미국장 뉴스")
-        if kor_failed:
+        if kor_failed and not closed:
             warn.append("한국장")
         head = f"🌅 [HYEOKS 모닝 브리핑] - {today_str}"
+        if closed:
+            head += "\n" + _closed_notice(closed)
         if warn:
             head += "\n⚠️ 일부 수집 실패: " + " · ".join(warn)
             if fred_all_failed:
