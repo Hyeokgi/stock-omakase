@@ -178,7 +178,7 @@ def _morning_after_text(unknown_market, nxt, expected_day):
         value = str(value or "").strip()
         if not value or value.startswith(("미확인", "미수집", "기록없음")):
             return "미확인(관측 없음)"
-        match = re.search(r"\[(?:시장 미확인 / |조회 )(\d{4}-\d{2}-\d{2})\s", value)
+        match = re.search(r"\[(?:시장 미확인 / |조회 )(\d{4}-\d{2}-\d{2})[\sT]", value)  # 조회 시각은 isoformat(T)
         if not expected_day or not match or match.group(1) != expected_day:
             return "미확인(직전 거래일·관측시각 검증 불가)"
         return value

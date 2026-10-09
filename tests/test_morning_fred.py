@@ -4,10 +4,19 @@
   ① 텔레그램·로그 어디에도 원인이 없었다(`except Exception as e` 로 잡고 e 를 버림)
   ② 나머지 3계열·뉴스·한국장이 전부 정상인데 AI 브리핑 전체가 경고문으로 대체됐다
 """
+import importlib
 import sys
 import types
 import unittest
 import datetime
+
+# requests·urllib3 는 설치돼 있으면 진짜를 쓴다. 가짜를 sys.modules 에 넣으면 같은 프로세스에서
+# 뒤에 실행되는 다른 시험이 그 가짜를 받는다(이 파일을 먼저 읽으면 32건 오류 — 2026-10-09 Claude 확인).
+for name in ("requests", "urllib3"):
+    try:
+        importlib.import_module(name)
+    except ImportError:
+        pass
 
 # 무거운 의존성은 스텁으로 막고 순수 로직만 본다
 for name, attrs in (("requests", {"get": None}),
@@ -152,6 +161,12 @@ class MorningObservationTests(unittest.TestCase):
         self.assertIn("164,100원", line)
         self.assertIn("NXT 확인값: 미확인", line)
         self.assertNotIn("KRX:", line)
+
+    def test_nightly_query_stamp_is_read(self):
+        # hyeoks_nightly.py 형식: "[조회 2026-10-08T19:54:12+09:00; 체결시각 미확인]" — 날짜 뒤가 공백이 아니라 T
+        quote = "+1.20% (10,000원) [조회 2026-10-08T19:54:12+09:00; 체결시각 미확인]"
+        self.assertIn("10,000원", M._morning_after_text(quote, "", "2026-10-08"))
+        self.assertIn("검증 불가", M._morning_after_text(quote, "", "2026-10-07"))
 
     def test_missing_and_stale_quote_are_not_no_change(self):
         old = "관측 (1,000원) [시장 미확인 / 2026-10-07 19:54:12 KST]"
