@@ -15,3 +15,4 @@ at,kind,runId,name,bytes,sha256,driveId,status,error,verified
 2026-10-08T20:00:20+09:00,bars,37765772263,research_bars_2026-10-08_37765772263_part1of2.csv.gz,1970093,2b7ba92c426c424faefc6586a179bde4929ebb7064a3173b862b24eb0c83f723,1o_Ct6oIR2Y9XUxfgu6815p_nSINPgbD3,접수,,
 2026-10-08T20:00:33+09:00,bars,37765772263,research_bars_2026-10-08_37765772263_part2of2.csv.gz,1985435,cd3eea00d514efb9e54f8f3203ef09ede80da43fd33534849580dd5d53791846,1vUunsw8Fi-ARSis0hVxrZ2FPlTy01Hp4,접수,,
 2026-10-08T20:00:43+09:00,bars,37765772263,research_bars_2026-10-08_37765772263_status.json.gz,7338,1cb41560ca1ea650c9c21fb812f5296e963800569e96871fbb20aa27b0ffaecb,1QMq8KgWx6RgrdSKep6CkdoCR_ksfSi0C,접수,,
+2026-10-08T15:04:37+09:00,dart,37734747326,research_dart_2026-10-08_37734747326.json.gz,17787,,1ScZqjtq69E5nqP_qkHgFg61a5cj9LDiT,접수,"복구(2026-10-09): 커밋 충돌로 유실 — 실행 로그와 드라이브 메타에서 재작성, sha256 미계산",

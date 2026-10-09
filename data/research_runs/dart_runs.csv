@@ -1,0 +1,2 @@
+day,runId,version,startedAt,finishedAt,polls,pollFailures,disclosures,withStockCode,seenBy1505,lastPollBefore1505,coverage1505,capped,status,stopReason,privateFile,privateStatus
+2026-10-08,37734747326,dart-disclosures-v1,2026-10-08T14:54:34+09:00,2026-10-08T15:04:37+09:00,2,0,621,621,621,2026-10-08T15:04:35+09:00,완전,False,완료,,research_dart_2026-10-08_37734747326.json.gz,접수

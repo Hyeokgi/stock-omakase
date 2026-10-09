@@ -14,6 +14,12 @@ on:
         description: '조회 끝 시각 KST (HH:MM)'
         required: false
         default: '15:08'
+  # 🔴 2026-10-08 실측: 09:10 깃허브 예약이 5시간 44분 늦은 14:54 에 시작해 조회가 2번뿐이었다.
+  #    GAS 가 평일 12:25 쯤 띄우는 stockinfo7 수집 실행이 요청되면 이 수집도 함께 시작한다(늦어도 12시대 시작).
+  #    연구 워크플로끼리의 연결이다 — 운영 워크플로(main.yml·ai_report.yml)에는 묶지 않는다.
+  workflow_run:
+    workflows: ["🗂️ 외부 테마 자료원 병행 수집 (stockinfo7 · 연구)"]
+    types: [requested]
   schedule:
     - cron: '10 0 * * 1-5'   # 09:10 KST
     - cron: '10 2 * * 1-5'   # 11:10 KST (백업)

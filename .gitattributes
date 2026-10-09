@@ -1,0 +1,4 @@
+# 연구 수집기 공개 요약 CSV 는 줄 추가만 하는 장부다. 여러 수집기(DART·한투 뉴스·stockinfo7·연구 일봉)가
+# 같은 시각에 같은 장부(private_receipts.csv 등)에 줄을 더하면 rebase 가 충돌로 멈춘다(2026-10-08 DART 커밋 실패).
+# union 은 양쪽 줄을 모두 남긴다 — 줄 추가 전용 파일에만 쓴다(JSON 상태 파일에는 쓰지 않는다).
+data/research_runs/*.csv merge=union
