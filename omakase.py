@@ -2023,9 +2023,13 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                 kis_res = GLOBAL_SESSION.get(f"{KIS_URL_BASE}/uapi/domestic-stock/v1/quotations/inquire-price", headers=kis_h, params={"fid_cond_mrkt_div_code": "J", "fid_input_iscd": code}, timeout=3).json()
                 if kis_res.get("rt_cd") == "0":
                     out = kis_res["output"]
-                    pgtr_qty = int(str(out.get("pgtr_ntby_qty", "0")).replace(",", "").replace("+", "") or "0")
-                    pgtr_ntby_eok = (pgtr_qty * current_price) / 100_000_000
-                    pgtr_ok = True
+                    # 🔴 2026-10-09 (Codex 교차 검토 R3, 사용자 승인) — 필드 없음·빈 값이 기본값 "0" 으로 바뀌어
+                    #    '조회 성공한 0' 이 됐다. 값이 있고 정수로 읽힐 때만 성공. 그 밖은 0(점수 불변) + 미확인 표시.
+                    _pgtr_val = out.get("pgtr_ntby_qty")
+                    _pgtr_raw = "" if _pgtr_val is None else str(_pgtr_val).replace(",", "").replace("+", "").strip()
+                    if re.fullmatch(r"-?\d+", _pgtr_raw):
+                        pgtr_ntby_eok = (int(_pgtr_raw) * current_price) / 100_000_000
+                        pgtr_ok = True
             except Exception as e:
                 print(f"⚠️ [KIS pgtr Exception for {name}] {e}")
 
@@ -2850,21 +2854,31 @@ def update_technical_data(df_theme, all_theme_map):
         except Exception: helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="33")
 
         # 🔴 2026-10-09 — 09시 전 재스캔은 전날 저녁 시간외 관측을 지킨다(keep_prior_after_quote 주석).
-        #    읽기에 실패하면 예전처럼 이번 스캔 값으로 덮는다 — 보존은 표시용이라 수집을 멈출 이유가 아니다.
+        #    AA(시간외)·AB(NXT)는 열마다 따로 판단하고, AC(장구분)는 AA 를 지킬 때만 함께 되돌린다(AA 값의 출처 라벨).
+        # 🔴 2026-10-09 (Codex 교차 검토 R2, 사용자 승인) — 이전 값 읽기에 실패하면 예전엔 결측으로 전체 갱신해
+        #    전날 관측을 지웠고, 다음 회차도 복구할 수 없었다. → 그 회차는 주가데이터_보조 갱신을 건너뛴다.
+        #    장 열기 전이라 가격은 전날과 같고, 10분 뒤 회차가 다시 시도한다. 다른 수집은 그대로 진행한다.
+        _skip_helper_update = False
         if now_time.hour < 9:
             try:
                 _prev_after = {str(row[1]).replace("'", "").strip().zfill(6): row
                                for row in helper_sheet.get_all_values()[1:]
                                if len(row) > 28 and str(row[1]).strip()}
-                _kept = 0
+                _kept = _kept_nxt = 0
                 for r in results:
                     _old = _prev_after.get(str(r[1]).replace("'", "").strip().zfill(6))
-                    if _old and len(r) > 28 and keep_prior_after_quote(r[26], _old[26], now_time):
-                        r[26], r[27], r[28] = _old[26], _old[27], _old[28]
+                    if not _old or len(r) <= 28:
+                        continue
+                    if keep_prior_after_quote(r[26], _old[26], now_time):
+                        r[26], r[28] = _old[26], _old[28]
                         _kept += 1
-                print(f"🌙 [시간외 보존] 09시 전 재스캔 — 전날 관측 {_kept}종목 유지")
+                    if keep_prior_after_quote(r[27], _old[27], now_time):
+                        r[27] = _old[27]
+                        _kept_nxt += 1
+                print(f"🌙 [시간외 보존] 09시 전 재스캔 — 전날 관측 시간외 {_kept}·NXT {_kept_nxt}종목 유지")
             except Exception as e:
-                print(f"⚠️ [시간외 보존 생략 — 이번 스캔 값으로 덮는다] {type(e).__name__}: {e}")
+                _skip_helper_update = True
+                print(f"⚠️ [시간외 보존 실패 — 이번 회차 주가데이터_보조 갱신을 건너뛴다] {type(e).__name__}: {e}")
 
         # 🏛️ [2026-09-14 제도 개편] '시간외단일가' 시장이 폐지되고 애프터마켓
         #    (16:00~20:00 실시간 접속매매)으로 대체됐다. 17:50 샘플은 더 이상
@@ -2895,18 +2909,21 @@ def update_technical_data(df_theme, all_theme_map):
             return row
 
         helper_sheet_data = [extended_headers] + [_row_for_helper_sheet(r) for r in results]
-        try:
-            helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
-            # 🔴 2026-09-22 — 정리 범위가 **AG(33열)** 로 굳어 있었는데 쓰는 폭은 34열(AH)이다.
-            #    종목 수가 줄어든 날 AH(RS등급)만 남은 잔여 행이 생겼고(9/22 729·730행에
-            #    39·77 이 남아 있었다), analyst 가 그 행을 종목으로 읽어 000000 으로 바꾸며
-            #    V1/V2 변환 오류를 냈다. 이제 **실제 출력 폭에서 끝 열을 계산한다** —
-            #    헤더가 늘어나도 다시 어긋나지 않는다.
-            _last_col = _col_letter(len(extended_headers))
-            helper_sheet.batch_clear([f"A{len(helper_sheet_data) + 1}:{_last_col}"])
-            apply_change_rate_formatting(doc, helper_sheet, len(helper_sheet_data), col_index=3,
-                                          extra_numeric_rules=[(33, 90, {"red": 0.1, "green": 0.6, "blue": 0.2})])  # 🆕 등락률 색상 + RS등급 90↑ 초록 강조
-        except Exception as e: print(f"⚠️ [helper_sheet update Error] {e}")
+        if _skip_helper_update:
+            print("⏭ [주가데이터_보조] 09시 전 이전 시간외 값을 읽지 못해 이번 회차는 쓰지 않는다(전날 관측 보존)")
+        else:
+            try:
+                helper_sheet.update(range_name="A1", values=helper_sheet_data, value_input_option="USER_ENTERED")
+                # 🔴 2026-09-22 — 정리 범위가 **AG(33열)** 로 굳어 있었는데 쓰는 폭은 34열(AH)이다.
+                #    종목 수가 줄어든 날 AH(RS등급)만 남은 잔여 행이 생겼고(9/22 729·730행에
+                #    39·77 이 남아 있었다), analyst 가 그 행을 종목으로 읽어 000000 으로 바꾸며
+                #    V1/V2 변환 오류를 냈다. 이제 **실제 출력 폭에서 끝 열을 계산한다** —
+                #    헤더가 늘어나도 다시 어긋나지 않는다.
+                _last_col = _col_letter(len(extended_headers))
+                helper_sheet.batch_clear([f"A{len(helper_sheet_data) + 1}:{_last_col}"])
+                apply_change_rate_formatting(doc, helper_sheet, len(helper_sheet_data), col_index=3,
+                                              extra_numeric_rules=[(33, 90, {"red": 0.1, "green": 0.6, "blue": 0.2})])  # 🆕 등락률 색상 + RS등급 90↑ 초록 강조
+            except Exception as e: print(f"⚠️ [helper_sheet update Error] {e}")
 
         portfolio_protected_names = set()
         try:
@@ -3492,8 +3509,18 @@ def update_technical_data(df_theme, all_theme_map):
 
             _ledger_expected, _ledger_found = [], []
             if new_rows:
-                bt_sheet.append_rows(new_rows, value_input_option="USER_ENTERED")
-                print(f"✅ [백테스트 V6 Step1] 진입 {len(new_rows)}행 append 완료 (차트/수급/랜덤/지수 · 추적은 Step2)")
+                # 🔴 2026-10-09 (Codex 교차 검토 R1, 사용자 승인) — 서버에는 저장됐는데 응답만 실패할 수 있다.
+                #    예전엔 append 예외가 바깥 except 로 빠져 아래 증거 저장(feature_store·순위 풀·영수증)이 모두 생략됐고,
+                #    다음 회차는 첫 적재 고정 때문에 새 행이 없어 그날 증거가 영영 비었다.
+                #    → 예외를 잡고 같은 실행 안에서 원장을 다시 읽는다. 기대한 행이 **모두** 있으면 같은 묶음으로 계속한다.
+                #      일부·전무면 예전처럼 실패로 둔다(새 후보 보충 없음 — 전무일 때만 다음 회차가 적재한다).
+                _append_err = None
+                try:
+                    bt_sheet.append_rows(new_rows, value_input_option="USER_ENTERED")
+                    print(f"✅ [백테스트 V6 Step1] 진입 {len(new_rows)}행 append 완료 (차트/수급/랜덤/지수 · 추적은 Step2)")
+                except Exception as _e:
+                    _append_err = _e
+                    print(f"⚠️ [백테스트 V6 Step1] append 응답 오류 {type(_e).__name__}: {_e} — 원장을 다시 읽어 확인한다")
                 # 🔴 2026-09-18 지시 ⑦ — append **호출 성공**은 적재의 증거가 아니다.
                 #    시트를 다시 읽어 기대한 trade_id 가 실재하는지 확인한다(read-after-write).
                 #    이 확인이 없으면 "썼다고 생각했는데 없는" 경로를 영영 못 본다.
@@ -3511,6 +3538,10 @@ def update_technical_data(df_theme, all_theme_map):
                     TELEMETRY.note('ledger', f'확인 실패 {type(_e).__name__}',
                                    feature_telemetry.CRITICAL)
                     print(f"⚠️ [원장 확인 실패] {type(_e).__name__}: {_e}")
+                if _append_err is not None:
+                    if set(_ledger_found) != set(_ledger_expected):
+                        raise _append_err
+                    print("✅ [백테스트 V6 Step1] 응답 오류였지만 원장에 모두 있다 — 같은 묶음으로 증거 저장을 이어 간다")
                 sort_and_format_backtest_log(doc, bt_sheet)  # 🆕 새 행이 추가된 직후에만 정렬+서식 재적용
 
                 # 🗂️ 순위 풀 — **append 가 성공한 뒤에만** 남긴다(위 주석 참조).

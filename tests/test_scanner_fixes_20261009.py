@@ -78,7 +78,7 @@ class ProgramUnknownTests(unittest.TestCase):
         self.assertIn("pgtr_ok = False", src)
         ok_at = src.index("pgtr_ok = True")
         self.assertLess(src.index('if kis_res.get("rt_cd") == "0":'), ok_at)
-        self.assertLess(src.index("pgtr_ntby_eok = (pgtr_qty * current_price) / 100_000_000"), ok_at)
+        self.assertLess(src.index("pgtr_ntby_eok = (int(_pgtr_raw) * current_price) / 100_000_000"), ok_at)
 
     def test_label_kept_for_v2_score_number_replaced(self):
         text = "⚪ [수급강도 평년] 1.0배 / 프로그램:0.0억"
@@ -133,7 +133,7 @@ class KeepPriorAfterQuoteTests(unittest.TestCase):
         def row(code):
             return ["x", f"'{code}"] + [""] * 24 + [self.MISSING, "", "시간외 미확인"] + [""] * 6
         results = [row("005930"), row("000660"), row("035420")]
-        ns = dict(NS, helper_sheet=Sheet(), results=results,
+        ns = dict(NS, helper_sheet=Sheet(), results=results, _skip_helper_update=False,
                   now_time=datetime.datetime(2026, 10, 12, 7, 1, tzinfo=KST))
         exec(compile(ast.Module([block], []), "omakase.py", "exec"), ns)
         self.assertEqual(results[0][26:29], [self.OLD, "", "시간외(시장 미확인)"])
@@ -146,6 +146,149 @@ class KeepPriorAfterQuoteTests(unittest.TestCase):
         self.assertLess(src.index("if now_time.hour < 9:"), at)
         self.assertLess(at, src.index('helper_sheet.update(range_name="A1", values=helper_sheet_data'))
 
+
+
+# ── Codex 교차 검토 R1~R3 (2026-10-09, 사용자 승인) — 실제 소스 블록을 가짜 응답으로 실행한다 ──
+
+class _Telemetry:
+    def __init__(self):
+        self.notes = []
+
+    def note(self, feature, why, klass=None, code=""):
+        self.notes.append((feature, why))
+
+
+_FT = type("FT", (), {"CRITICAL": "critical"})
+
+
+def _append_block():
+    """`if new_rows:` 본문 중 append·재조회·판단까지(정렬·증거 저장 전)."""
+    node = next(n for n in ast.walk(TREE) if isinstance(n, ast.If) and ast.unparse(n.test) == "new_rows"
+                and any(isinstance(x, ast.Try) and "append_rows" in ast.unparse(x) for x in n.body))
+    k = next(i for i, x in enumerate(node.body)
+             if isinstance(x, ast.If) and ast.unparse(x.test) == "_append_err is not None")
+    return compile(ast.Module(node.body[:k + 1], []), "omakase.py", "exec")
+
+
+class AppendRecoveryR1Tests(unittest.TestCase):
+    ROWS = [["2026-10-12_차트TOP2_A"], ["2026-10-12_랜덤2_B"]]
+
+    def run_block(self, append_exc=None, stored=(), read_exc=None):
+        class Sheet:
+            def append_rows(self, rows, value_input_option=None):
+                if append_exc:
+                    raise append_exc
+
+            def col_values(self, i):
+                if read_exc:
+                    raise read_exc
+                return ["trade_id"] + list(stored)
+        ns = {"bt_sheet": Sheet(), "new_rows": self.ROWS, "TELEMETRY": _Telemetry(),
+              "feature_telemetry": _FT, "_ledger_expected": [], "_ledger_found": []}
+        exec(_append_block(), ns)
+        return ns
+
+    def test_timeout_after_server_stored_continues_with_same_batch(self):
+        ns = self.run_block(TimeoutError("응답 없음"), stored=[r[0] for r in self.ROWS])
+        self.assertIsInstance(ns["_append_err"], TimeoutError)
+        self.assertEqual(set(ns["_ledger_found"]), set(ns["_ledger_expected"]))
+
+    def test_partial_or_unreadable_after_error_still_fails(self):
+        with self.assertRaises(TimeoutError):
+            self.run_block(TimeoutError("응답 없음"), stored=[self.ROWS[0][0]])
+        with self.assertRaises(TimeoutError):
+            self.run_block(TimeoutError("응답 없음"), read_exc=ConnectionError("재조회 실패"))
+        with self.assertRaises(TimeoutError):
+            self.run_block(TimeoutError("응답 없음"), stored=[])
+
+    def test_normal_append_unchanged(self):
+        ns = self.run_block(stored=[r[0] for r in self.ROWS])
+        self.assertIsNone(ns["_append_err"])
+        self.assertEqual(ns["TELEMETRY"].notes, [])
+        ns = self.run_block(stored=[self.ROWS[0][0]])          # 누락은 예전처럼 계측만 하고 진행
+        self.assertEqual(ns["TELEMETRY"].notes[0][0], "ledger")
+
+
+class PreopenReadFailureR2Tests(unittest.TestCase):
+    OLD = KeepPriorAfterQuoteTests.OLD
+    MISSING = KeepPriorAfterQuoteTests.MISSING
+
+    def block(self):
+        fn = _fn("update_technical_data")
+        return next(n for n in ast.walk(fn) if isinstance(n, ast.If) and ast.unparse(n.test) == "now_time.hour < 9")
+
+    def row(self, code):
+        return ["x", f"'{code}"] + [""] * 24 + [self.MISSING, "", "시간외 미확인"] + [""] * 6
+
+    def run_block(self, sheet):
+        results = [self.row("005930")]
+        ns = dict(NS, helper_sheet=sheet, results=results, _skip_helper_update=False,
+                  now_time=datetime.datetime(2026, 10, 12, 7, 1, tzinfo=KST))
+        exec(compile(ast.Module([self.block()], []), "omakase.py", "exec"), ns)
+        return ns, results
+
+    def test_read_failure_skips_the_write_and_keeps_rows_untouched(self):
+        class Broken:
+            def get_all_values(self):
+                raise TimeoutError("시트 응답 없음")
+        ns, results = self.run_block(Broken())
+        self.assertTrue(ns["_skip_helper_update"])
+        self.assertEqual(results[0][26], self.MISSING)
+        src = ast.get_source_segment(SRC, _fn("update_technical_data"))
+        self.assertIn("_skip_helper_update = False", src)
+        skip_at = src.index("if _skip_helper_update:")
+        self.assertLess(skip_at, src.index('helper_sheet.update(range_name="A1"'))
+        self.assertLess(src.index("_skip_helper_update = False"), src.index("if now_time.hour < 9:"))
+
+    def test_nxt_column_is_kept_on_its_own(self):
+        nxt = "NXT 관측 (1,000원) [조회 2026-10-08T19:50:00+09:00; 체결시각 미확인]"
+
+        class Sheet:
+            def get_all_values(self_inner):
+                return [["h"] * 34, ["가", "005930"] + [""] * 24 + [self.MISSING, nxt, "시간외 미확인"] + [""] * 5]
+        ns, results = self.run_block(Sheet())
+        self.assertFalse(ns["_skip_helper_update"])
+        self.assertEqual(results[0][26], self.MISSING)        # AA 는 지킬 관측이 없다
+        self.assertEqual(results[0][27], nxt)                 # AB 는 따로 지킨다
+        self.assertEqual(results[0][28], "시간외 미확인")       # AC 는 AA 를 지킬 때만 되돌린다
+
+
+class ProgramFieldR3Tests(unittest.TestCase):
+    def run_block(self, payload=None, raises=None):
+        fn = _fn("analyze_single_stock")
+        block = next(n for n in ast.walk(fn) if isinstance(n, ast.If)
+                     and ast.unparse(n.test) == "KIS_TOKEN and KIS_APP_KEY and KIS_APP_SECRET")
+
+        class Resp:
+            def json(self_inner):
+                return payload
+
+        class Session:
+            def get(self_inner, *a, **k):
+                if raises:
+                    raise raises
+                return Resp()
+        ns = {"re": re, "KIS_TOKEN": "t", "KIS_APP_KEY": "k", "KIS_APP_SECRET": "s", "KIS_URL_BASE": "https://x",
+              "GLOBAL_SESSION": Session(), "code": "005930", "name": "가", "current_price": 10000,
+              "pgtr_ntby_eok": 0.0, "pgtr_ok": False}
+        exec(compile(ast.Module([block], []), "omakase.py", "exec"), ns)
+        return ns["pgtr_ok"], round(ns["pgtr_ntby_eok"], 4)
+
+    def test_missing_or_blank_field_is_not_a_successful_zero(self):
+        for out in ({}, {"pgtr_ntby_qty": ""}, {"pgtr_ntby_qty": None}, {"pgtr_ntby_qty": "N/A"}):
+            with self.subTest(out=out):
+                self.assertEqual(self.run_block({"rt_cd": "0", "output": out}), (False, 0.0))
+
+    def test_numbers_including_real_zero_are_successes(self):
+        cases = {"0": 0.0, 0: 0.0, "100": 0.01, "-1,000": -0.1, "+2,500": 0.25}
+        for qty, eok in cases.items():
+            with self.subTest(qty=qty):
+                self.assertEqual(self.run_block({"rt_cd": "0", "output": {"pgtr_ntby_qty": qty}}), (True, eok))
+
+    def test_failed_calls_stay_unknown(self):
+        self.assertEqual(self.run_block({"rt_cd": "1", "output": {"pgtr_ntby_qty": "100"}}), (False, 0.0))
+        self.assertEqual(self.run_block({"rt_cd": "0"}), (False, 0.0))            # output 없음 → 예외
+        self.assertEqual(self.run_block(raises=TimeoutError("x")), (False, 0.0))
 
 if __name__ == "__main__":
     unittest.main()
