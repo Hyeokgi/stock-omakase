@@ -943,6 +943,45 @@ def parse_price_num(value):
     cleaned = re.sub(r'[^0-9]', '', str(value))
     return int(cleaned) if cleaned else 0
 
+
+# 🔴 2026-10-09 (사용자 승인) — 그날 스캐너 진입은 **첫 적재 한 번**으로 고정한다.
+#    10/8 15:11 실행이 15:01 실행의 빈자리(랜덤2_배지 하루 2개 중 1)를 다른 시점의 후보로 채웠다.
+#    대조군이 15:15 에 다른 풀에서 진입했고, 그 실행의 영수증(저장 0행·degraded)이 그날 판정을 FAIL 로 만들었다.
+#    채널별로만 막으면 첫 적재 때 비어 있던 채널(예: 수급TOP2 후보 없음)이 뒤에 들어와 같은 일이 생긴다.
+#    리포트 채널은 analyst 가 같은 시트에 쓰므로 세지 않는다 — 스캐너 자신의 채널만 본다.
+SCANNER_ENTRY_CHANNELS = ("차트TOP2", "수급TOP2", "랜덤2", "랜덤2_배지", "지수벤치_KOSPI", "지수벤치_KOSDAQ")
+
+
+def scanner_entries_today(bt_rows, today_str):
+    """백테스트_로그(헤더 제외)에서 오늘 스캐너 채널로 이미 적재된 행 수."""
+    return sum(1 for row in bt_rows
+               if len(row) > 2 and str(row[1]).strip() == today_str
+               and str(row[2]).strip() in SCANNER_ENTRY_CHANNELS)
+
+
+# 프로그램 순매수 조회 실패 표시 — 실제 0.0억과 구분한다(analyze_single_stock 의 pgtr_ok).
+PROGRAM_UNKNOWN = "프로그램:미확인(조회 실패)"
+
+
+# 🔴 2026-10-09 (사용자 승인, Codex 진단) — 장 열기 전 재스캔이 전날 저녁 시간외 관측을 지우고 있었다.
+#    after_market_quotes 는 관측일이 '오늘' 이 아니면 결측을 돌려준다. 07:01~08:51 스캔은 날짜가 바뀐 뒤라
+#    전 종목이 결측이 되고, 그 값이 주가데이터_보조 AA 를 덮어 07:45 장전 브리핑이 전날 관측을 못 봤다.
+#    → 09시 전 재스캔이 결측을 얻었고, 이전 값이 **오늘보다 앞선 날짜가 찍힌 관측**이면 이전 값을 둔다.
+#    장중·장후 스캔은 그대로 덮는다(그날 거래가 없으면 결측이 맞다). 선정 점수에는 쓰이지 않는 칸이다.
+AFTER_QUOTE_MISSING = ("", "미확인(당일 시간외 시세 없음)")
+_AFTER_STAMP = re.compile(r"\[(?:시장 미확인 / |조회 )(\d{4}-\d{2}-\d{2})[\sT]")
+
+
+def keep_prior_after_quote(new_value, old_value, now):
+    """09시 전 재스캔에서 이전 실행의 시간외 관측을 지켜야 하면 True."""
+    if now.hour >= 9 or str(new_value).strip() not in AFTER_QUOTE_MISSING:
+        return False
+    old = str(old_value).strip()
+    m = _AFTER_STAMP.search(old)
+    return (not old.startswith("미확인") and m is not None
+            and m.group(1) < now.strftime("%Y-%m-%d"))
+
+
 def find_key(data, key):
     if isinstance(data, dict):
         if key in data: return data[key]
@@ -1975,6 +2014,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
             if valid_days >= 5: break
         
         pgtr_ntby_eok = 0.0  
+        # 🔴 2026-10-09 (사용자 승인, Codex 진단) — 조회 실패(토큰 없음·rt_cd≠0·예외)도 0.0억으로 남아
+        #    실제 0 과 구분되지 않았다. 점수 계산은 지금처럼 0 을 쓰고(선정 불변), **표시만** 미확인으로 바꾼다.
+        pgtr_ok = False
         if KIS_TOKEN and KIS_APP_KEY and KIS_APP_SECRET:
             try:
                 kis_h = {"authorization": f"Bearer {KIS_TOKEN}", "appkey": KIS_APP_KEY, "appsecret": KIS_APP_SECRET, "custtype": "P", "tr_id": "FHKST01010100"}
@@ -1983,6 +2025,7 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
                     out = kis_res["output"]
                     pgtr_qty = int(str(out.get("pgtr_ntby_qty", "0")).replace(",", "").replace("+", "") or "0")
                     pgtr_ntby_eok = (pgtr_qty * current_price) / 100_000_000
+                    pgtr_ok = True
             except Exception as e:
                 print(f"⚠️ [KIS pgtr Exception for {name}] {e}")
 
@@ -2002,6 +2045,9 @@ def analyze_single_stock(name, code, is_warning_market, theme_rank_dict, all_the
         elif smi_ratio >= 2.5 and not pgtr_direction: program_text = f"⚠️ [수급강도 혼조] {smi_ratio:.1f}배 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
         elif smi_ratio <= 0.4: program_text = f"💤 [수급강도 절벽] {smi_ratio:.1f}배 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
         else: program_text = f"⚪ [수급강도 평년] {smi_ratio:.1f}배 / 프로그램:{pgtr_sign}{pgtr_ntby_eok:.1f}억"
+        if not pgtr_ok:
+            # 수급강도 라벨([…])은 그대로 둔다 — V2 점수가 이 라벨을 읽는다
+            program_text = program_text.rsplit(" / 프로그램:", 1)[0] + " / " + PROGRAM_UNKNOWN
             
         acc_i_buy_eok = acc_i_buy_won / 100_000_000
         acc_f_buy_eok = acc_f_buy_won / 100_000_000
@@ -2803,6 +2849,23 @@ def update_technical_data(df_theme, all_theme_map):
         try: helper_sheet = doc.worksheet("주가데이터_보조")
         except Exception: helper_sheet = doc.add_worksheet(title="주가데이터_보조", rows="150", cols="33")
 
+        # 🔴 2026-10-09 — 09시 전 재스캔은 전날 저녁 시간외 관측을 지킨다(keep_prior_after_quote 주석).
+        #    읽기에 실패하면 예전처럼 이번 스캔 값으로 덮는다 — 보존은 표시용이라 수집을 멈출 이유가 아니다.
+        if now_time.hour < 9:
+            try:
+                _prev_after = {str(row[1]).replace("'", "").strip().zfill(6): row
+                               for row in helper_sheet.get_all_values()[1:]
+                               if len(row) > 28 and str(row[1]).strip()}
+                _kept = 0
+                for r in results:
+                    _old = _prev_after.get(str(r[1]).replace("'", "").strip().zfill(6))
+                    if _old and len(r) > 28 and keep_prior_after_quote(r[26], _old[26], now_time):
+                        r[26], r[27], r[28] = _old[26], _old[27], _old[28]
+                        _kept += 1
+                print(f"🌙 [시간외 보존] 09시 전 재스캔 — 전날 관측 {_kept}종목 유지")
+            except Exception as e:
+                print(f"⚠️ [시간외 보존 생략 — 이번 스캔 값으로 덮는다] {type(e).__name__}: {e}")
+
         # 🏛️ [2026-09-14 제도 개편] '시간외단일가' 시장이 폐지되고 애프터마켓
         #    (16:00~20:00 실시간 접속매매)으로 대체됐다. 17:50 샘플은 더 이상
         #    '단일가'가 아니므로 라벨을 중립적인 '장마감후가격'으로 바꿨다.
@@ -3374,7 +3437,16 @@ def update_technical_data(df_theme, all_theme_map):
                         ch = str(row[2]).strip()
                         channel_today_count[ch] = channel_today_count.get(ch, 0) + 1
 
+                # 🔴 2026-10-09 — 오늘 스캐너 진입이 이미 있으면 이번 실행은 진입을 더하지 않는다(SCANNER_ENTRY_CHANNELS 주석).
+                #    새 행이 없으면 영수증도 남지 않으므로, 그날 판정은 첫 적재 실행의 영수증으로 한다.
+                _entered_today = scanner_entries_today(bt_data[1:], today_str)
+                if _entered_today:
+                    print(f"⏭ [백테스트 V6 Step1] 오늘 스캐너 진입 {_entered_today}행이 이미 있다 — "
+                          f"첫 적재 시점으로 고정하고 추가하지 않는다")
+
                 def add_channel(channel, picks, cap=2):
+                    if _entered_today:
+                        return
                     for r in picks:
                         if channel_today_count.get(channel, 0) >= cap:
                             break   # 오늘 이 채널 cap개 이미 확보 → 추가 실행의 중복 적재 차단(랜덤 폭증 버그 픽스)
@@ -3405,14 +3477,14 @@ def update_technical_data(df_theme, all_theme_map):
                 # 지수벤치(KOSPI·KOSDAQ 각 1행/일) — 순수 지수보유 베이스라인. 둘을 별개 채널로 분리해서
                 # 코스피·코스닥 이격이 클 때 나란히 비교할 수 있게 함(기존엔 KOSPI 하나만 있었음).
                 tid_idx = f"{today_str}_지수벤치_KOSPI"
-                if tid_idx not in existing_ids:
+                if not _entered_today and tid_idx not in existing_ids:
                     ixc = idx_close_cache.get("KOSPI", 0.0)
                     new_rows.append([tid_idx, today_str, "지수벤치_KOSPI", "KOSPI", "'KOSPI", "", "지수보유", entry_stage, concentration_str,
                                      "", "", "", "", "KOSPI", ixc, ixc] + [""] * 16 + ["", "", "", ""])
                     existing_ids.add(tid_idx)
 
                 tid_idx_kq = f"{today_str}_지수벤치_KOSDAQ"
-                if tid_idx_kq not in existing_ids:
+                if not _entered_today and tid_idx_kq not in existing_ids:
                     ixc_kq = idx_close_cache.get("KOSDAQ", 0.0)
                     new_rows.append([tid_idx_kq, today_str, "지수벤치_KOSDAQ", "KOSDAQ", "'KOSDAQ", "", "지수보유", entry_stage, concentration_str,
                                      "", "", "", "", "KOSDAQ", ixc_kq, ixc_kq] + [""] * 16 + ["", "", "", ""])
