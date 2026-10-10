@@ -75,6 +75,7 @@ class TmpDir(unittest.TestCase):
     def run_bars(self, day="2026-10-06", fetch_fn=None, codes=("005930", "000660"), up=None, **kw):
         up = up or Up()
         patches = [mock.patch.object(R, "universe", return_value=list(codes)),
+                   mock.patch.object(R, "registry_codes", return_value=[]),
                    mock.patch.object(R, "backfill_universe", return_value=list(kw.pop("rest", []))),
                    mock.patch.object(R, "INDEXES", ())]
         if fetch_fn:
@@ -223,6 +224,18 @@ class CodexReviewR1toR6(TmpDir):
         self.assertTrue(set(R.backfill_universe(upto=days[-1])) <= everything)
         self.assertEqual(len(first) + len(rest), len(everything), "중복 없이")
 
+    def test_registry_codes_join_the_priority_section(self):
+        """2026-10-10 사용자 결정 — 우선 구간에 등록부 추적 종목을 더한다(교체 아님, 전체 집합은 그대로)."""
+        days = R.snapshot_days()
+        first, rest = R.plan_order(days[-1])
+        reg = set(R.registry_codes(days[-1]))
+        self.assertTrue(reg, "등록부 추적 종목이 있어야 한다")
+        self.assertTrue(reg <= set(first), "등록부 종목은 모두 우선 구간에")
+        self.assertTrue(set(R.universe(days[-1])) - set(R.INDEXES) <= set(first), "기존 우선 구간은 그대로")
+        with mock.patch.object(R, "registry_codes", return_value=[]):
+            first0, rest0 = R.plan_order(days[-1])
+        self.assertEqual(set(first) | set(rest), set(first0) | set(rest0), "받는 종목 전체는 바뀌지 않는다")
+
     def test_R2_midnight_run_keeps_finished_previous_session(self):
         now = datetime.datetime(2026, 10, 7, 1, 0, tzinfo=KST)
         self.assertEqual(R.target_day(now), "2026-10-06")
@@ -348,6 +361,25 @@ class CodexR7toR11(TmpDir):
         s = R.theme_obs_summary("2026-10-06", self.d)
         self.assertIn("15:05 판단 화면 결측 — 그 시각 최신은 14시본(대체하지 않음)", s)
         self.assertIn("15시본 첫 확보 15:06:00", s)
+
+    def test_v2_rule_uses_latest_same_day_screen_from_1012_only(self):
+        """2026-10-10 사전 고정 v2 — 10/12 부터 15:05 까지 받은 가장 최근 당일 화면. 그 전 날짜는 v1 그대로."""
+        import hyeoks_theme_source_collect as C
+
+        def row(day, t, hour, cls, sday=None):
+            return {"day": day, "runId": "r", "requestedAt": t, "receivedAt": t, "parsedAt": t, "http": 200,
+                    "class": cls, "header": f"{sday or day} {hour}시", "screenDay": sday or day, "screenHour": hour,
+                    "cards": 1, "rows": 1, "digest": f"{day}{hour}", "privateFile": "f"}
+        C.append_obs([row("2026-10-12", "2026-10-12T12:10:00+09:00", 12, "첫관측"),
+                      row("2026-10-12", "2026-10-12T14:08:00+09:00", 14, "갱신"),
+                      row("2026-10-12", "2026-10-12T15:06:00+09:00", 15, "갱신"),          # 15:05 뒤 — 소급 금지
+                      row("2026-10-13", "2026-10-13T15:00:00+09:00", 15, "날짜불일치", sday="2026-10-12"),
+                      row("2026-10-08", "2026-10-08T14:08:00+09:00", 14, "갱신")], self.d)
+        s = R.theme_obs_summary("2026-10-12", self.d)
+        self.assertIn("15:05 판단 화면 14시본 (14:08:00 확보 · 화면 기준 65분 전) [규칙 v2]", s)
+        self.assertIn("15시본 첫 확보 15:06:00", s)
+        self.assertIn("결측 — 15:05 전 당일 화면 없음 [규칙 v2]", R.theme_obs_summary("2026-10-13", self.d))
+        self.assertIn("결측 — 그 시각 최신은 14시본(대체하지 않음)", R.theme_obs_summary("2026-10-08", self.d))
 
     def test_R9_bar_receipts_have_sha256_and_drive_id(self):
         out, up = self.run_bars(fetch_fn=lambda c, n, g: ([bar()], ""))

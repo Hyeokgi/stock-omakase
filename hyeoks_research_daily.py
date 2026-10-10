@@ -208,10 +208,29 @@ def _rotate(xs, k):
     return xs[k:] + xs[:k]
 
 
+def registry_codes(day, snap_dir=SNAP_DIR):
+    """에피소드 등록부의 추적 종목 — 미종결 에피소드 종목 + 그 주 대조군 + 그날 보조 대조군.
+    🔴 2026-10-10 사용자 결정(허브 #14): 연구 일봉 우선 구간에 더한다(교체 아님). 배지가 사라지거나
+       거래대금이 줄어 그날 A 에서 빠진 대장·대조군도 먼저 받는다. 실패하면 빈 목록 — 우선 구간만 예전대로."""
+    try:
+        import hyeoks_episode_registry as E
+        days = E.load_obs(snap_dir, until=day)
+        if not days:
+            return []
+        episodes, _, _, _ = E.build(days)
+        secondary, _ = E.secondary_controls(days[-1])
+        return E.tracked_codes(episodes, secondary)
+    except Exception as e:
+        print(f"⚠️ 에피소드 등록부 우선 구간 생략 — {type(e).__name__}: {str(e)[:80]}")
+        return []
+
+
 def plan_order(day, snap_dir=SNAP_DIR, offset=0, priority_offset=0):
     """(우선 목록, 나머지 목록). 지수는 맨 앞 고정, 우선 종목은 `priority_offset`, 나머지는 `offset` 부터 돌린다.
-    🔴 Codex R7 — 우선 구간 뒤쪽이 매번 예산에 걸려 영원히 밀리지 않게 우선 구간도 회전한다."""
-    prio = [c for c in universe(day, snap_dir) if c not in INDEXES]
+    🔴 Codex R7 — 우선 구간 뒤쪽이 매번 예산에 걸려 영원히 밀리지 않게 우선 구간도 회전한다.
+    우선 = 그날 A ∪ 최근 대장 후보 ∪ 에피소드 등록부 추적 종목(2026-10-10)."""
+    prio = [c for c in sorted(set(universe(day, snap_dir)) | set(registry_codes(day, snap_dir)))
+            if c not in INDEXES]
     first = list(INDEXES) + _rotate(prio, priority_offset)
     seen = set(first)
     rest = _rotate([c for c in backfill_universe(snap_dir, upto=day) if c not in seen], offset)
@@ -447,6 +466,10 @@ def load_run(day, run_id, runs_dir=RUNS_DIR):
 
 
 DECISION_HM = "15:05"   # 종베 판단 시각 (운영대전제)
+# 🔴 2026-10-10 사전 고정 v2(사용자 결정) — docs/사전고정_2026-10-10_stockinfo7_판단화면_v2.md.
+#    15시본은 10/6~10/8 사흘 모두 없었다(화면 시각이 매일 다름). 이 날짜부터는 15:05 까지 파싱이 끝난
+#    **가장 최근 당일 화면**을 시각과 함께 쓴다. 그 전 날짜는 v1(15시본만) 그대로 — 소급하지 않는다.
+STOCKINFO7_RULE_V2_FROM = "2026-10-12"
 
 
 def theme_obs_summary(day, runs_dir=RUNS_DIR):
@@ -481,7 +504,16 @@ def theme_obs_summary(day, runs_dir=RUNS_DIR):
     cutoff = f"{day}T{DECISION_HM}:00"
     usable = [r for r in valid if sday_hour(r)[0] == day and ready(r) and ready(r) <= cutoff]
     latest = max(usable, key=ready) if usable else None
-    if latest and sday_hour(latest)[1] == 15:
+    if day >= STOCKINFO7_RULE_V2_FROM:
+        hour = sday_hour(latest)[1] if latest else None
+        if latest and hour is not None:
+            hh, mm = (int(x) for x in DECISION_HM.split(":"))
+            age = (hh * 60 + mm) - hour * 60          # 화면 기준 시각이 15:05 보다 몇 분 앞서나
+            main_line = (f"{DECISION_HM} 판단 화면 {hour}시본 ({ready(latest)[11:19]} 확보 · "
+                         f"화면 기준 {age}분 전) [규칙 v2]")
+        else:
+            main_line = f"{DECISION_HM} 판단 화면 결측 — {DECISION_HM} 전 당일 화면 없음 [규칙 v2]"
+    elif latest and sday_hour(latest)[1] == 15:
         main_line = f"{DECISION_HM} 판단 화면 15시본 ({ready(latest)[11:19]} 확보)"
     elif latest:
         main_line = f"{DECISION_HM} 판단 화면 결측 — 그 시각 최신은 {sday_hour(latest)[1]}시본(대체하지 않음)"
