@@ -177,8 +177,9 @@ def main(argv=None, env=None, get=None, clock=None, sleep=time.sleep, uploader=N
     if not ok:
         print(f"ℹ️ {day} 은 예정 거래일이 아니다{(' — ' + why) if why else ''} — 수집 생략")
         return 0
-    hh, mm = (int(x) for x in a.until.split(":"))
-    until = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    until, capped = R.poll_deadline(now, a.until)
+    if capped:
+        print(f"ℹ️ 깃허브 작업 한도 때문에 {until:%H:%M} 까지만 조회한다 — 뒤 구간은 다음 실행이 맡는다")
     if now > until:
         print(f"ℹ️ {a.until} 이 지났다 — 앞 실행이 끝냈거나 늦게 시작했다. 아무것도 하지 않는다")
         return 0

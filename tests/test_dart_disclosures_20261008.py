@@ -121,6 +121,25 @@ class Dart(unittest.TestCase):
         self.assertEqual(out, 0)
 
 
+class JobCapTests(unittest.TestCase):
+    """2026-10-10 — 깃허브 작업 한도(360분) 안에서 저장까지 끝나게 조회 끝 시각을 묶는다."""
+
+    def test_long_runs_are_capped_short_runs_are_not(self):
+        until, capped = D.R.poll_deadline(at("09:00"), "15:08")
+        self.assertEqual((until.strftime("%H:%M"), capped), ("14:40", True))      # 09:00 + 340분
+        until, capped = D.R.poll_deadline(at("09:05"), "12:15")                   # GAS 아침 실행
+        self.assertEqual((until.strftime("%H:%M"), capped), ("12:15", False))
+        until, capped = D.R.poll_deadline(at("12:25"), "15:08")                   # 12:25 연동 오후 실행
+        self.assertEqual((until.strftime("%H:%M"), capped), ("15:08", False))
+
+    def test_both_collectors_use_the_cap(self):
+        import inspect
+        import hyeoks_kis_news as N
+        for mod in (D, N):
+            with self.subTest(mod=mod.__name__):
+                self.assertIn("R.poll_deadline(now, a.until)", inspect.getsource(mod.main))
+
+
 if __name__ == "__main__":
     unittest.main()
 

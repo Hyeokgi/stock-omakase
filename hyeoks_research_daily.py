@@ -611,6 +611,20 @@ def send(text, post, token):
         return False, type(e).__name__        # 토큰이 들어간 URL 을 오류 문구에 남기지 않는다
 
 
+# 🔴 2026-10-10 — 깃허브 작업은 최대 360분이다. 09시 전후에 시작해 15:08 까지 도는 장중 수집(DART·한투 뉴스)은
+#    한도에 걸려 저장 전에 죽을 수 있다. 조회 끝 시각을 시작 + 340분(설치·저장·커밋 몫 20분 제외)으로 묶는다.
+#    잘린 뒤 구간은 다음 실행(12:25 stockinfo7 연동 등)이 맡는다.
+JOB_CAP_MIN = 340
+
+
+def poll_deadline(now, hhmm, cap_min=JOB_CAP_MIN):
+    """(조회 끝 시각, 한도 때문에 잘렸는지). 끝 = min(오늘 hhmm, now + cap_min분)."""
+    hh, mm = (int(x) for x in hhmm.split(":"))
+    until = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    cap = now + datetime.timedelta(minutes=cap_min)
+    return (cap, True) if until > cap else (until, False)
+
+
 def trading_day(day):
     from hyeoks_trading_calendar import scheduled_session
     try:
