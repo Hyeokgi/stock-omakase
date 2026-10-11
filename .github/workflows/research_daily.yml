@@ -74,6 +74,14 @@ jobs:
         mkdir -p data/research_runs
         python hyeoks_research_daily.py --bars ${TARGET_DATE:+--date "$TARGET_DATE"}
 
+    # 대장 정의 v2 후보 — 현행 정의와 나란히 구조만(건수·지문) 기록한다. 수익률·이후 가격은 계산하지 않는다.
+    # docs/사전등록_2026-10-11_대장정의_v2_후보.md §3. 공개 스냅샷에서 매번 처음부터 다시 계산하므로(결정적)
+    # 하루 빠져도 다음 실행이 메운다. 실패해도 일봉 수집·보고는 계속한다. 출력은 아래 공개 요약 커밋에 함께 들어간다.
+    - name: 🏷️ 대장 정의 v2 구조 기록
+      if: always()
+      continue-on-error: true
+      run: python hyeoks_leader_def_v2.py --record
+
     # 수집이 FAILED 로 끝나도 공개 요약(건수·상태·파일 이름 — 가격 없음)은 남긴다.
     - name: 💾 공개 요약 커밋
       id: archive
