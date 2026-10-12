@@ -224,15 +224,25 @@ class CohortGateTests(unittest.TestCase):
             self.assertEqual(rule["start"], "2026-10-12")
 
 
+def _have_commits(*shas):
+    """체크아웃에 그 커밋들이 있나. CI 의 기본 checkout 은 얕아서(fetch-depth 1) 과거 커밋이 없다.
+    2026-10-13 — 이 확인 없이 True/False 를 기대해 main CI 가 실패했다. 없으면 git_contains 는 None(확인 불가)이어야 한다."""
+    import subprocess
+    return all(subprocess.run(["git", "cat-file", "-e", f"{s}^{{commit}}"], capture_output=True).returncode == 0
+               for s in shas)
+
+
 class GitLineageTests(unittest.TestCase):
     def test_known_boundary_is_ancestor_of_head(self):
         import subprocess
         head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
                               text=True).stdout.strip()
-        self.assertIs(v.git_contains(head[:8], "c623b5c"), True)
+        expect = True if _have_commits(head, "c623b5c") else None
+        self.assertIs(v.git_contains(head[:8], "c623b5c"), expect)
 
     def test_older_commit_does_not_contain_boundary(self):
-        self.assertIs(v.git_contains("b4ededd", "c623b5c"), False)
+        expect = False if _have_commits("b4ededd", "c623b5c") else None
+        self.assertIs(v.git_contains("b4ededd", "c623b5c"), expect)
 
     def test_unknown_sha_is_none_not_false(self):
         self.assertIsNone(v.git_contains("deadbeef", "c623b5c"))
