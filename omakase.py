@@ -3556,7 +3556,13 @@ def update_technical_data(df_theme, all_theme_map):
                     if set(_ledger_found) != set(_ledger_expected):
                         raise _append_err
                     print("✅ [백테스트 V6 Step1] 응답 오류였지만 원장에 모두 있다 — 같은 묶음으로 증거 저장을 이어 간다")
-                sort_and_format_backtest_log(doc, bt_sheet)  # 🆕 새 행이 추가된 직후에만 정렬+서식 재적용
+                # 🔴 2026-10-13 Codex P1 — 정렬·서식은 보기용이다. 그 함수의 첫 조회(get_all_values)가 try 밖이라
+                #    예외가 나면 바깥 Step1 except 로 빠져 아래 Feature Store·순위 풀·영수증이 통째로 생략됐다.
+                #    아래 증거는 메모리의 적재 결과(new_rows·results)를 쓰므로 정렬 실패와 무관하다 — 감싸고 계속한다.
+                try:
+                    sort_and_format_backtest_log(doc, bt_sheet)  # 🆕 새 행이 추가된 직후에만 정렬+서식 재적용
+                except Exception as _sort_e:
+                    print(f"⚠️ [정렬·서식 실패 — 증거 저장은 계속] {type(_sort_e).__name__}: {_sort_e}")
 
                 # 🗂️ 순위 풀 — **append 가 성공한 뒤에만** 남긴다(위 주석 참조).
                 #    picked 는 메모리의 top2 가 아니라 **실제로 원장에 들어간 행**에서 뽑는다.
@@ -3592,7 +3598,14 @@ def update_technical_data(df_theme, all_theme_map):
                         exclusion=_excl, band=_band)
                     _pool_dropped[_ch] = len(rank_pool.DROPPED)   # P0-4 채널별 누적
                     if _pok:
-                        _pool_rows += rank_pool.recorded_count(today_str, _ch, _pool_runid)
+                        # 🔴 2026-10-13 Codex P1 — 건수 되읽기(파일 open)가 실패해도 영수증 발행을 건너뛰지 않는다.
+                        #    대신 조용하지도 않다 — 계측에 남겨 영수증이 degraded 로 정직하게 표시된다.
+                        try:
+                            _pool_rows += rank_pool.recorded_count(today_str, _ch, _pool_runid)
+                        except Exception as _cnt_e:
+                            TELEMETRY.note('pool_row', f'순위 풀 건수 확인 실패 {type(_cnt_e).__name__}',
+                                           feature_telemetry.OBSERVE)
+                            print(f"   ⚠️ [순위 풀 건수 확인 실패 — 영수증은 계속] {_ch}: {type(_cnt_e).__name__}")
                         print(f"   🗂️ 순위 풀 보존 — {_pmsg}")
                     elif _pmsg.startswith("기록 실패"):
                         TELEMETRY.note('pool_row', '순위 풀 기록 실패',
