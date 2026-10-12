@@ -761,6 +761,181 @@ def holm(pairs, m=None, alpha=0.05):
     return ok
 
 
+# ── 정책 결속 (R1-1 · 2026-10-13) ─────────────────────────────────────────
+# Codex 결정 R1(2026-10-11, 사용자 위임) · 전략로드맵 §3-5-7 U3.
+# 원장(`백테스트_로그`)에는 policy_id·run_id 열이 없다. 그래서 원장 행에 아무것도
+# 쓰지 않고, **판정 단계에서** 외부 증거를 엮어 행마다 결속을 따로 만든다.
+#   원장 행(trade_id·진입일·채널·종목코드)
+#     ↔ scanner 영수증(found_trade_ids · today_str · run_id · code_sha)
+#     ↔ 후보 풀 행(같은 날·채널·종목, picked=Y · 같은 run_id·code_sha · policy_id)
+#     ↔ 실행 코드 계보(경계 커밋을 포함하는가)
+# 하나라도 빠지거나·어긋나거나·여러 갈래면 그 행은 결속 실패다.
+# **날짜나 정책 문자열만으로 인증하지 않는다.** policy_id 는 '실제 설정' 증거로만 쓰고
+# (같은 cohort 안에서 다르면 혼합), 원본 값을 바꾸거나 덮어쓰지 않는다.
+POLICY_UNVERIFIED = "channel_policy_unverified"
+# R5 — 10/9 첫 적재 제한(`c623b5c`)은 차트TOP2·수급TOP2 의 새 cohort 경계다.
+# R4 — 대조군 랜덤2 도 같은 제한을 받으므로 같은 경계를 탄다.
+# start 는 날짜로 고른 값이 아니라 영수증 증거로 확정된 첫 적용 표본일이다
+# (2026-10-12 run 38210556325 · SHA 9e87678 — docs/collaboration/2026-10-12_Claude_R5_첫적용_증거.md).
+# 리포트 채널 경계는 R4 점검 마감 전이라 아직 없다 → cohort_rule_missing 으로 닫힌다.
+COHORT_BOUNDARY = {
+    "차트TOP2": {"boundary": "c623b5c", "start": "2026-10-12",
+                 "cohort": "chart-top2/first-load-day"},
+    "수급TOP2": {"boundary": "c623b5c", "start": "2026-10-12",
+                 "cohort": "supply-top2/first-load-day"},
+    "랜덤2": {"boundary": "c623b5c", "start": "2026-10-12",
+              "cohort": "random2/first-load-day"},
+}
+POOL_CHANNELS = ("차트TOP2", "수급TOP2")   # rank_pool.csv 에 선정 행이 남는 채널
+C_CODE = 4                                 # BT_HEADER 종목코드
+
+
+def _gated_channels():
+    return set(CONFIRMATORY) | set(EXPLORATORY) | {CONTROL}
+
+
+def git_contains(code_sha, boundary, repo=None):
+    """실행 코드 `code_sha` 가 `boundary` 커밋을 포함하나. True/False/None(확인 불가).
+
+    얕은 clone·모르는 SHA 는 None 이다. None 을 False 로 바꾸지 않는다 —
+    '이전 코드' 와 '모름' 은 다른 결속 실패 사유다."""
+    import re, subprocess
+    hexre = re.compile(r"[0-9a-f]{7,40}")
+    if not (isinstance(code_sha, str) and hexre.fullmatch(code_sha)
+            and isinstance(boundary, str) and hexre.fullmatch(boundary)):
+        return None
+    try:
+        rc = subprocess.run(["git", "merge-base", "--is-ancestor", boundary, code_sha],
+                            cwd=repo or os.path.dirname(os.path.abspath(__file__)),
+                            capture_output=True, timeout=30).returncode
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return {0: True, 1: False}.get(rc)
+
+
+def bind_policy(rows, receipts, pool_rows, contains):
+    """원장 행 번호 → 결속 결과. 판정 대상 채널(확증·탐색·대조군) 행만 다룬다.
+
+    결과: {"channel","date","trade_id","ok","reason","cohort","run_id","code_sha","policy_id"}
+    cohort 는 (경계 cohort 이름, 후보 풀 policy_id 원문) — 풀이 없는 채널은 policy_id "".
+    """
+    by_tid = {}
+    for rec in receipts or []:
+        if rec.get("kind") != "scanner":
+            continue
+        led = (rec.get("payload") or {}).get("ledger") or {}
+        for tid in led.get("found_trade_ids") or []:
+            by_tid.setdefault(str(tid), []).append(rec)
+    gated = _gated_channels()
+    out = {}
+    for i, r in enumerate(rows[1:], start=1):
+        if len(r) <= C_CHANNEL:
+            continue
+        ch = str(r[C_CHANNEL]).strip()
+        if ch not in gated:
+            continue
+        tid = str(r[C_TRADE_ID]).strip()
+        day = str(r[C_ENTRY_DATE]).strip()[:10]
+        b = {"channel": ch, "date": day, "trade_id": tid, "ok": False, "reason": "",
+             "cohort": None, "run_id": "", "code_sha": "", "policy_id": ""}
+        out[i] = b
+        rule = COHORT_BOUNDARY.get(ch)
+        if rule is None:
+            b["reason"] = "cohort_rule_missing"
+            continue
+        if not tid:
+            b["reason"] = "trade_id_missing"
+            continue
+        runs = {(str(x.get("run_id", "")), str(x.get("code_sha", ""))): x
+                for x in by_tid.get(tid, [])}
+        if not runs:
+            b["reason"] = "receipt_missing"
+            continue
+        if len(runs) > 1:
+            b["reason"] = "receipt_ambiguous"
+            continue
+        (run, sha), rec = next(iter(runs.items()))
+        b["run_id"], b["code_sha"] = run, sha
+        p = rec.get("payload") or {}
+        if str(p.get("today_str") or rec.get("cycle_date") or "") != day:
+            b["reason"] = "receipt_date_mismatch"
+            continue
+        if not sha:
+            b["reason"] = "code_sha_missing"
+            continue
+        lineage = contains(sha, rule["boundary"])
+        if lineage is None:
+            b["reason"] = "code_ancestry_unknown"
+            continue
+        if lineage is False:
+            b["reason"] = "pre_boundary_code"
+            continue
+        policy = ""
+        if ch in POOL_CHANNELS:
+            code = str(r[C_CODE]).strip() if len(r) > C_CODE else ""
+            hits = {(str(x.get("run_id", "")), str(x.get("code_sha", "")),
+                     str(x.get("policy_id", "")))
+                    for x in pool_rows or []
+                    if str(x.get("date", "")) == day and str(x.get("channel", "")) == ch
+                    and str(x.get("code", "")) == code and str(x.get("picked", "")) == "Y"}
+            if not hits:
+                b["reason"] = "pool_row_missing"
+                continue
+            if len(hits) > 1:
+                b["reason"] = "pool_row_ambiguous"
+                continue
+            prun, psha, policy = next(iter(hits))
+            if (prun, psha) != (run, sha):
+                b["reason"] = "pool_receipt_conflict"
+                continue
+        b.update(ok=True, policy_id=policy, cohort=(rule["cohort"], policy))
+    return out
+
+
+def _cohort_side(bindings, ch):
+    """한 채널의 cohort 상태. 경계 이전 행은 범위 밖(합치지 않음), 이후 행은 전부 결속돼야 한다."""
+    side = {"channel": ch, "open": False, "reason": "", "cohort": None,
+            "in_scope": 0, "prior_cohort": 0, "failures": {}}
+    rule = COHORT_BOUNDARY.get(ch)
+    if rule is None:
+        side["reason"] = "cohort_rule_missing"
+        return side
+    keys = set()
+    for b in bindings.values():
+        if b["channel"] != ch:
+            continue
+        try:
+            day = datetime.date.fromisoformat(b["date"]).isoformat()
+        except ValueError:
+            day = ""
+        if day and day < rule["start"]:
+            side["prior_cohort"] += 1
+            continue
+        side["in_scope"] += 1
+        if not day:
+            side["failures"]["entry_date_invalid"] = side["failures"].get("entry_date_invalid", 0) + 1
+        elif not b["ok"]:
+            side["failures"][b["reason"]] = side["failures"].get(b["reason"], 0) + 1
+        else:
+            keys.add(b["cohort"])
+    if side["failures"]:
+        side["reason"] = POLICY_UNVERIFIED
+    elif len(keys) > 1:
+        side["reason"] = "cohort_mixed"
+    elif not keys:
+        side["reason"] = "no_rows_in_cohort"
+    else:
+        side["open"], side["cohort"] = True, next(iter(keys))
+    return side
+
+
+def cohort_gate(bindings, ch, ctrl=CONTROL):
+    """채널과 대조군이 **둘 다** 단일 cohort 로 결속돼야 연다. 사유는 채널 쪽을 먼저 적는다."""
+    a, c = _cohort_side(bindings, ch), _cohort_side(bindings, ctrl)
+    reason = a["reason"] or c["reason"]
+    return {"open": a["open"] and c["open"], "reason": reason, "channel": a, "control": c}
+
+
 # ── 리포트 ────────────────────────────────────────────────────────────────
 # §3-5-5 — 주력(탐색) 갈래의 1차 문턱 감시 대상. §0-1 의 주력 정의를 따른다.
 EXPLORATORY = ("리포트TOP2_단기", "리포트TOP2_중기", "리포트TOP2_장기")
