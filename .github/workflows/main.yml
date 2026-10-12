@@ -87,6 +87,30 @@ jobs:
         if: always()
         run: python hyeoks_data_quality.py --check --spreadsheet-id 1BcZ2HtkjlArbEGcRcMo8uKG1-ZQ-kv0RvNiiLJFQzks
 
+      # 🧳 2026-10-13 — 스캐너 증거 사본(A). 아래 커밋 단계가 실패해도(9/18 14:41·14:51 유형)
+      #    이 회차가 만든 영수증·Feature Store·전수조사 파일이 artifact 로 14일 남는다.
+      #    판정에 쓰지 않는다(사용자 결정 C-b). 되살리기는 manifest 로 출처를 검증하는 별도 도구(B)가 한다.
+      #    🔴 두 단계가 실패해도 run 결론은 success 여야 한다 — Evidence Builder 가 scanner 영수증의
+      #    run 결론으로 no_unexplained_failure 를 정한다(Codex 10/13 P2). 그래서 continue-on-error·짧은 상한.
+      #    사본은 저장소 밖($RUNNER_TEMP)에 만들고 세 폴더의 변경 파일만 담는다 — secret.json 이 섞이지 않는다.
+      - name: 🧳 스캐너 증거 사본 준비
+        id: evidence
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 1
+        run: python .github/evidence_snapshot.py --out "$RUNNER_TEMP/scanner-evidence"
+
+      - name: 🧳 스캐너 증거 사본 올리기 (14일 보존)
+        if: always() && steps.evidence.outputs.files != '' && steps.evidence.outputs.files != '0'
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.evidence.outputs.name }}
+          path: ${{ runner.temp }}/scanner-evidence
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: 📊 타점 전수조사·후보 동결 보존
         # 스캐너는 10분마다 돌지만 기록은 하루 한 줄이다(14:40~15:10 KST, 날짜 멱등).
         # 그래서 이 스텝은 하루 144회 중 **1회만** 실제로 커밋하고 나머지는 즉시 끝난다.
