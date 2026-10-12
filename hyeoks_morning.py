@@ -539,110 +539,6 @@ def _generate_with_retry(client, prompt):
             else: raise e
     raise Exception("서버 응답 불가")
 
-def parse_ai_json(text):
-    try:
-        clean_text = text.replace('```json', '').replace('```', '').strip()
-        return json.loads(clean_text)
-    except:
-        try:
-            t_match = re.search(r'"target_price"\s*:\s*(\d+)', text)
-            s_match = re.search(r'"stop_loss"\s*:\s*(\d+)', text)
-            b_match = re.search(r'"briefing"\s*:\s*"([^"]+)"', text)
-            return {
-                "briefing": b_match.group(1) if b_match else "분석 결과 텍스트 오류",
-                "target_price": int(t_match.group(1)) if t_match else 0,
-                "stop_loss": int(s_match.group(1)) if s_match else 0
-            }
-        except:
-            return {"briefing": "응답 오류", "target_price": 0, "stop_loss": 0}
-
-def batch_generate_briefings():
-    print("🌅 [새벽 6시 배치] 전 종목 AI 브리핑 일괄 굽기 시작 (gemini-2.5-flash)...")
-    try:
-        gcp_creds_str = os.environ.get("GCP_CREDENTIALS")
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        if gcp_creds_str and len(gcp_creds_str.strip()) > 10:
-            creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(gcp_creds_str), scope)
-        else:
-            creds = ServiceAccountCredentials.from_json_keyfile_name("secret.json", scope)
-            
-        client_g = gspread.authorize(creds)
-        doc = client_g.open_by_url(SHEET_URL)
-        helper_sheet = doc.worksheet("주가데이터_보조")
-        
-        try: brief_db_sheet = doc.worksheet("브리핑_기록")
-        except: brief_db_sheet = doc.add_worksheet(title="브리핑_기록", rows="200", cols="5")
-        
-        tech_data = helper_sheet.get_all_values()[1:]
-        cands_list = []
-        
-        for r in tech_data:
-            if len(r) < 21: continue
-            name, code = str(r[0]).strip(), str(r[1]).replace("'", "").strip().zfill(6)
-            # 🔧 [수정] r[9](브리핑상태)가 아니라 r[8](마스터타점)을 읽어야 함 — 아래 제외 조건들이
-            #    전부 타점 분류 키워드('매매제한','관망' 등)인데 브리핑상태 텍스트("AI 브리핑 대기중" 등)에는
-            #    이 단어들이 안 나와서 사실상 아무것도 걸러지지 않고, Gemini에게도 엉뚱한 정보가 전달되고 있었음.
-            curr_p, tajeom_raw = str(r[2]).strip(), str(r[8]).strip()
-            seed_tag = str(r[25]).strip() if len(r) > 25 else "NORMAL"  # ⚠️ [확인 필요] 이 칸도 실제로 SEED/NORMAL 표기가 맞는지 별도 확인 필요(아래 설명 참고)
-            
-            if re.search(r'매매제한|매수금지|자본잠식|딱지|데이터 부족|3년적자|스코어 미달|관망', tajeom_raw): continue 
-            tajeom_clean = tajeom_raw.split('⚠️')[0].strip().split('🎯')[0].strip()
-            
-            cands_list.append({
-                'name': name, 'code': code, 'curr_p': curr_p, 'tajeom': tajeom_clean, 'type': seed_tag
-            })
-
-        client_gemini = genai.Client(api_key=GEMINI_API_KEY)
-        results_to_save = [["종목코드", "브리핑", "목표가", "손절가"]]
-        
-        print(f"총 {len(cands_list)}개 타점 유효 종목 브리핑 생성 시작...")
-        
-        for cand in cands_list:
-            print(f" - [{cand['name']}] 브리핑 굽는 중...")
-            
-            if cand['type'] == "SEED":
-                guide_text = "중장기 모아가기 전략. 차트상 60일선, 기준봉 시가, 쌍바닥 등 의미있는 넉넉한 하단 지지선을 '손절가'로 명확한 가격(원)으로 제시하고, 하락시 2차 분할매수 시나리오를 제시하라."
-            else:
-                guide_text = "단기 스윙 전략. 손익비 1.5배 이상의 타이트한 '목표가'와 '손절가'를 명확한 가격(원)으로 제시하라."
-                
-            prompt = f"""
-            당신은 수석 퀀트 애널리스트입니다. 기업 소개는 생략하고 기술적 위치와 차트 대응 전략만 60자 내외로 매우 짧게 요약하세요.
-            ■ 종목명: {cand['name']} 
-            ■ 현재가: {cand['curr_p']}원 
-            ■ 타점배지: {cand['tajeom']}
-            💡 가이드: {guide_text}
-            
-            반드시 아래 JSON 형식으로만 대답하십시오. (target_price와 stop_loss는 숫자만 입력)
-            {{
-                "briefing": "전략 요약",
-                "target_price": 150000,
-                "stop_loss": 135000
-            }}
-            """
-            
-            try:
-                res = client_gemini.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-                data = parse_ai_json(res.text)
-                
-                b_text = data.get('briefing', '분석 완료')
-                if not b_text.startswith("✅"): b_text = f"✅ [간단 브리핑] {b_text}"
-                
-                t_price = f"{int(data.get('target_price', 0)):,}원" if data.get('target_price') else "관망"
-                s_price = f"{int(data.get('stop_loss', 0)):,}원" if data.get('stop_loss') else "관망"
-                
-                results_to_save.append([f"'{cand['code']}", b_text, t_price, s_price])
-                time.sleep(2) 
-            except Exception as e:
-                print(f"   에러: {e}")
-                results_to_save.append([f"'{cand['code']}", "⚠️ 분석 오류", "0", "0"])
-
-        brief_db_sheet.clear()
-        brief_db_sheet.update(range_name="A1", values=results_to_save, value_input_option="USER_ENTERED")
-        print("🌅 새벽 6시 배치 브리핑 굽기 완료! (브리핑_기록 시트 저장 완료)")
-    
-    except Exception as e:
-        print(f"❌ 배치 작업 에러: {e}")
-
 # ==========================================
 # 메인 실행 트리거
 # ==========================================
@@ -667,11 +563,11 @@ if __name__ == "__main__":
 
     now_obj = datetime.datetime.now(KST)
     
-    # 💡 [구조 수정] 새벽 6시 대에는 시트용 종목 브리핑을 일괄적으로 먼저 구운 뒤, 텔레그램 발송까지 물 흐르듯 이어집니다.
-    if now_obj.hour == 6:
-        batch_generate_briefings()
-        
-    # 배치 작업 완료 후 (혹은 6시 외의 정기 호출 시간대) 텔레그램 모닝 시황 발송 시스템 가동
+    # 🧹 2026-10-12 — 새벽 6시 종목 브리핑 일괄 생성(batch_generate_briefings)을 지웠다(Gemini 10/11 P2-2, 사용자 지시).
+    #    워크플로는 GAS 07:45 수동 실행뿐이라 `hour == 6` 이 참인 적이 없었고, 결과를 쓰던 '브리핑_기록' 시트를
+    #    읽는 코드도 없었다. 켜졌다면 scanner_bot 의 로그 시트를 지우고, 가격 검증(price_levels) 없이
+    #    예시 가격(150000/135000)을 베낀 값을 쓸 수 있었다. 종목별 간단 브리핑은 hyeoks_analyst.py 가 맡는다.
+    # 텔레그램 모닝 시황 발송
     print("🚀 HYEOKS 능동형 모닝 브리핑 시스템 가동 시작...")
     liquidity_data, fred_failures = get_global_liquidity_data()
     market_data, news_data = get_us_market_summary()
