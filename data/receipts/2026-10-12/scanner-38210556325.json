@@ -1,0 +1,79 @@
+{
+ "code_sha": "9e876782",
+ "cycle_date": "2026-10-12",
+ "emitted_at": "2026-10-12T15:05:02.546486+09:00",
+ "fingerprint": "3858ca931dde",
+ "kind": "scanner",
+ "payload": {
+  "ci_conclusion": "success",
+  "cycle_date_matches": true,
+  "expected_state": "reached",
+  "feature_store": {
+   "date": "2026-10-12",
+   "dropped": 0,
+   "fingerprint": "3858ca931dde",
+   "rows": 745,
+   "run_id": "38210556325"
+  },
+  "features": {
+   "v1": {
+    "errors": 0,
+    "measured": true,
+    "parsed": 1
+   },
+   "v2": {
+    "errors": 0,
+    "measured": true,
+    "parsed": 1
+   },
+   "v3": {
+    "errors": 0,
+    "measured": true,
+    "out_of_range": 0,
+    "schema_reason": "",
+    "unparsable": 0,
+    "used": 249
+   }
+  },
+  "ledger": {
+   "expected_trade_ids": [
+    "2026-10-12_차트TOP2_139480",
+    "2026-10-12_랜덤2_079550",
+    "2026-10-12_랜덤2_006800",
+    "2026-10-12_지수벤치_KOSPI",
+    "2026-10-12_지수벤치_KOSDAQ"
+   ],
+   "expected_zero_reason": "",
+   "found_trade_ids": [
+    "2026-10-12_차트TOP2_139480",
+    "2026-10-12_랜덤2_079550",
+    "2026-10-12_랜덤2_006800",
+    "2026-10-12_지수벤치_KOSPI",
+    "2026-10-12_지수벤치_KOSDAQ"
+   ]
+  },
+  "rank_pool": {
+   "by_channel_dropped": {
+    "수급TOP2": 0,
+    "차트TOP2": 0
+   },
+   "date": "2026-10-12",
+   "fingerprint": "3858ca931dde",
+   "rows": 1,
+   "total_dropped": 0
+  },
+  "scanned": 745,
+  "telemetry": {
+   "by_feature": {},
+   "gate_blocking_total": 0,
+   "reasons": {},
+   "samples": {}
+  },
+  "today_str": "2026-10-12",
+  "v1_parse_errors": 0,
+  "v2_parse_errors": 0,
+  "v3_parse_errors": 0
+ },
+ "receipt_version": "receipt-v2",
+ "run_id": "38210556325"
+}
