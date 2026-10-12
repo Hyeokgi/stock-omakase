@@ -138,6 +138,41 @@ class Snapshot(unittest.TestCase):
         self.assertEqual(copied, ["envelope_census.csv"], "앞 실행의 사본이 남으면 안 된다")
         self.assertEqual(len(m["files"]), 1)
 
+    def test_hidden_component_anywhere_is_rejected(self):
+        """upload-artifact 는 숨김 폴더 안 파일을 기본으로 뺀다 — manifest 에 넣으면 artifact 와 어긋난다."""
+        self.write("data/receipts/.staging/x.json", "{}")
+        self.write("data/feature_store/2026-10-13.csv.gz", "gz")
+        m = self.run_snapshot()
+        self.assertEqual(m["rejected"], [{"path": "data/receipts/.staging/x.json", "reason": "임시·숨김 파일"}])
+        self.assertEqual([f["path"] for f in m["files"]], ["data/feature_store/2026-10-13.csv.gz"])
+
+    def test_nonstandard_paths_are_rejected_not_normalized(self):
+        """검사한 경로와 복사하는 경로가 같아야 한다 — 역슬래시·.. 를 고쳐 쓰지 않고 거부한다."""
+        for rel in ("data/receipts/a\\b.json", "data/receipts/../receipts/x.json", "data/receipts//x.json",
+                    "data/receipts/./x.json"):
+            with self.subTest(rel):
+                self.assertEqual(S.reject_reason(self.repo, rel), "비표준 경로")
+        self.assertEqual(S.reject_reason(self.repo, "data/other/x.csv"), "폴더 밖")
+
+    def test_rename_takes_the_new_path_and_keeps_two_char_status(self):
+        _git(self.repo, "mv", "data/receipts/2026-10-12/scanner-1.json", "data/receipts/2026-10-12/scanner-9.json")
+        self.write("data/scanner_census/rank_pool.csv", "date,channel\n2026-10-12,A\n2026-10-13,B\n")   # 추적 파일 수정(미스테이지)
+        self.write("data/feature_store/2026-10-13.csv.gz", "gz")                                          # 새 파일
+        m = self.run_snapshot()
+        got = {f["path"]: f["status"] for f in m["files"]}
+        self.assertEqual(got, {"data/receipts/2026-10-12/scanner-9.json": "R ",
+                               "data/scanner_census/rank_pool.csv": " M",
+                               "data/feature_store/2026-10-13.csv.gz": "??"})
+
+    def test_out_dir_not_made_by_this_script_is_not_deleted(self):
+        os.makedirs(self.out)
+        keep = os.path.join(self.out, "important.txt")
+        pathlib.Path(keep).write_text("keep", encoding="utf-8")
+        self.write("data/feature_store/2026-10-13.csv.gz", "gz")
+        with self.assertRaises(ValueError):
+            self.run_snapshot()
+        self.assertTrue(os.path.exists(keep), "소유 표식 없는 폴더는 지우지 않는다")
+
     def test_cli_never_fails_the_step_and_writes_outputs(self):
         self.write("data/feature_store/2026-10-13.csv.gz", "gz")
         gh_out = os.path.join(tempfile.mkdtemp(), "out.txt")
@@ -188,6 +223,7 @@ class Workflow(unittest.TestCase):
         self.assertEqual(w["path"], "${{ runner.temp }}/scanner-evidence", "저장소 전체를 올리면 secret.json 이 섞인다")
         self.assertEqual(int(w["retention-days"]), 14)
         self.assertIn("steps.evidence.outputs.files != '0'", up["if"], "변경분이 없는 회차는 올리지 않는다")
+        self.assertIn("steps.evidence.outputs.files != ''", up["if"], "준비 단계가 출력 없이 죽으면 올리지 않는다")
 
     def test_snapshot_script_is_in_the_fingerprint(self):
         self.assertIn(".github/evidence_snapshot.py", G.FINGERPRINT_FILES,

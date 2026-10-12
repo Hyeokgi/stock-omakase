@@ -9,8 +9,10 @@ manifest 로 출처를 검증한 뒤에만 한다.
 지키는 것
   1. 세 폴더(data/receipts · data/feature_store · data/scanner_census)의 **변경된 일반 파일**만 복사한다.
      `git status` 를 세 폴더로 한정해 보므로 저장소 최상위의 secret.json 은 들어올 수 없다.
-  2. 링크·임시·숨김 파일과 폴더 밖 경로는 복사하지 않고 manifest 의 rejected 에 사유와 함께 남긴다.
+  2. 링크(경로 어디든)·임시 파일·숨김 이름(경로 어디든)·비표준 경로·폴더 밖 경로는 복사하지 않고 manifest 의
+     rejected 에 사유와 함께 남긴다. 검사한 경로 그대로 복사한다(Codex 10/13 재검토).
   3. 사본 폴더는 저장소 밖이어야 한다(저장소 안이면 거부) — 저장소 전체가 올라가는 일을 막는다.
+     앞 실행 사본은 소유 표식이 있을 때만 지운다.
   4. 이 스크립트 때문에 수집기가 실패하지 않는다 — CLI 는 예외를 잡아 경고만 남기고 exit 0 이다.
      워크플로 단계도 continue-on-error 다(Evidence Builder 는 run 결론으로 판정한다 — Codex 10/13 P2).
 """
@@ -26,6 +28,7 @@ import sys
 DIRS = ("data/receipts", "data/feature_store", "data/scanner_census")
 SCHEMA = "scanner-evidence-v1"
 TEMP_SUFFIXES = (".tmp", ".temp", ".swp", ".part", "~")
+OWNER = ".scanner-evidence-owner"   # 사본 폴더 소유 표식 — 숨김 파일이라 artifact 에는 올라가지 않는다
 KST = datetime.timezone(datetime.timedelta(hours=9))
 
 
@@ -50,15 +53,23 @@ def changed(root):
 
 
 def reject_reason(root, rel):
-    """복사하면 안 되는 이유. 빈 문자열이면 복사한다."""
-    norm = os.path.normpath(rel).replace("\\", "/")
-    if os.path.isabs(norm) or norm.startswith("../") or not any(norm.startswith(d + "/") for d in DIRS):
+    """복사하면 안 되는 이유. 빈 문자열이면 복사한다.
+
+    🔴 Codex 10/13 재검토 — 검사한 경로와 복사하는 경로가 **같아야** 한다. 경로를 바꿔(정규화) 검사하면
+    리눅스에서 `a\\b.json`(파일 이름)과 `a/b.json`(폴더 아래)이 다른 파일인데 하나를 검사하고 다른 하나를
+    복사할 수 있다. 그래서 바꾸지 않고, 역슬래시·빈·`.`·`..` 구성요소가 있으면 비표준 경로로 거부한다.
+    숨김 이름은 마지막 파일명뿐 아니라 **모든 구성요소**에서 거부한다 — upload-artifact 는 숨김 폴더 안
+    파일을 기본으로 빼므로, 넣으면 manifest 와 artifact 의 파일 목록이 어긋난다.
+    """
+    parts = rel.split("/")
+    if "\\" in rel or os.path.isabs(rel) or any(p in ("", ".", "..") for p in parts):
+        return "비표준 경로"
+    if not any(rel.startswith(d + "/") for d in DIRS):
         return "폴더 밖"
-    base = os.path.basename(norm)
-    if base.startswith(".") or base.endswith(TEMP_SUFFIXES):
+    if any(p.startswith(".") for p in parts) or parts[-1].endswith(TEMP_SUFFIXES):
         return "임시·숨김 파일"
-    full = os.path.join(root, norm)
-    if os.path.islink(full):
+    full = os.path.join(root, *parts)
+    if any(os.path.islink(os.path.join(root, *parts[:i])) for i in range(1, len(parts) + 1)):
         return "링크"
     if not os.path.isfile(full):
         return "일반 파일 아님"
@@ -74,12 +85,15 @@ def _inside(child, parent):
 
 
 def _clear(out):
-    """앞 실행의 사본을 지운다. 이 스크립트가 만든 모양(files/·manifest.json)이 아니면 건드리지 않는다."""
+    """앞 실행의 사본을 지운다. 이 스크립트가 만든 폴더(소유 표식 있음)이거나 빈 폴더일 때만 지운다."""
     if not os.path.exists(out):
         return
-    extra = set(os.listdir(out)) - {"files", "manifest.json"}
-    if extra:
-        raise ValueError(f"사본 폴더에 모르는 항목이 있다 — 지우지 않는다: {sorted(extra)}")
+    names = set(os.listdir(out))
+    if not names:
+        os.rmdir(out)
+        return
+    if OWNER not in names or names - {"files", "manifest.json", OWNER}:
+        raise ValueError(f"이 스크립트가 만든 사본 폴더가 아니다 — 지우지 않는다: {sorted(names)}")
     shutil.rmtree(out)
 
 
@@ -113,7 +127,7 @@ def snapshot(root, out, env=None):
         if why:
             rejected.append({"path": rel, "reason": why})
         else:
-            files.append((xy.strip(), rel))
+            files.append((xy, rel))     # git 상태 두 글자 그대로(" M"·"??"·"R " …)
 
     manifest = {
         "schema": SCHEMA,
@@ -134,9 +148,12 @@ def snapshot(root, out, env=None):
     if not files:
         return manifest
 
+    os.makedirs(out, exist_ok=True)
+    with open(os.path.join(out, OWNER), "w", encoding="utf-8") as f:
+        f.write(SCHEMA + "\n")
     for status, rel in files:
-        src = os.path.join(root, rel)
-        dst = os.path.join(out, "files", rel)
+        src = os.path.join(root, *rel.split("/"))      # 검사한 경로 그대로
+        dst = os.path.join(out, "files", *rel.split("/"))
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copyfile(src, dst)
         manifest["files"].append({"path": rel, "status": status,
