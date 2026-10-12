@@ -5,6 +5,10 @@ name: 🔎 한투 시황·공시 제목 시험 호출 (수동 · 1회 · 저장 
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "basic = 1회 구조 확인 · continuation = 이어 받기 입력 시험(허브 #19, 후보 형식마다 1회)"
+        default: basic
 
 permissions:
   contents: read
@@ -23,6 +27,8 @@ jobs:
       env:
         KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
         KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+        MODE: ${{ github.event.inputs.mode }}
       run: |
-        python hyeoks_kis_news_probe.py | tee probe.md
+        if [ "$MODE" = "continuation" ]; then ARG=--continuation; else ARG=; fi
+        python hyeoks_kis_news_probe.py $ARG | tee probe.md
         cat probe.md >> "$GITHUB_STEP_SUMMARY"
