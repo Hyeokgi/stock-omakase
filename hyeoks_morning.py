@@ -1,5 +1,4 @@
 import os, sys, requests, datetime, time, json, re
-from bs4 import BeautifulSoup
 from google import genai
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
