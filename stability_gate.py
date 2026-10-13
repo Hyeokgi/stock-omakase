@@ -76,6 +76,8 @@ FINGERPRINT_FILES = [
     # 🧳 2026-10-13 — main.yml 이 커밋 단계 앞에서 부르는 증거 사본 스크립트(설계 A).
     #    생산 워크플로가 실행하는 코드라, 바뀌면 지문도 바뀌어야 한다.
     ".github/evidence_snapshot.py",
+    # 🖥️ 2026-10-13 — omakase.py 가 매 회차 부르는 표시 전용 탭 모듈. 생산 실행 코드라 지문에 넣는다.
+    "theme_status.py",
 ]
 
 

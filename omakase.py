@@ -22,6 +22,7 @@ THEME_SOURCE_STATE = {"status": "NOT_CHECKED", "requested": 0, "success": 0, "fa
 #    분류 근거: docs/silent_exception_분류_2026-09-18.md
 TELEMETRY = feature_telemetry.Telemetry()
 import rank_pool
+import theme_status   # 🖥️ 2026-10-13 — 표시 전용 탭 '테마_현황'. 선정·리포트 입력(수급_실시간)과 무관
 import feature_store
 import badge_observations
 import price_levels
@@ -527,8 +528,13 @@ def get_market_cap(code):
     # 🆕 [개편 폴백] HTML 파싱이 실패했거나 값이 없으면 신규 JSON 경로로 대체
     return fetch_market_cap_json(code)
 
+# 🖥️ 2026-10-13 — 사람이 보는 '테마_현황' 탭에만 쓰는 수집 정보. 선정 경로(all_theme_map·수급_실시간)는 이 값을 읽지 않는다.
+THEME_STATUS = {"dominated": [], "note": ""}
+
+
 def get_real_money_themes():
     THEME_SOURCE_STATE.update(status="FAILED", requested=0, success=0, failed=0)
+    THEME_STATUS.update(dominated=[], note="")
     try:
         now = datetime.datetime.now(KST)
         is_market_closed = now.hour > 15 or (now.hour == 15 and now.minute >= 30)
@@ -553,6 +559,7 @@ def get_real_money_themes():
                 print(f"🔁 [테마 폴백] 구 HTML 실패 → 신규 JSON API로 테마 {len(raw_themes)}개 확보")
             else:
                 print("❌ [테마] HTML·JSON 모두 실패 — 이번 회차 테마 수집을 건너뜁니다.")
+                THEME_STATUS["note"] = "테마 목록 수집 실패(HTML·JSON 모두)"
                 return pd.DataFrame(), is_market_closed, {}
 
         themes = [t for t in raw_themes if t['name'] not in THEME_BLACKLIST][:20]
@@ -629,6 +636,7 @@ def get_real_money_themes():
         THEME_SOURCE_STATE["status"] = "OK"
         if not theme_data_list:
             print("⚠️ 조건을 만족하는 테마 종목이 하나도 없습니다. (시가총액/등락률 필터 확인)")
+            THEME_STATUS["note"] = "등락률 3%·거래대금 50억을 넘는 종목이 2개 이상인 테마 없음"
             return pd.DataFrame(), is_market_closed, {}
             
         grouped_themes = {}
@@ -645,12 +653,19 @@ def get_real_money_themes():
             if len(merged_stocks_val) >= 2:
                 if merged_stocks_val[0]['value'] >= merged_stocks_val[1]['value'] * 5:
                     print(f"⚠️ [{merged_name}] 1등 대장주가 2등보다 거래대금이 5배 이상 커서 개별주로 강등(테마 배제)합니다.")
+                    # 🖥️ 표시 전용 — 빠진 묶음을 '테마_현황' 에 보여 주려고 모은다. 선정에는 쓰지 않는다.
+                    THEME_STATUS["dominated"].append({
+                        "theme": " / ".join(theme_names),
+                        "top": dict((k, merged_stocks_val[0][k]) for k in ("name", "code", "rate", "value")),
+                        "second": dict((k, merged_stocks_val[1][k]) for k in ("name", "code", "rate", "value"))})
                     continue
             
             merged_stocks_rate = sorted(merged_stocks_val, key=lambda x: x['rate'], reverse=True)
             merged_themes.append({'theme_name': merged_name, 'theme_sum': sum(s['value'] for s in merged_stocks_val), 'stocks': merged_stocks_rate})
             
         merged_themes = sorted(merged_themes, key=lambda x: x['theme_sum'], reverse=True)
+        if not merged_themes:
+            THEME_STATUS["note"] = f"조건을 넘은 묶음 {len(grouped_themes)}개가 모두 1등 독식으로 빠짐"
         
         all_theme_map = {}
         for m_data in merged_themes:
@@ -3703,6 +3718,9 @@ if __name__ == "__main__":
     doc = gspread.authorize(creds).open_by_url(SHEET_URL)
     
     update_google_sheet(doc, df_theme, df_news, df_naver, df_main_news, is_market_closed)
+    # 🖥️ 2026-10-13 — 사람이 보는 표시 전용 탭. 실패해도 예외를 내지 않고, 아래 선정 경로와 무관하다.
+    theme_status.update(doc, df_theme.to_dict('records') if not df_theme.empty else [], THEME_STATUS,
+                        datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M'))
     update_technical_data(df_theme, all_theme_map)
     manage_schedule_sheet(schedules=get_market_schedule())
     
