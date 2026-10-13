@@ -1,0 +1,82 @@
+name: 🧮 15:05 잠정 수급 기록 (한투 추정가집계 · 연구)
+
+# 설계: docs/collaboration/2026-10-14_Claude_잠정수급_기록설계.md — 판단 기준 값은 사용자 결정 대기.
+# K12(등락률 10%↑ + 당일 기관·외국인 동반 순매수)를 15:05 에 볼 수 있는 값(한투 가집계 14:30 입력분)으로 재현할 수 있는지
+# 앞으로 쌓아 본다. 과거 잠정치는 어디에도 없어서 놓친 날은 복원할 수 없다.
+#
+# 🔔 발사 — 15:05 스냅샷 워크플로가 요청되면(GAS 15:02 발사) 같이 시작한다. 스냅샷 코드·워크플로는 건드리지 않는다.
+#    13:00 회차·늦게 도착한 백업 예약은 도구의 시작 창(14:50~15:25)에서 걸러지고, 이미 기록한 날은 건너뛴다.
+#    깃허브 예약(cron)은 몇 시간씩 늦어(market_snapshot.yml 주석의 실측) 쓰지 않는다.
+# 🔒 원본(종목코드·응답 전부·그 시점 시세)은 드라이브 비공개. 공개 저장소에는 data/research_runs/ 의 건수·영수증만.
+#    운영 KIS 토큰(시트 칸)은 건드리지 않고 실행당 토큰 1회 발급. 호출은 초당 4건 이하(운영 omakase 와 같은 앱키).
+# 🔎 수동 실행 mode=probe 는 시험 호출 — 종목 2개, 응답 구조만 로그에 남기고 저장·커밋하지 않는다.
+# 연구 전용: 선정 조건·주문·시트·운영 Gate 와 무관. 지문 대상 파일이 아니다.
+
+on:
+  workflow_run:
+    workflows: ["📸 HYEOKS 장중 시장 스냅샷"]
+    types: [requested]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'probe = 시험 호출(구조만 출력·저장 없음) · record = 15:05 기록(14:50~15:25 창 안에서만)'
+        required: true
+        default: 'probe'
+        type: choice
+        options: ['probe', 'record']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: flow-estimate
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.10'
+    - run: pip install requests
+
+    - name: 🔄 최신 상태 받기
+      run: |
+        git pull --ff-only origin main || echo "⚠️ 최신 main 으로 빨리감기 실패 — 이벤트 시점 상태로 진행"
+
+    - name: 🔎 시험 호출 (구조만 · 저장 없음)
+      if: github.event_name == 'workflow_dispatch' && inputs.mode == 'probe'
+      env:
+        KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+        KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+      run: |
+        python hyeoks_flow_estimate.py --probe
+
+    - name: 🧮 기록 (원본 → 드라이브 비공개)
+      if: github.event_name == 'workflow_run' || inputs.mode == 'record'
+      env:
+        KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+        KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+      run: |
+        python hyeoks_flow_estimate.py
+
+    - name: 💾 공개 건수 커밋
+      if: always() && (github.event_name == 'workflow_run' || inputs.mode == 'record')
+      run: |
+        mkdir -p data/research_runs
+        if [ -z "$(git status --porcelain data/research_runs)" ]; then
+          echo "ℹ️ 바뀐 파일 없음 (휴장일·창 밖·중복) — 커밋 생략"; exit 0
+        fi
+        git config user.name  "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add data/research_runs
+        git commit -m "data: 잠정 수급 기록 건수 $(TZ=Asia/Seoul date +%Y-%m-%d) run ${GITHUB_RUN_ID} [skip ci]"
+        for i in 1 2 3; do
+          git pull --rebase --autostash origin main && git push origin HEAD:main && exit 0
+          echo "⚠️ 푸시 재시도 $i/3"; sleep 5
+        done
+        echo "::error::공개 건수 커밋 푸시 실패"; exit 1
