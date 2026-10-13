@@ -529,12 +529,30 @@ def get_market_cap(code):
     return fetch_market_cap_json(code)
 
 # 🖥️ 2026-10-13 — 사람이 보는 '테마_현황' 탭에만 쓰는 수집 정보. 선정 경로(all_theme_map·수급_실시간)는 이 값을 읽지 않는다.
-THEME_STATUS = {"dominated": [], "note": ""}
+THEME_STATUS = {"dominated": [], "note": "", "input_written": ""}
+
+
+def update_theme_display(doc, df_theme, timeout=30):
+    """표시 전용 탭 갱신 — 데몬 스레드에서 돌리고 `timeout` 초만 기다린다. 시트가 멈춰도 실행을 붙잡지 않는다.
+
+    선정·영수증이 모두 끝난 뒤에 부른다. 예외를 내지 않는다(theme_status.update 도 스스로 삼킨다).
+    """
+    try:
+        import threading
+        rows = df_theme.to_dict('records') if not df_theme.empty else []
+        now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M')
+        t = threading.Thread(target=theme_status.update, args=(doc, rows, dict(THEME_STATUS), now_str), daemon=True)
+        t.start()
+        t.join(timeout)
+        if t.is_alive():
+            print(f"⚠️ [테마_현황] 표시 갱신이 {timeout}초를 넘겨 기다리지 않고 끝낸다(선정·영수증과 무관)")
+    except Exception as e:
+        print(f"⚠️ [테마_현황] 표시 갱신 준비 실패(선정·영수증과 무관) — {type(e).__name__}")
 
 
 def get_real_money_themes():
     THEME_SOURCE_STATE.update(status="FAILED", requested=0, success=0, failed=0)
-    THEME_STATUS.update(dominated=[], note="")
+    THEME_STATUS.update(dominated=[], note="", input_written="")
     try:
         now = datetime.datetime.now(KST)
         is_market_closed = now.hour > 15 or (now.hour == 15 and now.minute >= 30)
@@ -654,10 +672,14 @@ def get_real_money_themes():
                 if merged_stocks_val[0]['value'] >= merged_stocks_val[1]['value'] * 5:
                     print(f"⚠️ [{merged_name}] 1등 대장주가 2등보다 거래대금이 5배 이상 커서 개별주로 강등(테마 배제)합니다.")
                     # 🖥️ 표시 전용 — 빠진 묶음을 '테마_현황' 에 보여 주려고 모은다. 선정에는 쓰지 않는다.
-                    THEME_STATUS["dominated"].append({
-                        "theme": " / ".join(theme_names),
-                        "top": dict((k, merged_stocks_val[0][k]) for k in ("name", "code", "rate", "value")),
-                        "second": dict((k, merged_stocks_val[1][k]) for k in ("name", "code", "rate", "value"))})
+                    #    기록이 실패해도 수집 결과가 바뀌면 안 된다(Codex 10/13) — 여기서 삼킨다.
+                    try:
+                        THEME_STATUS["dominated"].append({
+                            "theme": " / ".join(theme_names),
+                            "top": dict((k, merged_stocks_val[0][k]) for k in ("name", "code", "rate", "value")),
+                            "second": dict((k, merged_stocks_val[1][k]) for k in ("name", "code", "rate", "value"))})
+                    except Exception:
+                        pass
                     continue
             
             merged_stocks_rate = sorted(merged_stocks_val, key=lambda x: x['rate'], reverse=True)
@@ -758,6 +780,7 @@ def update_google_sheet(doc, df_theme, df_news, df_naver, df_main_news, is_marke
                 except Exception as note_error:
                     print(f"::warning::테마 상태 메모 기록 실패: {type(note_error).__name__}")
                 print("✅ [수급_실시간] 시트 갱신 완료")
+                THEME_STATUS["input_written"] = datetime.datetime.now(KST).strftime('%H:%M')   # 🖥️ 표시 탭이 '갱신함' 을 말할 근거
             except Exception as e: print(f"❌ [수급_실시간] 업데이트 실패: {e}")
             now_check = datetime.datetime.now(KST)
             # 🛡️ [수정] "now_check.hour < 9" 조건 삭제 — 이게 새벽~아침 9시 전 모든 실행을 "장마감 이후"로
@@ -3718,11 +3741,10 @@ if __name__ == "__main__":
     doc = gspread.authorize(creds).open_by_url(SHEET_URL)
     
     update_google_sheet(doc, df_theme, df_news, df_naver, df_main_news, is_market_closed)
-    # 🖥️ 2026-10-13 — 사람이 보는 표시 전용 탭. 실패해도 예외를 내지 않고, 아래 선정 경로와 무관하다.
-    theme_status.update(doc, df_theme.to_dict('records') if not df_theme.empty else [], THEME_STATUS,
-                        datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M'))
     update_technical_data(df_theme, all_theme_map)
     manage_schedule_sheet(schedules=get_market_schedule())
+    # 🖥️ 2026-10-13 — 사람이 보는 표시 전용 탭. 스캐너·영수증이 **끝난 뒤**, 시간 상한 안에서만 쓴다(Codex 10/13).
+    update_theme_display(doc, df_theme)
     
     print(f"🎉 모든 주입 패치 작업 완료! (KST {datetime.datetime.now(KST).strftime('%H:%M:%S')})")
 

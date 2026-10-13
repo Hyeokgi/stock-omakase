@@ -28,8 +28,12 @@ def build(status, theme_rows, now_str):
     """(머리 4줄, 본문 행들). `theme_rows` 는 수급_실시간에 쓴 행(dict) 목록, `status` 는 스캐너가 모은 정보."""
     passed = len({r.get("순위") for r in theme_rows})
     note = status.get("note", "")
-    if passed:
-        state = f"통과 테마 {passed}개 — 수급_실시간 갱신함"
+    written = status.get("input_written", "")
+    if passed and written:
+        state = f"통과 테마 {passed}개 — 수급_실시간 갱신함({written})"
+    elif passed:
+        # 🔴 Codex 10/13 — 원본 탭 쓰기가 실패했는데 '갱신함' 이라고 쓰면 안 된다.
+        state = f"통과 테마 {passed}개 — 그러나 수급_실시간 쓰기 실패 또는 미확인(로그 확인). 그 탭은 앞선 결과일 수 있다"
     else:
         state = ("지금 통과 테마 없음 — 수급_실시간은 갱신을 건너뛰어 앞선 결과가 남아 있다"
                  + (f" ({note})" if note else ""))
@@ -52,8 +56,8 @@ def build(status, theme_rows, now_str):
 def update(doc, theme_rows, status, now_str):
     """표시 탭을 다시 쓴다. 성공하면 True. 실패해도 예외를 내지 않는다.
 
-    통과 테마가 있을 때만 '수급_실시간 마지막 갱신' 칸(B5)을 지금 시각으로 바꾼다 — 없을 때는 그대로 두어
-    앞선 결과가 언제 것인지 보이게 한다.
+    `수급_실시간` 쓰기가 실제로 성공했을 때만(`status["input_written"]`) '수급_실시간 마지막 갱신' 칸(B5)을
+    지금 시각으로 바꾼다 — 아니면 그대로 두어 앞선 결과가 언제 것인지 보이게 한다.
     """
     try:
         try:
@@ -62,7 +66,7 @@ def update(doc, theme_rows, status, now_str):
             ws = doc.add_worksheet(title=TAB, rows=200, cols=len(HEADER))
         head, body = build(status, theme_rows, now_str)
         ws.update(range_name="A1", values=head, value_input_option="USER_ENTERED")
-        if theme_rows:
+        if theme_rows and status.get("input_written"):
             ws.update(range_name="A5", values=[["수급_실시간 마지막 갱신", now_str]], value_input_option="USER_ENTERED")
         ws.batch_clear(["A7:Z"])
         ws.update(range_name="A7", values=body, value_input_option="USER_ENTERED")
