@@ -780,7 +780,7 @@ def update_google_sheet(doc, df_theme, df_news, df_naver, df_main_news, is_marke
                 except Exception as note_error:
                     print(f"::warning::테마 상태 메모 기록 실패: {type(note_error).__name__}")
                 print("✅ [수급_실시간] 시트 갱신 완료")
-                THEME_STATUS["input_written"] = datetime.datetime.now(KST).strftime('%H:%M')   # 🖥️ 표시 탭이 '갱신함' 을 말할 근거
+                THEME_STATUS["input_written"] = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M')   # 🖥️ 표시 탭이 '갱신함'·마지막 갱신 시각을 말할 근거
             except Exception as e: print(f"❌ [수급_실시간] 업데이트 실패: {e}")
             now_check = datetime.datetime.now(KST)
             # 🛡️ [수정] "now_check.hour < 9" 조건 삭제 — 이게 새벽~아침 9시 전 모든 실행을 "장마감 이후"로
@@ -3743,8 +3743,6 @@ if __name__ == "__main__":
     update_google_sheet(doc, df_theme, df_news, df_naver, df_main_news, is_market_closed)
     update_technical_data(df_theme, all_theme_map)
     manage_schedule_sheet(schedules=get_market_schedule())
-    # 🖥️ 2026-10-13 — 사람이 보는 표시 전용 탭. 스캐너·영수증이 **끝난 뒤**, 시간 상한 안에서만 쓴다(Codex 10/13).
-    update_theme_display(doc, df_theme)
     
     print(f"🎉 모든 주입 패치 작업 완료! (KST {datetime.datetime.now(KST).strftime('%H:%M:%S')})")
 
@@ -3759,3 +3757,7 @@ if __name__ == "__main__":
                 response = GLOBAL_SESSION.post(GOOGLE_WEBHOOK_URL, timeout=30)
                 if response.status_code == 200: print("✅ 구글 자동 릴레이 바통터치 성공")
         except Exception as e: print(f"❌ 릴레이 에러: {e}")
+
+    # 🖥️ 2026-10-13 — 사람이 보는 표시 전용 탭. 스캐너·영수증·릴레이가 **모두 끝난 뒤** 맨 마지막에, 시간 상한 안에서만 쓴다.
+    #    뒤에 같은 doc 을 쓰는 코드가 없어야 한다 — 상한을 넘긴 스레드와 시트 연결을 동시에 쓰지 않게(Codex 10/13).
+    update_theme_display(doc, df_theme)

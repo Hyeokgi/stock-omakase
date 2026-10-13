@@ -56,8 +56,9 @@ def build(status, theme_rows, now_str):
 def update(doc, theme_rows, status, now_str):
     """표시 탭을 다시 쓴다. 성공하면 True. 실패해도 예외를 내지 않는다.
 
-    `수급_실시간` 쓰기가 실제로 성공했을 때만(`status["input_written"]`) '수급_실시간 마지막 갱신' 칸(B5)을
-    지금 시각으로 바꾼다 — 아니면 그대로 두어 앞선 결과가 언제 것인지 보이게 한다.
+    `수급_실시간` 쓰기가 실제로 성공했을 때만 '수급_실시간 마지막 갱신' 칸(B5)을 **그 쓰기 시각**
+    (`status["input_written"]`, 날짜 포함)으로 바꾼다 — 표시를 쓰는 지금 시각이 아니다(Codex 10/13).
+    아니면 그대로 두어 앞선 결과가 언제 것인지 보이게 한다.
     """
     try:
         try:
@@ -67,7 +68,8 @@ def update(doc, theme_rows, status, now_str):
         head, body = build(status, theme_rows, now_str)
         ws.update(range_name="A1", values=head, value_input_option="USER_ENTERED")
         if theme_rows and status.get("input_written"):
-            ws.update(range_name="A5", values=[["수급_실시간 마지막 갱신", now_str]], value_input_option="USER_ENTERED")
+            ws.update(range_name="A5", values=[["수급_실시간 마지막 갱신", status["input_written"]]],
+                      value_input_option="USER_ENTERED")
         ws.batch_clear(["A7:Z"])
         ws.update(range_name="A7", values=body, value_input_option="USER_ENTERED")
         print(f"🖥️ [{TAB}] 표시 갱신 — 통과 {len({r.get('순위') for r in theme_rows})} · "

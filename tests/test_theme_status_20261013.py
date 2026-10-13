@@ -82,6 +82,13 @@ class Update(unittest.TestCase):
         ranges = [c[1] for c in doc.sheet.calls if c[0] == "update"]
         self.assertEqual(ranges, ["A1", "A5", "A7"])
 
+    def test_last_update_cell_shows_the_input_write_time_not_the_display_time(self):
+        """Codex 10/13 — 입력은 10:51 에 썼는데 표시가 10:56 에 돌면 마지막 갱신은 10:51 이어야 한다."""
+        doc = FakeDoc()
+        T.update(doc, ROWS, {"dominated": [], "note": "", "input_written": "2026-10-13 10:51"}, "2026-10-13 10:56")
+        a5 = next(c[2] for c in doc.sheet.calls if c[0] == "update" and c[1] == "A5")
+        self.assertEqual(a5, [["수급_실시간 마지막 갱신", "2026-10-13 10:51"]])
+
     def test_last_input_update_time_is_kept_when_nothing_passed_or_the_write_failed(self):
         for rows, written in (([], "10:51"), (ROWS, "")):
             doc = FakeDoc()
@@ -138,9 +145,13 @@ class Isolation(unittest.TestCase):
         main = next(n for n in self.tree.body if isinstance(n, ast.If) and "__main__" in ast.unparse(n.test))
         calls = [ast.unparse(c.func) for c in ast.walk(main) if isinstance(c, ast.Call)]
         self.assertNotIn("theme_status.update", calls, "직접 부르지 않는다 — 시간 상한 감싸개로만")
+        self.assertEqual(calls.count("update_theme_display"), 1, "표시는 한 번, 맨 끝에서만")
         self.assertLess(calls.index("update_technical_data"), calls.index("update_theme_display"),
                         "스캐너·영수증이 끝난 뒤에 표시한다")
         self.assertLess(calls.index("manage_schedule_sheet"), calls.index("update_theme_display"))
+        last = main.body[-1]
+        self.assertEqual(ast.unparse(last).strip(), "update_theme_display(doc, df_theme)",
+                         "맨 마지막이어야 한다 — 뒤에 같은 doc 을 쓰는 코드가 있으면 상한을 넘긴 스레드와 겹친다")
 
     def test_dominance_branch_still_only_drops_the_group_even_if_recording_fails(self):
         fn = self.fn["get_real_money_themes"]
