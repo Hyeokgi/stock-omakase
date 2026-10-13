@@ -578,18 +578,27 @@ def materials_summary(day, runs_dir=RUNS_DIR):
             return int(float(r.get(k) or 0))
         except ValueError:
             return 0
+    def runs_note(rs):
+        bad = [r.get("status") or "?" for r in rs if r.get("status") != "완료"]
+        return (f" · 실행 {len(rs)}" if len(rs) > 1 else "") + (f" ⚠️ 미완료 실행 {len(bad)}({'/'.join(bad)})" if bad else "")
     parts = []
     dart = rows("dart_runs.csv")
     if dart:
-        best = max(dart, key=lambda r: n(r, "polls"))
+        # 🔴 2026-10-13 — 하루를 아침(~12:15)·오후(~15:08) 실행으로 나눈 뒤(10/10) 조회 수가 많은 아침 실행을 골라
+        #    10/12 보고가 '15:05 범위 불완전' 이라고 잘못 썼다. 15:05 범위는 오후 실행이 맡고, 오후 첫 조회는
+        #    전 거래일부터 다시 훑으므로 15:05 까지 본 건수가 가장 큰 실행이 그날 전체다.
+        best = max(dart, key=lambda r: (r.get("coverage1505") == "완전", n(r, "seenBy1505"), n(r, "polls")))
         parts.append(f"DART 공시 {n(best, 'disclosures')}건(15:05까지 {n(best, 'seenBy1505')} · "
-                     f"15:05 범위 {best.get('coverage1505') or '?'} · {best.get('status') or '?'})")
+                     f"15:05 범위 {best.get('coverage1505') or '?'} · {best.get('status') or '?'}){runs_note(dart)}")
     news = rows("kis_news_runs.csv")
     if news:
-        best = max(news, key=lambda r: n(r, "polls"))
+        # 한투 뉴스는 실행마다 그때부터 새로 받는다 — 실행별 건수를 더한다. 실행 경계의 겹침은 비공개 원자료로만 지운다.
+        news.sort(key=lambda r: r.get("startedAt") or "")
         over = sum(n(r, "overflowPolls") for r in news)
-        parts.append(f"한투 뉴스 {n(best, 'news')}건(15:05까지 {n(best, 'publishedBy1505')} · 종목코드 {n(best, 'withStockCode')} · "
-                     f"{best.get('status') or '?'})" + (f" ⚠️ 넘침 의심 {over}회 — 최신 40건만 받음" if over else ""))
+        per = f"실행별 {'+'.join(str(n(r, 'news')) for r in news)}, 겹침 포함 가능 · " if len(news) > 1 else ""
+        parts.append(f"한투 뉴스 {sum(n(r, 'news') for r in news)}건({per}15:05까지 {sum(n(r, 'publishedBy1505') for r in news)} · "
+                     f"종목코드 {sum(n(r, 'withStockCode') for r in news)} · {news[-1].get('status') or '?'}){runs_note(news)}"
+                     + (f" ⚠️ 넘침 의심 {over}회 — 그 구간은 못 받았을 수 있음" if over else ""))
     return " · ".join(parts)
 
 
