@@ -19,8 +19,8 @@ STOCK_HDR = ["itemcode", "itemname", "nowPrice", "highPrice", "prevChangeRate", 
 BIG = 10_000_000_000   # 100억 — A 의 50억을 넘긴다
 
 
-def stock(code, rate, amt, nos, top, vol=1000, alert="00"):
-    return {"itemcode": code, "itemname": f"n{code}", "nowPrice": "1000", "highPrice": "1000",
+def stock(code, rate, amt, nos, top, vol=1000, alert="00", now="1000", high="1000"):
+    return {"itemcode": code, "itemname": f"n{code}", "nowPrice": now, "highPrice": high,
             "prevChangeRate": str(rate), "tradeVolume": str(vol), "tradeAmount": str(amt),
             "manageStatusGb": "0", "tradeStopYn": "N", "marketAlertType": alert,
             "themeNos": "|".join(nos), "topThemeNo": top}
@@ -47,6 +47,10 @@ class Locked(unittest.TestCase):
                           V.SURGE_WINDOW, V.SURGE_MULT, V.CUTOFF, V.SLOT_CLOSE),
                          ("leader-def-v2", "2026-10-12", 20, 3, 15.0, 60, "2027-06-30", 10, 2.0, "15:05:00", (15, 25)))
         self.assertEqual(V.OUT.replace("\\", "/"), "data/research_runs/leader_def_v2_structure.csv")
+
+    def test_wick_split_is_preregistered(self):
+        """2026-10-13 사전 지정 탐색 분할 — 결과를 보기 전에 고정했다. 바꾸면 사후 선택이 된다."""
+        self.assertEqual((V.WICK_SPLIT, V.GIVEBACK), (0.05, 1 / 3))
 
     def test_slot_close_matches_the_collector_window(self):
         import hyeoks_market_snapshot as S
@@ -113,6 +117,16 @@ class Definitions(unittest.TestCase):
         passed, leaders, below = V.build_v2h(items, rows, ["T"])
         self.assertEqual((passed, [x["code"] for x in leaders], below), ([], ["c4"], 1))
 
+    def test_wick_measures_from_the_1505_price_and_the_intraday_high(self):
+        """윗꼬리 — 고점 대비 하락률·오른 폭 대비 반납·상한가 찍고 풀림 (2026-10-13 기술 통계)."""
+        x = {"P": 1000.0, "high": 1100.0, "rate": 20.0}           # 전일 833.3 → 고점 +32% → 지금 +20%
+        dd, give, touched = V.wick(x)
+        self.assertAlmostEqual(dd, 1 - 1000 / 1100)
+        self.assertAlmostEqual(give, (1100 - 1000) / (1100 - 1000 / 1.2))
+        self.assertTrue(touched, "고점이 상한가 근접(≥29.5%)이었고 지금은 아래면 '찍고 풀림'")
+        self.assertEqual(V.wick({"P": 1000.0, "high": 1000.0, "rate": 30.0}), (0.0, 0.0, False), "상한가에 붙어 있으면 꼬리 없음")
+        self.assertEqual(V.wick({"P": 1000.0, "high": 0.0, "rate": 20.0}), (None, None, False), "고가를 모르면 모름")
+
     def test_unreadable_theme_rate_is_none_and_left_out_of_ranking(self):
         th = [{"code": "1", "rate": None}, {"code": "2", "rate": 1.0}]
         self.assertEqual(V.top_themes(th, 3), ["2"])
@@ -174,11 +188,31 @@ class Recording(unittest.TestCase):
         self.assertEqual((r["cur_pre"], r["cur"]), (2, 1), "현행: T9 대장 000003(20%) · T2 대장 000004 는 상한가 근접 제외")
         self.assertEqual((r["v2h_pre"], r["v2h"], r["v2h_below"], r["v2h_overlap"]), (3, 2, 0, 1),
                          "사용자 기준: 상위 3 테마 대장 000002(15%)·000004(30%, 제외)·000003(20%) — 현행과 겹침 000003")
+        self.assertEqual(r["v2h_limitup"], 1, "000004(30%) — 15:05 상한가라 그날 살 수 없다")
+        self.assertEqual((r["v2h_wick5"], r["v2h_giveback3"], r["v2h_touch_release"], r["v2h_wick_unknown"]), (0, 0, 0, 0))
         self.assertEqual((r["v2m_pre"], r["v2m"]), (3, 2), "v2M: T1→000002 · T2→000004(제외) · T9→000003")
         self.assertEqual((r["overlap"], r["v2m_only"], r["cur_only"]), (1, 1, 0))
         self.assertEqual((r["top3_cur_slots"], r["topN_cur_slots"]), (2, 2), "T1 자리에는 현행 대장이 없다")
         self.assertEqual(r["v2s_pre"], 0, "평소 거래량 그대로 — 급증 아님")
         self.assertEqual(r["v2s_short"], 0)
+
+    def test_wick_counts_are_taken_on_the_buyable_user_set(self):
+        """000003(20%)이 장중 상한가를 찍고 내려왔다 — 고점 대비 9.1%·반납 0.375·찍고 풀림."""
+        before = V.collect(self.dir, as_of="2026-10-12")[0]["fp"]   # 꼬리 없는 같은 집합
+        p = os.path.join(self.dir, "2026-10-12_1505.csv.gz")
+        rows = [stock("000001", 12.0, 3 * BIG, ["T1", "T9"], "T9"),
+                stock("000002", 15.0, 2 * BIG, ["T1", "T9"], "T9", alert="01", high="1100"),   # 시장경보 — 공통 제외
+                stock("000003", 20.0, 9 * BIG, ["T9"], "T9", high="1100"),
+                stock("000004", 30.0, 2 * BIG, ["T2"], "T2"),
+                stock("000005", 4.0, 1 * BIG, ["T2"], "T2")]
+        write_gz(p, ["#meta", "capturedAt=2026-10-12T15:02:50+09:00", "slot=1505",
+                     "priceReceivedAt=2026-10-12T15:02:53+09:00"], STOCK_HDR, rows)
+        r = V.collect(self.dir, as_of="2026-10-12")[0]
+        self.assertEqual(r["status"], "기록")
+        self.assertEqual((r["v2h"], r["v2h_wick5"], r["v2h_giveback3"], r["v2h_touch_release"]), (1, 1, 1, 1),
+                         "공통 제외로 빠진 000002 의 꼬리는 세지 않는다 — 살 수 있는 집합만")
+        self.assertEqual(r["v2h_limitup"], 1, "상한가 종목은 꼬리 집계(살 수 있는 집합)가 아니라 따로 센다")
+        self.assertNotEqual(before, r["fp"], "000002 가 경보로 빠졌으니 집합은 달라졌다(이 시험의 전제 확인)")
 
     def test_surge_passes_when_volume_doubles(self):
         self.put("2026-10-12", vol_hot=2000)

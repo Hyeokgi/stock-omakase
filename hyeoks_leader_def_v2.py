@@ -42,12 +42,15 @@ SURGE_MULT = 2.0         # 운영 'V.거래과열' `vol_ratio_10d >= 200` (`omak
 CUTOFF = "15:05:00"      # 판단 마감(KST) — 가격·테마 값이 이 시각까지 수신·갱신된 날만 관측일이다 (운영대전제 §2 15:05 슬롯)
 SLOT_CLOSE = (15, 25)    # 수집기 15:05 슬롯 허용 창의 끝(`hyeoks_market_snapshot.SLOTS`) — 이 뒤면 그날 파일 유무가 정해진다
 KST = datetime.timezone(datetime.timedelta(hours=9))
+WICK_SPLIT = 0.05        # 사전 지정 탐색 분할(2026-10-13 사용자 지시) — 15:05 고점 대비 하락률 5% 이상/미만. 판정에 쓰지 않는다
+GIVEBACK = 1 / 3         # 기술 통계 — 그날 오른 폭의 1/3 이상을 15:05 까지 반납
 OUT = os.path.join("data", "research_runs", "leader_def_v2_structure.csv")
 
 FIELDS = ["date", "status", "in_calendar", "captured_at", "price_at", "theme_at", "written_at",
           "theme_rate_fail", "member_unknown", "themes", "A",
           "cur_pre", "cur", "cur_excl",
           "v2h_pre", "v2h", "v2h_excl", "v2h_below", "v2h_overlap",
+          "v2h_limitup", "v2h_wick5", "v2h_giveback3", "v2h_touch_release", "v2h_wick_unknown",
           "v2m_pre", "v2m", "v2m_excl", "v2m_slot_small", "v2m_slot_dominance", "v2m_slot_dup",
           "v2s_pre", "v2s", "v2s_short", "v2s_excl",
           "overlap", "v2m_only", "cur_only", "jaccard",
@@ -198,6 +201,22 @@ def build_v2h(items, rows1505, top3):
     return passed, leaders, len(leaders) - len(passed)
 
 
+def wick(it):
+    """(고점 대비 하락률, 오른 폭 대비 반납 비율, 상한가 찍고 풀림) — 15:05 현재가(P)와 그때까지의 장중 고가로 잰다.
+
+    종가가 아니라 15:05 다 — 매수 시점에는 종가를 모른다. 15:05 뒤 동시호가에서 생기는 꼬리는 여기 없다.
+    고가를 읽지 못하면 (None, None, False). 기술 통계일 뿐 집합(대장 선정)을 바꾸지 않는다.
+    """
+    P, hi, rate = it.get("P") or 0.0, it.get("high") or 0.0, it.get("rate") or 0.0
+    if P <= 0 or hi <= 0:
+        return None, None, False
+    prev = P / (1 + rate / 100)
+    dd = max(0.0, 1 - P / hi)
+    give = (hi - P) / (hi - prev) if hi > prev else 0.0
+    touched = (hi / prev - 1) >= abc.RISK_RATE_CAP and rate / 100.0 < abc.RISK_RATE_CAP   # 상한(0.295, 비율)은 risk_filter 와 같다
+    return dd, give, touched
+
+
 def day_structure(rows1505, themes, prior_vols):
     """하루 구조 집계. 입력은 그날 15:05 자료와 그 이전 거래량뿐이다. 가격 결과는 다루지 않는다."""
     A, _ = abc.build_A(rows1505)
@@ -211,6 +230,7 @@ def day_structure(rows1505, themes, prior_vols):
     v2s, short = surge_split(v2m, rows1505, prior_vols)
     v2sc, s_ex = abc.risk_filter(v2s)
     cur_themes = {x["theme"] for x in cur}
+    h_wicks = [wick(x) for x in v2hc]
 
     s_cur, s_m, s_h = {x["code"] for x in curc}, {x["code"] for x in v2mc}, {x["code"] for x in v2hc}
     union = s_cur | s_m
@@ -221,6 +241,13 @@ def day_structure(rows1505, themes, prior_vols):
         "cur_pre": len(cur), "cur": len(curc), "cur_excl": _excl(cur_ex),
         "v2h_pre": len(v2h), "v2h": len(v2hc), "v2h_excl": _excl(h_ex), "v2h_below": below,
         "v2h_overlap": len(s_cur & s_h),
+        # 2026-10-13 기술 통계(판정 불변) — 15:05 상한가라 그날 살 수 없는 사용자 기준 대장은 따로 센다.
+        #   윗꼬리 셋은 살 수 있는 집합(공통 제외 뒤 B_v2Hᶜ)에서 센다.
+        "v2h_limitup": sum(1 for x in v2h if x["rate"] / 100.0 >= abc.RISK_RATE_CAP),
+        "v2h_wick5": sum(1 for w in h_wicks if w[0] is not None and w[0] >= WICK_SPLIT),
+        "v2h_giveback3": sum(1 for w in h_wicks if w[1] is not None and w[1] >= GIVEBACK),
+        "v2h_touch_release": sum(1 for w in h_wicks if w[2]),
+        "v2h_wick_unknown": sum(1 for w in h_wicks if w[0] is None),
         "v2m_pre": len(v2m), "v2m": len(v2mc), "v2m_excl": _excl(m_ex),
         "v2m_slot_small": slots["small"], "v2m_slot_dominance": slots["dominance"], "v2m_slot_dup": slots["dup"],
         "v2s_pre": len(v2s), "v2s": len(v2sc), "v2s_short": short, "v2s_excl": _excl(s_ex),
