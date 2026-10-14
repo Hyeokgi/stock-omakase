@@ -1,0 +1,83 @@
+name: 🕐 급등 사건 과거 1분봉 수집 (한투 · 연구 · 수동)
+
+# 설계: docs/collaboration/2026-10-14_Claude_급등사건_분봉수집설계.md
+# '급등 대장주 5거래일 안 +10%' 연구(PC)에 쓸 사건일 t·t+1 의 09:00~15:30 1분봉을 한투 주식일별분봉조회로 받는다.
+# 한투는 과거 분봉을 최대 1년만 보관한다 — 오래된 달부터, 승인 뒤 되도록 빨리 돌린다.
+#
+# 🔒 사건 목록(종목코드·날짜)은 공개 저장소에 없다. PC 가 `--pack` 으로 만든 문자열을 비밀값 MINUTE_EVENTS 로 넣는다.
+#    원본 분봉은 드라이브 비공개, 공개 저장소에는 data/research_runs/ 의 건수·영수증·목록 sha 앞 12자만.
+#    운영 KIS 토큰(시트 칸)은 건드리지 않고 실행당 토큰 1회. 07~20시는 초당 4건, 밤에는 더 빠르게(한투 한도 초당 20건).
+# 🔎 mode=probe 는 시험 호출 — 삼성전자로 과거 분봉·프로그램매매의 응답 구조만 로그에 남기고 저장·커밋하지 않는다.
+# 수동 실행만 — 예약 없음. 연구 전용: 선정 조건·주문·시트·운영 Gate 와 무관. 지문 대상 파일이 아니다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'probe = 시험 호출(구조만·저장 없음) · collect = 수집'
+        required: true
+        default: 'probe'
+        type: choice
+        options: ['probe', 'collect']
+      months:
+        description: 'collect: all(끝난 달은 건너뜀) 또는 2025-10,2025-11 처럼 사건일 달'
+        required: false
+        default: 'all'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: minute-backfill
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.10'
+    - run: pip install requests
+
+    - name: 🔄 최신 상태 받기
+      run: |
+        git pull --ff-only origin main || echo "⚠️ 최신 main 으로 빨리감기 실패 — 이벤트 시점 상태로 진행"
+
+    - name: 🔎 시험 호출 (구조만 · 저장 없음)
+      if: inputs.mode == 'probe'
+      env:
+        KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+        KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+      run: |
+        python hyeoks_minute_backfill.py --probe
+
+    - name: 🕐 수집 (원본 → 드라이브 비공개)
+      if: inputs.mode == 'collect'
+      env:
+        KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+        KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+        MINUTE_EVENTS: ${{ secrets.MINUTE_EVENTS }}
+        MONTHS: ${{ inputs.months }}
+      run: |
+        python hyeoks_minute_backfill.py --months "${MONTHS:-all}"
+
+    - name: 💾 공개 건수 커밋
+      if: always() && inputs.mode == 'collect'
+      run: |
+        mkdir -p data/research_runs
+        if [ -z "$(git status --porcelain data/research_runs)" ]; then
+          echo "ℹ️ 바뀐 파일 없음 — 커밋 생략"; exit 0
+        fi
+        git config user.name  "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add data/research_runs
+        git commit -m "data: 급등 사건 분봉 수집 건수 $(TZ=Asia/Seoul date +%Y-%m-%d) run ${GITHUB_RUN_ID} [skip ci]"
+        for i in 1 2 3; do
+          git pull --rebase --autostash origin main && git push origin HEAD:main && exit 0
+          echo "⚠️ 푸시 재시도 $i/3"; sleep 5
+        done
+        echo "::error::공개 건수 커밋 푸시 실패"; exit 1
