@@ -1,0 +1,2 @@
+day,runId,version,startedAt,finishedAt,marketRows,candidates,capped,called,ok,failed,rateLimitRetries,withRows,latestFilled,inputCodes,status,stopReason,privateFile,privateStatus
+2026-10-14,38519933765,flow-estimate-v1,2026-10-14T15:02:55+09:00,2026-10-14T15:03:08+09:00,2869,15,0,15,15,0,0,15,15,1:13|2:14|3:15|4:15|5:15,완료,,research_flowest_2026-10-14_38519933765.json.gz,접수
