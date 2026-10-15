@@ -14,3 +14,4 @@ cycle_date,run_id,source,verdict,fingerprint,ci_green,earnings_schema_ok,dart_co
 2026-10-12,38210444523+38210556325+38244130030+38248544650,cycle,PASS,3858ca931dde,Y,Y,Y,Y,Y,Y,Y,DEGRADED,,stability-gate-v3
 2026-10-13,38354324386+38354444004+38391804342+38396724595,cycle,PASS,3858ca931dde,Y,Y,Y,Y,Y,Y,Y,DEGRADED,,stability-gate-v3
 2026-10-14,38519689021+38519818395+38558188300+38563211367,cycle,FAIL,3858ca931dde,Y,Y,Y,Y,N,Y,N,DEGRADED,store_written:feature_store(행=750 버림=0) rank_pool(행=0 버림=0) 날짜=2026-10-14/2026-10-14 사이클일치=True 지문일치=True; no_unexplained_failure:영수증없음=[] 기대상태미달=['scanner'] 최종아님=[] workflow=ok 깨진파일=0,stability-gate-v3
+2026-10-15,38689864612+38689998106+38729130325+38734034883,cycle,FAIL,3858ca931dde,Y,Y,Y,Y,N,Y,N,DEGRADED,store_written:feature_store(행=748 버림=0) rank_pool(행=0 버림=0) 날짜=2026-10-15/2026-10-15 사이클일치=True 지문일치=True; no_unexplained_failure:영수증없음=[] 기대상태미달=['scanner'] 최종아님=[] workflow=ok 깨진파일=0,stability-gate-v3
