@@ -1,3 +1,4 @@
 day,runId,version,startedAt,finishedAt,marketRows,candidates,capped,called,ok,failed,rateLimitRetries,withRows,latestFilled,inputCodes,status,stopReason,privateFile,privateStatus
 2026-10-14,38519933765,flow-estimate-v1,2026-10-14T15:02:55+09:00,2026-10-14T15:03:08+09:00,2869,15,0,15,15,0,0,15,15,1:13|2:14|3:15|4:15|5:15,완료,,research_flowest_2026-10-14_38519933765.json.gz,접수
 2026-10-15,38690111611,flow-estimate-v1,2026-10-15T15:02:54+09:00,2026-10-15T15:03:04+09:00,2869,8,0,8,8,0,0,8,8,1:8|2:8|3:8|4:8|5:8,완료,,research_flowest_2026-10-15_38690111611.json.gz,접수
+2026-10-16,38858987300,flow-estimate-v1,2026-10-16T15:02:50+09:00,2026-10-16T15:03:23+09:00,2869,43,0,43,43,0,0,43,43,1:43|2:43|3:43|4:43|5:43,완료,,research_flowest_2026-10-16_38858987300.json.gz,접수
