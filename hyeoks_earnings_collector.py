@@ -722,8 +722,8 @@ if __name__ == "__main__":
 
     consensus_done = len({r[0] for r in consensus_rows_out[1:]})
     state = consensus_health(len(consensus_targets), consensus_done)
-    print(f"📊 [컨센서스] {state} — 시도 {len(consensus_targets)} · 성공 {consensus_done} · "
-          f"실패 {len(consensus_failures)}")
+    print(f"📊 [컨센서스] {state} — 대상 {len(consensus_targets)} · 시도 {consensus_attempted} · 성공 {consensus_done} · "
+          f"추정치없음 {consensus_empty} · 실패 {len(consensus_failures)} · 미처리 {len(consensus_targets) - consensus_attempted}")
 
     # 🔴 GPT §6 — 성공분을 **먼저 정직하게 저장하고** 그 다음에 상태를 판단한다.
     if len(consensus_rows_out) > 1:
@@ -769,7 +769,9 @@ if __name__ == "__main__":
     print(f"예산초과={'Y' if time_budget_hit else 'N'} 본표쓰기={'차단' if earnings_blocked else '정상'}")
     print("\n[Consensus]")
     print(f"preflight {'OK' if pre_ok else 'FAIL'}")
-    print(f"attempted {len(consensus_targets)}")
+    print(f"attempted {consensus_attempted}")
+    print(f"empty {consensus_empty}")
+    print(f"unprocessed {len(consensus_targets) - consensus_attempted}")
     print(f"success {consensus_done}")
     print(f"failed {len(consensus_failures)}")
     print(f"state={state}")

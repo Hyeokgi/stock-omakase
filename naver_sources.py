@@ -4,6 +4,9 @@ import html
 import json
 import math
 import re
+import time
+import ssl
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -121,14 +124,36 @@ def consensus_estimates(code):
     if not code:
         raise SourceError("Invalid stock code")
     page = f"https://navercomp.wisereport.co.kr/v3/company/c1050001.aspx?cmp_cd={code}&theme=light&cn="
-    source = read(page)
+    source = _consensus_retry(lambda: read(page))
     match = re.search(r"sDT:\s*'([0-9]{8})'", source)
     if not match:
         raise SourceError("Provider reference date missing")
     dt.datetime.strptime(match[1], "%Y%m%d")
     params = dict(flag="2", cmp_cd=code, finGubun="IFRSL", frq="1", sDT=match[1], chartType="svg")
     url = "https://navercomp.wisereport.co.kr/v3/company/ajax/c1050001_data.aspx?" + urlencode(params)
-    return parse_consensus(get_json(url, page))
+    return parse_consensus(_consensus_retry(lambda: get_json(url, page)))
+
+
+def _consensus_retry(fetch):
+    """읽기 전용 일시 통신 오류만 한 번 재시도한다(재시도 전 1초 대기).
+
+    각 read의 timeout=12는 전체 실행시간 상한이 아니다.
+    400/403/429·스키마/기준일 오류는 재시도하지 않는다. 콜렉터의 55분 예산은 유지한다.
+    """
+    for attempt in range(2):
+        try:
+            return fetch()
+        except SourceError as error:
+            cause = error.__cause__
+            if isinstance(cause, HTTPError):
+                transient = cause.code in (500, 502, 503, 504)
+            else:
+                reason = cause.reason if isinstance(cause, URLError) else cause
+                transient = isinstance(reason, (TimeoutError, ssl.SSLEOFError, ConnectionResetError))
+            if attempt or not transient:
+                raise
+            print(f"::warning::컨센서스 일시 통신 실패 — 1회 재시도 ({type(cause).__name__})")
+            time.sleep(1)
 
 
 def merge_consensus_rows(old, new):
