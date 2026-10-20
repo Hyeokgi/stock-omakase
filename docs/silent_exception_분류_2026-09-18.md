@@ -61,3 +61,11 @@
 - `CRITICAL`·`OBSERVE` 합계가 0 이 아니면 `no_silent_parse_error` 가 **거짓**이다.
 - 즉 이 12곳 중 하나라도 조용히 실패하면 **그 거래일은 Stability Gate 를 통과하지 못한다.**
 - `DISPLAY`·`RESEARCH` 는 세기만 하고 Gate 를 막지 않는다. 다만 영수증에는 남는다.
+
+## 2026-10-20 추가 계측
+
+기존 12곳 표와 과거 판정은 그대로 둔다. `omakase.get_real_money_themes`의
+`theme_membership`을 `CRITICAL`로 추가했다. 테마 목록·구성 조회 실패 또는 부분 성공은
+정상적인 후보 0건과 다르며, 최신 선정 입력을 확인할 수 없기 때문이다.
+가격 수집은 계속하지만 영수증의 `theme_source`와 기존 telemetry/Gate 경로에 실패를 남긴다.
+조회는 정상이고 선정 조건에 맞는 종목만 없는 경우에는 이 오류를 기록하지 않는다.

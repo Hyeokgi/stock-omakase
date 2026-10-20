@@ -14,6 +14,9 @@ import scanner_census
 import earnings_schema
 import hyeoks_tajeom
 import feature_telemetry
+from naver_membership import fetch_members, MembershipError, scanner_rows
+
+THEME_SOURCE_STATE = {"status": "NOT_CHECKED", "requested": 0, "success": 0, "failed": 0}
 
 # 🔴 2026-09-18 — 조용한 예외를 '세고 사유를 남기는' 구조로 바꾼다.
 #    분류 근거: docs/silent_exception_분류_2026-09-18.md
@@ -305,22 +308,7 @@ def fetch_theme_list_json(limit=20):
 def fetch_theme_stocks_json(theme_no):
     """테마 구성종목 — HTML 파싱 결과와 같은 단위로 맞춘다.
     rate = 등락률(%), value = 거래대금(백만원) — HTML의 td[8]과 같은 단위."""
-    d = _json_get(f"/market/theme/{theme_no}/stocklist?marketType=ALL&orderType=priceTop&startIdx=0&pageSize=100")
-    if not isinstance(d, list) or not d:
-        return []
-    out = []
-    for x in d:
-        code = str(x.get('itemcode', '')).strip()
-        if not code.isdigit():
-            continue
-        try:
-            rate = float(str(x.get('prevChangeRate') or 0))
-            amt = float(str(x.get('tradeAmount') or 0)) / 1_000_000.0   # 원 → 백만원
-        except Exception:
-            continue
-        out.append({'name': str(x.get('itemname', '')).strip(), 'code': f"'{code}",
-                    'rate': rate, 'value': int(amt)})
-    return out
+    return scanner_rows(fetch_members("theme", theme_no, GLOBAL_SESSION))
 
 
 def fetch_investor_trend_json(code, days=5):
@@ -540,6 +528,7 @@ def get_market_cap(code):
     return fetch_market_cap_json(code)
 
 def get_real_money_themes():
+    THEME_SOURCE_STATE.update(status="FAILED", requested=0, success=0, failed=0)
     try:
         now = datetime.datetime.now(KST)
         is_market_closed = now.hour > 15 or (now.hour == 15 and now.minute >= 30)
@@ -567,6 +556,7 @@ def get_real_money_themes():
                 return pd.DataFrame(), is_market_closed, {}
 
         themes = [t for t in raw_themes if t['name'] not in THEME_BLACKLIST][:20]
+        THEME_SOURCE_STATE["requested"] = len(themes)
         
         theme_data_list = []
         print("▶️ 실시간 주도 테마 수집 시작 (1등 독식 5배수 필터 적용)...")
@@ -582,10 +572,13 @@ def get_real_money_themes():
                 if not type_5_table:
                     # 🆕 [개편 폴백] 상세 HTML이 없거나 깨졌으면 JSON 구성종목으로 대체.
                     #    단위는 어댑터에서 HTML(td[8], 백만원)과 동일하게 맞춰 두었다.
-                    if theme.get('no'):
-                        for sj in fetch_theme_stocks_json(theme['no']):
-                            if sj['rate'] >= TARGET_PERCENT and sj['value'] >= 5000:
-                                stocks.append(sj)
+                    if not theme.get('no'):
+                        raise MembershipError("theme detail unavailable")
+                    members = fetch_theme_stocks_json(theme['no'])
+                    THEME_SOURCE_STATE["success"] += 1
+                    for sj in members:
+                        if sj['rate'] >= TARGET_PERCENT and sj['value'] >= 5000:
+                            stocks.append(sj)
                     if not stocks:
                         continue
                     stocks_val = sorted(stocks, key=lambda x: x['value'], reverse=True)[:5]
@@ -595,6 +588,7 @@ def get_real_money_themes():
                     continue
 
                 name_idx, rate_idx, val_idx = 0, 4, 8
+                THEME_SOURCE_STATE["success"] += 1
 
                 for tr in type_5_table.find_all('tr'):
                     tds = tr.find_all('td')
@@ -624,9 +618,15 @@ def get_real_money_themes():
                     stocks_rate = sorted(stocks_val, key=lambda x: x['rate'], reverse=True)
                     theme_data_list.append({'theme_name': theme['name'], 'stocks': stocks_rate})
             except Exception as e:
+                THEME_SOURCE_STATE["failed"] += 1
                 print(f"⚠️ [get_real_money_themes Loop Exception for {theme['name']}] {e}")
                 continue
-            
+
+        if THEME_SOURCE_STATE["failed"] or not themes:
+            THEME_SOURCE_STATE["status"] = "PARTIAL" if THEME_SOURCE_STATE["success"] else "FAILED"
+            print("::warning::테마 구성 조회 불완전 — 후보 없음이 아님. 이번 테마 갱신·선정 입력 보류")
+            return pd.DataFrame(), is_market_closed, {}
+        THEME_SOURCE_STATE["status"] = "OK"
         if not theme_data_list:
             print("⚠️ 조건을 만족하는 테마 종목이 하나도 없습니다. (시가총액/등락률 필터 확인)")
             return pd.DataFrame(), is_market_closed, {}
@@ -670,7 +670,11 @@ def get_real_money_themes():
         
     except Exception as e:
         print(f"❌ 테마 수집 에러: {e}")
+        THEME_SOURCE_STATE["status"] = "FAILED"
         return pd.DataFrame(), False, {}
+    finally:
+        if THEME_SOURCE_STATE["status"] != "OK":
+            TELEMETRY.note("theme_membership", THEME_SOURCE_STATE["status"], feature_telemetry.CRITICAL)
 
 def get_naver_search_ranking():
     try:
@@ -734,6 +738,10 @@ def update_google_sheet(doc, df_theme, df_news, df_naver, df_main_news, is_marke
                 sheet_rt = doc.worksheet("수급_실시간")
                 sheet_rt.batch_clear(['A2:Z'])
                 sheet_rt.update(range_name="A2", values=df_theme.values.tolist(), value_input_option="USER_ENTERED")
+                try:
+                    sheet_rt.update_note("A1", f"테마 갱신 성공: {datetime.datetime.now(KST).isoformat()} · 구성 조회 OK")
+                except Exception as note_error:
+                    print(f"::warning::테마 상태 메모 기록 실패: {type(note_error).__name__}")
                 print("✅ [수급_실시간] 시트 갱신 완료")
             except Exception as e: print(f"❌ [수급_실시간] 업데이트 실패: {e}")
             now_check = datetime.datetime.now(KST)
@@ -784,7 +792,13 @@ def update_google_sheet(doc, df_theme, df_news, df_naver, df_main_news, is_marke
                             print("❌ [수급_Raw] 3회 재시도 모두 실패 — 원본 데이터는 그대로 보존됨(안전)")
                 except Exception as e: print(f"❌ [수급_Raw] 누적 기록 실패: {e}")
         else:
-            print("⚠️ 수집된 테마 데이터가 없어 구글 시트 업데이트를 건너뜁니다.")
+            state = THEME_SOURCE_STATE["status"]
+            reason = "조회 정상·조건 충족 후보 없음" if state == "OK" else f"구성 조회 {state}·최신 테마 확인 불가"
+            print(f"⚠️ 테마 갱신 생략: {reason}. 기존 행의 날짜·시간은 이전 관측입니다.")
+            try:
+                doc.worksheet("수급_실시간").update_note("A1", f"{datetime.datetime.now(KST).isoformat()} · {reason}. 기존 행은 이전 관측이며 이번 회차 자료가 아닙니다.")
+            except Exception as note_error:
+                print(f"::warning::테마 상태 메모 기록 실패: {type(note_error).__name__}")
         for df, target_sheet_name in [(df_news, "뉴스_키워드"), (df_naver, "네이버_검색상위"), (df_main_news, "네이버_주요뉴스")]:
             if not df.empty:
                 try:
@@ -3619,6 +3633,7 @@ def update_technical_data(df_theme, all_theme_map):
                                                          TELEMETRY.total() == 0)
                                            else "degraded"),
                         "ci_conclusion": os.environ.get("CI_CONCLUSION", ""),
+                        "theme_source": dict(THEME_SOURCE_STATE),
                         # ⑤/P0-5 — "계측되지 않음" 과 "실패 0" 을 가른다.
                         #    measured=False 면 Evidence Builder 가 곧바로 거짓으로 본다.
                         "features": {

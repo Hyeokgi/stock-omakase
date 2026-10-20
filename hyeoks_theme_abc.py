@@ -43,6 +43,7 @@ from hyeoks_closing_bet import (SNAP_DIR, KST, MIN_TURNOVER, PILOT_DAYS, COST,
                                 PRICE_LIMIT, LIMIT_TOL, ADJ_TOL,
                                 read_snapshot, scan_dates, exit_open, _f)
 from hyeoks_trading_calendar import load_nontrading, next_trading_day
+from naver_membership import theme_membership_ok
 
 # ── 사전등록 정의 — 데이터를 보고 바꾸지 않는다 ─────────────────────────
 LEADER_POOL     = 5      # B: 테마 내 거래대금 상위 N — omakase.py:604 `[:5]`
@@ -461,7 +462,7 @@ def quality_check(window_days, expected_days=None):
     entry_missing, matured_missing, immature, unclassified = [], [], [], []
     for date in exp:
         d = dmap.get(date)
-        if d is None or d.get("skip") == "스냅샷없음":
+        if d is None or d.get("skip") in {"스냅샷없음", "테마구성불완전"}:
             entry_missing.append(date)
         elif d.get("skip"):
             continue                                           # 휴장일 파일 — 예정 거래일이 아니다
@@ -595,6 +596,8 @@ def build_day(date, snap_dir, with_returns, nontrading=None, dates=None):
         return {"date": date, "skip": "스냅샷없음"}
     meta, rows1505, dup15 = read_snapshot(p15)
     _, rows1300, dup13 = read_snapshot(p13)
+    if not theme_membership_ok(meta, rows1505):
+        return {"date": date, "skip": "테마구성불완전"}
 
     A, drop = build_A(rows1505)
     Bc, dom_excl = build_B_current(A)

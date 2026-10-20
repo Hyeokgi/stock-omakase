@@ -50,10 +50,8 @@
 #      그래서 업종도 테마처럼 **다중 소속**으로 저장하고, 총합·비중은 계산하지 않는다.
 #      실제 겹침 정도는 수집할 때마다 로그에 찍히니(중복소속 N건) 표본이 쌓이면 다시 본다.
 #
-#   ⚠️ 구성종목 조회는 **한 번에 200개가 상한**이다(실측: 250·300·400 전부 HTTP 400,
-#      startIdx 는 무시됨 — §3). 즉 200종목이 넘는 분류는 **전량을 받을 수 없다.**
-#      현재 걸리는 것은 '기타'(1,538) 하나뿐이고, 그런 행은 truncated=Y 로 표시한다.
-#      잘린 행의 sum*·*Cnt 는 상위 200종목만의 값이므로 그대로 쓰면 안 된다.
+#   2026-10-20 구성종목 개편 대응: size/cursor 로 전량을 받는다.
+#   목록보다 적게 받거나 가격과 연결되지 않으면 집계는 빈칸, 품질은 PARTIAL 이다.
 #
 # 사용법
 #   python hyeoks_market_snapshot.py --slot 1300
@@ -74,6 +72,7 @@ import xml.etree.ElementTree as ET
 
 import requests
 import urllib3
+from naver_membership import fetch_members, membership_status, MembershipError
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
@@ -115,8 +114,6 @@ MARKET_URL = ("https://stock.naver.com/api/domestic/market/stock/default"
 THEME_V2_URL = ("https://stock.naver.com/api/stockSecurity/rankings/v2/domestic/themes"
                 "?sortType=changeRate&size=100&period=daily")
 # 구성종목(코드→테마) 매핑은 v2 에 없어 구 엔드포인트를 계속 쓴다. 테마 번호 체계는 동일하다.
-THEME_STOCK_URL = ("https://stock.naver.com/api/domestic/market/theme/{no}/stocklist"
-                   "?marketType=ALL&orderType=priceTop&startIdx=0&pageSize=100")
 
 # 보관 필드 — 나중에 무엇을 물어볼지 다 알 수 없으므로 판단 근거가 될 만한 원자료를 넓게 남긴다.
 #
@@ -151,7 +148,7 @@ THEME_FIELDS = ["ranking", "code", "name", "changeRate",
                 "risingCount", "fallingCount", "unchangedCount",
                 "totalMarketCap", "totalTradingVolume", "totalTradingValue",
                 "topByChangeRate", "topByTradingValue", "topByMarketCap", "topByTradingVolume",
-                "updatedAt"]
+                "updatedAt", "membershipStatus", "membershipCount", "membershipError"]
 THEME_TOPS = ["topByChangeRate", "topByTradingValue", "topByMarketCap", "topByTradingVolume"]
 
 # 종목 행에 덧붙이는 테마 열 — 판정에 쓰는 값이 아니라 조인 키다.
@@ -184,12 +181,8 @@ SECTORS = {
     "upjong": ("🏭 업종",   40),   # 실측 79
     "group":  ("🏢 그룹사", 30),   # 실측 61
 }
-# ⚠️ pageSize 상한은 **200** 이다 (실측 2026-08-28: 목록은 300부터, 구성종목은 250부터 HTTP 400).
-#    startIdx 는 무시되므로(§3) 페이지를 넘길 수도 없다 → 200종목 초과 분류는 전량 수집 불가.
+# 목록은 기존 pageSize 형식, 구성종목은 2026-10-20부터 별도 size/cursor 형식이다.
 SECTOR_LIST_URL = "https://stock.naver.com/api/domestic/market/{kind}/list?pageSize=200"
-SECTOR_STOCK_URL = ("https://stock.naver.com/api/domestic/market/{kind}/{no}/stocklist"
-                    "?marketType=ALL&orderType=priceTop&startIdx=0&pageSize=200")
-SECTOR_PAGE_MAX = 200
 
 # 업종·그룹사 집계 필드.
 #   raw* — 네이버가 준 원본 그대로. 필드명이 테마 v2 와 다르다(riseCnt/fallCnt/…, 실측 확인).
@@ -200,8 +193,7 @@ SECTOR_PAGE_MAX = 200
 #     우리가 방금 받은 2,877행으로 다시 세는 이유는 두 가지다:
 #       ① 단위가 확실하다 — 종목 행의 tradeAmount 와 같은 '원'이다.
 #       ② 시각이 일치한다 — 같은 호출에서 나온 값이라 집계와 종목이 어긋나지 않는다.
-#   truncated — Y 면 구성종목이 200 상한에 잘렸다는 뜻이다. **그 행의 sum*·*Count 는
-#     상위 200종목만의 값**이므로 분류 간 비교에 쓰면 안 된다.
+#   truncated — Y 면 목록의 구성 수보다 덜 받았다. 불완전 집계는 빈칸으로 보존한다.
 SECTOR_FIELDS = ["no", "name", "type",
                  "rawChangeRate", "rawRecent3daysChangeRate", "rawTotalAccAmount",
                  "rawTotalAccQuant", "rawTotalMarketSum", "rawTotalCnt",
@@ -209,7 +201,7 @@ SECTOR_FIELDS = ["no", "name", "type",
                  "fetchedCount", "matchedCount", "truncated",
                  "sumTradeAmount", "sumMarketCap",
                  "risingCount", "fallingCount", "unchangedCount",
-                 "topByTradingValue", "topByChangeRate"]
+                 "topByTradingValue", "topByChangeRate", "membershipStatus", "membershipError"]
 
 # 네이버 원본 필드명 → 우리 열 이름. (테마 v2 와 이름 체계가 다르다는 것이 실측으로 확인됐다)
 SECTOR_RAW_MAP = {
@@ -317,15 +309,20 @@ def fetch_theme_data():
     belong, fails = {}, 0
     for t in themes:
         try:
-            rr = SESSION.get(THEME_STOCK_URL.format(no=t["code"]), verify=False, timeout=10)
-            for x in (rr.json() if rr.status_code == 200 else []):
-                c = str(x.get("itemcode", "")).strip()
-                if _is_code(c):
-                    belong.setdefault(c, []).append(str(t["code"]))
-        except Exception:
+            members = fetch_members("theme", t["code"], SESSION)
+            if not members:
+                raise MembershipError("theme constituents empty")
+            for x in members:
+                belong.setdefault(x["itemcode"], []).append(str(t["code"]))
+            t.update(membershipStatus="OK", membershipCount=len(members), membershipError="")
+        except Exception as error:
             fails += 1
+            t.update(membershipStatus="FAILED", membershipCount="", membershipError=str(error)[:120])
         time.sleep(0.08)
 
+    if fails:
+        # 일부 소속만으로 topThemeNo 를 정하면 정상적인 분류처럼 보인다.
+        belong = {}
     print(f"🏷️ 테마 {len(themes)}개 ({page}페이지) · 매핑 {len(belong)}종목"
           + (f" · 구성종목 조회 실패 {fails}개" if fails else ""))
     return themes, belong
@@ -378,20 +375,19 @@ def fetch_sector_data(kind, mkt):
         if not no:
             continue
 
-        codes = []
+        codes, member_error = [], ""
         try:
-            rr = SESSION.get(SECTOR_STOCK_URL.format(kind=kind, no=no), verify=False, timeout=10)
-            for x in (rr.json() if rr.status_code == 200 else []):
-                c = str(x.get("itemcode", "")).strip()
-                if _is_code(c):
-                    codes.append(c)
-        except Exception:
+            codes = [x["itemcode"] for x in fetch_members(kind, no, SESSION)]
+            if not codes and _f(it.get("totalCnt")) > 0:
+                raise MembershipError(f"{kind} constituents unexpectedly empty")
+        except Exception as error:
             fails += 1
+            member_error = str(error)[:120]
         time.sleep(0.08)
 
-        # 200 상한에 잘렸는가. 네이버가 말하는 totalCnt 와 실제로 받은 수를 맞춰 본다.
+        # 커서 완료 후에도 목록이 알린 구성 수와 다르면 완전 집계가 아니다.
         total = int(_f(it.get("totalCnt")))
-        truncated = len(codes) >= SECTOR_PAGE_MAX and total > len(codes)
+        truncated = total > len(codes)
         if truncated:
             cut.append(f"{name}({len(codes)}/{total})")
 
@@ -416,17 +412,25 @@ def fetch_sector_data(kind, mkt):
                "risingCount": rise, "fallingCount": fall,
                "unchangedCount": len(mine) - rise - fall,
                "topByTradingValue": _top(_amt, lambda v: f"{v:.0f}"),
-               "topByChangeRate": _top(_rate, lambda v: f"{v:.2f}")}
+               "topByChangeRate": _top(_rate, lambda v: f"{v:.2f}"),
+               "membershipStatus": "FAILED" if member_error else "PARTIAL" if truncated or len(mine) < len(codes) else "OK",
+               "membershipError": member_error}
+        if row["membershipStatus"] != "OK":
+            for key in ("sumTradeAmount", "sumMarketCap", "risingCount", "fallingCount",
+                        "unchangedCount", "topByTradingValue", "topByChangeRate"):
+                row[key] = ""
         for col, src in SECTOR_RAW_MAP.items():
             row[col] = str(it.get(src, ""))
         out.append(row)
 
     # 겹침 정도를 매번 센다 — '배타적'이라는 전제가 실측으로 깨졌으므로 조용히 믿지 않는다.
+    if membership_status(out) != "OK":
+        belong = {}
     multi = sum(1 for v in belong.values() if len(v) > 1)
     print(f"{label} {len(out)}개 · 매핑 {len(belong)}종목"
           + (f" · 다중소속 {multi}종목" if multi else " · 다중소속 없음")
           + (f" · 구성종목 조회 실패 {fails}개" if fails else "")
-          + (f" · ⚠️ 200상한에 잘림: {', '.join(cut[:5])}" if cut else ""))
+          + (f" · ⚠️ 구성 수 미달: {', '.join(cut[:5])}" if cut else ""))
     return out, belong
 
 
@@ -580,6 +584,8 @@ def write_readme():
 
     def _agg_table(rows, head, note, n, key):
         """업종·그룹사 요약표. 둘의 스키마가 같아 한 함수로 낸다."""
+        if any(r.get("membershipStatus") not in (None, "", "OK") for r in rows):
+            return [head, "", "⚠️ 구성·가격 연결 불완전 — 거래대금 순위와 집계 표시를 보류합니다.", ""]
         hot = sorted(rows, key=lambda z: -_f(z.get(key)))[:n]
         out = [head, "", note, "",
                "| # | 이름 | 등락률 | 거래대금 | 상승/구성 | 대금 1위 |",
@@ -602,8 +608,8 @@ def write_readme():
                         10, "sumTradeAmount")
         if any(u.get("truncated") == "Y" for u in up):
             cut = [u.get("name", "") for u in up if u.get("truncated") == "Y"]
-            L += [f"> ⚠️ 표시된 분류({' · '.join(cut)})는 구성종목이 **200개 상한에 잘렸다.** "
-                  "거래대금·상승수가 상위 200종목만의 부분값이라 다른 행과 나란히 비교하면 안 된다.", ""]
+            L += [f"> ⚠️ 표시된 분류({' · '.join(cut)})는 구성 수가 부족하다. "
+                  "과거 파일의 부분 집계도 완전한 다른 행과 비교하면 안 된다.", ""]
 
     # 🏢 그룹사 — 계열사가 함께 움직이는지. 테마·업종 어느 쪽에도 안 잡히는 축이다.
     gr = _read_agg(f"{OUT_DIR}/{latest}_{_tslot}_group.csv.gz")
@@ -717,7 +723,10 @@ def main():
                     # 뒤에 붙인다 — 앞 키의 순서를 바꾸지 않는다(key=value 로 읽지만 혹시 모를 위치 의존 대비)
                     f"priceRequestedAt={price_requested.isoformat()}",
                     f"priceReceivedAt={price_received.isoformat()}",
-                    f"writtenAt={datetime.datetime.now(KST).isoformat()}"])
+                    f"writtenAt={datetime.datetime.now(KST).isoformat()}",
+                    f"themeMembershipStatus={membership_status(themes)}",
+                    f"upjongMembershipStatus={membership_status(sectors.get('upjong', ([], {}))[0])}",
+                    f"groupMembershipStatus={membership_status(sectors.get('group', ([], {}))[0])}"])
         w.writerow(FIELDS + THEME_COLS + SECTOR_COLS)
         up_belong = sectors.get("upjong", ([], {}))[1]
         gr_belong = sectors.get("group", ([], {}))[1]
@@ -738,7 +747,8 @@ def main():
         with gzip.open(tpath, "wt", encoding="utf-8", newline="") as fp:
             tw = csv.writer(fp)
             tw.writerow(["#meta", f"capturedAt={now.isoformat()}", f"slot={a.slot}",
-                         f"themes={len(themes)}", "amountUnit=원"])
+                         f"themes={len(themes)}", "amountUnit=원",
+                         f"membershipStatus={membership_status(themes)}"])
             tw.writerow(THEME_FIELDS)
             for t in sorted(themes, key=lambda z: -_f(z.get("totalTradingValue"))):
                 tw.writerow([_flat_top(t.get(k)) if k in THEME_TOPS else str(t.get(k, ""))
@@ -757,18 +767,22 @@ def main():
             sw = csv.writer(fp)
             sw.writerow(["#meta", f"capturedAt={now.isoformat()}", f"slot={a.slot}",
                          f"count={len(srows)}", "amountUnit=원",
+                         f"membershipStatus={membership_status(srows)}",
                          "note=sum*/topBy*/*Count 는 같은 스냅샷의 종목행에서 직접 집계한 값. "
                          "raw* 는 네이버 원본이며 rawTotalAccAmount 는 단위 미확인 — 판정에 쓰지 말 것. "
-                         "truncated=Y 는 구성종목 200 상한에 잘린 행이라 sum*/*Count 가 부분값"])
+                         "membershipStatus!=OK 는 구성/가격 연결 불완전으로 sum*/*Count 집계 보류"])
             sw.writerow(SECTOR_FIELDS)
             for it in sorted(srows, key=lambda z: -_f(z.get("sumTradeAmount"))):
                 sw.writerow([str(it.get(k, "")) for k in SECTOR_FIELDS])
         label = SECTORS[kind][0]
         print(f"✅ {label} 저장 {spath}  ({os.path.getsize(spath):,}바이트)")
-        hots = sorted(srows, key=lambda z: -_f(z.get("sumTradeAmount")))[0]
-        print(f"   {label} 거래대금 1위: {hots.get('name')} "
-              f"{_f(hots.get('sumTradeAmount')) / 1e8:,.0f}억 "
-              f"({hots.get('risingCount')}/{hots.get('matchedCount')} 상승)")
+        if membership_status(srows) == "OK":
+            hots = sorted(srows, key=lambda z: -_f(z.get("sumTradeAmount")))[0]
+            print(f"   {label} 거래대금 1위: {hots.get('name')} "
+                  f"{_f(hots.get('sumTradeAmount')) / 1e8:,.0f}억 "
+                  f"({hots.get('risingCount')}/{hots.get('matchedCount')} 상승)")
+        else:
+            print(f"::warning::{label} 구성 품질 {membership_status(srows)} — 집계 비교 보류")
 
     size = os.path.getsize(path)
     lead = top[0] if top else {}

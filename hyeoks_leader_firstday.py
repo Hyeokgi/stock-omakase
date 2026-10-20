@@ -53,12 +53,13 @@ def load_obs(snap_dir=SNAP_DIR):
     for name in sorted(os.listdir(snap_dir)):
         if not name.endswith("_1505.csv.gz") or not name[:4].isdigit():
             continue
-        _, rows, _ = read_snapshot(os.path.join(snap_dir, name))
+        meta, rows, _ = read_snapshot(os.path.join(snap_dir, name))
         A, _ = T.build_A(rows)
         B, _ = T.build_B_current(A)
         rates = [_f(r.get("prevChangeRate")) for r in rows.values()]
         rates = [x for x in rates if x is not None]
         out.append({"date": name[:10], "rows": rows, "A": A, "B": {x["code"] for x in B},
+                    "membership_ok": T.theme_membership_ok(meta, rows),
                     "breadth": (sum(1 for x in rates if x > 0) / len(rates)) if rates else None})
     return out
 
@@ -67,6 +68,10 @@ def registry(days):
     """관측일마다 처리군(새 대장)·대조군과 층. 가격 결과는 계산하지 않는다."""
     reg = []
     for i, day in enumerate(days):
+        # 가격 관측일은 삭제하지 않는다(3관측일 라벨의 시계 보존).
+        # 최근 대장 이력이 미확인이면 '처음 대장' 여부도 확인할 수 없다.
+        if any(not d.get("membership_ok", True) for d in days[max(0, i - LOOKBACK):i + 1]):
+            continue
         past = set().union(*[days[q]["B"] for q in range(max(0, i - LOOKBACK), i)]) if i else set()
         pool = [x for x in day["A"] if x["rate"] < RATE_CAP]
         if not pool:

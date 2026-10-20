@@ -88,7 +88,8 @@ class SnapshotTimestampTests(unittest.TestCase):
         """새 키는 **뒤에** 붙는다 — 기존 키의 순서를 바꾸지 않는다."""
         keys = [kv.split("=", 1)[0] for kv in self.first[1:]]
         self.assertEqual(keys[:6], ["capturedAt", "slot", "total", "kept", "KOSPI", "KOSDAQ"])
-        self.assertEqual(keys[6:], ["priceRequestedAt", "priceReceivedAt", "writtenAt"])
+        self.assertEqual(keys[6:9], ["priceRequestedAt", "priceReceivedAt", "writtenAt"])
+        self.assertEqual(keys[9:], ["themeMembershipStatus", "upjongMembershipStatus", "groupMembershipStatus"])
 
     def test_existing_reader_still_parses_rows(self):
         meta, rows, dup = read_snapshot(self.path)

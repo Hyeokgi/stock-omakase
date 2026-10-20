@@ -31,6 +31,7 @@ EXPECTED = {
 }
 # 12곳 표 밖에서 **추가로** 건 계측 — 지시 ⑤(V1·V2·V3 각각)와 ⑦(원장) 때문에 필요하다.
 EXTRA = {
+    "theme_membership": FT.CRITICAL, # 2026-10-20 — 구성 조회 실패는 정상 후보 0이 아니다
     "v1_score": FT.CRITICAL,          # P0-5 — scanner·analyst 양쪽
     "v2_score": FT.CRITICAL,          # P0-5 — V2 게이트 판정 실패(fail-closed 유지)
     "v3_score": FT.CRITICAL,          # P0-5 — DB_실적 읽기 실패도 v3 오류다

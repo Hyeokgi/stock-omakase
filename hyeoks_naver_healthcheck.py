@@ -16,6 +16,7 @@ import requests
 from bs4 import BeautifulSoup
 import xml.etree.ElementTree as ET
 import urllib3
+from naver_membership import fetch_members
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
@@ -270,8 +271,7 @@ def chk_theme_stocks_json():
     if not isinstance(tl, list) or not tl:
         return False, "테마목록 비어있음"
     no = tl[0].get('no')
-    d = _get(f"https://stock.naver.com/api/domestic/market/theme/{no}/stocklist"
-             f"?marketType=ALL&orderType=priceTop&startIdx=0&pageSize=100").json()
+    d = fetch_members("theme", no, SESSION)
     return isinstance(d, list) and len(d) >= 2, f"테마{no} 구성 {len(d) if isinstance(d, list) else 0}종목"
 
 
@@ -295,8 +295,7 @@ def _chk_sector_list(kind, min_n, big_min):
     ⚠️ 이 경로는 **없는 이름에도 200 + `[]`** 를 주고(docs/네이버개편_대응.md §3),
        pageSize 를 빠뜨리면 조용히 **20건**으로 잘린다. 그래서 상태코드가 아니라
        건수·필수필드·구성종목까지 봐야 '껍데기 200'을 거를 수 있다.
-    ⚠️ pageSize 상한은 200 이다 — 실측(2026-08-28) 결과 목록은 300부터,
-       구성종목은 250부터 HTTP 400 이 난다. 상한을 넘기면 통째로 실패한다.
+    목록은 pageSize=200, 구성종목은 size/cursor 로 끝까지 확인한다.
     """
     d = _get(f"https://stock.naver.com/api/domestic/market/{kind}/list?pageSize=200").json()
     if not isinstance(d, list) or len(d) < min_n:
@@ -307,10 +306,9 @@ def _chk_sector_list(kind, min_n, big_min):
 
     # 가장 큰 분류의 구성종목을 받아 본다. 목록만 200 을 주고 상세가 죽은 경우를 잡는다.
     big = max(d, key=lambda x: int(float(str(x.get('totalCnt') or 0))))
-    st = _get(f"https://stock.naver.com/api/domestic/market/{kind}/{big['no']}/stocklist"
-              f"?marketType=ALL&orderType=priceTop&startIdx=0&pageSize=200").json()
+    st = fetch_members(kind, big['no'], SESSION)
     n = len(st) if isinstance(st, list) else 0
-    if n < big_min:
+    if n < max(big_min, int(float(str(big.get('totalCnt') or 0)))):
         return False, f"{len(d)}개지만 최대분류 {big.get('name')} 구성 {n}종목(임계 {big_min})"
     return True, f"{len(d)}개 · 최대 {big.get('name')} {n}종목(totalCnt {big.get('totalCnt')})"
 

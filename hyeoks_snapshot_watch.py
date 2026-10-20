@@ -34,7 +34,7 @@
 # 종료 코드
 #   0 = 구멍 없음 / 1 = 복구 가능한 구멍 있음(경고) / 2 = 복구 불가 구멍 발생(즉시 확인)
 # ==========================================================================
-import os, re, gzip, sys, datetime, argparse
+import os, re, gzip, sys, datetime, argparse, csv
 import xml.etree.ElementTree as ET
 import requests, urllib3
 
@@ -89,18 +89,35 @@ def read_meta(path):
     try:
         with gzip.open(path, "rt", encoding="utf-8") as fh:
             head = fh.readline().rstrip("\n")
-            cols = fh.readline().rstrip("\n").split(",")
-            rows = sum(1 for _ in fh)
+            reader = csv.DictReader(fh)
+            cols = reader.fieldnames or []
+            rows, mapped = 0, {k: 0 for k in ("themeNos", "upjongNos", "groupNos")}
+            for row in reader:
+                rows += 1
+                for key in mapped:
+                    mapped[key] += bool(row.get(key))
     except Exception as e:
         return {"_error": str(e)}
     if not head.startswith("#meta"):
         return {"_error": "첫 줄이 #meta 가 아님"}
-    meta = {"_cols": cols, "_rows": rows}
+    meta = {"_cols": cols, "_rows": rows, "_mapped": mapped}
     for part in head.split(",")[1:]:
         if "=" in part:
             k, v = part.split("=", 1)
             meta[k.strip().strip('"')] = v.strip().strip('"')
     return meta
+
+
+def membership_issues(meta):
+    """파일 존재만으로 통과시키지 않고 명시적 실패와 전량 연결 0을 검사한다."""
+    issues = []
+    for kind, col in (("theme", "themeNos"), ("upjong", "upjongNos"), ("group", "groupNos")):
+        status = meta.get(kind + "MembershipStatus")
+        if status is not None and status != "OK":
+            issues.append(f"{kind} 구성 {status}")
+        elif col in meta.get("_cols", []) and meta.get("_rows", 0) and not meta.get("_mapped", {}).get(col):
+            issues.append(f"{kind} 구성 연결 0")
+    return issues
 
 
 def in_window(captured_at, slot):
@@ -193,7 +210,10 @@ def main():
         for slot in ("1300", "1505"):
             f = f"{d}_{slot}.csv.gz"
             if f in snap_have:
-                cells.append("✅")
+                quality = read_meta(os.path.join(SNAP_DIR, f))
+                issues = membership_issues(quality)
+                cells.append("⚠️" if issues else "✅")
+                missing_hard.extend(f"{slot} {issue}" for issue in issues)
             else:
                 cells.append("❌")
                 missing_hard.append(f"스냅샷 {slot}")

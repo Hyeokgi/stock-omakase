@@ -44,7 +44,7 @@ FINGERPRINT_FILES = [
     # 🔴 2026-09-20 — naver_sources 는 종목코드 규칙을 krx_code 에 위임한다.
     #    위임한 모듈이 지문에 없으면 규칙이 바뀌어도 지문이 그대로다(3차 교차검증과 같은 계열).
     "krx_code.py", "krx_amount.py",
-    "naver_sources.py", "after_market_quotes.py", "telegram_target.py",
+    "naver_sources.py", "naver_membership.py", "after_market_quotes.py", "telegram_target.py",
     "hyeoks_performance_memory.py", "hyeoks_data_quality.py",
     "hyeoks_run_freeze.py",
     # 🔴 2026-10-04 — 목표가·손절가 검증 규칙. omakase·analyst 가 위임하므로 같이 묶는다.

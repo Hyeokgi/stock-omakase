@@ -127,7 +127,7 @@ def day_quality(d, meta, themes, rows1505, top):
         status = "시각초과"
     elif rate_fail:
         status = "불완전(테마등락률)"
-    elif unknown:
+    elif unknown or meta.get("themeMembershipStatus", "OK") != "OK":
         status = "불완전(소속)"
     else:
         status = "기록"
