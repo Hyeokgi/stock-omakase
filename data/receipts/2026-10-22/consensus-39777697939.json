@@ -1,0 +1,34 @@
+{
+ "code_sha": "b160ccae",
+ "cycle_date": "2026-10-22",
+ "emitted_at": "2026-10-22T22:17:59.734076+09:00",
+ "fingerprint": "18dadfa91350",
+ "kind": "consensus",
+ "payload": {
+  "attempted": 160,
+  "empty": 2,
+  "expected_state": "reached",
+  "failed": 112,
+  "preflight": [
+   {
+    "code": "005930",
+    "secs": 2.5,
+    "state": "ok",
+    "why": ""
+   },
+   {
+    "code": "000660",
+    "secs": 18.3,
+    "state": "fail",
+    "why": "SourceError: Source unavailable: URLError: [SSL: UNEXPECTED_EOF_WHILE_READING] EOF occurred in violation of protocol (_ssl.c:1017)"
+   }
+  ],
+  "preflight_ok": true,
+  "state": "DEGRADED",
+  "success": 46,
+  "targets": 174,
+  "unprocessed": 14
+ },
+ "receipt_version": "receipt-v2",
+ "run_id": "39777697939"
+}
