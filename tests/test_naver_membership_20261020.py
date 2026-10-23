@@ -101,6 +101,8 @@ def scanner_functions(*names):
     env = dict(datetime=datetime, KST=datetime.timezone(datetime.timedelta(hours=9)),
                GLOBAL_SESSION=Mock(), BeautifulSoup=Mock(return_value=soup), pd=Mock(),
                THEME_SOURCE_STATE={}, THEME_BLACKLIST=[], TARGET_PERCENT=3,
+               # 2026-10-24 — 표시 전용 '테마_현황' 탭 정보(theme_status.py). 선정은 읽지 않는다.
+               THEME_STATUS={"dominated": [], "note": "", "input_written": ""},
                fetch_theme_list_json=Mock(return_value=[{"no": "1", "name": "시험"}]),
                fetch_theme_stocks_json=Mock(), MembershipError=N.MembershipError,
                TELEMETRY=feature_telemetry.Telemetry(), feature_telemetry=feature_telemetry,
@@ -128,6 +130,8 @@ class ScannerSourceTests(unittest.TestCase):
                 env["get_real_money_themes"]()
                 self.assertEqual(env["THEME_SOURCE_STATE"]["status"], "FAILED" if fails else "OK")
                 self.assertEqual(env["TELEMETRY"].total(), 1 if fails else 0)
+                # 표시 탭이 '구성 조회 불완전' 과 '조건 충족 없음' 을 가려 보여 준다(2026-10-24)
+                self.assertIn("구성 조회 불완전" if fails else "등락률 3%", env["THEME_STATUS"]["note"])
 
     def test_failed_source_preserves_sheet_values_and_adds_warning_note(self):
         env = scanner_functions("update_google_sheet")
