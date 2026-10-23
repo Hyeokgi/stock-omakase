@@ -1,0 +1,34 @@
+{
+ "code_sha": "ebd18172",
+ "cycle_date": "2026-10-23",
+ "emitted_at": "2026-10-23T21:27:53.515866+09:00",
+ "fingerprint": "18dadfa91350",
+ "kind": "consensus",
+ "payload": {
+  "attempted": 168,
+  "empty": 20,
+  "expected_state": "reached",
+  "failed": 1,
+  "preflight": [
+   {
+    "code": "005930",
+    "secs": 2.2,
+    "state": "ok",
+    "why": ""
+   },
+   {
+    "code": "000660",
+    "secs": 2.5,
+    "state": "ok",
+    "why": ""
+   }
+  ],
+  "preflight_ok": true,
+  "state": "DEGRADED",
+  "success": 147,
+  "targets": 168,
+  "unprocessed": 0
+ },
+ "receipt_version": "receipt-v2",
+ "run_id": "39952724190"
+}
