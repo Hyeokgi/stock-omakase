@@ -2986,7 +2986,8 @@ def update_technical_data(df_theme, all_theme_map):
                 if len(row) > 4:
                     if row[3] and str(row[3]).strip(): portfolio_protected_names.add(str(row[3]).strip()) 
                     if row[4] and str(row[4]).strip(): portfolio_protected_names.add(str(row[4]).strip()) 
-            print(f"📦 [포트폴리오 동기화 완료] 중기 전략 핵심주 보호막 가동: {list(portfolio_protected_names)}")
+            # 🔴 2026-10-24 허브 #18 — 공개 실행 로그에 보호 종목명 전체가 찍혔다. 개수만 남긴다(과거 로그는 그대로 둔다, 10/12 사용자).
+            print(f"📦 [포트폴리오 동기화 완료] 중기 전략 핵심주 보호막 가동: {len(portfolio_protected_names)}종목")
         except Exception as e:
             print(f"⚠️ [DB_중장기 시트 연동 실패] {e}")
 
