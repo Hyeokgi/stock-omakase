@@ -650,6 +650,7 @@ def get_real_money_themes():
         if THEME_SOURCE_STATE["failed"] or not themes:
             THEME_SOURCE_STATE["status"] = "PARTIAL" if THEME_SOURCE_STATE["success"] else "FAILED"
             print("::warning::테마 구성 조회 불완전 — 후보 없음이 아님. 이번 테마 갱신·선정 입력 보류")
+            THEME_STATUS["note"] = f"테마 구성 조회 불완전({THEME_SOURCE_STATE['status']}) — 후보 없음이 아님"
             return pd.DataFrame(), is_market_closed, {}
         THEME_SOURCE_STATE["status"] = "OK"
         if not theme_data_list:
@@ -708,6 +709,7 @@ def get_real_money_themes():
     except Exception as e:
         print(f"❌ 테마 수집 에러: {e}")
         THEME_SOURCE_STATE["status"] = "FAILED"
+        THEME_STATUS["note"] = "테마 수집 중 오류 — 후보 없음이 아님"
         return pd.DataFrame(), False, {}
     finally:
         if THEME_SOURCE_STATE["status"] != "OK":
