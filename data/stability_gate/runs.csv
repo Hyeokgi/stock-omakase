@@ -20,3 +20,4 @@ cycle_date,run_id,source,verdict,fingerprint,ci_green,earnings_schema_ok,dart_co
 2026-10-20,39377907270+39378029726+39416583940+39421657753,cycle,FAIL,18dadfa91350,N,Y,Y,N,N,N,N,DEGRADED,"ci_green:scanner 영수증 없음; no_silent_parse_error:scanner 영수증 없음; store_written:scanner 영수증 없음; ledger_written:scanner 영수증 없음; no_unexplained_failure:영수증없음=['scanner', 'analyst'] 기대상태미달=[] 최종아님=[] workflow=['main.yml=결론없음', 'ai_report.yml=결론없음'] 깨진파일=0",stability-gate-v3
 2026-10-21,39552772398+39552898319+39593647545+39598968044,cycle,PASS,18dadfa91350,Y,Y,Y,Y,Y,Y,Y,DEGRADED,,stability-gate-v3
 2026-10-22,39731257384+39731390878+39772304143+39777697939,cycle,PASS,18dadfa91350,Y,Y,Y,Y,Y,Y,Y,DEGRADED,,stability-gate-v3
+2026-10-23,39908890570+39909022787+39947688849+39952724190,cycle,FAIL,18dadfa91350,Y,Y,N,Y,Y,Y,Y,DEGRADED,"dart_complete:대상=168 허용합=1 {'hard_error': 0, 'circuit_breaker_unprocessed': 167, 'time_budget_unprocessed': 0} 미분류=0 본표차단=- 입력=ok",stability-gate-v3
