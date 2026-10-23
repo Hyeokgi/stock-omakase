@@ -3675,6 +3675,10 @@ def update_technical_data(df_theme, all_theme_map):
                     #    같아야 정상이다. 다르면 feature_store·rank_pool 의 날짜와
                     #    어긋나 Gate 의 store_written 이 떨어진다 — 조용히 넘기지 않는다.
                     _cyc = production_receipt.cycle_date_now()
+                    # 🔴 2026-10-24 허브 #20 — 급락장에서 후보가 정말 0 이면 순위 풀도 0행이다. 그 0 을 '기록 실패' 와
+                    #    가르려고 채널별 후보 수를 남긴다. 두 채널 모두 0 일 때만 0행을 정상으로 본다(evidence_builder.pool_rows_ok).
+                    _pool_cands = {_ch: len(_ranked) for _ch, _ranked, *_rest in _pool_plan}
+                    _pool_zero_ok = bool(_pool_cands) and not any(_pool_cands.values())
                     if _cyc != today_str:
                         TELEMETRY.note('cycle_date', f'{today_str}≠{_cyc}',
                                        feature_telemetry.OBSERVE)
@@ -3683,7 +3687,7 @@ def update_technical_data(df_theme, all_theme_map):
                         "today_str": today_str,
                         "cycle_date_matches": _cyc == today_str,
                         # ⑧ 기계 기준 — 사람이 "이상 없음" 이라고 쓰지 않는다
-                        "expected_state": ("reached" if (_fok and _pool_rows and
+                        "expected_state": ("reached" if (_fok and (_pool_rows or _pool_zero_ok) and
                                                          TELEMETRY.total() == 0)
                                            else "degraded"),
                         "ci_conclusion": os.environ.get("CI_CONCLUSION", ""),
@@ -3714,6 +3718,8 @@ def update_technical_data(df_theme, all_theme_map):
                         "rank_pool": {"date": today_str,
                                       "fingerprint": _sg.fingerprint(),
                                       "rows": _pool_rows,
+                                      "candidates": _pool_cands,
+                                      "expected_zero_reason": ("후보 없음" if _pool_zero_ok else ""),
                                       "by_channel_dropped": _pool_dropped,
                                       "total_dropped": sum(_pool_dropped.values())},
                         # ⑦ read-after-write

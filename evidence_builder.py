@@ -39,6 +39,22 @@ REQUIRED_WORKFLOWS = ("main.yml", "ai_report.yml", "earnings_collector.yml")
 
 MIN_STORE_ROWS = 50          # 스캔 풀은 700대다. 50 미만이면 정상 수집이 아니다
 MIN_POOL_ROWS = 1            # rank_pool 은 채널당 상위 N — 0 이면 기록이 안 된 것이다
+# 🔴 2026-10-24 허브 #20 — 급락장(10/14·10/15)에는 스캐너 후보가 정말 0 이라 순위 풀도 0행이었다.
+#    그 0 을 '기록 실패' 로 읽어 FAIL 이 났다. 두 채널의 후보 수가 **모두 0** 이고 영수증이 이유를 적었을 때만
+#    0행을 정상으로 받는다. 후보가 있는데 0행이면 지금처럼 거짓이다. 원장의 `expected_zero_reason` 과 같은 방식.
+POOL_CHANNELS = ("차트TOP2", "수급TOP2")
+
+
+def pool_rows_ok(rp):
+    """순위 풀 행수가 정상인가 — 1행 이상, 또는 두 채널 후보 0 + 사유."""
+    rows = rp.get("rows")
+    if isinstance(rows, int) and not isinstance(rows, bool) and rows >= MIN_POOL_ROWS:
+        return True
+    cands = rp.get("candidates")
+    return (rows == 0 and isinstance(cands, dict)
+            and all(isinstance(cands.get(ch), int) and not isinstance(cands.get(ch), bool)
+                    and cands[ch] == 0 for ch in POOL_CHANNELS)
+            and bool(str(rp.get("expected_zero_reason") or "").strip()))
 
 
 def _miss(kind):
@@ -154,14 +170,16 @@ def build(cycle_date, fingerprint, root=R.RECEIPT_DIR, workflow_states=None):
               and fs.get("fingerprint") == fingerprint
               and rp.get("fingerprint") == fingerprint
               and isinstance(fs.get("rows"), int) and fs["rows"] >= MIN_STORE_ROWS
-              and isinstance(rp.get("rows"), int) and rp["rows"] >= MIN_POOL_ROWS
+              and pool_rows_ok(rp)
               and fs.get("dropped") == 0
               and rp.get("total_dropped") == 0
               # 🔴 2026-09-19 — 영수증 날짜와 저장 날짜가 갈리면 증거가 아니다
               and sc["payload"].get("cycle_date_matches") is True)
         put("store_written", ok,
             f"feature_store(행={fs.get('rows')} 버림={fs.get('dropped')}) "
-            f"rank_pool(행={rp.get('rows')} 버림={rp.get('total_dropped')}) "
+            f"rank_pool(행={rp.get('rows')} 버림={rp.get('total_dropped')}"
+            f"{' 후보=' + str(rp.get('candidates')) if 'candidates' in rp else ''}"
+            f"{' 사유=' + str(rp.get('expected_zero_reason')) if rp.get('expected_zero_reason') else ''}) "
             f"날짜={fs.get('date')}/{rp.get('date')} "
             f"사이클일치={sc['payload'].get('cycle_date_matches')} 지문일치="
             f"{fs.get('fingerprint') == fingerprint and rp.get('fingerprint') == fingerprint}")
@@ -442,6 +460,24 @@ def _selftest():
         seed(d, p, good_earnings())
         chk("rank_pool 이 행을 버렸으면 거짓 (P0-4)",
             build(DAY, FP, root=d, workflow_states=WF)[0]["store_written"] is False)
+
+    def zero_pool(**kw):
+        p = good_scanner()
+        p["rank_pool"].update(rows=0, candidates={"차트TOP2": 0, "수급TOP2": 0},
+                              expected_zero_reason="후보 없음")
+        p["rank_pool"].update(kw)
+        return p
+
+    for name, p, want in (
+            ("두 채널 후보 0 + 사유면 순위 풀 0행도 참 (#20)", zero_pool(), True),
+            ("후보가 있는데 0행이면 거짓 (#20)", zero_pool(candidates={"차트TOP2": 3, "수급TOP2": 0}), False),
+            ("사유가 없으면 거짓 (#20)", zero_pool(expected_zero_reason=""), False),
+            ("한 채널 후보 수가 빠지면 거짓 (#20)", zero_pool(candidates={"차트TOP2": 0}), False),
+            ("후보 수가 없던 옛 영수증의 0행은 거짓 (#20)", {**good_scanner(), "rank_pool": {
+                **good_scanner()["rank_pool"], "rows": 0}}, False)):
+        with tempfile.TemporaryDirectory() as d:
+            seed(d, p, good_earnings())
+            chk(name, build(DAY, FP, root=d, workflow_states=WF)[0]["store_written"] is want)
 
     with tempfile.TemporaryDirectory() as d:          # P0-3 리포트 원장
         seed(d, good_scanner(), good_earnings(),
