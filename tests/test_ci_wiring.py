@@ -174,7 +174,9 @@ class GitAddPathTests(unittest.TestCase):
     def test_main_yml_creates_the_dirs_it_adds(self):
         body = "\n".join(
             s.get("run", "") for s in load(WF / "main.yml")["jobs"]["build"]["steps"])
-        self.assertIn("mkdir -p data/scanner_census data/feature_store", body)
+        self.assertIn("mkdir -p data/scanner_census data/receipts", body)
+        # 🔒 2026-10-25 — 후보 자료는 커밋하지 않는다(private_store.py · .gitignore)
+        self.assertNotIn("data/feature_store", body.split("mkdir -p data/scanner_census")[1].split("git commit")[0])
 
 
 class SourceErrorTests(unittest.TestCase):

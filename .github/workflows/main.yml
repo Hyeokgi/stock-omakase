@@ -93,6 +93,16 @@ jobs:
       #    🔴 두 단계가 실패해도 run 결론은 success 여야 한다 — Evidence Builder 가 scanner 영수증의
       #    run 결론으로 no_unexplained_failure 를 정한다(Codex 10/13 P2). 그래서 continue-on-error·짧은 상한.
       #    사본은 저장소 밖($RUNNER_TEMP)에 만들고 세 폴더의 변경 파일만 담는다 — secret.json 이 섞이지 않는다.
+      # 🔒 2026-10-25 — 후보 자료(Feature Store · 순위 풀)는 공개 저장소 · artifact 에 남기지 않는다(허브 §8,
+      #    Codex 검토 P1, 사용자 결정). 러너가 쓴 파일을 드라이브(비공개)로 올리고 공개에는 건수 색인
+      #    data/scanner_census/private_index.csv 만 남긴다. 업로드가 실패해도 회차를 실패로 만들지 않는다 —
+      #    색인에 '실패' 가 남고 같은 날 뒤 회차가 다시 기록해 올린다. 창 밖 회차는 새 자료가 없어 바로 끝난다.
+      - name: 🔒 후보 자료 비공개 보관 (드라이브)
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 8
+        run: python private_store.py --upload
+
       - name: 🧳 스캐너 증거 사본 준비
         id: evidence
         if: always()
@@ -124,14 +134,16 @@ jobs:
           #    두 회차가 **전수조사 한 줄을 커밋하지 못하고 워크플로째 실패**했다.
           #    기록 창은 14:40~15:10 뿐이다 — 계속 실패했으면 그날치를 통째로 잃었다.
           #    관측을 남기려다 수집기를 죽이지 않는다. 경로를 먼저 만들어 둔다.
-          mkdir -p data/scanner_census data/feature_store data/receipts
-          if [ -z "$(git status --porcelain data/scanner_census data/feature_store data/receipts)" ]; then
+          # 🔒 2026-10-25 — data/feature_store · data/scanner_census/rank_pool.csv 는 .gitignore(드라이브 비공개).
+          #    여기서는 건수 색인 · 전수조사 · 영수증만 커밋한다.
+          mkdir -p data/scanner_census data/receipts
+          if [ -z "$(git status --porcelain data/scanner_census data/receipts)" ]; then
             echo "기록 없음 (창 밖이거나 오늘치 이미 있음)"
             exit 0
           fi
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -- data/scanner_census data/feature_store data/receipts
+          git add -- data/scanner_census data/receipts
           git commit -m "data: 타점 전수조사·후보 동결 $(TZ=Asia/Seoul date +%Y-%m-%d) [skip ci]"
           # 스냅샷·분봉 워크플로가 같은 시간대에 푸시할 수 있으므로 rebase 후 재시도
           for i in 1 2 3; do

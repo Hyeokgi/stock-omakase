@@ -51,10 +51,11 @@ def pool_rows_ok(rp):
     if isinstance(rows, int) and not isinstance(rows, bool) and rows >= MIN_POOL_ROWS:
         return True
     cands = rp.get("candidates")
-    return (rows == 0 and isinstance(cands, dict)
-            and all(isinstance(cands.get(ch), int) and not isinstance(cands.get(ch), bool)
-                    and cands[ch] == 0 for ch in POOL_CHANNELS)
-            and bool(str(rp.get("expected_zero_reason") or "").strip()))
+    reason = rp.get("expected_zero_reason")
+    # 2026-10-25 Codex 검토(P3) — 0행도 정확한 정수 0 이어야 한다(False · 0.0 거부), 사유는 비지 않은 문자열만.
+    return (type(rows) is int and rows == 0 and isinstance(cands, dict)
+            and all(type(cands.get(ch)) is int and cands[ch] == 0 for ch in POOL_CHANNELS)
+            and isinstance(reason, str) and bool(reason.strip()))
 
 
 def _miss(kind):

@@ -125,6 +125,12 @@ def _safe_code(r):
 
 def already_recorded(day, channel, path=POOL_PATH):
     """같은 날 같은 채널이 이미 있나. 재실행이 중복 적재하지 않게."""
+    # 🔒 2026-10-25 — 순위 풀은 이제 커밋하지 않고 드라이브(비공개)로 간다(private_store.py, 허브 §8).
+    #    새 러너에는 앞 회차 행이 없으니 공개 색인의 접수 행도 본다(기본 경로일 때만).
+    if path == POOL_PATH:
+        import private_store
+        if private_store.recorded("rank_pool", day, channel):
+            return True
     if not os.path.exists(path):
         return False
     try:
