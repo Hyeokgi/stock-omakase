@@ -33,6 +33,12 @@
 #
 # 종료 코드
 #   0 = 구멍 없음 / 1 = 복구 가능한 구멍 있음(경고) / 2 = 복구 불가 구멍 발생(즉시 확인)
+#
+# 🔴 2026-10-24 — 알려진 구멍은 실패로 세지 않는다(사용자 결정, 허브 #21).
+#   10/12 부터 매일 빨간불이었는데 새 구멍은 없었다. 지난 구멍(10/12 분봉 · 10/16~10/20 구성 연결 0 ·
+#   10/21~10/23 업종 PARTIAL)이 20일 감시 창에 남아 있었기 때문이다. 매일 빨가면 정작 새 구멍을 못 본다.
+#   사람이 원인을 확인한 구멍은 KNOWN_GAPS 파일에 (날짜 · 항목 · 사유)로 적는다. 표와 결론에는 그대로 보이되
+#   종료 코드는 **목록에 없는 구멍**으로만 정한다. 새 구멍은 확인해서 적을 때까지 계속 빨갛다.
 # ==========================================================================
 import os, re, gzip, sys, datetime, argparse, csv
 import xml.etree.ElementTree as ET
@@ -57,6 +63,8 @@ SLOT_PRIMARY_BY = {"1300": "13:10", "1505": "15:05"}
 
 # 스냅샷이 처음 쌓이기 시작한 날. 이 앞은 애초에 없는 것이므로 결측으로 세지 않는다.
 SNAPSHOT_EPOCH = "2026-08-28"
+# 원인을 확인한 복구 불가 구멍 — 항목 문자열은 아래 결론의 '복구 불가 구멍' 줄과 똑같이 쓴다.
+KNOWN_GAPS = "data/snapshot_watch/known_gaps.csv"
 # 업종·그룹사 축과 호가 4열이 들어간 날(merge 4236a7c, 19:54 KST → 실제 적용은 다음 거래일).
 SECTOR_EPOCH = "2026-08-31"
 
@@ -169,6 +177,36 @@ def backup_cron_report(days):
         started = str(run.get("run_started_at", ""))[:16].replace("T", " ")
         print(f"   · {started} UTC · {run.get('conclusion') or run.get('status')}")
     print(f"   → 최근 {len(runs)}회 발사 확인. 정상인 날은 중복 가드로 조용히 끝나는 것이 설계된 동작이다.")
+
+
+def load_known(path=None):
+    """{(날짜, 항목): 사유}. 파일이 없거나 깨졌으면 빈 dict — 그러면 모든 구멍이 새 구멍이다(안전한 쪽)."""
+    try:
+        with open(path or KNOWN_GAPS, encoding="utf-8", newline="") as fh:
+            return {(r["date"].strip(), r["item"].strip()): (r.get("reason") or "").strip()
+                    for r in csv.DictReader(fh) if r.get("date") and r.get("item")}
+    except FileNotFoundError:
+        return {}
+    except (OSError, KeyError, csv.Error, UnicodeDecodeError) as e:
+        print(f"⚠️ 알려진 구멍 목록을 못 읽었다({type(e).__name__}) — 모든 구멍을 새 구멍으로 본다")
+        return {}
+
+
+def split_known(lost, known):
+    """(새 구멍, 알려진 구멍). 각각 [(날짜, [항목...])]. 알려진 쪽은 같은 사유끼리 묶어 '항목들 — 사유' 로 적는다."""
+    new, old = [], []
+    for d, what in lost:
+        n = [w for w in what if (d, w) not in known]
+        by_reason = {}
+        for w in what:
+            if (d, w) in known:
+                by_reason.setdefault(known[(d, w)], []).append(w)
+        o = [f"{', '.join(ws)} — {why}" for why, ws in by_reason.items()]
+        if n:
+            new.append((d, n))
+        if o:
+            old.append((d, o))
+    return new, old
 
 
 def main():
@@ -290,15 +328,23 @@ def main():
         for d, what in recoverable:
             print(f"   · {d}: {', '.join(what)}")
         print("   메우는 법: Actions → '⏱️ HYEOKS 장중 분봉 프로파일' → Run workflow → date 에 날짜 입력")
-    if lost:
+    new, old = split_known(lost, load_known())
+    if old:
+        print("\n📌 알려진 구멍(원인 확인됨 — 실패로 세지 않는다):")
+        for d, what in old:
+            print(f"   · {d}: {'; '.join(what)}")
+    if new:
         print("\n❌ 복구 불가 구멍:")
-        for d, what in lost:
+        for d, what in new:
             print(f"   · {d}: {', '.join(what)}")
         print("   시장 스냅샷은 사후 복원이 불가능하다. 트리거(GAS/cron)가 살아 있는지 확인하라.")
+        print(f"   원인을 확인했으면 {KNOWN_GAPS} 에 date,item,reason 으로 적는다(item 은 위 항목 그대로).")
     if not lost and not recoverable:
         print("✅ 구멍 없음. 전 거래일 수집 완료.")
+    elif not new and not recoverable:
+        print("✅ 새 구멍 없음 — 남은 것은 알려진 구멍뿐이다.")
 
-    if lost:
+    if new:
         return 2
     if recoverable:
         return 2 if args.strict else 1
