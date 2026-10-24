@@ -61,7 +61,7 @@ class MainLoop(unittest.TestCase):
 
         calls = []
         with mock.patch.object(C, "OUT_DIR", d), mock.patch.object(C, "trading_days", return_value=DAYS[:-1]), \
-             mock.patch.object(C, "collect_day", side_effect=lambda day, *rest: calls.append(day) or 0), \
+             mock.patch.object(C, "collect_day", side_effect=lambda day, *rest, **kw: calls.append((day, rest[1], kw.get("allow_proxy", True))) or 0), \
              mock.patch.object(C.datetime, "datetime", FakeDT), mock.patch.object(sys, "argv", ["x", *argv]), \
              mock.patch("builtins.print"):
             rc = C.main()
@@ -69,7 +69,7 @@ class MainLoop(unittest.TestCase):
 
     def test_1012_case_is_collected_by_the_late_run(self):
         rc, calls = self.run_main(at("2026-10-13", "01:14"), existing=("2026-10-02", "2026-10-06", "2026-10-07", "2026-10-08"))
-        self.assertEqual((rc, calls), (0, ["2026-10-12"]))
+        self.assertEqual((rc, calls), (0, [("2026-10-12", False, False)]), "메우기는 force 없이 · 대용 순위 금지")
 
     def test_nothing_missing_does_nothing(self):
         rc, calls = self.run_main(at("2026-10-13", "01:14"), existing=DAYS[:-1])
@@ -77,7 +77,25 @@ class MainLoop(unittest.TestCase):
 
     def test_explicit_date_is_kept(self):
         _, calls = self.run_main(at("2026-10-13", "16:00"), ["--date", "2026-10-07"], existing=DAYS)
-        self.assertEqual(calls, ["2026-10-07"])
+        self.assertEqual(calls, [("2026-10-07", False, True)])
+
+
+class CodexReview(unittest.TestCase):
+    """2026-10-25 Codex 검토 — 날짜 없는 --force 회귀, 자동 메우기의 '오늘 순위' 대용."""
+
+    def test_force_without_date_rebuilds_today_like_before(self):
+        rc, calls = MainLoop.run_main(MainLoop(), at("2026-10-13", "16:00"), ["--force"], existing=DAYS)
+        self.assertEqual((rc, calls), (0, [("2026-10-13", True, True)]))
+
+    def test_catchup_refuses_today_ranking_as_a_proxy_for_a_past_day(self):
+        def proxy(day, top):
+            C.RANK_SRC = "proxy_today"
+            return [("000010", "시험")]
+        d = tempfile.mkdtemp()
+        with mock.patch.object(C, "OUT_DIR", d), mock.patch.object(C, "pick_targets", side_effect=proxy),              mock.patch.object(C, "profile") as prof, mock.patch("builtins.print"):
+            self.assertEqual(C.collect_day("2026-10-12", 300, False, at("2026-10-13", "01:14"), DAYS, allow_proxy=False), 1)
+            prof.assert_not_called()
+        self.assertEqual(os.listdir(d), [])
 
 
 class CollectDayGuards(unittest.TestCase):

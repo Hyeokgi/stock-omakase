@@ -183,8 +183,19 @@ def load_known(path=None):
     """{(날짜, 항목): 사유}. 파일이 없거나 깨졌으면 빈 dict — 그러면 모든 구멍이 새 구멍이다(안전한 쪽)."""
     try:
         with open(path or KNOWN_GAPS, encoding="utf-8", newline="") as fh:
-            return {(r["date"].strip(), r["item"].strip()): (r.get("reason") or "").strip()
-                    for r in csv.DictReader(fh) if r.get("date") and r.get("item")}
+            reader = csv.DictReader(fh)
+            if not {"date", "item", "reason"} <= set(reader.fieldnames or []):
+                raise KeyError("date,item,reason 열이 없다")
+            out, skipped = {}, 0
+            for r in reader:
+                d, item, why = ((r.get(k) or "").strip() for k in ("date", "item", "reason"))
+                if d and item and why:
+                    out[(d, item)] = why
+                elif d or item:
+                    skipped += 1        # 사유 없는 줄은 면제하지 않는다(2026-10-25 Codex 검토)
+            if skipped:
+                print(f"⚠️ 알려진 구멍 목록에 사유 없는 줄 {skipped}개 — 면제하지 않는다")
+            return out
     except FileNotFoundError:
         return {}
     except (OSError, KeyError, csv.Error, UnicodeDecodeError) as e:
@@ -249,7 +260,8 @@ def main():
             f = f"{d}_{slot}.csv.gz"
             if f in snap_have:
                 quality = read_meta(os.path.join(SNAP_DIR, f))
-                issues = membership_issues(quality)
+                # 2026-10-25 Codex 검토 — 읽기 실패를 예전에는 마지막 거래일에서만 잡아, 지난 날짜 파일이 깨지면 ✅ 로 보였다.
+                issues = ["파일 손상"] if "_error" in quality else membership_issues(quality)
                 cells.append("⚠️" if issues else "✅")
                 missing_hard.extend(f"{slot} {issue}" for issue in issues)
             else:
@@ -302,8 +314,7 @@ def main():
                 continue
             m = read_meta(path)
             if "_error" in m:
-                print(f"   {slot}: ⚠️ 읽기 실패 — {m['_error']}")
-                lost.append((d, [f"{slot} 파일 손상"]))
+                print(f"   {slot}: ⚠️ 읽기 실패 — {m['_error']}")   # 구멍 목록에는 위 날짜별 검사가 이미 넣었다
                 continue
             cap = m.get("capturedAt", "")
             ok = in_window(cap, slot)

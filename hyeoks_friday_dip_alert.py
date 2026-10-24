@@ -36,6 +36,7 @@ PROXY_MIN = 3e10                  # 순위의 현재가 × 누적 거래량이 �
 PAGE = 30                         # 등락률 순위 한 번에 오는 최대 종목 수
 CHECK_AT = "19:40"
 LATEST = "19:58"                  # 이 시각이 지나 시작하면 20:00 매수에 쓸 수 없어 아무것도 하지 않는다
+SEND_BY = "19:59"                 # 조회가 늦어져 이 시각을 넘기면 보내지 않는다(2026-10-25 Codex 검토)
 PAUSE = 0.07                      # 한투 호출 사이 쉼(초) — 초당 20건 제한
 DONE = {"대상없음", "해당없음", "발송성공", "응답불명"}
 RUN_COLS = ["day", "runId", "version", "startedAt", "checkedAt", "scanCalls", "scanned", "confirmed", "events", "hits",
@@ -67,35 +68,46 @@ def kis_getter(get, key, secret, tok, sleep):
     return call
 
 
-def rank_band(kis, iscd, lo, hi):
+def rank_band(kis, iscd, lo, hi, plo=None, phi=None):
     js = kis("/uapi/domestic-stock/v1/ranking/fluctuation", "FHPST01700000",
              {"fid_cond_mrkt_div_code": "J", "fid_cond_scr_div_code": "20170", "fid_input_iscd": iscd,
-              "fid_rank_sort_cls_code": "0", "fid_input_cnt_1": "0", "fid_prc_cls_code": "0", "fid_input_price_1": "",
-              "fid_input_price_2": "", "fid_vol_cnt": "", "fid_trgt_cls_code": "0", "fid_trgt_exls_cls_code": "0",
+              "fid_rank_sort_cls_code": "0", "fid_input_cnt_1": "0", "fid_prc_cls_code": "0",
+              "fid_input_price_1": "" if plo is None else str(plo), "fid_input_price_2": "" if phi is None else str(phi),
+              "fid_vol_cnt": "", "fid_trgt_cls_code": "0", "fid_trgt_exls_cls_code": "0",
               "fid_div_cls_code": "0", "fid_rsfl_rate1": f"{lo:.2f}", "fid_rsfl_rate2": f"{hi:.2f}"})
     return js.get("output") or []
 
 
+PRICE_MAX = 10_000_000
+
+
 def scan(band, lo=SCAN_LO, hi=SCAN_HI):
-    """band(시장, 하한, 상한) → 순위 행들. 30개가 꽉 차면 구간을 반으로 나눠 다시 받는다.
-    10/23 실측: 270회 · 2,371종목. 더 나눌 수 없이 꽉 찬 구간은 등락률 0.00% 양옆뿐이었다(보합 종목이 30개 넘음).
-    종가 +10% 종목이 거기 있으려면 애프터마켓에서 9% 넘게 빠져야 해서 기록에만 남긴다.
-    (코드 → 행, 호출 수, 더 나눌 수 없는데 꽉 찬 구간 목록)."""
+    """band(시장, 등락률 하한, 상한, 가격 하한, 상한) → 순위 행들. 30개가 꽉 차면 등락률 구간을 반으로,
+    더 나눌 수 없으면(보합 0.00% 처럼 같은 등락률이 30개 넘음) **가격 구간**으로 나눠 다시 받는다.
+    🔴 2026-10-25 Codex 검토 — 처음에는 0.00% 근처를 잘린 채 넘겼는데, 종가 +10% 종목이 저녁에 9% 넘게 빠져
+    그 구간에 있으면 바로 그 종목이 알림 대상이다. 10/24 실측: 가격 필터(fid_input_price_1/2, 양끝 포함)가 동작한다.
+    (코드 → 행, 호출 수, 가격으로도 더 나눌 수 없는데 꽉 찬 구간 목록)."""
     got, calls, cut = {}, 0, []
     for iscd in ("0001", "1001"):                 # 코스피 · 코스닥
-        todo = [(lo, hi)]
+        todo = [(lo, hi, None, None)]
         while todo:
-            a, b = todo.pop()
-            rows = band(iscd, a, b)
+            a, b, pa, pb = todo.pop()
+            rows = band(iscd, a, b, pa, pb)
             calls += 1
             for x in rows:
                 got[x.get("stck_shrn_iscd", "")] = x
-            if len(rows) >= PAGE:
-                mid = round((a + b) / 2, 2)
-                if b - a < 0.02 or mid in (a, b):
-                    cut.append((iscd, a, b))
-                else:
-                    todo += [(a, mid), (mid, b)]
+            if len(rows) < PAGE:
+                continue
+            mid = round((a + b) / 2, 2)
+            if pa is None and b - a >= 0.02 and mid not in (a, b):
+                todo += [(a, mid, None, None), (mid, b, None, None)]
+                continue
+            pa, pb = (0, PRICE_MAX) if pa is None else (pa, pb)
+            if pb - pa < 1:
+                cut.append((iscd, a, b, pa, pb))
+            else:
+                pm = (pa + pb) // 2
+                todo += [(a, b, pa, pm), (a, b, pm + 1, pb)]
     got.pop("", None)
     return got, calls, cut
 
@@ -244,9 +256,16 @@ def main(argv=None, env=None, get=None, post=None, clock=None, sleep=time.sleep,
         import requests
         get, post = get or requests.get, post or requests.post
     day8 = day.replace("-", "")
+    # 🔴 2026-10-25 Codex 검토 — 후보도 19:40 에 고른다. 거래량은 조회 시점까지의 누적(애프터 포함)이라
+    #    18:00 백업이 고르면 19:40 실행과 1~2위가 달라질 수 있다. 확정 일봉 거래대금도 애프터를 포함한다
+    #    (10/22 실측: 일봉 거래대금 = 19:59 봉 누적). 그래서 확인 시각에 고르는 쪽이 관측 정의에 가장 가깝다.
+    wait = (at(clock(), a.check_at) - clock()).total_seconds()
+    if wait > 0 and not a.day:
+        print(f"⏳ {a.check_at} 까지 {wait / 60:.0f}분 기다린다")
+        sleep(wait)
     try:
         kis = kis_getter(get, key, secret, token(post, key, secret), sleep)
-        rows, calls, cut = scan(lambda iscd, lo, hi: rank_band(kis, iscd, lo, hi))
+        rows, calls, cut = scan(lambda iscd, lo, hi, plo=None, phi=None: rank_band(kis, iscd, lo, hi, plo, phi))
         cands = prelist(rows)
         picks = pick([day_bar(kis, c, day8) for c in cands])
     except Exception as e:
@@ -256,15 +275,12 @@ def main(argv=None, env=None, get=None, post=None, clock=None, sleep=time.sleep,
         return 1
     st.update(scanCalls=calls, scanned=len(rows), confirmed=len(cands), events=len(picks), incomplete=len(cut))
     print(f"🔎 순위 호출 {calls}회 · 순위 종목 {len(rows)} · 일봉 확인 {len(cands)} · 조건 1~{TOP}위 {len(picks)}"
-          + (f" · ⚠️ 잘린 구간 {len(cut)} {[(m, lo, hi) for m, lo, hi in cut]}" if cut else ""))
+          + (f" · ⚠️ 가격으로도 못 나눈 구간 {len(cut)}" if cut else ""))
     if not picks:
-        st.update(status="대상없음", checkedAt=clock().isoformat(timespec="seconds"), hits=0)
+        # 조회가 잘렸으면 '대상 없음' 으로 확정하지 않는다 — 뒤 실행이 다시 본다(DONE 에 없는 상태).
+        st.update(status="조회불완전" if cut else "대상없음", checkedAt=clock().isoformat(timespec="seconds"), hits=0)
         record()
         return 0
-    wait = (at(clock(), a.check_at) - clock()).total_seconds()
-    if wait > 0 and not a.day:
-        print(f"⏳ {a.check_at} 까지 {wait / 60:.0f}분 기다린다")
-        sleep(wait)
     t = clock()
     hhmmss = min(t.strftime("%H%M%S"), "200000")
     try:
@@ -280,11 +296,17 @@ def main(argv=None, env=None, get=None, post=None, clock=None, sleep=time.sleep,
     st.update(checkedAt=t.isoformat(timespec="seconds"), hits=hits)
     print(f"🌙 조건 해당 {hits}/{len(picks)}")        # 종목명 · 가격은 공개 로그에 찍지 않는다
     if not hits:
-        st.update(status="해당없음")
+        st.update(status="조회불완전" if cut else "해당없음")
         record()
         return 0
     if a.dry_run:
         print("ℹ️ 시험 실행 — 보내지 않는다")
+        return 0
+    # 🔴 2026-10-25 Codex 검토 — 시작할 때만 19:58 을 보면, 조회가 늦어져 20:00 매수 뒤에 보낼 수 있다.
+    if not a.day and clock() >= at(clock(), SEND_BY):
+        print(f"ℹ️ {SEND_BY} 이 지나 20:00 매수에 쓸 수 없어 보내지 않는다")
+        st.update(status="늦은발송생략")
+        record()
         return 0
     sent, err = R.send(text, post, env.get("TELEGRAM_BOT_TOKEN", ""))
     st.update(status=R.send_status(sent, err), sendStatus=R.send_status(sent, err), note=err)
