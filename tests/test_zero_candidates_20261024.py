@@ -100,6 +100,13 @@ class GateSide(unittest.TestCase):
         self.assertFalse(ok({"rows": 0, "candidates": {"차트TOP2": False, "수급TOP2": 0}, "expected_zero_reason": "x"}))
         self.assertFalse(ok({"rows": True}))
         self.assertFalse(ok({"rows": 0}))
+        # 2026-10-25 Codex 검토(P3) — 형식이 정확해야 한다
+        Z = {"candidates": {"차트TOP2": 0, "수급TOP2": 0}, "expected_zero_reason": "후보 없음"}
+        self.assertTrue(ok(dict(Z, rows=0)))
+        self.assertFalse(ok(dict(Z, rows=False)))
+        self.assertFalse(ok(dict(Z, rows=0.0)))
+        self.assertFalse(ok(dict(Z, rows=0, expected_zero_reason=7)))
+        self.assertFalse(ok(dict(Z, rows=0, candidates={"차트TOP2": 0.0, "수급TOP2": 0})))
 
 
 if __name__ == "__main__":
