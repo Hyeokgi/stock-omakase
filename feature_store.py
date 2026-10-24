@@ -210,6 +210,12 @@ def record(day, results, **kw):
             return False, "결과 없음"
         if os.path.exists(path_for(day, kw.get("root", STORE_DIR))):
             return False, f"{day} 이미 기록됨"
+        # 🔒 2026-10-25 — 파일은 이제 커밋하지 않고 드라이브(비공개)로 간다(private_store.py, 허브 §8).
+        #    새 러너에는 앞 회차 파일이 없으니 '이미 기록됨' 은 공개 색인의 접수 행으로 본다(기본 경로일 때만).
+        if kw.get("root", STORE_DIR) == STORE_DIR:
+            import private_store
+            if private_store.recorded("feature_store", day):
+                return False, f"{day} 이미 기록됨(드라이브 접수)"
         now = kw.pop("now", None) or datetime.datetime.now(KST)
         root = kw.pop("root", STORE_DIR)
         kw.setdefault("captured_at", now.isoformat())

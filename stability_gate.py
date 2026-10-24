@@ -55,6 +55,8 @@ FINGERPRINT_FILES = [
     "scanner_census.py", "hyeoks_tajeom.py",
     # 스키마·계약
     "earnings_schema.py", "feature_store.py", "rank_pool.py",
+    # 🔒 2026-10-25 — main.yml 이 매 회차 부르고, 두 모듈의 '이미 기록됨' 판단이 이 색인을 읽는다.
+    "private_store.py",
     # P1-4 — is_trading_day() 가 이걸 쓴다. 거래일 판정이 바뀌면 사이클 정의가 바뀐다.
     "hyeoks_trading_calendar.py",
     # 안정화 판정 자체

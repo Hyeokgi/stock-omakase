@@ -7,7 +7,7 @@ artifact 로 남게 하는 것이 목적이다. 판정에는 쓰지 않는다(�
 manifest 로 출처를 검증한 뒤에만 한다.
 
 지키는 것
-  1. 세 폴더(data/receipts · data/feature_store · data/scanner_census)의 **변경된 일반 파일**만 복사한다.
+  1. 두 폴더(data/receipts · data/scanner_census)의 **변경된 일반 파일**만 복사한다(2026-10-25 data/feature_store 제외 — 후보 자료 비공개).
      `git status` 를 세 폴더로 한정해 보므로 저장소 최상위의 secret.json 은 들어올 수 없다.
   2. 링크(경로 어디든)·임시 파일·숨김 이름(경로 어디든)·비표준 경로·폴더 밖 경로는 복사하지 않고 manifest 의
      rejected 에 사유와 함께 남긴다. 검사한 경로 그대로 복사한다(Codex 10/13 재검토).
@@ -25,7 +25,10 @@ import shutil
 import subprocess
 import sys
 
-DIRS = ("data/receipts", "data/feature_store", "data/scanner_census")
+# 🔒 2026-10-25 — data/feature_store 를 뺐다. 공개 저장소의 artifact 는 로그인한 누구나 받을 수 있어
+#    종목별 후보 자료를 담으면 안 된다(Codex 검토 P1 · 사용자 결정, 허브 §8). 후보 자료는 private_store.py 가
+#    드라이브로 보낸다. data/scanner_census/rank_pool.csv 도 .gitignore 라 git status 에 안 잡혀 담기지 않는다.
+DIRS = ("data/receipts", "data/scanner_census")
 SCHEMA = "scanner-evidence-v1"
 TEMP_SUFFIXES = (".tmp", ".temp", ".swp", ".part", "~")
 OWNER = ".scanner-evidence-owner"   # 사본 폴더 소유 표식 — 숨김 파일이라 artifact 에는 올라가지 않는다

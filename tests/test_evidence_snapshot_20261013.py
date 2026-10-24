@@ -64,17 +64,34 @@ class Snapshot(unittest.TestCase):
     def run_snapshot(self):
         return S.snapshot(self.repo, self.out, env=self.env)
 
-    def test_copies_only_changed_regular_files_in_the_three_dirs(self):
+    def test_candidate_data_never_goes_into_the_public_artifact(self):
+        """2026-10-25 — 후보 자료(Feature Store · 순위 풀)는 공개 artifact 에 담지 않는다(허브 §8, 사용자 결정).
+        저장소 .gitignore 의 두 줄을 그대로 쓴다 — 그 줄이 빠지면 이 시험이 실패한다."""
+        lines = [l for l in (pathlib.Path(__file__).resolve().parent.parent / ".gitignore").read_text(encoding="utf-8").splitlines()
+                 if l.strip() in ("data/feature_store/", "data/scanner_census/rank_pool.csv")]
+        self.assertEqual(len(lines), 2, "저장소 .gitignore 에 후보 자료 두 줄이 있어야 한다")
+        _git(self.repo, "rm", "-q", "--cached", "data/scanner_census/rank_pool.csv")
+        nl = chr(10)
+        self.write(".gitignore", nl.join(lines) + nl)
+        _git(self.repo, "add", ".gitignore")
+        _git(self.repo, "commit", "-q", "-m", "ignore")
+        self.write("data/scanner_census/rank_pool.csv", "date,channel" + nl + "2026-10-13,A" + nl)
+        self.write("data/feature_store/2026-10-13.csv.gz", "gz")
+        self.write("data/scanner_census/private_index.csv", "kind,date" + nl + "feature_store,2026-10-13" + nl)
+        m = self.run_snapshot()
+        self.assertEqual(sorted(f["path"] for f in m["files"]), ["data/scanner_census/private_index.csv"])
+
+    def test_copies_only_changed_regular_files_in_the_two_dirs(self):
         self.write("data/scanner_census/rank_pool.csv", "date,channel\n2026-10-12,A\n2026-10-13,A\n")   # 수정
         self.write("data/receipts/2026-10-13/scanner-38210556325.json", '{"k":1}')                     # 새 파일
-        self.write("data/feature_store/2026-10-13.csv.gz", "gz")                                        # 새 파일
+        self.write("data/scanner_census/2026-10-13.csv.gz", "gz")                                        # 새 파일
         self.write("secret.json", "TOP-SECRET")                                                         # 최상위 — 들어오면 안 된다
         self.write("data/other/x.csv", "nope")                                                          # 세 폴더 밖
         self.write("data/receipts/2026-10-13/scanner.json.tmp", "partial")                              # 임시 파일
         m = self.run_snapshot()
         got = sorted(f["path"] for f in m["files"])
-        self.assertEqual(got, ["data/feature_store/2026-10-13.csv.gz",
-                               "data/receipts/2026-10-13/scanner-38210556325.json",
+        self.assertEqual(got, ["data/receipts/2026-10-13/scanner-38210556325.json",
+                               "data/scanner_census/2026-10-13.csv.gz",
                                "data/scanner_census/rank_pool.csv"])
         self.assertEqual([r["path"] for r in m["rejected"]], ["data/receipts/2026-10-13/scanner.json.tmp"])
         copied = sorted(str(p.relative_to(pathlib.Path(self.out) / "files")).replace("\\", "/")
@@ -86,7 +103,7 @@ class Snapshot(unittest.TestCase):
         self.assertNotIn("secret.json", everything)
 
     def test_manifest_records_provenance_and_hashes(self):
-        self.write("data/feature_store/2026-10-13.csv.gz", "gz-bytes")
+        self.write("data/scanner_census/2026-10-13.csv.gz", "gz-bytes")
         m = self.run_snapshot()
         saved = json.loads((pathlib.Path(self.out) / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(saved, m)
@@ -118,20 +135,20 @@ class Snapshot(unittest.TestCase):
 
     def test_deleted_file_is_listed_not_copied(self):
         os.remove(pathlib.Path(self.repo) / "data/receipts/2026-10-12/scanner-1.json")
-        self.write("data/feature_store/2026-10-13.csv.gz", "gz")
+        self.write("data/scanner_census/2026-10-13.csv.gz", "gz")
         m = self.run_snapshot()
         self.assertEqual(m["deleted"], ["data/receipts/2026-10-12/scanner-1.json"])
-        self.assertEqual([f["path"] for f in m["files"]], ["data/feature_store/2026-10-13.csv.gz"])
+        self.assertEqual([f["path"] for f in m["files"]], ["data/scanner_census/2026-10-13.csv.gz"])
 
     def test_out_dir_inside_the_repo_is_refused(self):
-        self.write("data/feature_store/2026-10-13.csv.gz", "gz")
+        self.write("data/scanner_census/2026-10-13.csv.gz", "gz")
         with self.assertRaises(ValueError):
             S.snapshot(self.repo, os.path.join(self.repo, "evidence"), env=self.env)
 
     def test_rerun_overwrites_the_old_copy(self):
-        self.write("data/feature_store/2026-10-13.csv.gz", "gz")
+        self.write("data/scanner_census/2026-10-13.csv.gz", "gz")
         self.run_snapshot()
-        os.remove(pathlib.Path(self.repo) / "data/feature_store/2026-10-13.csv.gz")
+        os.remove(pathlib.Path(self.repo) / "data/scanner_census/2026-10-13.csv.gz")
         self.write("data/scanner_census/envelope_census.csv", "d\n")
         m = self.run_snapshot()
         copied = sorted(p.name for p in (pathlib.Path(self.out) / "files").rglob("*") if p.is_file())
@@ -141,10 +158,10 @@ class Snapshot(unittest.TestCase):
     def test_hidden_component_anywhere_is_rejected(self):
         """upload-artifact 는 숨김 폴더 안 파일을 기본으로 뺀다 — manifest 에 넣으면 artifact 와 어긋난다."""
         self.write("data/receipts/.staging/x.json", "{}")
-        self.write("data/feature_store/2026-10-13.csv.gz", "gz")
+        self.write("data/scanner_census/2026-10-13.csv.gz", "gz")
         m = self.run_snapshot()
         self.assertEqual(m["rejected"], [{"path": "data/receipts/.staging/x.json", "reason": "임시·숨김 파일"}])
-        self.assertEqual([f["path"] for f in m["files"]], ["data/feature_store/2026-10-13.csv.gz"])
+        self.assertEqual([f["path"] for f in m["files"]], ["data/scanner_census/2026-10-13.csv.gz"])
 
     def test_nonstandard_paths_are_rejected_not_normalized(self):
         """검사한 경로와 복사하는 경로가 같아야 한다 — 역슬래시·.. 를 고쳐 쓰지 않고 거부한다."""
@@ -157,24 +174,24 @@ class Snapshot(unittest.TestCase):
     def test_rename_takes_the_new_path_and_keeps_two_char_status(self):
         _git(self.repo, "mv", "data/receipts/2026-10-12/scanner-1.json", "data/receipts/2026-10-12/scanner-9.json")
         self.write("data/scanner_census/rank_pool.csv", "date,channel\n2026-10-12,A\n2026-10-13,B\n")   # 추적 파일 수정(미스테이지)
-        self.write("data/feature_store/2026-10-13.csv.gz", "gz")                                          # 새 파일
+        self.write("data/scanner_census/2026-10-13.csv.gz", "gz")                                          # 새 파일
         m = self.run_snapshot()
         got = {f["path"]: f["status"] for f in m["files"]}
         self.assertEqual(got, {"data/receipts/2026-10-12/scanner-9.json": "R ",
                                "data/scanner_census/rank_pool.csv": " M",
-                               "data/feature_store/2026-10-13.csv.gz": "??"})
+                               "data/scanner_census/2026-10-13.csv.gz": "??"})
 
     def test_out_dir_not_made_by_this_script_is_not_deleted(self):
         os.makedirs(self.out)
         keep = os.path.join(self.out, "important.txt")
         pathlib.Path(keep).write_text("keep", encoding="utf-8")
-        self.write("data/feature_store/2026-10-13.csv.gz", "gz")
+        self.write("data/scanner_census/2026-10-13.csv.gz", "gz")
         with self.assertRaises(ValueError):
             self.run_snapshot()
         self.assertTrue(os.path.exists(keep), "소유 표식 없는 폴더는 지우지 않는다")
 
     def test_cli_never_fails_the_step_and_writes_outputs(self):
-        self.write("data/feature_store/2026-10-13.csv.gz", "gz")
+        self.write("data/scanner_census/2026-10-13.csv.gz", "gz")
         gh_out = os.path.join(tempfile.mkdtemp(), "out.txt")
         env = dict(self.env, GITHUB_OUTPUT=gh_out)
         rc = S.main(["--root", self.repo, "--out", self.out], env=env)
