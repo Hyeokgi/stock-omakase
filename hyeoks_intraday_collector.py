@@ -40,7 +40,7 @@
 #   · 판정하지 않는다. 지표를 계산해 저장할 뿐, 어느 가설이 맞는지는 9/17 에 본다.
 #
 # 사용법
-#   python hyeoks_intraday_collector.py                 # 오늘
+#   python hyeoks_intraday_collector.py                 # 최근 5거래일 중 장이 끝났는데 빠진 날 전부(2026-10-24~)
 #   python hyeoks_intraday_collector.py --date 2026-08-25   # 소급 (6거래일 이내만)
 #   python hyeoks_intraday_collector.py --top 500
 # ==========================================================================
@@ -233,25 +233,58 @@ def profile(code, date_str):
     }
 
 
+# 🔴 2026-10-24 — 10/12 분봉이 영영 빠졌다. 깃허브 예약이 9시간 늦어 10/13 01:14 에 돌았고,
+#    '오늘(10/13)' 만 보다가 아직 장이 열리지 않은 날이라 그냥 끝났다. 감시가 5일 동안 '복구 가능' 이라 했지만
+#    아무도 --date 로 메우지 않아 기한이 지났다. 그래서 --date 가 없으면 최근 CATCHUP_DAYS 거래일 중
+#    장이 끝났는데 파일이 없는 날을 **전부** 받는다. 예약이 자정을 넘기거나 하루 이틀 통째로 빠져도 다음 실행이 메운다.
+CATCHUP_DAYS = 5          # 네이버는 6거래일치를 준다. 감시(hyeoks_snapshot_watch)의 복구 가능 창과 같게 둔다.
+
+
+def catchup_days(days, now, out_dir=None):
+    """받아야 할 날짜들. 최근 CATCHUP_DAYS 거래일 중 장이 끝났고(오늘은 15:35 이후) 파일이 없는 날."""
+    out_dir = out_dir or OUT_DIR
+    today = now.strftime('%Y-%m-%d')
+    closed = now.hour * 60 + now.minute >= 15 * 60 + 35
+    if not days:                      # 거래일 조회 실패 — 예전처럼 오늘만 본다(collect_day 가 다시 거른다)
+        return [today]
+    return [d for d in days[-CATCHUP_DAYS:]
+            if (d < today or (d == today and closed)) and not os.path.exists(f"{out_dir}/{d}.csv.gz")]
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--date", help="YYYY-MM-DD (기본: 오늘). 분봉은 6거래일치만 남으므로 그 이전은 불가")
+    ap.add_argument("--date", help="YYYY-MM-DD (기본: 최근 5거래일 중 빠진 날 전부). 분봉은 6거래일치만 남으므로 그 이전은 불가")
     ap.add_argument("--top", type=int, default=TOP_N, help=f"거래대금 상위 N종목 (기본 {TOP_N})")
     ap.add_argument("--force", action="store_true", help="기존 파일이 있어도 다시 만든다")
     a = ap.parse_args()
 
     now = datetime.datetime.now(KST)
-    date_str = a.date or now.strftime('%Y-%m-%d')
+    days = trading_days(8)
+    if a.date:
+        return collect_day(a.date, a.top, a.force, now, days)
+    todo = catchup_days(days, now)
+    if not todo:
+        print(f"ℹ️ 최근 {CATCHUP_DAYS}거래일 분봉이 모두 있다 (실행 {now.strftime('%Y-%m-%d %H:%M:%S')} KST) — 종료")
+        return 0
+    if len(todo) > 1 or todo[0] != now.strftime('%Y-%m-%d'):
+        print(f"↩️ 빠진 날 {len(todo)}일을 메운다: {', '.join(todo)}")
+    rc = 0
+    for d in todo:
+        rc = max(rc, collect_day(d, a.top, a.force, now, days))
+    return rc
+
+
+def collect_day(date_str, top, force, now, days):
+    """하루치 분봉 프로파일. 0 = 저장했거나 건너뛸 이유가 있음, 1 = 수집 실패."""
     print(f"⏱️ [분봉 프로파일] {date_str}  (실행 {now.strftime('%Y-%m-%d %H:%M:%S')} KST)")
 
-    days = trading_days(8)
     if days and date_str not in days:
         print(f"🚫 {date_str} 는 거래일이 아니거나 6거래일 범위 밖 — 종료")
         print(f"   조회 가능 구간: {days[0]} ~ {days[-1]}")
         return 0
 
     path = f"{OUT_DIR}/{date_str}.csv.gz"
-    if os.path.exists(path) and not a.force:
+    if os.path.exists(path) and not force:
         print(f"ℹ️ 이미 존재 — {path} (종료)")
         return 0
 
@@ -261,7 +294,7 @@ def main():
         print("   (미완성 프로파일이 저장되면 오전/오후 비교가 통째로 왜곡된다)")
         return 0
 
-    targets = pick_targets(date_str, a.top)
+    targets = pick_targets(date_str, top)
     if not targets:
         return 1
     print(f"   대상 {len(targets)}종목 — 분봉 수집 시작")
