@@ -262,6 +262,9 @@ def main():
     days = trading_days(8)
     if a.date:
         return collect_day(a.date, a.top, a.force, now, days)
+    if a.force:
+        # 2026-10-25 Codex 검토 — 날짜 없는 --force 는 예전처럼 오늘 파일을 다시 만든다(메우기는 있는 파일을 건너뛴다).
+        return collect_day(now.strftime('%Y-%m-%d'), a.top, True, now, days)
     todo = catchup_days(days, now)
     if not todo:
         print(f"ℹ️ 최근 {CATCHUP_DAYS}거래일 분봉이 모두 있다 (실행 {now.strftime('%Y-%m-%d %H:%M:%S')} KST) — 종료")
@@ -270,12 +273,14 @@ def main():
         print(f"↩️ 빠진 날 {len(todo)}일을 메운다: {', '.join(todo)}")
     rc = 0
     for d in todo:
-        rc = max(rc, collect_day(d, a.top, a.force, now, days))
+        rc = max(rc, collect_day(d, a.top, a.force, now, days, allow_proxy=False))
     return rc
 
 
-def collect_day(date_str, top, force, now, days):
-    """하루치 분봉 프로파일. 0 = 저장했거나 건너뛸 이유가 있음, 1 = 수집 실패."""
+def collect_day(date_str, top, force, now, days, allow_proxy=True):
+    """하루치 분봉 프로파일. 0 = 저장했거나 건너뛸 이유가 있음, 1 = 수집 실패.
+    allow_proxy=False(자동 메우기) — 그날 스냅샷이 없어 '오늘 순위' 를 대신 쓰게 되면 저장하지 않는다.
+    오늘 순위로 과거 날 표본을 고르면 미래 정보로 고른 표본이다(2026-10-25 Codex 검토). 사람이 --date 로 돌리면 예전처럼 허용."""
     print(f"⏱️ [분봉 프로파일] {date_str}  (실행 {now.strftime('%Y-%m-%d %H:%M:%S')} KST)")
 
     if days and date_str not in days:
@@ -296,6 +301,10 @@ def collect_day(date_str, top, force, now, days):
 
     targets = pick_targets(date_str, top)
     if not targets:
+        return 1
+    if not allow_proxy and RANK_SRC == "proxy_today" and date_str != now.strftime('%Y-%m-%d'):
+        print(f"❌ {date_str} 스냅샷이 없어 오늘 순위로 대신 골라야 한다 — 자동 메우기는 저장하지 않는다. "
+              f"필요하면 --date {date_str} 로 직접 돌릴 것(rankSource=proxy_today 로 남는다)")
         return 1
     print(f"   대상 {len(targets)}종목 — 분봉 수집 시작")
 
