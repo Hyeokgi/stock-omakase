@@ -22,6 +22,7 @@ THEME_SOURCE_STATE = {"status": "NOT_CHECKED", "requested": 0, "success": 0, "fa
 #    분류 근거: docs/silent_exception_분류_2026-09-18.md
 TELEMETRY = feature_telemetry.Telemetry()
 import rank_pool
+import theme_status   # 🖥️ 2026-10-13 — 표시 전용 탭 '테마_현황'. 선정·리포트 입력(수급_실시간)과 무관
 import feature_store
 import badge_observations
 import price_levels
@@ -527,8 +528,31 @@ def get_market_cap(code):
     # 🆕 [개편 폴백] HTML 파싱이 실패했거나 값이 없으면 신규 JSON 경로로 대체
     return fetch_market_cap_json(code)
 
+# 🖥️ 2026-10-13 — 사람이 보는 '테마_현황' 탭에만 쓰는 수집 정보. 선정 경로(all_theme_map·수급_실시간)는 이 값을 읽지 않는다.
+THEME_STATUS = {"dominated": [], "note": "", "input_written": ""}
+
+
+def update_theme_display(doc, df_theme, timeout=30):
+    """표시 전용 탭 갱신 — 데몬 스레드에서 돌리고 `timeout` 초만 기다린다. 시트가 멈춰도 실행을 붙잡지 않는다.
+
+    선정·영수증이 모두 끝난 뒤에 부른다. 예외를 내지 않는다(theme_status.update 도 스스로 삼킨다).
+    """
+    try:
+        import threading
+        rows = df_theme.to_dict('records') if not df_theme.empty else []
+        now_str = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M')
+        t = threading.Thread(target=theme_status.update, args=(doc, rows, dict(THEME_STATUS), now_str), daemon=True)
+        t.start()
+        t.join(timeout)
+        if t.is_alive():
+            print(f"⚠️ [테마_현황] 표시 갱신이 {timeout}초를 넘겨 기다리지 않고 끝낸다(선정·영수증과 무관)")
+    except Exception as e:
+        print(f"⚠️ [테마_현황] 표시 갱신 준비 실패(선정·영수증과 무관) — {type(e).__name__}")
+
+
 def get_real_money_themes():
     THEME_SOURCE_STATE.update(status="FAILED", requested=0, success=0, failed=0)
+    THEME_STATUS.update(dominated=[], note="", input_written="")
     try:
         now = datetime.datetime.now(KST)
         is_market_closed = now.hour > 15 or (now.hour == 15 and now.minute >= 30)
@@ -553,6 +577,7 @@ def get_real_money_themes():
                 print(f"🔁 [테마 폴백] 구 HTML 실패 → 신규 JSON API로 테마 {len(raw_themes)}개 확보")
             else:
                 print("❌ [테마] HTML·JSON 모두 실패 — 이번 회차 테마 수집을 건너뜁니다.")
+                THEME_STATUS["note"] = "테마 목록 수집 실패(HTML·JSON 모두)"
                 return pd.DataFrame(), is_market_closed, {}
 
         themes = [t for t in raw_themes if t['name'] not in THEME_BLACKLIST][:20]
@@ -625,10 +650,12 @@ def get_real_money_themes():
         if THEME_SOURCE_STATE["failed"] or not themes:
             THEME_SOURCE_STATE["status"] = "PARTIAL" if THEME_SOURCE_STATE["success"] else "FAILED"
             print("::warning::테마 구성 조회 불완전 — 후보 없음이 아님. 이번 테마 갱신·선정 입력 보류")
+            THEME_STATUS["note"] = f"테마 구성 조회 불완전({THEME_SOURCE_STATE['status']}) — 후보 없음이 아님"
             return pd.DataFrame(), is_market_closed, {}
         THEME_SOURCE_STATE["status"] = "OK"
         if not theme_data_list:
             print("⚠️ 조건을 만족하는 테마 종목이 하나도 없습니다. (시가총액/등락률 필터 확인)")
+            THEME_STATUS["note"] = "등락률 3%·거래대금 50억을 넘는 종목이 2개 이상인 테마 없음"
             return pd.DataFrame(), is_market_closed, {}
             
         grouped_themes = {}
@@ -645,12 +672,23 @@ def get_real_money_themes():
             if len(merged_stocks_val) >= 2:
                 if merged_stocks_val[0]['value'] >= merged_stocks_val[1]['value'] * 5:
                     print(f"⚠️ [{merged_name}] 1등 대장주가 2등보다 거래대금이 5배 이상 커서 개별주로 강등(테마 배제)합니다.")
+                    # 🖥️ 표시 전용 — 빠진 묶음을 '테마_현황' 에 보여 주려고 모은다. 선정에는 쓰지 않는다.
+                    #    기록이 실패해도 수집 결과가 바뀌면 안 된다(Codex 10/13) — 여기서 삼킨다.
+                    try:
+                        THEME_STATUS["dominated"].append({
+                            "theme": " / ".join(theme_names),
+                            "top": dict((k, merged_stocks_val[0][k]) for k in ("name", "code", "rate", "value")),
+                            "second": dict((k, merged_stocks_val[1][k]) for k in ("name", "code", "rate", "value"))})
+                    except Exception:
+                        pass
                     continue
             
             merged_stocks_rate = sorted(merged_stocks_val, key=lambda x: x['rate'], reverse=True)
             merged_themes.append({'theme_name': merged_name, 'theme_sum': sum(s['value'] for s in merged_stocks_val), 'stocks': merged_stocks_rate})
             
         merged_themes = sorted(merged_themes, key=lambda x: x['theme_sum'], reverse=True)
+        if not merged_themes:
+            THEME_STATUS["note"] = f"조건을 넘은 묶음 {len(grouped_themes)}개가 모두 1등 독식으로 빠짐"
         
         all_theme_map = {}
         for m_data in merged_themes:
@@ -671,6 +709,7 @@ def get_real_money_themes():
     except Exception as e:
         print(f"❌ 테마 수집 에러: {e}")
         THEME_SOURCE_STATE["status"] = "FAILED"
+        THEME_STATUS["note"] = "테마 수집 중 오류 — 후보 없음이 아님"
         return pd.DataFrame(), False, {}
     finally:
         if THEME_SOURCE_STATE["status"] != "OK":
@@ -743,6 +782,7 @@ def update_google_sheet(doc, df_theme, df_news, df_naver, df_main_news, is_marke
                 except Exception as note_error:
                     print(f"::warning::테마 상태 메모 기록 실패: {type(note_error).__name__}")
                 print("✅ [수급_실시간] 시트 갱신 완료")
+                THEME_STATUS["input_written"] = datetime.datetime.now(KST).strftime('%Y-%m-%d %H:%M')   # 🖥️ 표시 탭이 '갱신함'·마지막 갱신 시각을 말할 근거
             except Exception as e: print(f"❌ [수급_실시간] 업데이트 실패: {e}")
             now_check = datetime.datetime.now(KST)
             # 🛡️ [수정] "now_check.hour < 9" 조건 삭제 — 이게 새벽~아침 9시 전 모든 실행을 "장마감 이후"로
@@ -2946,7 +2986,8 @@ def update_technical_data(df_theme, all_theme_map):
                 if len(row) > 4:
                     if row[3] and str(row[3]).strip(): portfolio_protected_names.add(str(row[3]).strip()) 
                     if row[4] and str(row[4]).strip(): portfolio_protected_names.add(str(row[4]).strip()) 
-            print(f"📦 [포트폴리오 동기화 완료] 중기 전략 핵심주 보호막 가동: {list(portfolio_protected_names)}")
+            # 🔴 2026-10-24 허브 #18 — 공개 실행 로그에 보호 종목명 전체가 찍혔다. 개수만 남긴다(과거 로그는 그대로 둔다, 10/12 사용자).
+            print(f"📦 [포트폴리오 동기화 완료] 중기 전략 핵심주 보호막 가동: {len(portfolio_protected_names)}종목")
         except Exception as e:
             print(f"⚠️ [DB_중장기 시트 연동 실패] {e}")
 
@@ -3556,7 +3597,13 @@ def update_technical_data(df_theme, all_theme_map):
                     if set(_ledger_found) != set(_ledger_expected):
                         raise _append_err
                     print("✅ [백테스트 V6 Step1] 응답 오류였지만 원장에 모두 있다 — 같은 묶음으로 증거 저장을 이어 간다")
-                sort_and_format_backtest_log(doc, bt_sheet)  # 🆕 새 행이 추가된 직후에만 정렬+서식 재적용
+                # 🔴 2026-10-13 Codex P1 — 정렬·서식은 보기용이다. 그 함수의 첫 조회(get_all_values)가 try 밖이라
+                #    예외가 나면 바깥 Step1 except 로 빠져 아래 Feature Store·순위 풀·영수증이 통째로 생략됐다.
+                #    아래 증거는 메모리의 적재 결과(new_rows·results)를 쓰므로 정렬 실패와 무관하다 — 감싸고 계속한다.
+                try:
+                    sort_and_format_backtest_log(doc, bt_sheet)  # 🆕 새 행이 추가된 직후에만 정렬+서식 재적용
+                except Exception as _sort_e:
+                    print(f"⚠️ [정렬·서식 실패 — 증거 저장은 계속] {type(_sort_e).__name__}: {_sort_e}")
 
                 # 🗂️ 순위 풀 — **append 가 성공한 뒤에만** 남긴다(위 주석 참조).
                 #    picked 는 메모리의 top2 가 아니라 **실제로 원장에 들어간 행**에서 뽑는다.
@@ -3592,7 +3639,14 @@ def update_technical_data(df_theme, all_theme_map):
                         exclusion=_excl, band=_band)
                     _pool_dropped[_ch] = len(rank_pool.DROPPED)   # P0-4 채널별 누적
                     if _pok:
-                        _pool_rows += rank_pool.recorded_count(today_str, _ch, _pool_runid)
+                        # 🔴 2026-10-13 Codex P1 — 건수 되읽기(파일 open)가 실패해도 영수증 발행을 건너뛰지 않는다.
+                        #    대신 조용하지도 않다 — 계측에 남겨 영수증이 degraded 로 정직하게 표시된다.
+                        try:
+                            _pool_rows += rank_pool.recorded_count(today_str, _ch, _pool_runid)
+                        except Exception as _cnt_e:
+                            TELEMETRY.note('pool_row', f'순위 풀 건수 확인 실패 {type(_cnt_e).__name__}',
+                                           feature_telemetry.OBSERVE)
+                            print(f"   ⚠️ [순위 풀 건수 확인 실패 — 영수증은 계속] {_ch}: {type(_cnt_e).__name__}")
                         print(f"   🗂️ 순위 풀 보존 — {_pmsg}")
                     elif _pmsg.startswith("기록 실패"):
                         TELEMETRY.note('pool_row', '순위 풀 기록 실패',
@@ -3621,6 +3675,10 @@ def update_technical_data(df_theme, all_theme_map):
                     #    같아야 정상이다. 다르면 feature_store·rank_pool 의 날짜와
                     #    어긋나 Gate 의 store_written 이 떨어진다 — 조용히 넘기지 않는다.
                     _cyc = production_receipt.cycle_date_now()
+                    # 🔴 2026-10-24 허브 #20 — 급락장에서 후보가 정말 0 이면 순위 풀도 0행이다. 그 0 을 '기록 실패' 와
+                    #    가르려고 채널별 후보 수를 남긴다. 두 채널 모두 0 일 때만 0행을 정상으로 본다(evidence_builder.pool_rows_ok).
+                    _pool_cands = {_ch: len(_ranked) for _ch, _ranked, *_rest in _pool_plan}
+                    _pool_zero_ok = bool(_pool_cands) and not any(_pool_cands.values())
                     if _cyc != today_str:
                         TELEMETRY.note('cycle_date', f'{today_str}≠{_cyc}',
                                        feature_telemetry.OBSERVE)
@@ -3629,7 +3687,7 @@ def update_technical_data(df_theme, all_theme_map):
                         "today_str": today_str,
                         "cycle_date_matches": _cyc == today_str,
                         # ⑧ 기계 기준 — 사람이 "이상 없음" 이라고 쓰지 않는다
-                        "expected_state": ("reached" if (_fok and _pool_rows and
+                        "expected_state": ("reached" if (_fok and (_pool_rows or _pool_zero_ok) and
                                                          TELEMETRY.total() == 0)
                                            else "degraded"),
                         "ci_conclusion": os.environ.get("CI_CONCLUSION", ""),
@@ -3660,6 +3718,8 @@ def update_technical_data(df_theme, all_theme_map):
                         "rank_pool": {"date": today_str,
                                       "fingerprint": _sg.fingerprint(),
                                       "rows": _pool_rows,
+                                      "candidates": _pool_cands,
+                                      "expected_zero_reason": ("후보 없음" if _pool_zero_ok else ""),
                                       "by_channel_dropped": _pool_dropped,
                                       "total_dropped": sum(_pool_dropped.values())},
                         # ⑦ read-after-write
@@ -3706,3 +3766,7 @@ if __name__ == "__main__":
                 response = GLOBAL_SESSION.post(GOOGLE_WEBHOOK_URL, timeout=30)
                 if response.status_code == 200: print("✅ 구글 자동 릴레이 바통터치 성공")
         except Exception as e: print(f"❌ 릴레이 에러: {e}")
+
+    # 🖥️ 2026-10-13 — 사람이 보는 표시 전용 탭. 스캐너·영수증·릴레이가 **모두 끝난 뒤** 맨 마지막에, 시간 상한 안에서만 쓴다.
+    #    뒤에 같은 doc 을 쓰는 코드가 없어야 한다 — 상한을 넘긴 스레드와 시트 연결을 동시에 쓰지 않게(Codex 10/13).
+    update_theme_display(doc, df_theme)
