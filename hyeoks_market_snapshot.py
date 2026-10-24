@@ -52,6 +52,10 @@
 #
 #   2026-10-20 구성종목 개편 대응: size/cursor 로 전량을 받는다.
 #   목록보다 적게 받거나 가격과 연결되지 않으면 집계는 빈칸, 품질은 PARTIAL 이다.
+#   🔴 2026-10-24 정정(허브 #21): 품질(membershipStatus)은 **구성 목록을 끝까지 받았는가**만 본다
+#      (naver_membership.membership_status 의 정의와 같다). 가격 연결 부족은 그 업종의 집계만 비운다.
+#      '기타' 업종은 1,555종목 중 스캔 연결이 2개뿐이라 매일 PARTIAL 이었고, 그 한 줄 때문에
+#      10/21~10/23 모든 종목의 업종 연결(upjongNos)이 지워졌다.
 #
 # 사용법
 #   python hyeoks_market_snapshot.py --slot 1300
@@ -413,9 +417,10 @@ def fetch_sector_data(kind, mkt):
                "unchangedCount": len(mine) - rise - fall,
                "topByTradingValue": _top(_amt, lambda v: f"{v:.0f}"),
                "topByChangeRate": _top(_rate, lambda v: f"{v:.2f}"),
-               "membershipStatus": "FAILED" if member_error else "PARTIAL" if truncated or len(mine) < len(codes) else "OK",
+               "membershipStatus": "FAILED" if member_error else "PARTIAL" if truncated else "OK",
                "membershipError": member_error}
-        if row["membershipStatus"] != "OK":
+        # 집계는 구성이 완전하고 **모든 구성 종목이 가격과 연결될 때만** 낸다(부분 합계를 0·완성본처럼 보이지 않게).
+        if row["membershipStatus"] != "OK" or len(mine) < len(codes):
             for key in ("sumTradeAmount", "sumMarketCap", "risingCount", "fallingCount",
                         "unchangedCount", "topByTradingValue", "topByChangeRate"):
                 row[key] = ""
@@ -585,8 +590,12 @@ def write_readme():
     def _agg_table(rows, head, note, n, key):
         """업종·그룹사 요약표. 둘의 스키마가 같아 한 함수로 낸다."""
         if any(r.get("membershipStatus") not in (None, "", "OK") for r in rows):
-            return [head, "", "⚠️ 구성·가격 연결 불완전 — 거래대금 순위와 집계 표시를 보류합니다.", ""]
-        hot = sorted(rows, key=lambda z: -_f(z.get(key)))[:n]
+            return [head, "", "⚠️ 구성 목록 불완전 — 거래대금 순위와 집계 표시를 보류합니다.", ""]
+        # 2026-10-24 — 가격 연결이 모자라 집계를 비운 업종('기타' 등)만 뺀다. 빈 합계를 0억으로 줄 세우지 않는다.
+        held = [r for r in rows if r.get("sumTradeAmount", "") == ""]
+        hot = sorted([r for r in rows if r.get("sumTradeAmount", "") != ""], key=lambda z: -_f(z.get(key)))[:n]
+        if held:
+            note += f" (가격 연결 부족으로 집계 보류 {len(held)}개: {', '.join(r.get('name', '')[:10] for r in held[:3])})"
         out = [head, "", note, "",
                "| # | 이름 | 등락률 | 거래대금 | 상승/구성 | 대금 1위 |",
                "|---:|---|---:|---:|:---:|---|"]
@@ -770,14 +779,18 @@ def main():
                          f"membershipStatus={membership_status(srows)}",
                          "note=sum*/topBy*/*Count 는 같은 스냅샷의 종목행에서 직접 집계한 값. "
                          "raw* 는 네이버 원본이며 rawTotalAccAmount 는 단위 미확인 — 판정에 쓰지 말 것. "
-                         "membershipStatus!=OK 는 구성/가격 연결 불완전으로 sum*/*Count 집계 보류"])
+                         "membershipStatus!=OK 는 구성 목록 불완전 · matchedCount<fetchedCount 는 가격 연결 부족 — 둘 다 sum*/*Count 집계 보류"])
             sw.writerow(SECTOR_FIELDS)
             for it in sorted(srows, key=lambda z: -_f(z.get("sumTradeAmount"))):
                 sw.writerow([str(it.get(k, "")) for k in SECTOR_FIELDS])
         label = SECTORS[kind][0]
         print(f"✅ {label} 저장 {spath}  ({os.path.getsize(spath):,}바이트)")
-        if membership_status(srows) == "OK":
-            hots = sorted(srows, key=lambda z: -_f(z.get("sumTradeAmount")))[0]
+        # 2026-10-24 Codex 검토 — 집계를 비운 업종(가격 연결 부족)은 '1위 0억' 으로 줄 세우지 않는다.
+        priced = [z for z in srows if z.get("sumTradeAmount", "") != ""]
+        if membership_status(srows) == "OK" and not priced:
+            print(f"::warning::{label} 모든 분류가 가격 연결 부족 — 집계 비교 보류")
+        elif membership_status(srows) == "OK":
+            hots = sorted(priced, key=lambda z: -_f(z.get("sumTradeAmount")))[0]
             print(f"   {label} 거래대금 1위: {hots.get('name')} "
                   f"{_f(hots.get('sumTradeAmount')) / 1e8:,.0f}억 "
                   f"({hots.get('risingCount')}/{hots.get('matchedCount')} 상승)")

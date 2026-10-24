@@ -204,9 +204,12 @@ class SnapshotFailureTests(unittest.TestCase):
              patch.object(M, "fetch_members", return_value=[{"itemcode": "005930"}]), \
              patch.object(M.time, "sleep"):
             rows, mapping = M.fetch_sector_data("group", {})
-        self.assertEqual(rows[0]["membershipStatus"], "PARTIAL")
+        # 2026-10-24 정정(허브 #21) — 구성 목록은 완전하므로 품질은 OK, 가격이 안 이어진 집계만 비운다.
+        #   예전에는 PARTIAL + 연결 삭제였고, '기타' 업종 한 줄 때문에 모든 종목의 업종 연결이 지워졌다.
+        self.assertEqual(rows[0]["membershipStatus"], "OK")
         self.assertEqual(rows[0]["sumTradeAmount"], "")
-        self.assertEqual(mapping, {})
+        self.assertEqual(rows[0]["matchedCount"], 0)
+        self.assertIn("005930", mapping)
 
 
 class ConsumerQualityTests(unittest.TestCase):
