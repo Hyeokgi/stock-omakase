@@ -3,6 +3,7 @@ import datetime
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 import hyeoks_friday_dip_alert as A
 import hyeoks_research_daily as R
@@ -34,6 +35,7 @@ class FakeKis:
         self.calls.append(tr)
         if tr == "FHPST01700000":
             lo, hi = float(p["fid_rsfl_rate1"]), float(p["fid_rsfl_rate2"])
+            assert p["fid_input_price_1"] == "" and p["fid_input_price_2"] == "", "이 가짜 세계는 가격 나누기가 필요 없다"
             rows = [rank_row(c, s["rate"], s["evening"], s["vol"]) for c, s in sorted(self.stocks.items())
                     if s["market"] == p["fid_input_iscd"] and lo <= s["rate"] <= hi]
             return Resp({"rt_cd": "0", "output": rows[:A.PAGE]})
@@ -101,25 +103,37 @@ ENV = {"KIS_APP_KEY": "k", "KIS_APP_SECRET": "s", "TELEGRAM_BOT_TOKEN": "b", "GI
 
 
 class Scan(unittest.TestCase):
-    def test_full_band_is_split_until_complete(self):
-        rows = {f"{i:05d}0": {"rate": -5 + i * 0.05} for i in range(500)}
-
-        def band(iscd, lo, hi):
+    @staticmethod
+    def band_of(rows):
+        """rows — {코드: (등락률, 가격)}. 실제 API 처럼 등락률 · 가격 양끝 포함, 최대 30개."""
+        def band(iscd, lo, hi, plo=None, phi=None):
             if iscd != "0001":
                 return []
-            hit = [rank_row(c, r["rate"]) for c, r in sorted(rows.items()) if lo <= r["rate"] <= hi]
+            hit = [rank_row(c, r, p) for c, (r, p) in sorted(rows.items())
+                   if lo <= r <= hi and (plo is None or plo <= p <= phi)]
             return hit[:A.PAGE]
-        got, calls, cut = A.scan(band)
+        return band
+
+    def test_full_band_is_split_until_complete(self):
+        rows = {f"{i:05d}0": (-5 + i * 0.05, 1000 + i) for i in range(500)}
+        got, calls, cut = A.scan(self.band_of(rows))
         self.assertEqual(set(got), set(rows))
         self.assertEqual(cut, [])
         self.assertGreater(calls, 500 // A.PAGE)
 
-    def test_unsplittable_full_band_is_recorded(self):
-        def band(iscd, lo, hi):
-            return [rank_row(f"{i:05d}0", 0.0) for i in range(A.PAGE)] if iscd == "0001" and lo <= 0 <= hi else []
-        _, _, cut = A.scan(band)
+    def test_flat_bucket_is_split_by_price(self):
+        """2026-10-25 Codex — 보합(0.00%)이 30개를 넘어도 가격으로 나눠 숨은 종목(종가 +10% 뒤 저녁에 빠진 종목)을 찾는다."""
+        rows = {f"{i:05d}0": (0.0, 500 + i * 37) for i in range(75)}
+        rows.update({f"{i:05d}0": (3.0 + i / 100, 2000 + i) for i in range(100, 120)})
+        got, _, cut = A.scan(self.band_of(rows))
+        self.assertEqual((set(got), cut), (set(rows), []))
+
+    def test_same_rate_and_same_price_overflow_is_recorded(self):
+        rows = {f"{i:05d}0": (0.0, 1000) for i in range(A.PAGE + 1)}
+        got, calls, cut = A.scan(self.band_of(rows))
         self.assertTrue(cut)
-        self.assertTrue(all(lo <= 0 <= hi and hi - lo < 0.05 for _, lo, hi in cut))
+        self.assertTrue(all(lo <= 0 <= hi and pa <= 1000 <= pb and pb - pa < 1 for _, lo, hi, pa, pb in cut))
+        self.assertLess(calls, 200, "가격 나누기가 한 갈래로만 내려가야 한다")
 
     def test_prelist_keeps_common_shares_with_big_proxy_amount(self):
         rows = {"111110": rank_row("111110", 12, 10000, 4_000_000), "111115": rank_row("111115", 12, 10000, 9_000_000),
@@ -155,6 +169,7 @@ class Main(unittest.TestCase):
 
     def run_main(self, start, argv=(), stocks=None):
         k, post, c = FakeKis(stocks or world()), Post(), Clock(start)
+        self.clock_now = c
         rc = A.main(list(argv), env=ENV, get=k.get, post=post, clock=c, sleep=c.sleep, runs_dir=self.dir)
         return rc, k, post, c
 
@@ -209,6 +224,39 @@ class Main(unittest.TestCase):
         self.assertIn("발송실패", self.log())
         self.assertFalse(A.already_done("2026-10-23", self.dir))
         self.assertEqual(R.send_status(False, "HTTP 500"), "발송실패")
+        # Codex 검토 — 재실행이 실제로 다시 보낸다
+        rc, _, post, _ = self.run_main(fri("19:45"))
+        self.assertEqual((rc, len(post.sent)), (0, 1))
+
+    def test_incomplete_scan_is_not_final(self):
+        """2026-10-25 Codex — 가격으로도 못 나눈 구간이 남으면 '대상없음 · 해당없음' 으로 확정하지 않는다."""
+        real = A.scan
+        s = world()
+        for v in s.values():
+            v.update(vol=1)                                   # 거래대금 미달 → 대상 없음
+        with mock.patch.object(A, "scan", lambda band: real(band)[:2] + ([("1001", 0.0, 0.01, 1000, 1000)],)):
+            rc, _, post, _ = self.run_main(fri("19:41"), stocks=s)
+        self.assertEqual((rc, post.sent), (0, []))
+        self.assertIn("조회불완전", self.log())
+        self.assertFalse(A.already_done("2026-10-23", self.dir))
+
+    def test_no_send_after_deadline_even_if_started_in_time(self):
+        with mock.patch.object(A, "SEND_BY", "19:41"):
+            rc, _, post, _ = self.run_main(fri("19:41"))
+        self.assertEqual((rc, post.sent), (0, []))
+        self.assertIn("늦은발송생략", self.log())
+
+    def test_picks_are_made_at_check_time_not_at_start(self):
+        """2026-10-25 Codex — 18:00 백업이 먼저 고르면 거래량 기준 시각이 달라진다. 고르기 전에 19:40 까지 기다린다."""
+        seen = []
+        real = A.scan
+
+        def spy(band):
+            seen.append(self.clock_now())
+            return real(band)
+        with mock.patch.object(A, "scan", spy):
+            self.run_main(fri("18:00"))
+        self.assertGreaterEqual(seen[0], fri("19:40"))
 
 
 if __name__ == "__main__":
