@@ -55,6 +55,28 @@
 
 - 허브 #21 의 남은 부분: `snapshot_watch` 가 지난 구멍 때문에 계속 빨간 것을 그대로 둘지, 새 구멍만 실패로 볼지.
 
+## Codex 검토 반영 (2026-10-24, PR 머지 전)
+
+| Codex 지적 | 처리 |
+|---|---|
+| 1. 10/20 설계는 연결 삭제를 시험으로 명시했으나 유지해야 할 별도 근거는 없음 — 수정 방향이 맞다 | 그대로 |
+| 2. 저장 단계 콘솔의 '거래대금 1위' 가 집계를 비운 업종까지 줄 세워, 모두 비거나 정상 0 과 동점이면 '1위 · 0억' 을 찍을 수 있다 | 집계가 있는 업종만 줄 세우고, 하나도 없으면 '모든 분류가 가격 연결 부족 — 집계 비교 보류' 경고 |
+| 3. `main` 출력 · 저장 연결 시험 보강 — 전부 보류 · 그룹 혼합 · 저장 파일의 업종 상태와 연결이 감시까지 통과 | `main()` 을 끝까지 돌리는 시험 2건 추가: 저장 파일 `upjongMembershipStatus=OK` · `groupMembershipStatus=OK` · 업종 연결 유지 · `snapshot_watch.membership_issues` 통과(업종 · 그룹) · 콘솔 1위가 집계 있는 분류 / 모든 분류가 가격 연결 부족이면 1위를 찍지 않음. 콘솔 수정을 되돌리면 실패 확인 |
+
+전체 1,192건 — 실패 3건은 기존 Windows 권한 시험.
+
 ## 타인의 검토·승인 상태
 
-없음 — Codex 검토는 반영 뒤 요청한다(사용자 지시).
+- Codex: 검토함(읽기 전용, 2026-10-24) — 결론 '고칠 것 있음' → 위 표대로 반영. 반영분 재검토는 받지 않았다. 아래 원문(PC Claude 전달본, `-o` 출력 그대로).
+
+## Codex 원문
+
+기준 `9c3fc52` → `7aab3a2`의 [변경분](https://github.com/Hyeokgi/stock-omakase/compare/9c3fc52...7aab3a2)을 정적 검토했습니다. 파일 변경·Python 실행은 하지 않았습니다. 원격 최신 상태는 Git 인증 오류로 확인하지 못했습니다.
+
+1. **10/20 구현·시험에는 가격 연결 부족 시 연결 삭제를 명시했습니다.** 다만 이를 반드시 유지해야 한다는 별도 설계 근거는 확인되지 않습니다. `membership_status`의 정의는 구성 완전성과 가격 품질을 구분하므로, 이번 수정 방향이 맞습니다. 불완전 집계를 빈칸으로 남기는 보호도 유지됩니다. 근거는 [당시 시험:207](https://github.com/Hyeokgi/stock-omakase/blob/9c3fc52/tests/test_naver_membership_20261020.py#L207), [naver_membership.py:60](../../naver_membership.py:60), [hyeoks_market_snapshot.py:420](../../hyeoks_market_snapshot.py:420)입니다.
+
+2. **빠진 경로가 하나 있습니다.** `main`의 콘솔 순위는 여전히 상태가 OK이면 빈 집계까지 정렬합니다. 모든 집계가 보류되거나 정상 0과 동점이면, 보류 업종을 **“거래대금 1위·0억”**으로 출력할 수 있습니다. README처럼 빈 집계를 제외하고, 남는 행이 없으면 보류를 출력해야 합니다. 근거는 [hyeoks_market_snapshot.py:788](../../hyeoks_market_snapshot.py:788)입니다. 그룹 공통 함수에도 수정은 적용됩니다. 테마는 가격 연결을 검사하지 않으며, watch는 구성 상태·연결 0, healthcheck는 구성 건수, 대장 v2는 테마 상태를 확인하므로 추가 충돌은 발견하지 못했습니다. 근거는 [테마:315](../../hyeoks_market_snapshot.py:315), [watch:111](../../hyeoks_snapshot_watch.py:111), [healthcheck:307](../../hyeoks_naver_healthcheck.py:307), [대장 v2:130](../../hyeoks_leader_def_v2.py:130)입니다.
+
+3. **핵심 회귀시험은 있으나 `main` 출력·저장 연결 검증이 부족합니다.** 추가할 시험은 전부 집계 보류 및 정상 0과의 동점에서 콘솔 허위 순위가 없는지, 그룹에서도 정상 행·가격 미연결 행 혼합이 유지되는지, 저장 CSV의 `upjongMembershipStatus=OK`·업종 연결이 watch까지 통과하는지입니다. 현재 시험은 [test_upjong_link_20261024.py:27](../../tests/test_upjong_link_20261024.py:27), 기존 `main` 시험의 빈 업종 대역은 [test_snapshot_timestamps_20261001.py:53](../../tests/test_snapshot_timestamps_20261001.py:53)입니다.
+
+4. **고칠 것 있음(콘솔 순위의 빈 집계 제외·전부 보류 처리, 해당 경로 회귀시험 보강).**

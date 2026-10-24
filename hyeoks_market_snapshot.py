@@ -785,8 +785,12 @@ def main():
                 sw.writerow([str(it.get(k, "")) for k in SECTOR_FIELDS])
         label = SECTORS[kind][0]
         print(f"✅ {label} 저장 {spath}  ({os.path.getsize(spath):,}바이트)")
-        if membership_status(srows) == "OK":
-            hots = sorted(srows, key=lambda z: -_f(z.get("sumTradeAmount")))[0]
+        # 2026-10-24 Codex 검토 — 집계를 비운 업종(가격 연결 부족)은 '1위 0억' 으로 줄 세우지 않는다.
+        priced = [z for z in srows if z.get("sumTradeAmount", "") != ""]
+        if membership_status(srows) == "OK" and not priced:
+            print(f"::warning::{label} 모든 분류가 가격 연결 부족 — 집계 비교 보류")
+        elif membership_status(srows) == "OK":
+            hots = sorted(priced, key=lambda z: -_f(z.get("sumTradeAmount")))[0]
             print(f"   {label} 거래대금 1위: {hots.get('name')} "
                   f"{_f(hots.get('sumTradeAmount')) / 1e8:,.0f}억 "
                   f"({hots.get('risingCount')}/{hots.get('matchedCount')} 상승)")

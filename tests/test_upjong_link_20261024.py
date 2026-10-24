@@ -80,5 +80,61 @@ class SummaryTable(unittest.TestCase):
         self.assertNotIn("| 1 | 반도체", text)
 
 
+class MainEndToEnd(unittest.TestCase):
+    """Codex 검토(2026-10-24) — 저장 파일의 업종 상태 · 연결이 감시까지 통과하는지, 콘솔이 빈 집계를 1위로 찍지 않는지."""
+
+    def run_main(self, members):
+        import datetime
+        import io
+        import itertools
+        from contextlib import redirect_stdout
+        import hyeoks_snapshot_watch as W
+        tmp = tempfile.mkdtemp()
+        base = datetime.datetime(2026, 10, 26, 15, 2, 48, tzinfo=M.KST)
+        ticks = itertools.chain([base], itertools.repeat(base + datetime.timedelta(seconds=30)))
+
+        class FakeDT(datetime.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return next(ticks)
+
+        rows = [{"itemcode": f"{i:06d}", "itemname": f"종목{i}", "tradeAmount": str(10_000 + i),
+                 "nowPrice": "1000", "openPrice": "990", "prevChangeRate": "1.0"} for i in range(M.MIN_ROWS)]
+        lists = {"upjong": [{"no": "1", "name": "반도체", "totalCnt": 2}, {"no": "2", "name": "기타", "totalCnt": 2}],
+                 "group": [{"no": "7", "name": "그룹가", "totalCnt": 1}, {"no": "8", "name": "그룹나", "totalCnt": 1}]}
+        real = M.fetch_sector_data
+
+        def sector(kind, mkt):
+            with patch.object(M.SESSION, "get", return_value=Mock(json=Mock(return_value=lists[kind]))):
+                return real(kind, mkt)
+
+        out = io.StringIO()
+        with patch.object(M, "OUT_DIR", tmp),              patch.object(M.SESSION, "get", return_value=Mock(status_code=200, json=Mock(return_value=rows))),              patch.object(M, "fetch_theme_data", return_value=([], {})),              patch.object(M, "fetch_sector_data", side_effect=sector),              patch.object(M, "fetch_members", side_effect=lambda kind, no, session: [{"itemcode": c} for c in members[no]]),              patch.dict(M.SECTORS, {"upjong": ("업종", 1), "group": ("그룹", 1)}),              patch.object(M.time, "sleep"),              patch.object(M, "index_snapshot", return_value={"KOSPI": ("1", "0"), "KOSDAQ": ("1", "0")}),              patch.object(M, "write_readme", return_value=None),              patch.object(M.datetime, "datetime", FakeDT),              patch("sys.argv", ["x", "--slot", "1505", "--force"]), redirect_stdout(out):
+            self.assertEqual(M.main(), 0)
+        path = os.path.join(tmp, "2026-10-26_1505.csv.gz")
+        meta = W.read_meta(path)
+        with gzip.open(path, "rt", encoding="utf-8") as fh:
+            fh.readline()
+            links = {r["itemcode"]: r["upjongNames"] for r in csv.DictReader(fh)}
+        return meta, W.membership_issues(meta), links, out.getvalue()
+
+    def test_saved_file_keeps_links_and_passes_watch(self):
+        meta, issues, links, log = self.run_main({"1": ["001499", "001498"], "2": ["001497", "999990"],
+                                                  "7": ["001496"], "8": ["999980"]})
+        self.assertEqual((meta["upjongMembershipStatus"], meta["groupMembershipStatus"]), ("OK", "OK"))
+        self.assertEqual([i for i in issues if not i.startswith("theme")], [], "테마는 이 시험에서 비워 둔다")
+        self.assertEqual((links["001499"], links["001497"]), ("반도체", "기타"))
+        self.assertIn("업종 거래대금 1위: 반도체", log)
+        self.assertIn("그룹 거래대금 1위: 그룹가", log)
+
+    def test_all_sectors_unpriced_never_prints_a_zero_leader(self):
+        meta, _, links, log = self.run_main({"1": ["999991", "999992"], "2": ["999993", "999994"],
+                                             "7": ["999995"], "8": ["999996"]})
+        self.assertEqual(meta["upjongMembershipStatus"], "OK")
+        self.assertNotIn("업종 거래대금 1위", log)
+        self.assertNotIn("그룹 거래대금 1위", log)
+        self.assertIn("업종 모든 분류가 가격 연결 부족", log)
+
+
 if __name__ == "__main__":
     unittest.main()
