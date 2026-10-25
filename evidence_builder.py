@@ -45,6 +45,23 @@ MIN_POOL_ROWS = 1            # rank_pool 은 채널당 상위 N — 0 이면 기
 POOL_CHANNELS = ("차트TOP2", "수급TOP2")
 
 
+PRIVATE_SINCE = "2026-10-26"    # 후보 자료 비공개 보관 첫 생산 회차
+
+
+def private_preserved(cycle_date, fs, rp, index=None):
+    """(보존됨, 사유). Feature Store · 순위 풀 행이 있었던 날, 드라이브 접수나 봉인 사본이 색인에 있어야 한다."""
+    if cycle_date < PRIVATE_SINCE:
+        return True, ""
+    import private_store as P
+    miss = []
+    if isinstance(fs.get("rows"), int) and fs["rows"] > 0 and not P.preserved("feature_store", cycle_date, path=index):
+        miss.append("feature_store")
+    if isinstance(rp.get("rows"), int) and rp["rows"] > 0 and (
+            not P.preserved("rank_pool", cycle_date, path=index) or P.failed("rank_pool", cycle_date, path=index)):
+        miss.append("rank_pool")
+    return (not miss), (f"비공개 보존 없음({' · '.join(miss)})" if miss else "")
+
+
 def pool_rows_ok(rp):
     """순위 풀 행수가 정상인가 — 1행 이상, 또는 두 채널 후보 0 + 사유."""
     rows = rp.get("rows")
@@ -62,7 +79,7 @@ def _miss(kind):
     return f"{kind} 영수증 없음"
 
 
-def build(cycle_date, fingerprint, root=R.RECEIPT_DIR, workflow_states=None):
+def build(cycle_date, fingerprint, root=R.RECEIPT_DIR, workflow_states=None, private_index=None):
     """(evidence, detail) — stability_gate 가 먹는 7개 bool.
 
     workflow_states: {"main.yml": "success", ...} — P1-3.
@@ -176,7 +193,11 @@ def build(cycle_date, fingerprint, root=R.RECEIPT_DIR, workflow_states=None):
               and rp.get("total_dropped") == 0
               # 🔴 2026-09-19 — 영수증 날짜와 저장 날짜가 갈리면 증거가 아니다
               and sc["payload"].get("cycle_date_matches") is True)
-        put("store_written", ok,
+        # 🔒 2026-10-25 전체 검토 A — 후보 자료는 러너에만 쓰이고 드라이브로 간다. 그날 자료가 드라이브 접수나
+        #    봉인 사본으로 **남았는지**를 공개 색인으로 본다(private_store). 10/26 이전 회차는 이 길이 없었다.
+        priv = private_preserved(cycle_date, fs, rp, index=private_index)
+        ok = ok and priv[0]
+        put("store_written", ok, (priv[1] + " " if priv[1] else "") +
             f"feature_store(행={fs.get('rows')} 버림={fs.get('dropped')}) "
             f"rank_pool(행={rp.get('rows')} 버림={rp.get('total_dropped')}"
             f"{' 후보=' + str(rp.get('candidates')) if 'candidates' in rp else ''}"

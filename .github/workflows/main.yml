@@ -105,6 +105,20 @@ jobs:
         timeout-minutes: 8
         run: python private_store.py --upload
 
+      # 🔒 2026-10-25 전체 검토 A — 업로드에 실패한 원본은 AES-256 으로 봉인돼 .private_fallback/ 에 있다(키 없이는 못 읽음).
+      #    스캐너는 첫 적재 회차에서만 후보 자료를 만들어 뒤 회차가 다시 만들 수 없으므로, 같은 바이트를 14일 남긴다.
+      #    복구: artifact 를 내려받아 PC 에서 `python private_store.py --restore <폴더>`(사용자 환경 변수 PRIVATE_STORE_KEY).
+      - name: 🔒 업로드 못 한 후보 자료 봉인 사본 보관 (14일)
+        if: always() && hashFiles('.private_fallback/manifest.json') != ''
+        continue-on-error: true
+        timeout-minutes: 2
+        uses: actions/upload-artifact@v7
+        with:
+          name: private-fallback-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .private_fallback
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: 🧳 스캐너 증거 사본 준비
         id: evidence
         if: always()

@@ -27,6 +27,8 @@ freeze_status.json
 #    러너에서만 쓰고 private_store.py 가 드라이브(비공개)로 보낸다. 공개에는 private_index.csv(건수)만.
 data/feature_store/
 data/scanner_census/rank_pool.csv
+#    업로드에 실패한 원본의 봉인 사본(암호화) — artifact 로만 남긴다(private_store.py, 2026-10-25)
+.private_fallback/
 
 # Account NAV: frozen ledger, daily prices and trade details are private.
 data/account_private/
