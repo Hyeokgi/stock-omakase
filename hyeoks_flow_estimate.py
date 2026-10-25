@@ -11,7 +11,7 @@
 #          (거래정지 제외, 거래대금 큰 순 최대 400) 종목마다 추정가집계 1회. 원본(응답 전부 + 그 시점 시세)은
 #          드라이브 비공개, 공개 `data/research_runs/flow_estimate_runs.csv` 는 건수만.
 #   --probe — 토큰 1회 + 시험 종목 2개 호출. 응답 **구조만** 출력(값·부호 없음). 저장·커밋 없음.
-#   --reconcile DIR — 판정 때 PC 에서 한 번. 비공개 원본 + 네이버 일별 확정 순매수 → 일치율 요약(로컬, 공개 안 함).
+#   --reconcile DIR — 판정 때 PC 에서 한 번. 비공개 원본 + 한투 일별 확정 순매수 → 일치율 요약(로컬, 공개 안 함).
 #     드라이브 창구는 쓰기 전용이라 러너가 지난 잠정치를 읽을 수 없다 — 그래서 대조는 매일이 아니라 판정 때 한다.
 # 운영 KIS 토큰(구글 시트 칸)은 읽지도 쓰지도 않는다 — 실행당 토큰을 따로 1회 발급한다(hyeoks_kis_news 와 같다).
 # 하지 않는 것: 주문·시트·선정 변경. 공개 저장소·로그에 종목코드·종목명·수급 값을 남기지 않는다. 지문 대상이 아니다.
@@ -39,8 +39,13 @@ MARKET_URL = ("https://stock.naver.com/api/domestic/market/stock/default"
               "?tradeType=KRX&marketType=ALL&orderType=priceTop&startIdx=0&pageSize=3000")
 NAVER_HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json, text/plain, */*",
                  "Referer": "https://stock.naver.com/"}
-# 확정치 — 이번 연구(2019~2026 수급)를 받은 것과 같은 출처. bizdate=D 는 D 이전(D 미포함) 60거래일을 준다.
-TREND_URL = "https://m.stock.naver.com/api/stock/{code}/trend?pageSize=60&bizdate={bizdate}"
+# 🔒 2026-10-25 덧붙임(판정 전 · 일치율 보기 전, 설계 문서 §10) — 확정치와 거래량 배수의 직전 20거래일 거래량을
+#    네이버(m.stock trend · fchart, robots 가 막는 경로)에서 한투로 바꾼다. 지표 · 묶음 · 판정 기준은 그대로다.
+INVESTOR_PATH = "/uapi/domestic-stock/v1/quotations/inquire-investor"
+INVESTOR_TR = "FHKST01010900"     # 종목 투자자 — 최근 30거래일 일별 외국인 · 기관 순매수 수량(2026-10-25 구조 확인)
+DAILY_PATH = "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
+DAILY_TR = "FHKST03010100"        # 기간별 일봉 — 한 번에 최대 100봉
+DAILY_LOOKBACK = 45               # 직전 20거래일을 덮는 달력 일수(설 · 추석 연휴 포함)
 WINDOW = ((14, 50), (15, 25))     # 시작 시각 창 — 15:05 스냅샷 슬롯과 같다
 CALL_DEADLINE = (15, 29)          # 장 마감(15:30) 뒤 응답은 15:05 에 보이던 값이라고 볼 수 없다 → 그 전에 멈춘다
 MIN_ROWS = 1500                   # 전 종목 시세가 이보다 적으면 잘린 응답
@@ -432,65 +437,85 @@ def summarize(pairs):
             "picks": picks(pairs)}
 
 
-def fetch_finals(need, get, sleep=time.sleep):
-    """need = {코드: {날짜}} → ({(날짜, 코드): (외국인, 기관)}, 실패 종목 수). 네이버 일별 확정 순매수 수량."""
+def kis_caller(get, key, secret, tok, sleep=time.sleep):
+    """(경로, tr, 입력) → 정상 응답 dict, 실패면 None. 속도 제한 · 통신 오류는 1초 쉬고 두 번까지 다시."""
+    def call(path, tr_id, params):
+        h = dict(headers(key, secret, tok), tr_id=tr_id)
+        for attempt in range(3):
+            try:
+                js = get(BASE + path, headers=h, params=params, timeout=15).json()
+            except Exception:
+                js = None
+            js = js if isinstance(js, dict) else None
+            if js is not None and str(js.get("rt_cd")) == "0":
+                return js
+            if attempt < 2 and (js is None or js.get("msg_cd") == RATE_LIMIT):
+                sleep(1.0)
+                continue
+            return None
+    return call
+
+
+def fetch_finals(need, kis, sleep=time.sleep):
+    """need = {코드: {날짜}} → ({(날짜, 코드): (외국인, 기관)}, 실패 종목 수). 한투 종목 투자자의 일별 확정 순매수 수량.
+    최근 30거래일만 주므로 판정은 첫 기록일부터 30거래일 안에 한다. 응답에 없는 날의 짝은 '확정 없음' 으로 남는다."""
     out, fails = {}, 0
     for code, days in sorted(need.items()):
         want = {d.replace("-", "") for d in days}
-        biz = (datetime.date.fromisoformat(max(days)) + datetime.timedelta(days=1)).strftime("%Y%m%d")
-        ok = True
-        while True:
-            try:
-                rows = get(TREND_URL.format(code=code, bizdate=biz), headers=NAVER_HEADERS, timeout=15).json()
-            except Exception:
-                rows = None
-            if not isinstance(rows, list):
-                ok = False
-                break
-            for x in rows:
-                b = str(x.get("bizdate", ""))
+        js = kis(INVESTOR_PATH, INVESTOR_TR, {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code})
+        if js is None:
+            fails += 1
+        else:
+            for x in as_rows(js.get("output")):
+                b = str(x.get("stck_bsop_date", ""))
                 if b in want:
-                    out[(f"{b[:4]}-{b[4:6]}-{b[6:]}", code)] = (num(x.get("foreignerPureBuyQuant")),
-                                                                num(x.get("organPureBuyQuant")))
-            dates = [str(x.get("bizdate", "")) for x in rows if x.get("bizdate")]
-            if not dates or min(dates) <= min(want) or min(dates) >= biz:
-                break
-            biz = min(dates)
-            sleep(0.05)
-        fails += not ok
+                    out[(f"{b[:4]}-{b[4:6]}-{b[6:]}", code)] = (num(x.get("frgn_ntby_qty")), num(x.get("orgn_ntby_qty")))
+        sleep(PAUSE)
     return out, fails
 
 
-def volume_multiples(need, get, sleep=time.sleep, n=250):
+def volume_multiples(need, kis, sleep=time.sleep):
     """need = [(날짜, 코드, 15:05 거래량)] → {(날짜, 코드): 15:05 거래량 ÷ 그날 전 20거래일 평균 거래량}.
-    그날 봉은 쓰지 않는다(15:05 에 모르는 값). 20봉이 안 되면 뺀다."""
+    그날 봉은 쓰지 않는다(15:05 에 모르는 값). 20봉이 안 되면 뺀다. 거래량은 한투 일봉 누적(수정주가 기준)."""
     by, out = collections.defaultdict(list), {}
     for day, code, vol in need:
         by[code].append((day, vol))
     for code, items in sorted(by.items()):
-        bars, _err, _info = R.fetch(code, n, get)
+        first = datetime.date.fromisoformat(min(d for d, _ in items)) - datetime.timedelta(days=DAILY_LOOKBACK)
+        js = kis(DAILY_PATH, DAILY_TR, {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code,
+                                        "FID_INPUT_DATE_1": first.strftime("%Y%m%d"),
+                                        "FID_INPUT_DATE_2": max(d for d, _ in items).replace("-", ""),
+                                        "FID_PERIOD_DIV_CODE": "D", "FID_ORG_ADJ_PRC": "0"})
+        bars = sorted((f"{b[:4]}-{b[4:6]}-{b[6:]}", num(x.get("acml_vol")))
+                      for x in as_rows((js or {}).get("output2")) for b in [str(x.get("stck_bsop_date", ""))]
+                      if len(b) == 8 and num(x.get("acml_vol")) is not None)
         for day, vol in items:
-            prev = [b[5] for b in bars if b[0] < day][-20:]
+            prev = [v for d, v in bars if d < day][-20:]
             if len(prev) == 20 and sum(prev) > 0 and vol:
                 out[(day, code)] = vol / (sum(prev) / 20)
-        sleep(0.05)
+        sleep(PAUSE)
     return out
 
 
-def main_reconcile(src, out_dir, get, clock, sleep):
+def main_reconcile(src, out_dir, env, get, post, clock, sleep):
     today = clock().strftime("%Y-%m-%d")
     by_day = {d: v for d, v in load_private(glob.glob(os.path.join(src, "research_flowest_*.json.gz"))).items()
               if d < today}                       # 오늘 것은 확정 전이다
     if not by_day:
         print("❌ 대조할 비공개 원본이 없다(오늘 것은 확정 전이라 뺀다)")
         return 1
+    key, secret = env.get("KIS_APP_KEY", ""), env.get("KIS_APP_SECRET", "")
+    if not (key and secret):
+        print("❌ KIS_APP_KEY / KIS_APP_SECRET 없음")
+        return 1
+    kis = kis_caller(get, key, secret, token(post, key, secret), sleep)
     need = collections.defaultdict(set)
     for p in pairs_of(by_day, {}):
         need[p["code"]].add(p["day"])
-    finals, fails = fetch_finals(need, get, sleep)
+    finals, fails = fetch_finals(need, kis, sleep)
     pairs = pairs_of(by_day, finals)
     vm = volume_multiples([(p["day"], p["code"], p["volume"]) for p in pairs
-                           if p["k12"] and (both(p, "p") or both(p, "f"))], get, sleep)
+                           if p["k12"] and (both(p, "p") or both(p, "f"))], kis, sleep)
     for p in pairs:
         p["vm"] = vm.get((p["day"], p["code"]))
     s = dict(summarize(pairs), finalFetchFailures=fails, reconciledAt=clock().isoformat(timespec="seconds"),
@@ -532,7 +557,7 @@ def main(argv=None, env=None, get=None, post=None, clock=None, sleep=time.sleep,
     if a.probe:
         return probe(env, get, post, [c.strip() for c in a.codes.split(",") if c.strip()], clock, sleep)
     if a.reconcile:
-        return main_reconcile(a.reconcile, a.out, get, clock, sleep)
+        return main_reconcile(a.reconcile, a.out, env, get, post, clock, sleep)
     return main_record(env, get, post, clock, sleep, uploader, runs_dir, private_dir)
 
 
