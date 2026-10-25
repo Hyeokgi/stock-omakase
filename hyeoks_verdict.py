@@ -819,13 +819,24 @@ def bind_policy(rows, receipts, pool_rows, contains):
     결과: {"channel","date","trade_id","ok","reason","cohort","run_id","code_sha","policy_id"}
     cohort 는 (경계 cohort 이름, 후보 풀 policy_id 원문) — 풀이 없는 채널은 policy_id "".
     """
-    by_tid = {}
+    # 🔒 2026-10-25 — 10/26 회차부터 공개 영수증의 거래 ID 는 HMAC 으로 가려진다(production_receipt.redact).
+    #    같은 키로 원장 ID 를 해시해 찾는다. 예전 영수증(원문 ID)도 그대로 읽는다. 키가 없거나 순번으로 가린
+    #    영수증은 찾지 못해 그 행은 receipt_missing 이 된다(조용히 통과시키지 않는다).
+    import production_receipt as _PR
+    key = os.environ.get(_PR.ID_KEY_ENV, "")
+    by_tid, by_hash = {}, {}
     for rec in receipts or []:
         if rec.get("kind") != "scanner":
             continue
         led = (rec.get("payload") or {}).get("ledger") or {}
+        target = by_hash if led.get("id_hash") == _PR.ID_HASH else by_tid if not led.get("id_hash") else None
+        if target is None:
+            continue
         for tid in led.get("found_trade_ids") or []:
-            by_tid.setdefault(str(tid), []).append(rec)
+            target.setdefault(str(tid), []).append(rec)
+
+    def _receipts_for(tid):
+        return by_tid.get(tid, []) + (by_hash.get(_PR.id_hash(tid, key), []) if key else [])
     gated = _gated_channels()
     out = {}
     for i, r in enumerate(rows[1:], start=1):
@@ -847,7 +858,7 @@ def bind_policy(rows, receipts, pool_rows, contains):
             b["reason"] = "trade_id_missing"
             continue
         runs = {(str(x.get("run_id", "")), str(x.get("code_sha", ""))): x
-                for x in by_tid.get(tid, [])}
+                for x in _receipts_for(tid)}
         if not runs:
             b["reason"] = "receipt_missing"
             continue

@@ -366,7 +366,11 @@ def _selftest():
         seed(d, p, good_earnings())
         ev, det = build(DAY, FP, root=d, workflow_states=WF)
         chk("기대한 trade_id 가 시트에 없으면 거짓", ev["ledger_written"] is False)
-        chk("누락된 id 를 말한다", "t2" in det["reasons"]["ledger_written"])
+        # 2026-10-25 — 공개 영수증의 거래 ID 는 가려진다(production_receipt.redact). 가린 ID 로 말하는지 본다.
+        _led = R.redact(p)["ledger"]
+        _miss_id = sorted(set(_led["expected_trade_ids"]) - set(_led["found_trade_ids"]))[0]
+        chk("누락된 id 를 말한다(가린 id)", _miss_id in det["reasons"]["ledger_written"]
+            and "t2" not in det["reasons"]["ledger_written"].replace(_miss_id, ""))
 
     with tempfile.TemporaryDirectory() as d:
         p = good_scanner(); p["ledger"] = {"expected_trade_ids": [], "found_trade_ids": []}

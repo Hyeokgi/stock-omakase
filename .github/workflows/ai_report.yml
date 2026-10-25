@@ -68,6 +68,8 @@ jobs:
           KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
           # 🛡️ [예외 재실행] 기본값 false — 사람이 Actions 탭에서 수동 실행할 때만 체크박스로 켤 수 있음
           FORCE_RESEND: ${{ inputs.force_resend }}
+          # 🔒 2026-10-25 — 공개 영수증 거래 ID 가리기(HMAC)
+          PRIVATE_STORE_KEY: ${{ secrets.PRIVATE_STORE_KEY }}
           FORCE_BRIEFING: ${{ inputs.force_briefing }}
       run: |
         python hyeoks_analyst.py

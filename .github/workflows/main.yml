@@ -16,6 +16,8 @@ jobs:
     timeout-minutes: 17  # 💡 [하드 백스톱] 코드 내 15분 자체 데드라인이 어떤 이유로든 안 걸리면 GitHub가 강제 종료 → 다음 대기열이 밀리지 않게 보장
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      # 🔒 2026-10-25 — 공개 영수증 거래 ID 가리기(HMAC) · 후보 자료 업로드 실패 시 암호화 사본에 쓰는 키
+      PRIVATE_STORE_KEY: ${{ secrets.PRIVATE_STORE_KEY }}
     steps:
       - name: 코드 가져오기
         uses: actions/checkout@v7

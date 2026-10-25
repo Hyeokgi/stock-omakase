@@ -148,6 +148,50 @@ def path_for(day, kind, run_id="", root=RECEIPT_DIR, seq=""):
     return os.path.join(dir_for(day, root), f"{kind}-{tag}{seq}.json")
 
 
+# 🔒 2026-10-25 전체 검토 B — 영수증은 공개 저장소에 커밋된다. 거래 ID(`날짜_채널_종목코드`)와 계측 샘플(종목코드)이
+#    그날 선정 종목을 드러냈다. 거래 ID 는 비밀값 키의 HMAC 으로 바꾼다 — 같은 키를 가진 판정 단계(hyeoks_verdict)는
+#    원장 ID 를 같은 방식으로 해시해 계속 맞춰 볼 수 있고, Evidence Builder 의 기대 · 발견 대조(집합 비교)도 그대로다.
+#    키가 없으면 원문을 남기지 않고 영수증 안에서만 통하는 순번으로 바꾼다(판정 결속은 그날 끊긴다 — 경고).
+ID_KEY_ENV = "PRIVATE_STORE_KEY"
+ID_HASH = "hmac-sha256-16"
+ID_TOKEN = "token-no-key"
+
+
+def id_hash(tid, key):
+    import hashlib
+    import hmac
+    return hmac.new(key.encode("utf-8"), str(tid).encode("utf-8"), hashlib.sha256).hexdigest()[:16]
+
+
+def redact(payload, key=None):
+    """공개 영수증에서 종목 식별 정보를 뺀 사본. 원본 dict 는 건드리지 않는다."""
+    if not isinstance(payload, dict):
+        return payload
+    out = dict(payload)
+    key = os.environ.get(ID_KEY_ENV, "") if key is None else key
+    led = out.get("ledger")
+    if isinstance(led, dict) and not led.get("id_hash"):
+        exp, fnd = led.get("expected_trade_ids"), led.get("found_trade_ids")
+        led = dict(led)
+        if key:
+            f = lambda xs: [id_hash(x, key) for x in xs] if isinstance(xs, list) else xs
+            led["id_hash"] = ID_HASH
+        else:
+            union = sorted({str(x) for xs in (exp, fnd) if isinstance(xs, list) for x in xs})
+            tok = {x: f"t{i:03d}" for i, x in enumerate(union)}
+            f = lambda xs: [tok[str(x)] for x in xs] if isinstance(xs, list) else xs
+            led["id_hash"] = ID_TOKEN
+            print(f"::warning::{ID_KEY_ENV} 없음 — 영수증 거래 ID 를 순번으로 바꾼다(판정 결속이 그날 끊긴다)")
+        led["expected_trade_ids"], led["found_trade_ids"] = f(exp), f(fnd)
+        out["ledger"] = led
+    tel = out.get("telemetry")
+    if isinstance(tel, dict) and isinstance(tel.get("samples"), dict):
+        tel = dict(tel)
+        tel["samples"] = {k: len(v) if isinstance(v, (list, tuple)) else 0 for k, v in tel["samples"].items()}
+        out["telemetry"] = tel
+    return out
+
+
 def emit(day, kind, payload, root=RECEIPT_DIR, run_id="", sha="", fingerprint=""):
     """영수증 한 줄. 실패해도 예외를 밖으로 내지 않는다.
 
@@ -156,6 +200,7 @@ def emit(day, kind, payload, root=RECEIPT_DIR, run_id="", sha="", fingerprint=""
     if kind not in KINDS:
         return False, f"알 수 없는 영수증 종류 {kind}"
     try:
+        payload = redact(payload)
         rec = {
             "cycle_date": str(day),
             "kind": kind,
