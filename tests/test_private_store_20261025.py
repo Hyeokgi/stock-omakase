@@ -49,7 +49,7 @@ class Upload(unittest.TestCase):
         self.index = os.path.join(self.d, "census", "private_index.csv")
 
     def up(self, uploader, run="R1"):
-        return P.upload_pending(uploader, run, fs_dir=self.fs, pool_path=self.pool, index=self.index)
+        return P.upload_pending(uploader, run, fs_dir=self.fs, pool_path=self.pool, index=self.index, key="")
 
     def test_new_files_go_to_drive_and_index_has_no_stock_info(self):
         fs_file(self.fs, "2026-10-26", 3)

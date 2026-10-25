@@ -177,7 +177,7 @@ def fetch_stock_news_json(code, limit=3):
                     return titles
         return titles
     except Exception as e:
-        print(f"⚠️ [종목뉴스 JSON 폴백 실패] {code} :: {e}")
+        print(f"⚠️ [종목뉴스 JSON 폴백 실패] {type(e).__name__}")
         return []
 
 
@@ -197,7 +197,7 @@ def get_target_stock_news(code):
             news_list = [f"- {t}" for t in fetch_stock_news_json(code, 3)]
         return clean_emojis("\n".join(news_list)) if news_list else "개별 뉴스 없음"
     except Exception as e:
-        print(f"⚠️ [개별 뉴스 수집 실패 {code}] {e}")
+        print(f"⚠️ [개별 뉴스 수집 실패] {type(e).__name__}")
         return "뉴스 수집 실패"
  
 def get_vip_deep_dive_data(code, kis_token):
@@ -209,7 +209,7 @@ def get_vip_deep_dive_data(code, kis_token):
         out = res.get("output", {})
         return f"PER: {out.get('per', 'N/A')} / PBR: {out.get('pbr', 'N/A')}"
     except Exception as e:
-        print(f"⚠️ [KIS 재무지표 조회 실패 {code}] {e}")
+        print(f"⚠️ [KIS 재무지표 조회 실패] {type(e).__name__}")
         return "데이터 수집 실패"
  
 def cleanup_and_reorder(doc, sheet_name, sort_col_idx):
@@ -266,7 +266,7 @@ def validate_stock_historical_dna(cand, raw_theme_daily_map):
                     
         return cand, has_qualified_day
     except Exception as e:
-        print(f"⚠️ [{name}] 역사적 DNA 검증 인프라 오류 (안전을 위해 풀에서 배제): {e}")
+        print(f"⚠️ [후보 1종목] 역사적 DNA 검증 인프라 오류 (안전을 위해 풀에서 배제): {type(e).__name__}")
         return cand, False
 
 def generate_deep_report(st_type, best_cand, is_warning_market=False, KIS_TOKEN="", client=None):
@@ -396,7 +396,7 @@ def generate_deep_report(st_type, best_cand, is_warning_market=False, KIS_TOKEN=
             #    무효면 pick_data 를 만들지 않는다 → DB_스캐너 목표/손절 칸·가상계좌·백테스트_로그 목표/손절을 쓰지 않는다.
             lv = price_levels.validate_levels(best_cand['curr_p'], match.group(1), match.group(2), st_type)
             if lv['issues'] or lv['warnings']:
-                print(f"⚠️ [목표가·손절가 검증 {st_type} {best_cand['name']}] ok={lv['ok']} "
+                print(f"⚠️ [목표가·손절가 검증 {st_type}] ok={lv['ok']} "
                       f"issues={lv['issues']} warnings={lv['warnings']}")
             report_txt = report_txt + price_levels.report_note(lv)
             if lv['ok']:
@@ -711,7 +711,7 @@ try:
                     #    검증을 통과한 값만 쓰고, 아니면 목표/손절 칸은 건드리지 않는다(시스템 기준가 유지).
                     target_val, stop_val, _lv = price_levels.brief_cells(curr_p, parsed_data.get('target_price'), parsed_data.get('stop_loss'))
                     if target_val is None:
-                        print(f"⚠️ [브리핑 목표가·손절가 무효 — 시스템 기준가 유지] {stock_name}: {_lv['issues']}")
+                        print(f"⚠️ [브리핑 목표가·손절가 무효 — 시스템 기준가 유지] 1종목: {_lv['issues']}")
                     
                     current_db_snapshot = db_sheet.get_all_values()
                     real_row_idx = -1
@@ -742,7 +742,7 @@ try:
                         
                     time.sleep(3.5)
                 except Exception as e:
-                    print(f"[{stock_name}] 브리핑/가격 산출 에러 발생 (건너뜀): {e}")
+                    print(f"[브리핑 1종목] 가격 산출 에러 발생 (건너뜀): {type(e).__name__}")
                     
         print(f"🌅 {current_hour}시 시간외 마감 정제 브리핑 완료! 프로그램 종료."); exit(0)
  
@@ -961,7 +961,7 @@ try:
         for future in concurrent.futures.as_completed(future_to_dna):
             cand, is_qualified = future.result()
             if is_qualified: validated_pool.append(cand)
-            else: print(f"❌ [{cand['name']}] 역대 최고거래대금 기준 미달로 최종 리포트 및 스캐너 풀에서 완전 배제")
+            else: print("❌ [후보 1종목] 역대 최고거래대금 기준 미달로 최종 리포트 및 스캐너 풀에서 완전 배제")
  
     # ⑦ [대량 실패 가드]: 검증 인프라(네이버 등)가 전면 다운되면 전 종목이 동시 탈락 → 빈 풀이 조용히 넘어가는 것을 차단.
     # 탈락률 80% 이상이면 개별 부적격이 아니라 인프라 장애로 간주하고 점수순 폴백(우회)한다.
@@ -1154,19 +1154,20 @@ try:
     code_long = picks_json.get('long_term_code', '')
     # 🆕 [근거 로그] Gemini가 왜 이 종목을(또는 왜 000000을) 골랐는지 콘솔에 남겨서, 나중에 픽 품질을
     #    복기할 때 "이유를 알 수 없는 블랙박스" 상태가 아니라 근거를 추적할 수 있게 함.
-    print(f"🧠 [단기 픽 근거] {picks_json.get('reasoning_short', '(근거 없음)')}")
+    print(f"🧠 [단기 픽 근거] {len(str(picks_json.get('reasoning_short') or ''))}자 — 내용은 리포트에만(공개 로그 비공개)")
     # 🏷️ 선정 정책 식별자를 로그에 남긴다 — F01 수정 전/후 표본을 갈라야 하기 때문이다.
     #    원장(백테스트_로그)에는 정책 버전 열이 없으므로, 당분간 **진입일 + 이 로그**로 구분한다.
     print(f"🏷️ [선정 정책] {POLICY_ID} (적용 시작 {POLICY_SINCE}) — "
           f"이 날짜 이후 리포트 채널 표본은 이전 정책과 합치지 말 것")
-    print(f"🧠 [중기 스윙 픽 근거] {picks_json.get('reasoning_mid', '(근거 없음)')}")
-    print(f"🧠 [장기 추세추종 픽 근거] {picks_json.get('reasoning_long', '(근거 없음)')}")
+    print(f"🧠 [중기 스윙 픽 근거] {len(str(picks_json.get('reasoning_mid') or ''))}자 — 내용은 리포트에만(공개 로그 비공개)")
+    print(f"🧠 [장기 추세추종 픽 근거] {len(str(picks_json.get('reasoning_long') or ''))}자 — 내용은 리포트에만(공개 로그 비공개)")
     
     best_short = next((c for c in pool_150 if c['code'] == code_short), None) if code_short != "000000" else None
     best_mid = next((c for c in pool_150 if c['code'] == code_mid), None) if code_mid != "000000" else None
     best_long = next((c for c in pool_150 if c['code'] == code_long), None) if code_long != "000000" else None
  
-    print(f"🔥 최종 발굴 결과 -> 단기: {best_short['name'] if best_short else '없음(000000)'} / 중기 스윙: {best_mid['name'] if best_mid else '없음(000000)'} / 장기 추세추종: {best_long['name'] if best_long else '없음(000000)'}\n")
+    # 🔒 2026-10-25 — 공개 Actions 로그에 그날 선정 종목명을 찍지 않는다(전체 검토 C, 허브 §8 · #18 과 같은 원칙).
+    print(f"🔥 최종 발굴 결과 -> 단기: {'선정' if best_short else '없음'} / 중기 스윙: {'선정' if best_mid else '없음'} / 장기 추세추종: {'선정' if best_long else '없음'}")
 
     # ── 🧊 실행 입력 동결 (로드맵 §4-5) ────────────────────────────────
     #    지금까지 pool_150 을 만들어 AI 에 넘기고 **버렸다.** 그래서 "같은 후보군에서
@@ -1386,7 +1387,7 @@ try:
                     # 🔴 2026-10-04 — 검증을 통과한 값만 쓴다. 무효면 목표/손절 칸은 그대로 둔다(시스템 기준가 유지).
                     target_val, stop_val, _lv = price_levels.brief_cells(curr_p, parsed_data.get('target_price'), parsed_data.get('stop_loss'))
                     if target_val is None:
-                        print(f"⚠️ [브리핑 목표가·손절가 무효 — 시스템 기준가 유지] {stock_name}: {_lv['issues']}")
+                        print(f"⚠️ [브리핑 목표가·손절가 무효 — 시스템 기준가 유지] 1종목: {_lv['issues']}")
                     
                     db_sheet.update_cell(real_row_idx, 10, briefing_text)
                     if target_val is not None:
@@ -1403,7 +1404,7 @@ try:
                             break
                     time.sleep(3.5)
                 except Exception as e:
-                    print(f"[{stock_name}] 브리핑/가격 에러 (건너뜀): {e}")
+                    print(f"[브리핑 1종목] 가격 에러 (건너뜀): {type(e).__name__}")
  
     # ==========================================
     # 7. 가상계좌 업데이트
@@ -1428,15 +1429,20 @@ try:
             #    → 그런 행은 자동 청산을 하지 않고 경고만 남긴다. 수동매도는 그대로 된다.
             t_p, s_p = price_levels.to_int(r[7]), price_levels.to_int(r[8])
             levels_ok = 0 < s_p < buy_p < t_p and t_p <= buy_p * 3 and s_p >= buy_p * 0.3
+            curr_p = None
             try: curr_p = int(requests.get(f"https://m.stock.naver.com/api/stock/{code}/basic", timeout=3).json()['closePrice'].replace(',',''))
             except Exception as e:
-                print(f"⚠️ [보유종목 현재가 조회 실패 {code} — 매입가로 대체] {e}")
-                curr_p = buy_p
+                print(f"⚠️ [보유종목 현재가 조회 실패 — 평가 보류] {type(e).__name__}")
+            if curr_p is None:
+                # 🔴 2026-10-25 전체 검토 E — 예전엔 매입가로 대체해 수익률 0% 를 쓰고, 수동매도면 그 가짜 값으로 종료까지 했다.
+                #    이제는 행을 그대로 두고(현재가 · 수익률 · 수동매도 표시 유지) 다음 회차에 검증된 가격으로 처리한다.
+                new_rows.append([name, f"'{code}", buy_p, amt, r[4], r[5], r[6], t_p or "", s_p or "", r[9]])
+                continue
             
             rtn = (curr_p - buy_p) / buy_p
             reason = ""
             if not levels_ok:
-                print(f"⚠️ [가상계좌 {name}] 목표가 {t_p:,}·손절가 {s_p:,} 가 매입가 {buy_p:,} 와 맞지 않아 자동 청산을 건너뜀 — 시트 확인 필요")
+                print("⚠️ [가상계좌 1종목] 목표가·손절가가 매입가와 맞지 않아 자동 청산을 건너뜀 — 시트 확인 필요")
             if levels_ok and curr_p >= t_p: reason = "목표가 도달"
             elif levels_ok and curr_p <= s_p: reason = "손절가 이탈"
             elif str(r[9]).strip() == "매도": reason = "수동매도"
@@ -1512,9 +1518,22 @@ try:
         if already_published_today and FORCE_RESEND:
             print("⚠️ [강제 재발송 모드] 오늘 이미 발행됐지만 FORCE_RESEND=true로 재실행합니다.")
         print("▶ 텔레그램 발송 진행 중...")
-        requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument", 
-                      files={'document': open(pdf_file, 'rb')}, data={'chat_id': TELEGRAM_CHAT_ID, 'caption': "[HYEOKS] AI 심층 리서치 비상 보고서" if market_stage==3 else "[HYEOKS] AI 심층 리서치 보고서"})
-        print("✅ 텔레그램 발송 완료!")
+        # 🔴 2026-10-25 전체 검토 D — 예전엔 응답을 보지 않고 '발송 완료' 를 찍은 뒤 발행일을 기록해, 실패해도 그날 재발송이 막혔다.
+        _sent = False
+        try:
+            with open(pdf_file, 'rb') as _pdf:
+                _res = requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendDocument",
+                                     files={'document': _pdf}, timeout=120,
+                                     data={'chat_id': TELEGRAM_CHAT_ID, 'caption': "[HYEOKS] AI 심층 리서치 비상 보고서" if market_stage==3 else "[HYEOKS] AI 심층 리서치 보고서"})
+            _sent = getattr(_res, "status_code", 0) == 200 and bool((_res.json() or {}).get("ok"))
+            _why = "" if _sent else f"HTTP {getattr(_res, 'status_code', '?')}"
+        except Exception as _e:
+            _why = type(_e).__name__        # 토큰이 들어간 URL 을 오류 문구에 남기지 않는다
+        if _sent:
+            print("✅ 텔레그램 발송 완료!")
+        else:
+            print(f"::error::텔레그램 발송 실패({_why}) — 발행일을 기록하지 않는다(다음 실행이 다시 보낼 수 있다)")
+    if TELEGRAM_BOT_TOKEN and not (already_published_today and not FORCE_RESEND) and _sent:
         try:
             setting_sheet = doc.worksheet("⚙️설정")
             setting_rows = setting_sheet.get_all_values()

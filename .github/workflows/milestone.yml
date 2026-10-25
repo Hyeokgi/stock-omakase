@@ -28,6 +28,9 @@ permissions:
 jobs:
   milestone:
     runs-on: ubuntu-latest
+    env:
+      # 🔒 2026-10-25 — 가린 영수증 거래 ID 를 원장과 맞추는 키(production_receipt.redact)
+      PRIVATE_STORE_KEY: ${{ secrets.PRIVATE_STORE_KEY }}
     timeout-minutes: 10
 
     steps:
