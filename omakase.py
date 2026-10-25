@@ -239,8 +239,14 @@ def check_warning_market():
             ma5  = sum(prices[:5]) / 5
             if prices[0] < ma20: warning_count += 1
             if ma5 < ma20:       warning_count += 1
+        else:
+            # 🔴 2026-10-25 전체 검토 F — 20개 미만이면 검사가 조용히 빠졌다. 판정 값은 Block A(~11/06) 때문에
+            #    그대로 두고, '모름' 이 있었다는 사실을 계측에 남겨 그날 영수증이 degraded 로 정직하게 보이게 한다.
+            TELEMETRY.note('index_state', f'코스닥 지수 {len(prices)}개(20 미만) — 경고장 이평 검사 못 함',
+                           feature_telemetry.OBSERVE)
     except Exception as e:
         print(f"⚠️ [check_warning_market Naver Index Error] {e}")
+        TELEMETRY.note('index_state', f'코스닥 지수 조회 실패 {type(e).__name__}', feature_telemetry.OBSERVE)
         warning_count += 1 # 👑 Fail-Closed: 네트워크 터지면 리스크 관리를 위해 위험 장세로 간주
 
     try:
@@ -260,18 +266,26 @@ def is_index_above_ma5():
         if len(prices) >= 5:
             ma5 = sum(prices[:5]) / 5
             return prices[0] >= ma5
+        TELEMETRY.note('index_state', f'코스닥 지수 {len(prices)}개(5 미만) — 5일선 판정 못 함', feature_telemetry.OBSERVE)
     except Exception as e:
         print(f"⚠️ [is_index_above_ma5 Error] {e}")
+        TELEMETRY.note('index_state', f'5일선 판정 조회 실패 {type(e).__name__}', feature_telemetry.OBSERVE)
+    # 🔴 2026-10-25 전체 검토 F — '모름' 을 '5일선 위' 로 돌려준다. 값은 Block A 때문에 그대로, 대신 위 계측이 남는다.
     return True
 
 def get_kospi_fluctuation_rate():
     try:
         url = f"https://m.stock.naver.com/api/index/KOSPI/basic?_={int(time.time() * 1000)}"
         res = GLOBAL_SESSION.get(url, verify=False, timeout=3).json()
-        rate_str = res.get("fluctuationsRatio", "0")
+        rate_str = res.get("fluctuationsRatio")
+        if rate_str in (None, ""):
+            # 🔴 2026-10-25 전체 검토 F — 필드가 빠져도 '0' 으로 보합처럼 보였다. 값은 그대로(Block A), 계측만 남긴다.
+            TELEMETRY.note('index_state', '코스피 등락률 필드 없음 — 0.0 으로 대신함', feature_telemetry.OBSERVE)
+            return 0.0
         return float(str(rate_str).replace(',', ''))
     except Exception as e:
         print(f"⚠️ [get_kospi_fluctuation_rate Error] {e}")
+        TELEMETRY.note('index_state', f'코스피 등락률 조회 실패 {type(e).__name__} — 0.0 으로 대신함', feature_telemetry.OBSERVE)
         return 0.0
 
 # ==========================================================================
