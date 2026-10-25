@@ -9,7 +9,7 @@ from unittest import mock
 import evidence_builder as E
 import hyeoks_verdict as v
 import production_receipt as R
-from tests.test_r1_policy_binding import CHART_POLICY, D, NEW, contains, header, pool, row
+from test_r1_policy_binding import CHART_POLICY, D, NEW, contains, header, pool, row
 
 CODE = "123450"
 TID = f"{D}_차트TOP2_{CODE}"
