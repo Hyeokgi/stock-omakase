@@ -14,7 +14,7 @@ jobs:
   analyze_reports:
     runs-on: ubuntu-latest
     
-    timeout-minutes: 60  # 실행당 8건 + 새 요청 시작 20분 제한. 느린 단일 요청의 하드 백스톱.
+    timeout-minutes: 60  # 실행당 20건 + 새 요청 시작 20분 제한. 느린 단일 요청의 하드 백스톱.
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
@@ -37,7 +37,9 @@ jobs:
       - name: Run Trend Analyzer
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          MAX_REPORTS_PER_RUN: '8'
+          # 2026-10-26 8 → 20 — 주당 유입 약 24건 > 처리 16건(토 · 일 각 8)이라 최신순 정렬에서 오래된 리포트가 계속 밀렸다.
+          #   8건에 5~6분(건당 약 40초) → 20건 약 14분, 위 20분 예산 안.
+          MAX_REPORTS_PER_RUN: '20'
         run: python hyeoks_trend.py
       - name: Remove credentials
         if: always()

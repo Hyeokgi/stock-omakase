@@ -73,6 +73,21 @@ class TrendSafetyTests(unittest.TestCase):
         self.client.files.delete.assert_called_once()
         self.assertTrue(all(not Path(p).exists() for p in self.paths))
 
+    def test_log_has_no_pick_names(self):
+        self.data.update(top_pick_1="비밀종목가", evidence_1="p.3", top_pick_2="비밀종목나", evidence_2="p.4")
+        self.client.models.generate_content.return_value.text = json.dumps(self.data)
+        out = []
+        self.ns["print"] = lambda *a, **k: out.append(" ".join(map(str, a)))
+        self.ns["main"]()
+        log = "\n".join(out)
+        self.assertNotIn("비밀종목", log)
+        self.assertIn("추천 2개", log)
+        self.assertIn("비밀종목가", str(self.sheet.append_rows.call_args), "시트에는 그대로 적는다")
+
+    def test_workflow_budget_fits_time_limit(self):
+        wf = (Path(__file__).resolve().parents[1] / ".github/workflows/trend.yml").read_text(encoding="utf-8")
+        self.assertIn("MAX_REPORTS_PER_RUN: '20'", wf, "주당 유입(약 24건)보다 처리량이 커야 적체가 줄어든다")
+
     def test_uncertain_append_not_retried(self):
         self.sheet.append_rows.side_effect = TimeoutError("uncertain")
         with self.assertRaises(TimeoutError):
