@@ -163,7 +163,8 @@ def main():
                 analyzed_files.append(file_name)
                 if file.get('md5Checksum'):
                     analyzed_hashes.add(file['md5Checksum'])
-                print(f" ✨ 분석 완료 -> 섹터: {row_data[1]} | Top Pick: {row_data[3]}")
+                # 🔒 2026-10-26 — 공개 저장소 Actions 로그에 추천 종목명을 남기지 않는다(전체 검토 C 와 같은 기준). 개수만.
+                print(f" ✨ 분석 완료 -> 섹터: {row_data[1]} | 추천 {sum(1 for x in row_data[3:5] if str(x).strip())}개")
                 
             # 서버 메모리 관리: 업로드된 파일 삭제
             client.files.delete(name=uploaded_file.name)
