@@ -237,29 +237,46 @@ class Reconcile(unittest.TestCase):
         self.assertEqual((p["days"], p["provisionalPickDays"], p["finalPickDays"], p["sameCodeDays"],
                           p["provisionalPickFinalPass"]), (2, 2, 2, 1, 1))
 
-    def test_finals_paging_and_volume_multiple_excludes_same_day(self):
-        pages = {"20261017": [{"bizdate": "20261016", "foreignerPureBuyQuant": "+1,200", "organPureBuyQuant": "-30"},
-                              {"bizdate": "20261015", "foreignerPureBuyQuant": "5", "organPureBuyQuant": "6"}],
-                 "20261015": [{"bizdate": "20261014", "foreignerPureBuyQuant": "-7", "organPureBuyQuant": "8"}]}
+    def test_kis_finals_and_volume_multiple_exclude_same_day(self):
         asked = []
 
-        def get(url, headers=None, timeout=None):
-            biz = url.rsplit("=", 1)[1]
-            asked.append(biz)
-            return Resp(pages.get(biz, []))
-        got, fails = F.fetch_finals({"900100": {"2026-10-14", "2026-10-16"}}, get, sleep=lambda s: None)
-        self.assertEqual(fails, 0)
+        def kis(path, tr_id, params):
+            asked.append((tr_id, params["FID_INPUT_ISCD"]))
+            if tr_id == F.INVESTOR_TR:
+                if params["FID_INPUT_ISCD"] == "900200":
+                    return None                                    # 받기 실패 → 실패 종목 1
+                return {"rt_cd": "0", "output": [
+                    {"stck_bsop_date": "20261016", "frgn_ntby_qty": "1200", "orgn_ntby_qty": "-30"},
+                    {"stck_bsop_date": "20261015", "frgn_ntby_qty": "5", "orgn_ntby_qty": "6"},
+                    {"stck_bsop_date": "20261014", "frgn_ntby_qty": "-7", "orgn_ntby_qty": "8"}]}
+            self.assertEqual(tr_id, F.DAILY_TR)
+            self.assertEqual((params["FID_INPUT_DATE_1"], params["FID_INPUT_DATE_2"]), ("20260811", "20260925"))
+            days = [(datetime.date(2026, 9, 1) + datetime.timedelta(days=i)).strftime("%Y%m%d") for i in range(25)]
+            return {"rt_cd": "0", "output2": [{"stck_bsop_date": d, "acml_vol": "9999999" if d == "20260925" else "1000"}
+                                              for d in reversed(days)]}
+        got, fails = F.fetch_finals({"900100": {"2026-10-14", "2026-10-16"}, "900200": {"2026-10-14"}}, kis,
+                                    sleep=lambda s: None)
+        self.assertEqual(fails, 1)
         self.assertEqual(got[("2026-10-16", "900100")], (1200.0, -30.0))
         self.assertEqual(got[("2026-10-14", "900100")], (-7.0, 8.0))
         self.assertNotIn(("2026-10-15", "900100"), got, "필요한 날만 남긴다")
-        self.assertEqual(asked, ["20261017", "20261015"])
+        self.assertEqual(asked, [(F.INVESTOR_TR, "900100"), (F.INVESTOR_TR, "900200")], "종목당 한 번")
 
-        days = [(datetime.date(2026, 9, 1) + datetime.timedelta(days=i)).strftime("%Y%m%d") for i in range(25)]
-        xml = "<chartdata symbol='900100'>" + "".join(
-            f"<item data='{d}|100|110|90|100|{9_999_999 if d == '20260925' else 1000}'/>" for d in days) + "</chartdata>"
-        vm = F.volume_multiples([("2026-09-25", "900100", 3000)], lambda url, timeout=None: Resp(None, text=xml),
-                                sleep=lambda s: None)
+        vm = F.volume_multiples([("2026-09-25", "900100", 3000)], kis, sleep=lambda s: None)
         self.assertAlmostEqual(vm[("2026-09-25", "900100")], 3.0, msg="그날 봉(거래량 9,999,999)은 평균에 넣지 않는다")
+
+    def test_kis_caller_retries_rate_limit_but_not_other_errors(self):
+        replies = [{"rt_cd": "1", "msg_cd": F.RATE_LIMIT}, {"rt_cd": "0", "output": []},
+                   {"rt_cd": "1", "msg_cd": "EGW00123"}]
+        seen = []
+
+        def get(url, headers=None, params=None, timeout=None):
+            seen.append(headers["tr_id"])
+            return Resp(replies.pop(0))
+        call = F.kis_caller(get, "k", "s", "tok", sleep=lambda s: None)
+        self.assertEqual(call(F.INVESTOR_PATH, F.INVESTOR_TR, {})["rt_cd"], "0", "속도 제한은 쉬고 다시")
+        self.assertIsNone(call(F.INVESTOR_PATH, F.INVESTOR_TR, {}), "다른 오류는 바로 실패")
+        self.assertEqual(seen, [F.INVESTOR_TR] * 3)
 
     def test_reconcile_skips_today_and_writes_private_summary(self):
         d = tempfile.mkdtemp()
@@ -269,23 +286,31 @@ class Reconcile(unittest.TestCase):
                                  "output2": kis(5 if run == "1" else -5, 5)["output2"]}]}
             with gzip.open(os.path.join(d, f"research_flowest_{day}_{run}.json.gz"), "wt", encoding="utf-8") as fh:
                 json.dump(body, fh)
+        urls = []
 
-        def get(url, headers=None, timeout=None):
-            if "trend" in url:
-                return Resp([{"bizdate": "20261015", "foreignerPureBuyQuant": "3", "organPureBuyQuant": "4"}])
-            return Resp(None, text="<chartdata symbol='900100'></chartdata>")
+        def get(url, headers=None, params=None, timeout=None):
+            urls.append(url)
+            if url == F.BASE + F.INVESTOR_PATH:
+                return Resp({"rt_cd": "0", "output": [{"stck_bsop_date": "20261015", "frgn_ntby_qty": "3",
+                                                       "orgn_ntby_qty": "4"}]})
+            if url == F.BASE + F.DAILY_PATH:
+                return Resp({"rt_cd": "0", "output2": []})
+            raise AssertionError(url)
         out = os.path.join(d, "out")
         c = Clock(at("09:00", "2026-10-16"))
+        env = {"KIS_APP_KEY": "k", "KIS_APP_SECRET": "s"}
         with contextlib.redirect_stdout(io.StringIO()):
-            rc = F.main(["--reconcile", d, "--out", out], get=get, post=post_ok, clock=c, sleep=c.sleep)
+            self.assertEqual(F.main(["--reconcile", d, "--out", out], env={}, get=get, post=post_ok, clock=c,
+                                    sleep=c.sleep), 1, "키가 없으면 대조하지 않는다")
+            rc = F.main(["--reconcile", d, "--out", out], env=env, get=get, post=post_ok, clock=c, sleep=c.sleep)
         self.assertEqual(rc, 0)
+        self.assertFalse([u for u in urls if "naver" in u], "대조는 네이버를 부르지 않는다")
         with open(os.path.join(out, "summary.json"), encoding="utf-8") as fh:
             s = json.load(fh)
         self.assertEqual(s["recordDays"], ["2026-10-15"], "오늘(10/16) 기록은 확정 전이라 뺀다")
         self.assertEqual(s["complete"], 1)
         m = s["groups"]["전체 호출 종목"]["metrics"]["기관 부호 일치"]
         self.assertEqual(m["value"], 1.0, "같은 날 실행이 둘이면 시세를 먼저 받은(15:03) 실행을 쓴다")
-
 
 if __name__ == "__main__":
     unittest.main()
