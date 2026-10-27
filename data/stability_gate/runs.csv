@@ -21,3 +21,4 @@ cycle_date,run_id,source,verdict,fingerprint,ci_green,earnings_schema_ok,dart_co
 2026-10-21,39552772398+39552898319+39593647545+39598968044,cycle,PASS,18dadfa91350,Y,Y,Y,Y,Y,Y,Y,DEGRADED,,stability-gate-v3
 2026-10-22,39731257384+39731390878+39772304143+39777697939,cycle,PASS,18dadfa91350,Y,Y,Y,Y,Y,Y,Y,DEGRADED,,stability-gate-v3
 2026-10-23,39908890570+39909022787+39947688849+39952724190,cycle,FAIL,18dadfa91350,Y,Y,N,Y,Y,Y,Y,DEGRADED,"dart_complete:대상=168 허용합=1 {'hard_error': 0, 'circuit_breaker_unprocessed': 167, 'time_budget_unprocessed': 0} 미분류=0 본표차단=- 입력=ok",stability-gate-v3
+2026-10-26,40277311517+40277440385+40316765478+40321933197,cycle,PASS,3f49f73150c0,Y,Y,Y,Y,Y,Y,Y,SKIPPED,,stability-gate-v3
