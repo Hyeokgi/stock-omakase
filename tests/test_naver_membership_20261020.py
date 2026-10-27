@@ -185,6 +185,36 @@ class SnapshotFailureTests(unittest.TestCase):
         self.assertEqual(mapping, {})
         self.assertEqual(M.membership_status(rows), "PARTIAL")
 
+    def test_duplicate_code_is_retried_once_and_recovers(self):
+        # 2026-10-27 — 등락률 정렬 커서의 페이지 사이 순위 변동(추정)으로 생긴 중복은 한 번 다시 받으면 풀린다.
+        session = Mock()
+        session.get.return_value.json.return_value = [{"no": "1", "name": "시험", "totalCnt": 1}]
+        mkt = {"005930": {"tradeAmount": "5", "prevChangeRate": "1"}}
+        fm = Mock(side_effect=[N.MembershipError("upjong constituents invalid/duplicate code"),
+                               [{"itemcode": "005930"}]])
+        with patch.object(M, "SESSION", session), patch.dict(M.SECTORS, {"group": ("그룹", 1)}), \
+             patch.object(M, "fetch_members", fm), patch.object(M.time, "sleep"):
+            rows, mapping = M.fetch_sector_data("group", mkt)
+        self.assertEqual(fm.call_count, 2)
+        self.assertEqual(rows[0]["membershipStatus"], "OK")
+        self.assertIn("005930", mapping)
+
+    def test_retry_is_only_once_and_only_for_cursor_races(self):
+        session = Mock()
+        session.get.return_value.json.return_value = [{"no": "1", "name": "시험", "totalCnt": 1}]
+        dup = N.MembershipError("upjong constituents invalid/duplicate code")
+        fm = Mock(side_effect=[dup, dup])
+        with patch.object(M, "SESSION", session), patch.dict(M.SECTORS, {"group": ("그룹", 1)}), \
+             patch.object(M, "fetch_members", fm), patch.object(M.time, "sleep"):
+            rows, _ = M.fetch_sector_data("group", {})
+        self.assertEqual(fm.call_count, 2, "두 번째도 실패하면 더 부르지 않는다")
+        self.assertEqual(rows[0]["membershipStatus"], "FAILED")
+        fm = Mock(side_effect=N.MembershipError("group HTTP 400"))
+        with patch.object(M, "SESSION", session), patch.dict(M.SECTORS, {"group": ("그룹", 1)}), \
+             patch.object(M, "fetch_members", fm), patch.object(M.time, "sleep"):
+            M.fetch_sector_data("group", {})
+        self.assertEqual(fm.call_count, 1, "HTTP 오류는 재시도하지 않는다")
+
     def test_sector_complete_zero_is_a_real_zero(self):
         session = Mock()
         session.get.return_value.json.return_value = [{"no": "1", "name": "시험", "totalCnt": 1}]

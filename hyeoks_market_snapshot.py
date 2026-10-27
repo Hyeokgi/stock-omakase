@@ -313,7 +313,7 @@ def fetch_theme_data():
     belong, fails = {}, 0
     for t in themes:
         try:
-            members = fetch_members("theme", t["code"], SESSION)
+            members = _members("theme", t["code"])
             if not members:
                 raise MembershipError("theme constituents empty")
             for x in members:
@@ -330,6 +330,29 @@ def fetch_theme_data():
     print(f"🏷️ 테마 {len(themes)}개 ({page}페이지) · 매핑 {len(belong)}종목"
           + (f" · 구성종목 조회 실패 {fails}개" if fails else ""))
     return themes, belong
+
+
+# 🔴 2026-10-27 — 구성 목록은 등락률 정렬 커서로 100개씩 받는다. 장중에 페이지 사이 순위가 바뀌면 같은 종목이
+#    두 페이지에 와서 '중복 코드' 로 그 묶음 전체가 FAILED 가 됐다(10/26 15:05 업종 기타 · 10/27 13:00 자동차부품, 추정).
+#    그 두 오류만 1초 쉬고 처음부터 한 번 다시 받는다. 부분 목록을 완성본으로 쓰지 않는 원칙(naver_membership)은 그대로다.
+#    naver_membership.py 는 지문 대상이라 여기(지문 대상 아님)서 감싼다.
+RETRY_ERRORS = ("invalid/duplicate code", "invalid/repeated cursor")
+
+
+def _members(kind, no):
+    try:
+        return fetch_members(kind, no, SESSION)
+    except MembershipError as error:
+        if not any(e in str(error) for e in RETRY_ERRORS):
+            raise
+        time.sleep(1.0)
+        try:
+            rows = fetch_members(kind, no, SESSION)
+        except MembershipError as again:
+            print(f"↻ {kind} {no} 구성 재시도 1회 — 다시 실패({str(again)[:60]})")
+            raise
+        print(f"↻ {kind} {no} 구성 재시도 1회 — 회복")
+        return rows
 
 
 def _flat_leading(v):
@@ -381,7 +404,7 @@ def fetch_sector_data(kind, mkt):
 
         codes, member_error = [], ""
         try:
-            codes = [x["itemcode"] for x in fetch_members(kind, no, SESSION)]
+            codes = [x["itemcode"] for x in _members(kind, no)]
             if not codes and _f(it.get("totalCnt")) > 0:
                 raise MembershipError(f"{kind} constituents unexpectedly empty")
         except Exception as error:
