@@ -24,12 +24,19 @@ class Sheet:
     def __init__(self, values):
         self.values = values
         self.appended = []
+        self.updated = []
+        self.calls = []
 
     def get_all_values(self):
         return self.values
 
     def append_rows(self, rows, **kw):
         self.appended.append((rows, kw))
+        self.calls.append("append")
+
+    def batch_update(self, data, **kw):
+        self.updated.append((data, kw))
+        self.calls.append("update")
 
 
 def sheet_with(rows):
@@ -69,13 +76,31 @@ class CompanyInfoTests(unittest.TestCase):
         self.assertEqual((rc, sheet.appended), (0, []))
         self.assertIn("신규 0개", log)
 
-    def test_renamed_is_counted_not_rewritten(self):
+    def test_renamed_rows_get_kind_name_in_column_a_only(self):
         existing = kind_rows()
-        existing[0][0] = "옛이름"
+        existing[0][0] = "비밀옛이름"
+        existing[2][0] = "비밀옛이름2"
+        existing[2][1] = "시트의다른값"                 # A열 밖은 건드리지 않는다
+        existing.append(row("000001", "비밀옛이름3"))     # 같은 코드가 두 번 — 둘 다 본다
         sheet = sheet_with(existing)
-        rc, log = run(kind_html(kind_rows()), sheet)
-        self.assertEqual(sheet.appended, [])
-        self.assertIn("상호가 다른 종목 1개", log)
+        rc, log = run(kind_html(kind_rows(extra=[row("999999", "신규")])), sheet)
+        self.assertEqual(rc, 0)
+        (data, kw), = sheet.updated
+        self.assertEqual(data, [{"range": "A2", "values": [["기존1"]]}, {"range": "A4", "values": [["기존3"]]},
+                                {"range": f"A{len(existing) + 1}", "values": [["기존1"]]}])
+        self.assertEqual(kw["value_input_option"], "RAW")
+        self.assertEqual(sheet.calls, ["update", "append"], "고친 뒤에 덧붙인다(행 번호가 그대로)")
+        self.assertIn("상호가 KIND 와 다른 행 3개", log)
+        self.assertNotIn("비밀옛이름", log, "공개 로그에 옛 이름이 없다")
+
+    def test_too_many_renames_writes_nothing(self):
+        existing = kind_rows()
+        for r in existing[:C.MAX_RENAME + 1]:
+            r[0] = "다름"
+        sheet = sheet_with(existing)
+        rc, log = run(kind_html(kind_rows(extra=[row("999999", "신규")])), sheet)
+        self.assertEqual((rc, sheet.updated, sheet.appended), (1, [], []))
+        self.assertIn("상호 갱신", log)
 
     def test_guards_stop_before_writing(self):
         cases = {
@@ -95,8 +120,9 @@ class CompanyInfoTests(unittest.TestCase):
 
     def test_dry_run_reports_but_does_not_write(self):
         sheet = sheet_with(kind_rows())
+        sheet.values[1][0] = "옛이름"
         rc, log = run(kind_html(kind_rows(extra=[row("999999", "신규")])), sheet, dry=True)
-        self.assertEqual((rc, sheet.appended), (0, []))
+        self.assertEqual((rc, sheet.appended, sheet.updated), (0, [], []))
         self.assertIn("시험 실행", log)
 
     def test_workflow_is_weekday_morning_and_cleans_secret(self):
