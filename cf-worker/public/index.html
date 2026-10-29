@@ -1480,7 +1480,9 @@ function renderHome() {
   // ① 발행 리포트 — 발행된 날만 맨 위
   if (board && board.published && board.picks) {
     const lab = { short:'단기', mid:'중기 스윙', long:'장기 추세추종' };
-    html += `<section class="home-sec"><div class="home-sec-head"><span class="home-sec-title">📄 오늘 발행 리포트</span>`
+    // 아침에는 전날 발행분이 오므로 날짜가 오늘이 아니면 '최근' 으로 부른다.
+    const todayKst = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+    html += `<section class="home-sec"><div class="home-sec-head"><span class="home-sec-title">📄 ${board.date === todayKst ? '오늘' : '최근'} 발행 리포트</span>`
           + `<span class="home-sec-sub">${escHtml(board.date)}</span></div>`;
     ['short','mid','long'].forEach(k => {
       const p = board.picks[k] || {};
