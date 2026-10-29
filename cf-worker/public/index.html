@@ -406,6 +406,100 @@
   }
   .manual-modal-frame-wrap { flex: 1 1 auto; overflow: hidden; }
   .manual-modal-frame-wrap iframe { width: 100%; height: 100%; border: none; background: #fff; }
+
+  /* 🎨 2026-10-29 보조 글자와 라이트 모드 경고의 대비를 높인다. */
+  :root { --text-3: #929EAF; }
+  html[data-theme="light"] { --text-3: #606B7B; --gold: #855B1C; }
+  html[data-theme="light"] .ai-brief.warn { color: #A51D36; }
+  html[data-theme="light"] .config-btn.primary,
+  html[data-theme="light"] .theme-rank-badge { color: #fff; }
+  .meta-dot, .theme-name, .detail-label, .report-date, .news-meta,
+  .theme-stock-val, .chart-img-label, .score-pill { font-size: 12px; }
+  .ai-brief, .sched-brief-inner { font-size: 13px; line-height: 1.65; }
+  .price, .rank-price { font-variant-numeric: tabular-nums; }
+  .change-pill { white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+  /* 🎨 2026-10-29 자주 누르는 조작은 44px 이상, 키보드 초점은 명확하게 표시한다. */
+  button, input, select { font-family: inherit; }
+  button { touch-action: manipulation; }
+  .icon-btn, .cal-nav button, .manual-modal-bar button { width: 44px; height: 44px; flex-shrink: 0; }
+  .chip, .config-btn, .naver-link-btn, .history-tag { min-height: 44px; }
+  .history-tag { display: inline-flex; align-items: center; }
+  .star-btn { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; margin: 0; padding: 0; border: 0; background: transparent; }
+  .card-toggle { min-width: 44px; min-height: 44px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-hi); color: var(--text-2); cursor: pointer; font-size: 12px; }
+  .card-toggle .chevron { display: inline-block; }
+  .drag-handle { width: 44px; }
+  .tab-btn { min-width: 44px; min-height: 52px; border-radius: 10px; }
+  .tab-btn.active { background: var(--surface-hi); box-shadow: inset 0 3px var(--gold); }
+  .tab-btn .tab-label { font-size: 12px; }
+  :focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+  .search-box:focus-within { outline: 2px solid var(--gold); outline-offset: 2px; }
+  .search-box input:focus-visible { outline: none; }
+  #backToTopBtn { width: 44px !important; height: 44px !important; bottom: calc(82px + var(--safe-bottom)) !important; }
+
+  /* 🎨 2026-10-29 좁은 화면에서 헤더·입력창·긴 종목명이 가격을 밀어내지 않게 한다. */
+  .brand-row { gap: 8px; flex-wrap: wrap; }
+  .brand { min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
+  .brand-sub { line-height: 1.4; overflow-wrap: anywhere; }
+  .header-meta { flex-wrap: wrap; line-height: 1.6; margin-top: 8px; }
+  #liveDot { flex: 1 0 100%; margin-left: 0 !important; color: var(--text-2); }
+  .search-box, .search-box input { min-width: 0; }
+  .search-box input, .config-input, select.sort-select { font-size: 16px; min-height: 44px; }
+  .search-box { padding: 0 10px; }
+  .name-row { flex-wrap: wrap; gap: 4px; }
+  .stock-name, .rank-name, .theme-stock-name, .detail-val { overflow-wrap: anywhere; min-width: 0; }
+  .theme-name { max-width: 100%; }
+  .detail-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .theme-stock-row { flex-wrap: wrap; gap: 4px; }
+  .theme-stock-row > div:last-child { margin-left: auto; flex-wrap: wrap; }
+  .news-meta, .theme-group-head { flex-wrap: wrap; }
+  .history-detail.open, .sched-brief.open, .card.open .card-detail { max-height: none; }
+  .cal-day { min-height: 44px; min-width: 0; background: transparent; font-family: inherit; }
+  .empty-state { color: var(--text-2); line-height: 1.7; padding: 32px 16px; }
+  .empty-state button { display: block; margin: 16px auto 0; }
+  .config-panel { visibility: hidden; }
+  .config-panel.show { visibility: visible; }
+  .config-sheet { max-height: 90dvh; overflow-y: auto; }
+  @media (max-width: 380px) {
+    header { padding-left: 10px; padding-right: 10px; }
+    .brand-mark { font-size: 17px; }
+    .controls, main { padding-left: 10px; padding-right: 10px; }
+    .card { padding: 10px; }
+    .card-top { flex-wrap: wrap; }
+    .card-top .name-block { flex: 1 1 100%; }
+    .card-top .price-block { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+    .cal-grid { padding-left: 4px; padding-right: 4px; gap: 0; }
+    .watchlist-row .list-item { flex-wrap: wrap; }
+  }
+  /* 🎨 2026-10-29 ② 경고와 조작 크기를 유지하면서 첫 화면의 세로 여백을 줄인다. */
+  header { padding-top: calc(8px + var(--safe-top)); padding-bottom: 6px; }
+  .header-meta { margin-top: 4px; gap: 2px 6px; line-height: 1.4; }
+  .stage-banner { margin-top: 6px; padding: 7px 10px; gap: 3px; }
+  .stage-tags { margin-top: 1px; gap: 4px; }
+  #demoModeBanner { padding: 4px 12px !important; line-height: 1.4; }
+  .tab-notice { margin-top: 6px; padding: 6px 10px; }
+  .controls { padding-top: 6px; gap: 4px; }
+  .today-strip { padding: 0 0 2px; }
+  .today-pill { padding: 3px 9px; }
+  .view, main { gap: 6px; }
+  .card { padding: 8px 10px; }
+  .badge-row { margin-top: 3px; gap: 4px; }
+  .score-pair { gap: 3px; }
+  .score-pill { padding: 3px 4px; }
+  .badge-row .star-btn, .card-toggle { flex-shrink: 0; }
+  .name-block { flex: 1; }
+  .theme-name { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+  /* 🎨 2026-10-29 ② 키보드 행과 순서 조절 안내는 기존 화면 구조에 맞춰 표시한다. */
+  .history-stock-row, .sched-event.has-brief .sched-title { min-height: 44px; align-items: center; }
+  button.sched-title { display: flex; width: 100%; text-align: left; border: 0; background: transparent; color: inherit; padding: 4px 0; cursor: pointer; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  body:has(.drag-handle:focus-visible) #watchlistReorderHint { position: fixed; bottom: calc(80px + var(--safe-bottom)); left: 16px; right: 16px; z-index: 45; width: auto; height: auto; margin: 0; padding: 10px; clip-path: none; white-space: normal; background: var(--surface-hi); color: var(--text); border: 1px solid var(--gold); border-radius: 10px; font-size: 12px; }
+  .config-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  /* 🎨 2026-10-29 ② 움직임 감소 설정에서는 장식 애니메이션과 부드러운 스크롤을 멈춘다. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+    .star-btn:active { transform: none; }
+  }
 </style>
 </head>
 <body>
@@ -419,17 +513,19 @@
       <span class="brand-sub" id="brandSub">오마카세 · 실시간 스캐너</span>
     </div>
     <div style="display:flex; gap:8px;">
-      <button class="icon-btn" id="themeToggleBtn" title="테마 전환">☀︎</button>
-      <button class="icon-btn" id="manualFab" title="시스템 매뉴얼">📖</button>
-      <button class="icon-btn" id="refreshBtn" title="새로고침">⟳</button>
-      <button class="icon-btn" id="configBtn" title="설정">⚙</button>
+      <!-- 🎨 2026-10-29 아이콘 버튼에 화면 낭독용 이름을 제공한다. -->
+      <button class="icon-btn" id="themeToggleBtn" title="테마 전환" aria-label="테마 전환">☀︎</button>
+      <button class="icon-btn" id="manualFab" title="시스템 매뉴얼" aria-label="시스템 매뉴얼 열기">📖</button>
+      <button class="icon-btn" id="refreshBtn" title="새로고침" aria-label="새로고침">⟳</button>
+      <button class="icon-btn" id="configBtn" title="설정" aria-label="설정 열기">⚙</button>
     </div>
   </div>
   <div class="header-meta">
     <span class="meta-dot mono" id="countMeta">17개 종목</span>
     <span class="meta-dot">·</span>
     <span class="meta-dot mono" id="timeMeta">기준</span>
-    <span class="meta-dot" id="liveDot" style="margin-left:auto;"></span>
+    <!-- 🎨 2026-10-29 기존 저장본·갱신·오류 문구의 변경을 보조기기에 알린다. -->
+    <span class="meta-dot" id="liveDot" role="status" aria-live="polite" aria-atomic="true" style="margin-left:auto;"></span>
   </div>
   <div class="stage-banner" id="stageBanner">
     <div class="stage-title" id="stageTitle">🚨 STAGE 3 · 패닉셀 국면</div>
@@ -446,8 +542,9 @@
   <div class="controls">
     <div class="search-row">
       <div class="search-box"><span style="color:var(--text-3); font-size:13px;">⌕</span>
-        <input id="searchInput" placeholder="종목명 · 테마 검색" /></div>
-      <select class="sort-select" id="sortSelect">
+        <!-- 🎨 2026-10-29 입력 목적과 정렬 이름을 플레이스홀더와 별도로 제공한다. -->
+        <input id="searchInput" type="search" aria-label="종목명 또는 테마 검색" placeholder="종목명 · 테마 검색" /></div>
+      <select class="sort-select" id="sortSelect" aria-label="종목 정렬">
         <option value="default">기본순</option>
         <option value="v1">V1 높은순</option>
         <option value="v2">V2 높은순</option>
@@ -455,11 +552,12 @@
       </select>
     </div>
     <div class="chip-row" id="chipRow">
-      <div class="chip active" data-filter="all">전체</div>
-      <div class="chip" data-filter="hot">🚀 공격형</div>
-      <div class="chip" data-filter="green">🌱 바닥/모아가기</div>
-      <div class="chip" data-filter="violet">💎 외인특수</div>
-      <div class="chip" data-filter="watch">🔍 관심</div>
+      <!-- 🎨 2026-10-29 필터를 키보드로 조작 가능한 기본 버튼으로 바꾼다. -->
+      <button type="button" class="chip active" data-filter="all" aria-pressed="true">전체</button>
+      <button type="button" class="chip" data-filter="hot" aria-pressed="false">🚀 공격형</button>
+      <button type="button" class="chip" data-filter="green" aria-pressed="false">🌱 바닥/모아가기</button>
+      <button type="button" class="chip" data-filter="violet" aria-pressed="false">💎 외인특수</button>
+      <button type="button" class="chip" data-filter="watch" aria-pressed="false">🔍 관심</button>
     </div>
     <div class="today-strip" id="todayStrip"></div>
   </div>
@@ -490,9 +588,10 @@
 <div class="view" id="view-calendar">
   <div class="tab-header"><div class="tab-title">📅 캘린더</div></div>
   <div class="cal-nav">
-    <button id="calPrevBtn">‹</button>
+    <!-- 🎨 2026-10-29 월 이동 버튼의 방향을 말로 제공한다. -->
+    <button id="calPrevBtn" aria-label="이전 달">‹</button>
     <div class="cal-month-label" id="calMonthLabel"></div>
-    <button id="calNextBtn">›</button>
+    <button id="calNextBtn" aria-label="다음 달">›</button>
   </div>
   <div class="cal-grid" id="calGrid"></div>
   <main id="calDetail" style="padding-top:4px;"></main>
@@ -504,18 +603,21 @@
 </div>
 </div>
 
-<button id="backToTopBtn" style="display:none; position:fixed; right:16px; bottom:76px; z-index:35; width:40px; height:40px; border-radius:50%; border:1px solid var(--border); background:var(--surface); color:var(--text-2); font-size:16px; box-shadow:0 4px 12px rgba(0,0,0,0.3);">↑</button>
+<!-- 🎨 2026-10-29 맨 위 이동과 매뉴얼 닫기 버튼에 명확한 이름을 제공한다. -->
+<button id="backToTopBtn" aria-label="맨 위로 이동" style="display:none; position:fixed; right:16px; bottom:76px; z-index:35; width:40px; height:40px; border-radius:50%; border:1px solid var(--border); background:var(--surface); color:var(--text-2); font-size:16px; box-shadow:0 4px 12px rgba(0,0,0,0.3);">↑</button>
 
-<div class="manual-modal-overlay" id="manualModalOverlay">
+<!-- 🎨 2026-10-29 ② 모달의 역할과 제목을 보조기기에 제공한다. -->
+<div class="manual-modal-overlay" id="manualModalOverlay" role="dialog" aria-modal="true" aria-labelledby="manualModalTitle" tabindex="-1">
   <div class="manual-modal-bar">
-    <div class="title">📖 HYEOKS 시스템 매뉴얼</div>
-    <button id="manualCloseBtn">✕</button>
+    <div class="title" id="manualModalTitle">📖 HYEOKS 시스템 매뉴얼</div>
+    <button id="manualCloseBtn" aria-label="매뉴얼 닫기">✕</button>
   </div>
   <div class="manual-modal-frame-wrap" id="manualFrameWrap"></div>
 </div>
 
-<div class="tabbar" id="tabbar">
-  <button class="tab-btn active" data-tab="scanner"><span class="tab-icon">☰</span><span class="tab-label">스캐너</span></button>
+<!-- 🎨 2026-10-29 화면 이동 영역과 처음 선택된 화면을 명시한다. -->
+<div class="tabbar" id="tabbar" role="navigation" aria-label="주요 화면">
+  <button class="tab-btn active" data-tab="scanner" aria-current="page"><span class="tab-icon">☰</span><span class="tab-label">스캐너</span></button>
   <button class="tab-btn" data-tab="watchlist"><span class="tab-icon">★</span><span class="tab-label">관심</span></button>
   <button class="tab-btn" data-tab="report"><span class="tab-icon">📄</span><span class="tab-label">리포트</span></button>
   <button class="tab-btn" data-tab="theme"><span class="tab-icon">📊</span><span class="tab-label">테마</span></button>
@@ -524,11 +626,16 @@
   <button class="tab-btn" data-tab="search"><span class="tab-icon">🔎</span><span class="tab-label">검색</span></button>
 </div>
 
-<div class="config-panel" id="configPanel">
+<!-- 🎨 2026-10-29 ② 순서 조절 안내는 핸들에 키보드 초점을 두었을 때만 화면에 보인다. -->
+<div id="watchlistReorderHint" class="sr-only">관심종목 순서 조절. 위·아래 방향키로 이동하고 Tab으로 다음 조작으로 이동합니다.</div>
+<div id="watchlistOrderStatus" class="sr-only" role="status" aria-live="polite"></div>
+<!-- 🎨 2026-10-29 ② 설정에도 명시적인 닫기 조작과 대화상자 이름을 제공한다. -->
+<div class="config-panel" id="configPanel" role="dialog" aria-modal="true" aria-labelledby="configTitle" tabindex="-1">
   <div class="config-sheet">
-    <div class="config-title">실시간 데이터 연동</div>
+    <div class="config-heading"><div class="config-title" id="configTitle">실시간 데이터 연동</div><button type="button" class="icon-btn" id="configCloseBtn" aria-label="설정 닫기">✕</button></div>
     <div class="config-desc">Google Apps Script Web App URL을 붙여넣으면 7개 탭 전체가 실시간으로 연동됩니다. URL은 이 기기에만 저장됩니다.</div>
-    <input class="config-input" id="urlInput" placeholder="https://script.google.com/macros/s/.../exec" />
+    <!-- 🎨 2026-10-29 설정 입력에 이름을 제공한다. -->
+    <input class="config-input" id="urlInput" aria-label="Google Apps Script Web App URL" placeholder="https://script.google.com/macros/s/.../exec" />
     <div class="config-btn-row">
       <button class="config-btn ghost" id="clearUrlBtn">데모로 전환</button>
       <button class="config-btn primary" id="saveUrlBtn">저장 후 연동</button>
@@ -698,7 +805,8 @@ async function toggleFavorite(code) {
 }
 function starButtonHtml(code) {
   const on = favorites.includes(code);
-  return `<span class="star-btn ${on ? 'on' : ''}" data-star-code="${code}">${on ? '★' : '☆'}</span>`;
+  // 🎨 2026-10-29 별표의 선택 상태와 조작 이름을 기본 버튼으로 제공한다.
+  return `<button type="button" class="star-btn ${on ? 'on' : ''}" data-star-code="${code}" aria-pressed="${on}" aria-label="${code} 관심종목 ${on ? '제거' : '추가'}">${on ? '★' : '☆'}</button>`;
 }
 let toastTimer = null;
 function showStarToast(message, undoFn) {
@@ -723,7 +831,10 @@ function bindStarButtons(container, onToggleRender) {
       const code = el.dataset.starCode;
       const wasOn = favorites.includes(code);
       await toggleFavorite(code);
-      onToggleRender();
+      // 🎨 2026-10-29 비동기 관심 목록도 재렌더가 끝난 뒤 초점을 복원한다.
+      await onToggleRender();
+      // 🎨 2026-10-29 목록을 다시 그린 뒤에도 같은 별표의 키보드 초점을 유지한다.
+      if (e.detail === 0) document.querySelector('.view.active [data-star-code="' + code + '"]')?.focus({ preventScroll: true });
       // 🆕 [수정] 실수로 눌렀을 때를 대비한 안전망 — 2.5초 안에 "실행취소"로 바로 되돌릴 수 있음
       showStarToast(wasOn ? '☆ 관심종목에서 제거됨' : '★ 관심종목에 추가됨', async () => {
         await toggleFavorite(code);
@@ -760,7 +871,8 @@ function handleLogoError(img, code) {
 }
 function stockLogoHtml(code) {
   if (!code) return '';
-  return `<span class="stock-logo-wrap"><img src="https://ssl.pstatic.net/imgstock/fn/real/logo/stock/Stock${code}.svg" loading="lazy" onerror="handleLogoError(this,'${code}')"></span>`;
+  // 🎨 2026-10-29 바로 옆 종목명과 중복되는 장식 로고는 읽지 않는다.
+  return `<span class="stock-logo-wrap"><img src="https://ssl.pstatic.net/imgstock/fn/real/logo/stock/Stock${code}.svg" alt="" loading="lazy" onerror="handleLogoError(this,'${code}')"></span>`;
 }
 // 🆕 억 단위 숫자를 조/억으로 변환 + 천단위 쉼표 (예: 12345 → "1조 2,345억", 7559 → "7,559억")
 function fmtEok(n) {
@@ -800,7 +912,8 @@ function renderHeader() {
     tagsEl.innerHTML += `<span class="stage-tag">🧲 압축 장세 (1위 ${stage.top1} · 2위 ${stage.top2})</span>`;
     if (stage.top1 >= stage.top2 * 1.5 && stage.top1 >= 10) tagsEl.innerHTML += `<span class="stage-tag">SEED 쿼터 5→2 축소</span>`;
   }
-  document.getElementById('timeMeta').textContent = new Date().toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'}) + ' 기준';
+  // 🎨 2026-10-29 화면을 그린 시각을 자료의 기준 시각으로 오해하지 않게 구분한다.
+  document.getElementById('timeMeta').textContent = '화면 ' + new Date().toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'});
   const subs = { scanner:'오마카세 · 실시간 스캐너', watchlist:'내가 지켜보는 종목', report:'AI 심층 리서치 리포트', theme:'실시간 주도 테마', news:'네이버 증권 주요뉴스', calendar:'과거 테마 복기 · 미래 일정', search:'네이버 검색상위 종목' };
   document.getElementById('brandSub').textContent = subs[currentTab] || '';
 }
@@ -814,7 +927,8 @@ function buildStockCardHtml(r) {
   return `
       <div class="card-top" data-code="${r.code}">
         <div class="name-block">
-          <div class="name-row">${stockLogoHtml(r.code)}<span class="stock-name">${r.name}</span><span class="market-tag">${r.market || ''}</span>${r.fromPool ? '<span class="market-tag" style="color:var(--gold); border-color:rgba(212,162,76,0.3);">전체풀</span>' : ''}${starButtonHtml(r.code)}</div>
+          <!-- 🎨 2026-10-29 ② 별표는 아래 조작 행에 모아 종목명 행 높이를 줄인다. -->
+          <div class="name-row">${stockLogoHtml(r.code)}<span class="stock-name">${r.name}</span><span class="market-tag">${r.market || ''}</span>${r.fromPool ? '<span class="market-tag" style="color:var(--gold); border-color:rgba(212,162,76,0.3);">전체풀</span>' : ''}</div>
           <span class="theme-name">${r.themeAge ? (r.themeAge === '당일' ? '🆕' : '🕰️') + ' ' : ''}${r.theme || ''}</span>
         </div>
         <div class="price-block ${priceFlash}">
@@ -825,7 +939,9 @@ function buildStockCardHtml(r) {
       <div class="badge-row">
         <span class="tajeom-badge tier-${tier}">${tierLabel(tier)}</span>
         <div class="score-pair"><span class="score-pill ${r.v1>=60?'hi':''}">V1 ${r.v1}</span><span class="score-pill ${r.v2>=60?'hi':''}">V2 ${r.v2}</span></div>
-        <span class="chevron">▾</span>
+        <!-- 🎨 2026-10-29 ② 별표와 상세 조작을 같은 행에 두고 44px 터치 영역을 유지한다. -->
+        ${starButtonHtml(r.code)}
+        <button type="button" class="card-toggle" aria-expanded="false">상세 <span class="chevron" aria-hidden="true">▾</span></button>
       </div>
       <div class="card-detail"><div class="detail-grid">
         <div class="detail-item"><span class="detail-label">타점 전체</span><span class="detail-val">${r.tajeom}</span></div>
@@ -841,15 +957,25 @@ function buildStockCardHtml(r) {
             <img src="https://ssl.pstatic.net/imgfinance/chart/item/candle/day/${r.code}.png" loading="lazy" alt="${r.name} 일봉차트" onerror="this.parentElement.style.display='none';">
           </div>
         </div>
-        <div class="detail-full naver-link-btn" data-navcode="${r.code}">🔗 네이버 증권에서 ${r.name} 상세보기</div>
+        <!-- 🎨 2026-10-29 외부 상세 이동을 키보드로 누를 수 있게 한다. -->
+        <button type="button" class="detail-full naver-link-btn" data-navcode="${r.code}">🔗 네이버 증권에서 ${r.name} 상세보기</button>
       </div></div>`;
 }
 
 function attachCardHandlers(card, r, isOpen, setOpen, rerenderFn) {
   const cardTop = card.querySelector('.card-top');
+  // 🎨 2026-10-29 키보드 상세 열기와 숨겨진 내용의 초점 접근을 맞춘다.
+  const toggle = card.querySelector('.card-toggle');
+  const detail = card.querySelector('.card-detail');
+  toggle.setAttribute('aria-label', r.name + ' 상세');
+  toggle.setAttribute('aria-expanded', String(isOpen));
+  detail.inert = !isOpen;
+  toggle.addEventListener('click', () => cardTop.click());
   let pressTimer = null, moved = false, longPressFired = false;
 
-  cardTop.addEventListener('touchstart', () => {
+  cardTop.addEventListener('touchstart', (e) => {
+    // 🎨 2026-10-29 별표를 길게 눌러도 종목 링크가 함께 열리지 않게 한다.
+    if (e.target.closest('[data-star-code]')) return;
     moved = false; longPressFired = false;
     pressTimer = setTimeout(() => {
       if (!moved) {
@@ -861,6 +987,8 @@ function attachCardHandlers(card, r, isOpen, setOpen, rerenderFn) {
   }, {passive:true});
   cardTop.addEventListener('touchmove', () => { moved = true; clearTimeout(pressTimer); }, {passive:true});
   cardTop.addEventListener('touchend', () => clearTimeout(pressTimer), {passive:true});
+  // 🎨 2026-10-29 취소된 터치의 길게 누르기 타이머를 정리한다.
+  cardTop.addEventListener('touchcancel', () => clearTimeout(pressTimer), {passive:true});
 
   cardTop.addEventListener('click', () => {
     if (longPressFired) { longPressFired = false; return; } // 롱프레스로 이미 처리됐으면 펼치기 클릭은 무시
@@ -869,12 +997,21 @@ function attachCardHandlers(card, r, isOpen, setOpen, rerenderFn) {
     const prevOpen = container ? container.querySelector('.card.open') : null;
     const willOpen = !card.classList.contains('open');
 
-    if (prevOpen && prevOpen !== card) prevOpen.classList.remove('open');
+    // 🎨 2026-10-29 펼침 표시와 접근성 상태를 함께 갱신한다.
+    if (prevOpen && prevOpen !== card) {
+      prevOpen.classList.remove('open');
+      prevOpen.querySelector('.card-toggle').setAttribute('aria-expanded', 'false');
+      prevOpen.querySelector('.card-detail').inert = true;
+    }
     card.classList.toggle('open', willOpen);
+    toggle.setAttribute('aria-expanded', String(willOpen));
+    detail.inert = !willOpen;
     setOpen(willOpen ? r.code : null); // 데이터 갱신 시 상태만 맞춰두고, 지금 당장은 리렌더하지 않음(애니메이션 유지)
 
     // 🆕 애니메이션이 진행되는 매 프레임마다 탭한 카드의 화면 위치를 붙잡아 둠
     //    (끝난 뒤 한 번에 보정하면 "따로 노는 두 박자"처럼 어색해서, 실시간으로 계속 따라붙게 함)
+    // 🎨 2026-10-29 ② 움직임 감소 때에는 펼침 뒤 프레임별 스크롤 보정을 실행하지 않는다.
+    if (reducedMotionMQ.matches) return;
     let anchorTop = card.getBoundingClientRect().top;
     const start = performance.now();
     const DURATION = 460; // CSS 트랜지션(0.42s)보다 살짝 여유
@@ -930,7 +1067,24 @@ function renderScanner() {
 
   const list = document.getElementById('cardList');
   list.innerHTML = '';
-  if (!filtered.length) { list.innerHTML = '<div class="empty-state">조건에 맞는 종목이 없습니다</div>'; return; }
+  // 🎨 2026-10-29 검색·필터 결과가 비면 원래 목록으로 돌아갈 조작을 제공한다.
+  if (!filtered.length) {
+    list.innerHTML = '<div class="empty-state" role="status">조건에 맞는 종목이 없습니다.' +
+      (searchTerm || currentFilter !== 'all' ? '<br>검색어나 필터를 바꿔보세요.<button type="button" class="chip" id="resetScannerBtn">검색·필터 초기화</button>' : '<br>다음 갱신 후 다시 확인해주세요.') + '</div>';
+    const reset = document.getElementById('resetScannerBtn');
+    if (reset) reset.addEventListener('click', () => {
+      searchTerm = '';
+      currentFilter = 'all';
+      document.getElementById('searchInput').value = '';
+      document.querySelectorAll('#chipRow .chip').forEach(c => {
+        c.classList.toggle('active', c.dataset.filter === 'all');
+        c.setAttribute('aria-pressed', String(c.dataset.filter === 'all'));
+      });
+      renderScanner();
+      document.getElementById('searchInput').focus();
+    });
+    return;
+  }
 
   filtered.forEach(r => {
     const card = document.createElement('div');
@@ -952,6 +1106,17 @@ function toDriveViewUrl(url) {
   return url;
 }
 
+// 🎨 2026-10-29 ② 별표 같은 자식 버튼과 겹치지 않게 행 자체의 Enter·Space만 활성화한다.
+function enableRowKeyboard(row) {
+  row.setAttribute('role', 'link');
+  row.tabIndex = 0;
+  row.addEventListener('keydown', e => {
+    if (e.target !== row || (e.key !== 'Enter' && e.key !== ' ')) return;
+    e.preventDefault();
+    if (!e.repeat) row.click();
+  });
+}
+
 function renderReport() {
   const rows = D('report', DEMO_REPORT);
   const list = document.getElementById('reportList');
@@ -961,7 +1126,11 @@ function renderReport() {
     const item = document.createElement('div');
     item.className = 'list-item link';
     item.innerHTML = `<div><div class="report-date">${r.date}</div><div class="report-link">${r.date} 리포트 보기</div></div><span class="ext-icon">↗</span>`;
-    if (r.url) item.addEventListener('click', () => window.open(toDriveViewUrl(r.url), '_blank'));
+    // 🎨 2026-10-29 ② 실제 링크가 있는 리포트 행을 키보드로 열 수 있게 한다.
+    if (r.url) {
+      enableRowKeyboard(item);
+      item.addEventListener('click', () => window.open(toDriveViewUrl(r.url), '_blank'));
+    }
     list.appendChild(item);
   });
 }
@@ -986,7 +1155,11 @@ function renderTheme() {
       row.className = 'theme-stock-row';
       row.style.cursor = 'pointer';
       row.innerHTML = `<div style="display:flex; align-items:center; gap:6px; min-width:0;">${s.code ? stockLogoHtml(s.code) : ''}<span class="theme-stock-name">${s.name}</span></div><div style="display:flex; gap:10px; align-items:center;">${s.val?`<span class="theme-stock-val mono">🪙${fmtEok(s.val)}</span>`:''}${changeSpan(s.change)}${s.code ? starButtonHtml(s.code) : ''}</div>`;
-      if (s.code) row.addEventListener('click', () => window.open(`https://m.stock.naver.com/domestic/stock/${s.code}/total`, '_blank'));
+      // 🎨 2026-10-29 ② 테마 종목 행과 별표는 각각 독립적으로 조작한다.
+      if (s.code) {
+        enableRowKeyboard(row);
+        row.addEventListener('click', () => window.open(`https://m.stock.naver.com/domestic/stock/${s.code}/total`, '_blank'));
+      }
       bindStarButtons(row, renderTheme);
       card.appendChild(row);
     });
@@ -1006,6 +1179,8 @@ function renderNews() {
     item.innerHTML = `<div class="news-item"><div class="news-title">${n.title}</div>
       <div class="news-meta"><span class="press-tag">${n.press}</span><span>·</span><span>${n.time}</span></div></div>
       <span class="ext-icon">↗</span>`;
+    // 🎨 2026-10-29 ② 뉴스 행의 기존 열기 동작을 키보드에도 연결한다.
+    enableRowKeyboard(item);
     item.addEventListener('click', () => window.open(n.link || 'https://finance.naver.com/news/mainnews.naver', '_blank'));
     list.appendChild(item);
   });
@@ -1093,11 +1268,21 @@ function renderCalGrid(dataMap) {
     const hasThemes = data && data.themes && data.themes.length > 0;
     const hasEvents = data && data.events && data.events.length > 0;
     const hasData = hasThemes || hasEvents;
-    const el = document.createElement('div');
+    // 🎨 2026-10-29 날짜를 기본 버튼으로 제공하고 날짜·선택 상태를 읽어준다.
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.setAttribute('aria-label', `${y}년 ${m + 1}월 ${d}일${hasThemes ? ', 주도 테마 있음' : ''}${hasEvents ? ', 일정 있음' : ''}`);
+    el.setAttribute('aria-pressed', String(dateStr === selectedCalDateStr));
+    if (dateStr === todayStr) el.setAttribute('aria-current', 'date');
     el.className = 'cal-day' + (hasData ? ' has-data' : '') + (dateStr === todayStr ? ' today' : '') + (dateStr === selectedCalDateStr ? ' selected' : '');
     el.dataset.date = dateStr;
-    el.innerHTML = `<span>${d}</span><div class="cal-dots">${hasThemes ? '<span class="cal-dot past"></span>' : ''}${hasEvents ? '<span class="cal-dot future"></span>' : ''}</div>`;
-    el.addEventListener('click', () => { selectedCalDateStr = (selectedCalDateStr === dateStr) ? null : dateStr; renderCalendar(); });
+    el.innerHTML = `<span>${d}</span><span class="cal-dots" aria-hidden="true">${hasThemes ? '<span class="cal-dot past"></span>' : ''}${hasEvents ? '<span class="cal-dot future"></span>' : ''}</span>`;
+    el.addEventListener('click', () => {
+      selectedCalDateStr = (selectedCalDateStr === dateStr) ? null : dateStr;
+      renderCalendar();
+      // 🎨 2026-10-29 다시 그린 날짜 버튼으로 키보드 초점을 돌려준다.
+      grid.querySelector(`[data-date="${dateStr}"]`).focus({ preventScroll: true });
+    });
     grid.appendChild(el);
   }
 }
@@ -1123,7 +1308,8 @@ function renderCalDetail(dataMap) {
     const tagsHtml = data.themes.map((t, i) => {
       const key = `${historyDate}|${t}`;
       const isActive = openHistoryKey === key;
-      return `<span class="history-tag ${i===0?'r1':'r2'} ${isActive?'active-tag':''}" data-key="${key}" data-date="${historyDate}" data-theme="${t}">${i+1}. ${t}</span>`;
+      // 🎨 2026-10-29 ② 복기 태그를 펼침 상태가 있는 기본 버튼으로 바꾼다.
+      return `<button type="button" class="history-tag ${i===0?'r1':'r2'} ${isActive?'active-tag':''}" aria-expanded="${isActive}" data-key="${key}" data-date="${historyDate}" data-theme="${t}">${i+1}. ${t}</button>`;
     }).join('');
     let detailHtml = '';
     if (openHistoryKey && openHistoryKey.startsWith(historyDate + '|') && data.themes.includes(openHistoryKey.split('|')[1])) {
@@ -1147,7 +1333,11 @@ function renderCalDetail(dataMap) {
     });
     item.querySelectorAll('.history-stock-row').forEach(row => {
       const code = row.dataset.code;
-      if (code) row.addEventListener('click', () => window.open(`https://m.stock.naver.com/domestic/stock/${code}/total`, '_blank'));
+      // 🎨 2026-10-29 ② 복기 상세 종목 링크도 키보드로 이동한다.
+      if (code) {
+        enableRowKeyboard(row);
+        row.addEventListener('click', () => window.open(`https://m.stock.naver.com/domestic/stock/${code}/total`, '_blank'));
+      }
     });
     wrap.appendChild(item);
   }
@@ -1163,9 +1353,11 @@ function renderCalDetail(dataMap) {
       const key = `${selectedCalDateStr}|${idx}`;
       const hasBrief = !!e.brief;
       const isOpen = openScheduleKey === key;
+      // 🎨 2026-10-29 ② 일정 제목은 기본 버튼으로, 접힌 본문은 초점 비활성 상태로 제공한다.
+      const titleTag = hasBrief ? `button type="button" aria-expanded="${isOpen}" data-key="${key}"` : 'div';
       return `<div class="sched-event ${hasBrief ? 'has-brief' : ''}" data-key="${key}">
-          <div class="sched-title"><span class="sched-pin">${hasBrief ? '🧠' : '📌'}</span>${e.title}${hasBrief ? '<span class="sched-chevron">▾</span>' : ''}</div>
-          ${hasBrief ? `<div class="sched-brief ${isOpen ? 'open' : ''}"><div class="sched-brief-inner">${e.brief}</div></div>` : ''}
+          <${titleTag} class="sched-title"><span class="sched-pin">${hasBrief ? '🧠' : '📌'}</span>${e.title}${hasBrief ? '<span class="sched-chevron">▾</span>' : ''}</${hasBrief ? 'button' : 'div'}>
+          ${hasBrief ? `<div class="sched-brief ${isOpen ? 'open' : ''}" ${isOpen ? '' : 'inert'}><div class="sched-brief-inner">${e.brief}</div></div>` : ''}
         </div>`;
     }).join('');
     item.innerHTML = eventsHtml;
@@ -1185,9 +1377,16 @@ function renderCalDetail(dataMap) {
 }
 
 function renderCalendar() {
+  // 🎨 2026-10-29 ② 동기·비동기 재렌더 때 아직 달력 안에 있는 초점만 같은 조작으로 복원한다.
+  const focused = document.activeElement;
+  const focusKey = focused?.closest('#calDetail') ? focused.dataset.key : null;
+  const focusDate = focused?.closest('#calGrid') ? focused.dataset.date : null;
   const dataMap = buildCalDataMap();
   renderCalGrid(dataMap);
   renderCalDetail(dataMap);
+  const controls = document.querySelectorAll('#calDetail button[data-key], #calGrid button[data-date]');
+  const restore = [...controls].find(el => (focusKey && el.dataset.key === focusKey) || (focusDate && el.dataset.date === focusDate));
+  if (restore) restore.focus({ preventScroll: true });
 }
 
 document.getElementById('calPrevBtn').addEventListener('click', () => {
@@ -1203,12 +1402,18 @@ function renderSearchTop() {
   const rows = D('searchTop', DEMO_SEARCHTOP);
   const list = document.getElementById('searchTopList');
   list.innerHTML = '';
+  // 🎨 2026-10-29 검색상위 데이터가 비어 있어도 빈 화면 대신 이유를 표시한다.
+  if (!rows.length) { list.innerHTML = '<div class="empty-state" role="status">수집된 검색상위 종목이 없습니다.<br>다음 갱신 후 다시 확인해주세요.</div>'; return; }
   rows.forEach(r => {
     const item = document.createElement('div');
     item.className = 'list-item' + (r.code ? ' link' : '');
     item.innerHTML = `<span class="rank-num mono">${r.rank}</span>${r.code ? stockLogoHtml(r.code) : ''}<span class="rank-name">${r.name}</span>
       <div style="display:flex; align-items:center; gap:8px;"><div style="text-align:right;"><div class="rank-price mono">${fmtPrice(r.price)}</div>${changeSpan(r.change)}</div>${r.code ? starButtonHtml(r.code) : ''}</div>`;
-    if (r.code) item.addEventListener('click', () => window.open(`https://m.stock.naver.com/domestic/stock/${r.code}/total`, '_blank'));
+    // 🎨 2026-10-29 ② 검색상위도 테마 행과 같은 키보드 조작을 제공한다.
+    if (r.code) {
+      enableRowKeyboard(item);
+      item.addEventListener('click', () => window.open(`https://m.stock.naver.com/domestic/stock/${r.code}/total`, '_blank'));
+    }
     bindStarButtons(item, renderSearchTop);
     list.appendChild(item);
   });
@@ -1345,9 +1550,28 @@ async function renderWatchlist() {
     row.className = 'watchlist-row';
     row.dataset.favCode = code;
 
+    // 🎨 2026-10-29 ② 기존 핸들에 초점을 두면 방향키로 순서를 바꾸며 드래그와 같은 순서를 저장한다.
     const handle = document.createElement('span');
     handle.className = 'drag-handle';
     handle.textContent = '⠿';
+    handle.tabIndex = 0;
+    handle.setAttribute('role', 'group');
+    handle.setAttribute('aria-label', `${data?.name || code} 순서 조절`);
+    handle.setAttribute('aria-describedby', 'watchlistReorderHint');
+    handle.setAttribute('aria-keyshortcuts', 'ArrowUp ArrowDown');
+    handle.addEventListener('keydown', async e => {
+      if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+      e.preventDefault();
+      const rows = [...list.querySelectorAll('.watchlist-row')];
+      const index = rows.indexOf(row);
+      const next = index + (e.key === 'ArrowUp' ? -1 : 1);
+      if (next < 0 || next >= rows.length) return;
+      list.insertBefore(row, next < index ? rows[next] : rows[next].nextSibling);
+      favorites = [...list.querySelectorAll('.watchlist-row')].map(el => el.dataset.favCode);
+      handle.focus();
+      document.getElementById('watchlistOrderStatus').textContent = `${data?.name || code}, ${favorites.length}개 중 ${next + 1}번째로 이동`;
+      await safeSet('favorites', JSON.stringify(favorites));
+    });
     row.appendChild(handle);
 
     const inner = document.createElement('div');
@@ -1365,6 +1589,8 @@ async function renderWatchlist() {
       const item = document.createElement('div');
       item.className = 'list-item';
       if (tier === 'simple') {
+        // 🎨 2026-10-29 ② 간단한 관심종목 행도 키보드로 상세 링크를 연다.
+        enableRowKeyboard(item);
         item.style.cursor = 'pointer';
         item.innerHTML = buildSimpleRowHtml(code, data);
         item.addEventListener('click', (e) => { if (!e.target.closest('[data-star-code]')) window.open(`https://m.stock.naver.com/domestic/stock/${code}/total`, '_blank'); });
@@ -1386,6 +1612,8 @@ function renderAll() { renderHeader(); (RENDERERS[currentTab] || renderScanner)(
 
 const TAB_ORDER = ['scanner','watchlist','report','theme','news','calendar','search'];
 let isTransitioning = false;
+// 🎨 2026-10-29 ② 실행 중 설정 변경도 읽어 탭 전환과 스크롤에 같은 모션 기준을 적용한다.
+const reducedMotionMQ = window.matchMedia('(prefers-reduced-motion: reduce)');
 
 function switchTab(tabName) {
   if (!TAB_ORDER.includes(tabName) || tabName === currentTab || isTransitioning) return;
@@ -1393,7 +1621,11 @@ function switchTab(tabName) {
   const toIdx = TAB_ORDER.indexOf(tabName);
   const direction = toIdx > fromIdx ? 'left' : 'right'; // 다음 탭이면 왼쪽으로, 이전 탭이면 오른쪽으로
 
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabName));
+  // 🎨 2026-10-29 현재 화면을 색상과 보조기기 상태에 함께 반영한다.
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === tabName);
+    b.setAttribute('aria-current', b.dataset.tab === tabName ? 'page' : 'false');
+  });
 
   const viewport = document.getElementById('viewport');
   const oldView = document.getElementById('view-' + currentTab);
@@ -1405,20 +1637,14 @@ function switchTab(tabName) {
   currentTab = tabName;
   renderAll(); // 새 탭 내용을 미리 채워둠 (아직 화면 밖에 위치)
 
-  const EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
-  newView.style.cssText = `display:flex; position:absolute; top:0; left:0; width:100%; transform: translateX(${direction === 'left' ? '100%' : '-100%'});`;
-  oldView.style.cssText = `display:flex; position:absolute; top:0; left:0; width:100%; transform: translateX(0);`;
-
-  void newView.offsetWidth; // 강제 리플로우 (트랜지션이 실제로 걸리게)
-  newView.style.transition = `transform 0.32s ${EASE}`;
-  oldView.style.transition = `transform 0.32s ${EASE}`;
-
-  requestAnimationFrame(() => {
-    newView.style.transform = 'translateX(0)';
-    oldView.style.transform = `translateX(${direction === 'left' ? '-100%' : '100%'})`;
-  });
-
-  const cleanup = () => {
+  // 🎨 2026-10-29 ② 전환 종료 이벤트가 없거나 자식에서 발생해도 탭 상태가 멈추지 않게 한다.
+  let cleaned = false, cleanupTimer, animationFrame;
+  const cleanup = e => {
+    if (e && (e.target !== newView || e.propertyName !== 'transform')) return;
+    if (cleaned) return;
+    cleaned = true;
+    clearTimeout(cleanupTimer);
+    cancelAnimationFrame(animationFrame);
     oldView.classList.remove('active');
     oldView.style.cssText = '';
     newView.classList.add('active');
@@ -1427,7 +1653,27 @@ function switchTab(tabName) {
     isTransitioning = false;
     newView.removeEventListener('transitionend', cleanup);
   };
-  newView.addEventListener('transitionend', cleanup, { once: true });
+  if (reducedMotionMQ.matches) {
+    cleanup();
+    window.scrollTo(0,0);
+    return;
+  }
+
+  const EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
+  newView.style.cssText = `display:flex; position:absolute; top:0; left:0; width:100%; transform: translateX(${direction === 'left' ? '100%' : '-100%'});`;
+  oldView.style.cssText = `display:flex; position:absolute; top:0; left:0; width:100%; transform: translateX(0);`;
+
+  void newView.offsetWidth; // 강제 리플로우 (트랜지션이 실제로 걸리게)
+  newView.style.transition = `transform 0.32s ${EASE}`;
+  oldView.style.transition = `transform 0.32s ${EASE}`;
+
+  animationFrame = requestAnimationFrame(() => {
+    newView.style.transform = 'translateX(0)';
+    oldView.style.transform = `translateX(${direction === 'left' ? '-100%' : '100%'})`;
+  });
+
+  newView.addEventListener('transitionend', cleanup);
+  cleanupTimer = setTimeout(cleanup, 400);
 
   window.scrollTo(0,0);
 }
@@ -1440,7 +1686,11 @@ document.getElementById('searchInput').addEventListener('input', e => { searchTe
 document.getElementById('sortSelect').addEventListener('change', e => { sortMode = e.target.value; renderScanner(); });
 document.querySelectorAll('.chip').forEach(chip => {
   chip.addEventListener('click', () => {
-    document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+    // 🎨 2026-10-29 필터의 누름 상태를 화면 선택과 동기화한다.
+    document.querySelectorAll('#chipRow .chip').forEach(c => {
+      c.classList.remove('active');
+      c.setAttribute('aria-pressed', String(c === chip));
+    });
     chip.classList.add('active');
     currentFilter = chip.dataset.filter;
     renderScanner();
@@ -1453,7 +1703,8 @@ document.querySelectorAll('.chip').forEach(chip => {
   const SWIPE_MIN_DIST = 65;
   const body = document.body;
   body.addEventListener('touchstart', e => {
-    if (e.target.closest('.chip-row') || e.target.closest('.card-detail') || e.target.closest('.drag-handle')) { tracking = false; return; }
+    // 🎨 2026-10-29 ② 요약 가로 스크롤·모달·입력·다중 터치는 탭 스와이프에서 제외한다.
+    if (e.touches.length !== 1 || e.target.closest('.chip-row, .today-strip, .card-detail, .drag-handle, .config-panel, .manual-modal-overlay, input, select, textarea')) { tracking = false; return; }
     const t = e.touches[0];
     startX = t.clientX; startY = t.clientY; tracking = true;
   }, {passive:true});
@@ -1467,6 +1718,8 @@ document.querySelectorAll('.chip').forEach(chip => {
     if (dx < 0 && idx < TAB_ORDER.length - 1) switchTab(TAB_ORDER[idx + 1]);      // 왼쪽으로 스와이프 → 다음 탭
     else if (dx > 0 && idx > 0) switchTab(TAB_ORDER[idx - 1]);                    // 오른쪽으로 스와이프 → 이전 탭
   }, {passive:true});
+  // 🎨 2026-10-29 ② 중단된 터치를 다음 제스처로 이어받지 않는다.
+  body.addEventListener('touchcancel', () => { tracking = false; }, {passive:true});
 })();
 
 /* ── 당겨서 새로고침 (스캐너 탭 최상단에서만) ── */
@@ -1513,7 +1766,8 @@ document.querySelectorAll('.chip').forEach(chip => {
   window.addEventListener('scroll', () => {
     btn.style.display = window.scrollY > 500 ? 'block' : 'none';
   }, {passive:true});
-  btn.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+  // 🎨 2026-10-29 ② 움직임 감소에서는 맨 위로 즉시 이동한다.
+  btn.addEventListener('click', () => window.scrollTo({ top: 0, behavior: reducedMotionMQ.matches ? 'instant' : 'smooth' }));
 })();
 
 /* ── 라이트/다크 모드 ── */
@@ -1529,6 +1783,10 @@ async function applyTheme(mode) {
   document.documentElement.setAttribute('data-theme', resolved);
   const icons = { dark: '☀︎', light: '☾', auto: '🌗' };
   document.getElementById('themeToggleBtn').textContent = icons[mode] || '☀︎';
+  // 🎨 2026-10-29 테마 버튼의 현재 설정과 다음 동작을 말로 설명한다.
+  const themeNames = { dark: '다크', light: '라이트', auto: '자동' };
+  const nextTheme = THEME_CYCLE[(THEME_CYCLE.indexOf(mode) + 1) % THEME_CYCLE.length];
+  document.getElementById('themeToggleBtn').setAttribute('aria-label', `화면 테마 ${themeNames[mode]}, ${themeNames[nextTheme]}으로 전환`);
   document.getElementById('themeToggleBtn').title = mode === 'auto' ? '테마: 자동(기기 설정 따라감)' : '테마 전환';
   await safeSet('themeMode', mode);
 }
@@ -1549,24 +1807,74 @@ function startAutoRefresh(url) {
 function stopAutoRefresh() { if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; } }
 document.addEventListener('visibilitychange', async () => {
   if (document.visibilityState === 'visible') {
+    // 🔧 2026-10-29 기본 주소(/api, 따로 저장한 URL 없음)에서도 앱으로 돌아오면 바로 갱신한다(예전엔 저장 URL 이 있을 때만).
     const saved = await safeGet('gasUrl');
-    if (saved) fetchLive(saved);
+    fetchLive(saved || '/api');
   }
 });
+
+// 🎨 2026-10-29 ② 설정·매뉴얼과 같은 출처 iframe을 하나의 초점 순환 범위로 다룬다.
+let activeDialog = null;
+function dialogFocusables(root) {
+  return [...root.querySelectorAll('button, a[href], input, select, textarea, iframe, [tabindex]')].flatMap(el => {
+    if (el.disabled || el.tabIndex < 0 || el.closest('[inert]') || !el.getClientRects().length || el.ownerDocument.defaultView.getComputedStyle(el).visibility === 'hidden') return [];
+    if (el.tagName === 'IFRAME') {
+      // 🎨 2026-10-29 ② 로딩 중 빈 프레임으로 초점이 빠지지 않게 내부 조작이 준비된 뒤에만 포함한다.
+      return el.contentDocument ? dialogFocusables(el.contentDocument) : [];
+    }
+    return [el];
+  });
+}
+function dialogKeydown(e) {
+  if (!activeDialog) return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    closeDialog();
+  } else if (e.key === 'Tab') {
+    const items = dialogFocusables(activeDialog.panel);
+    const index = items.indexOf(e.target);
+    const next = e.shiftKey ? (index <= 0 ? items.length - 1 : index - 1) : (index + 1) % items.length;
+    e.preventDefault();
+    (items[next] || activeDialog.panel).focus();
+  }
+}
+function openDialog(panel, className, opener, firstControl) {
+  if (activeDialog) closeDialog();
+  const background = [...document.body.children].filter(el => el !== panel && !['SCRIPT', 'TEMPLATE'].includes(el.tagName));
+  activeDialog = { panel, className, opener, background: background.map(el => [el, el.inert]), overflow: document.body.style.overflow };
+  background.forEach(el => { el.inert = true; });
+  panel.classList.add(className);
+  document.body.style.overflow = 'hidden';
+  firstControl.focus();
+}
+function closeDialog() {
+  if (!activeDialog) return;
+  const { panel, className, opener, background, overflow } = activeDialog;
+  panel.classList.remove(className);
+  background.forEach(([el, inert]) => { el.inert = inert; });
+  document.body.style.overflow = overflow;
+  activeDialog = null;
+  opener.focus({ preventScroll: true });
+}
+document.addEventListener('keydown', dialogKeydown, true);
 
 const configPanel = document.getElementById('configPanel');
 document.getElementById('configBtn').addEventListener('click', async () => {
   const saved = await safeGet('gasUrl');
   if (saved) document.getElementById('urlInput').value = saved;
-  configPanel.classList.add('show');
+  // 🎨 2026-10-29 ② 열기 직후 입력으로 이동하고 닫을 때 설정 버튼으로 돌아온다.
+  openDialog(configPanel, 'show', document.getElementById('configBtn'), document.getElementById('urlInput'));
 });
-configPanel.addEventListener('click', e => { if (e.target === configPanel) configPanel.classList.remove('show'); });
+// 🎨 2026-10-29 ② 배경·닫기 버튼·저장·데모 전환에서 동일하게 초점을 복원한다.
+configPanel.addEventListener('click', e => { if (e.target === configPanel) closeDialog(); });
+document.getElementById('configCloseBtn').addEventListener('click', closeDialog);
 
 document.getElementById('saveUrlBtn').addEventListener('click', async () => {
   const url = document.getElementById('urlInput').value.trim();
   if (!url) return;
   await safeSet('gasUrl', url);
-  configPanel.classList.remove('show');
+  // 🎨 2026-10-29 ② 설정 저장 후 초점과 배경 조작을 복원한다.
+  closeDialog();
   await fetchLive(url);
   startAutoRefresh(url);
 });
@@ -1575,12 +1883,14 @@ document.getElementById('clearUrlBtn').addEventListener('click', async () => {
   liveData = null;
   stopAutoRefresh();
   document.getElementById('liveDot').textContent = '';
-  configPanel.classList.remove('show');
+  // 🎨 2026-10-29 ② 데모 전환 후에도 같은 닫기 절차를 사용한다.
+  closeDialog();
   renderAll();
 });
 document.getElementById('refreshBtn').addEventListener('click', async () => {
+  // 🔧 2026-10-29 기본 주소(/api)에서도 새로고침 버튼이 실제로 새 자료를 받는다(예전엔 화면만 다시 그렸다).
   const saved = await safeGet('gasUrl');
-  if (saved) fetchLive(saved); else renderAll();
+  fetchLive(saved || '/api');
 });
 
 // 🔧 [수정] URL이 매번 동일해서 브라우저가 응답을 캐싱해버려 새로고침해도 예전 데이터가 나오던 문제 → 매 요청 캐시 무력화
@@ -1682,13 +1992,21 @@ function openManual() {
   if (!wrap.querySelector('iframe')) {
     const tpl = document.getElementById('manual-html-content');
     const iframe = document.createElement('iframe');
+    // 🎨 2026-10-29 매뉴얼 프레임의 용도를 보조기기에 알린다.
+    iframe.title = 'HYEOKS 시스템 매뉴얼';
+    // 🎨 2026-10-29 ② iframe 안에서도 Tab·Escape를 바깥 모달과 함께 처리한다.
+    iframe.addEventListener('load', () => {
+      iframe.contentDocument.addEventListener('keydown', dialogKeydown, true);
+    });
     iframe.srcdoc = tpl.innerHTML;
     wrap.appendChild(iframe);
   }
-  document.getElementById('manualModalOverlay').classList.add('open');
+  // 🎨 2026-10-29 ② 첫 조작인 닫기 버튼으로 초점을 이동한다.
+  openDialog(document.getElementById('manualModalOverlay'), 'open', document.getElementById('manualFab'), document.getElementById('manualCloseBtn'));
 }
 function closeManual() {
-  document.getElementById('manualModalOverlay').classList.remove('open');
+  // 🎨 2026-10-29 ② 매뉴얼을 연 버튼으로 초점을 복원한다.
+  closeDialog();
 }
 document.getElementById('manualFab').addEventListener('click', openManual);
 document.getElementById('manualCloseBtn').addEventListener('click', closeManual);
@@ -2328,6 +2646,34 @@ mark { background: #fef3c7; padding: 1px 5px; border-radius: 3px; font-weight: 7
   .cover h1 { font-size: 1.9rem; }
   .cover-meta { flex-direction: column; gap: 20px; }
   .arch-grid { grid-template-columns: 1fr 1fr; }
+}
+
+/* 🎨 2026-10-29 ② 매뉴얼 본문은 그대로 두고 표·도표의 가로 넘침을 각 영역 안에서 스크롤한다. */
+@media screen and (max-width: 900px) {
+  #toc:not(.open) { visibility: hidden; }
+  main, .section, .badge-card, .case-study, .chart-box, .score-viz { min-width: 0; max-width: 100%; }
+  .param-table, .signal-table { display: block; max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
+  .param-table th, .param-table td, .signal-table th, .signal-table td { min-width: 110px; overflow-wrap: anywhere; }
+  .chart-box { padding: 12px; overscroll-behavior-x: contain; }
+  .chart-box svg { min-width: 560px; }
+  .section, .cover { overflow-wrap: anywhere; }
+  .flow-content, .badge-dict-item .txt { min-width: 0; }
+  #toc a { min-height: 44px; }
+}
+@media screen and (max-width: 480px) {
+  .section { padding: 44px 16px 36px; }
+  .badge-card, .case-study, .score-viz { padding: 24px 16px; }
+  .quote, .warning-box, .tip-box, .thought-box { padding: 20px 16px; }
+  .arch-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .arch-node { padding: 16px 10px; min-width: 0; }
+  .case-header { flex-wrap: wrap; }
+  .score-bar-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(32px, 1fr) 42px; gap: 8px; }
+  .score-bar-label, .score-bar-val { width: auto; }
+}
+/* 🎨 2026-10-29 ② 매뉴얼 iframe에도 기기의 모션 감소 설정을 적용한다. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+  .badge-card:hover { transform: none; }
 }
 
 /* ── 인쇄 페이지 나눔 ── */
