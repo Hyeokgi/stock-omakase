@@ -478,6 +478,9 @@
   .stage-tags { margin-top: 1px; gap: 4px; }
   #demoModeBanner { padding: 4px 12px !important; line-height: 1.4; }
   .tab-notice { margin-top: 6px; padding: 6px 10px; }
+  /* ⚖️ 2026-10-30 지인과 공유하므로 '개인 연구 기록 · 매매 권유 아님' 을 고정 노출한다. */
+  .disclosure { margin: 14px 16px 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
+    color: var(--text-2); font-size: 12px; line-height: 1.6; background: var(--surface); }
   .controls { padding-top: 6px; gap: 4px; }
   .today-strip { padding: 0 0 2px; }
   .today-pill { padding: 3px 9px; }
@@ -563,6 +566,8 @@
   </div>
   <div class="pull-indicator" id="pullIndicator">⟳ 놓으면 새로고침</div>
   <main id="cardList" style="padding-top:0;"></main>
+  <!-- ⚖️ 2026-10-30 스캐너 목록 끝 고정 고지 -->
+  <div class="disclosure" role="note">⚖️ 개인 연구 기록입니다. 화면의 신호 · 점수 · 목표가 · 손절가는 기계적 계산 결과이며 특정 종목의 매수 · 매도 권유가 아닙니다. 과거 결과는 미래 수익을 보장하지 않고, 투자 판단과 손실 책임은 이용자 본인에게 있습니다. 이 앱은 금융투자업 · 유사투자자문 서비스가 아닙니다.</div>
 </div>
 
 <div class="view" id="view-watchlist">
@@ -572,6 +577,8 @@
 
 <div class="view" id="view-report">
   <div class="tab-notice">📢 본 리포트는 매일 오후 3시 10분에 업로드됩니다.</div>
+  <!-- ⚖️ 2026-10-30 리포트는 AI 가 고른 종목이라 고지를 맨 앞에 둔다. -->
+  <div class="disclosure" role="note">⚖️ 개인 연구 기록입니다. 화면의 신호 · 점수 · 목표가 · 손절가는 기계적 계산 결과이며 특정 종목의 매수 · 매도 권유가 아닙니다. 과거 결과는 미래 수익을 보장하지 않고, 투자 판단과 손실 책임은 이용자 본인에게 있습니다. 이 앱은 금융투자업 · 유사투자자문 서비스가 아닙니다.</div>
   <main id="reportList"></main>
 </div>
 
@@ -634,6 +641,7 @@
   <div class="config-sheet">
     <div class="config-heading"><div class="config-title" id="configTitle">실시간 데이터 연동</div><button type="button" class="icon-btn" id="configCloseBtn" aria-label="설정 닫기">✕</button></div>
     <div class="config-desc">Google Apps Script Web App URL을 붙여넣으면 7개 탭 전체가 실시간으로 연동됩니다. URL은 이 기기에만 저장됩니다.</div>
+    <div class="config-desc">⚖️ 개인 연구 기록입니다. 화면의 신호 · 점수 · 목표가 · 손절가는 기계적 계산 결과이며 특정 종목의 매수 · 매도 권유가 아닙니다. 과거 결과는 미래 수익을 보장하지 않고, 투자 판단과 손실 책임은 이용자 본인에게 있습니다. 이 앱은 금융투자업 · 유사투자자문 서비스가 아닙니다.</div>
     <!-- 🎨 2026-10-29 설정 입력에 이름을 제공한다. -->
     <input class="config-input" id="urlInput" aria-label="Google Apps Script Web App URL" placeholder="https://script.google.com/macros/s/.../exec" />
     <div class="config-btn-row">
@@ -2746,7 +2754,9 @@ mark { background: #fef3c7; padding: 1px 5px; border-radius: 3px; font-weight: 7
 <section class="cover" id="cover">
   <div class="cover-badge"><span class="dot"></span>OFFICIAL MASTER GUIDEBOOK · LIVE</div>
   <h1>HYEOKS QUANT SYSTEM<em>마스터 가이드북</em></h1>
-  <p class="cover-desc">세력의 노이즈를 수학으로 꿰뚫는다.<br>칼만 필터·실시간 수급·분기 실적을 융합한<br>퀀트 자동화 투자 시스템의 모든 것을 담았습니다.</p>
+  <p class="cover-desc">가격의 흔들림 속에서 추세를 수학으로 걸러 보려는 연구 기록.<br>칼만 필터·실시간 수급·분기 실적을 함께 쓰는<br>개인 퀀트 연구 시스템의 작동 방식을 정리했습니다.</p>
+  <!-- ⚖️ 2026-10-30 매뉴얼 맨 앞 고지 -->
+  <p class="cover-desc" style="font-size:0.85rem; opacity:0.9;">⚖️ 개인 연구 기록입니다. 화면의 신호 · 점수 · 목표가 · 손절가는 기계적 계산 결과이며 특정 종목의 매수 · 매도 권유가 아닙니다. 과거 결과는 미래 수익을 보장하지 않고, 투자 판단과 손실 책임은 이용자 본인에게 있습니다. 이 앱은 금융투자업 · 유사투자자문 서비스가 아닙니다.</p>
   <div class="cover-meta">
     <div><strong>VERSION</strong>v2.1 · 2026.07 추가 개정</div>
     <div><strong>대상 독자</strong>입문자 ~ 실전 트레이더</div>
@@ -3058,7 +3068,7 @@ mark { background: #fef3c7; padding: 1px 5px; border-radius: 3px; font-weight: 7
 
     <div class="action-box">
       <strong>📌 운용 방법 + V3 실적점수 확인 필수</strong><br>
-      당장 내일 오를 확률은 낮지만 <strong>하방 리스크가 닫혀 있는 자리</strong>입니다. 현재가에서 1차 매수 후, 지지선 부근에서 2차 분할 매수하며 느긋하게 주식 수를 늘려가십시오. <strong>이 유형만은 유독 실적점수(V3)가 중요합니다</strong> — 실적이 뚜렷하게 꺾이고 있는 종목은 애초에 이 타점 후보에서 제외되도록 설계되어 있지만, 혹시 표시된 V3 점수가 낮다면 신중하게 접근하십시오.
+      당장 내일 오를 확률은 낮지만 <strong>시스템이 하방 위험을 상대적으로 작게 보는 구간</strong>입니다(손실이 없다는 뜻은 아닙니다). 이 유형은 한 번에 사지 않고 지지선 부근까지 나눠 담는 분할 진입을 전제로 설계되었습니다. <strong>이 유형만은 유독 실적점수(V3)가 중요합니다</strong> — 실적이 뚜렷하게 꺾이고 있는 종목은 애초에 이 타점 후보에서 제외되도록 설계되어 있지만, 혹시 표시된 V3 점수가 낮다면 신중하게 접근하십시오.
     </div>
   </div>
 
@@ -3073,7 +3083,7 @@ mark { background: #fef3c7; padding: 1px 5px; border-radius: 3px; font-weight: 7
     <p>당일 또는 최근 며칠 사이 급부상한 주도 테마의 대장주에게 부여되거나, 칼만 필터 기준 하락 추세가 막 상승으로 전환된 초기 국면에 부여됩니다. 실적보다는 <strong>모멘텀·수급 강도</strong>가 핵심입니다.</p>
     <div class="action-box">
       <strong>📌 운용 방법 (호가창 대응 필수)</strong><br>
-      3분봉 20선 또는 당일 시가를 생명선으로 설정합니다. 단기 슈팅 구간만 노리고 빠르게 타격합니다. <span class="red">2등주(후발주)는 절대 금지.</span> 윗꼬리 발생이나 프로그램 매도 전환 시 즉각 자릅니다.
+      3분봉 20선 또는 당일 시가를 생명선으로 설정합니다. 단기 급등 구간만 짧게 다루는 유형입니다. <span class="red">2등주(후발주)는 절대 금지.</span> 윗꼬리 발생이나 프로그램 매도 전환 시 즉각 자릅니다.
     </div>
   </div>
 
@@ -3113,17 +3123,17 @@ mark { background: #fef3c7; padding: 1px 5px; border-radius: 3px; font-weight: 7
       <tr>
         <td><span class="sig-buy">🔴 대량유입 +XX억</span></td>
         <td>거래대금의 10% 이상 프로그램 순매수. <strong>메이저 자금이 의도적으로 쓸어 담는 중</strong></td>
-        <td class="green">적극 매수 검토. 타점 배지와 일치 시 가장 강력한 복합 신호</td>
+        <td class="green">강한 수급 신호. 타점 배지와 겹치면 시스템이 가장 강하게 보는 조합(매수 권유 아님)</td>
       </tr>
       <tr>
         <td><span class="sig-buy">🔴 매수우위 +XX억</span></td>
         <td>거래대금의 5~10% 수준 프로그램 순매수</td>
-        <td class="green">우호적 신호. 다른 조건과 복합 확인 후 매수</td>
+        <td class="green">우호적 신호. 다른 조건과 함께 확인하는 보조 신호</td>
       </tr>
       <tr>
         <td><span class="sig-sell">🔵 대량출회 XX억</span></td>
         <td>거래대금의 10% 이상 프로그램 순매도. <strong>메이저가 물량을 던지는 중</strong></td>
-        <td class="red">강력 매수 금지. 보유 중이라면 분할 매도 검토</td>
+        <td class="red">시스템이 신규 진입을 피하는 신호. 보유 중이면 비중 점검 대상</td>
       </tr>
       <tr>
         <td><span class="sig-neutral">⚪ 수급강도 평년</span></td>
@@ -3278,7 +3288,7 @@ mark { background: #fef3c7; padding: 1px 5px; border-radius: 3px; font-weight: 7
     <tbody>
       <tr><td><strong>STAGE 1</strong><br>정상 장세</td><td>실시간 등락률이 기준치 이내</td><td>추세 매매·돌파 매매 정상 가동. 개별 종목 사유로만 관망 권고</td></tr>
       <tr><td><strong>STAGE 2</strong><br>주의 장세</td><td>등락률 -1% 이하 또는 하락 시그널 텍스트 감지</td><td>강한 개별 매수 신호(외인집중 등)가 없는 종목은 매수 보류 권고</td></tr>
-      <tr><td><strong>STAGE 3</strong><br>패닉 장세</td><td>등락률 -3% 이하 또는 패닉·폭락 시그널 감지</td><td>전 종목 매수 보류, 현금 100% 관망 강력 권고</td></tr>
+      <tr><td><strong>STAGE 3</strong><br>패닉 장세</td><td>등락률 -3% 이하 또는 패닉·폭락 시그널 감지</td><td>전 종목 매수 보류로 분류(현금 비중을 높여 관망하는 구간)</td></tr>
     </tbody>
   </table>
 
@@ -3368,7 +3378,7 @@ mark { background: #fef3c7; padding: 1px 5px; border-radius: 3px; font-weight: 7
     </div>
     <div class="warning-box" style="margin-top:16px;">
       <div class="w-title">🚫 절대 금지 — 이유</div>
-      <p style="margin:0; font-size:0.95rem;">이미 칼만 엔진 기준 3차 파동 한계치에 도달했고 윗꼬리까지 생겼습니다. 지금 들어가면 <span class="red">세력의 물량 떠넘기기에 완벽하게 당하는 것</span>입니다.</p>
+      <p style="margin:0; font-size:0.95rem;">이미 칼만 엔진 기준 3차 파동 한계치에 도달했고 윗꼬리까지 생겼습니다. 이 자리에서의 진입은 <span class="red">고점에서 물량을 넘겨받을 위험이 큰 것</span>으로 봅니다.</p>
     </div>
   </div>
 
