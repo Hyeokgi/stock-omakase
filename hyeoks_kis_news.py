@@ -10,7 +10,7 @@
 #   더 이전 40건을 받는다(시험 run 38250737183 — 경계 1건 겹침·39건 이전). 이전 조회에서 본 뉴스에 닿을 때까지,
 #   한 조회당 최대 CONT_MAX 회. 그래도 못 닿으면 남은 구간만 '넘침' 으로 센다.
 # 저장: 원본은 구글 드라이브 비공개, 공개는 건수만(kis_news_runs.csv · private_receipts.csv). 로그에 제목·종목명 없음.
-# 운영 KIS 토큰(구글 시트 칸)은 읽지도 쓰지도 않는다 — 실행당 토큰을 따로 1회 발급한다.
+# 운영 KIS 토큰(구글 시트 칸)은 쓰지 않고 읽기만 한다 — 오늘 것이 통하면 함께 쓰고, 아니면 실행당 1회 발급(2026-10-30, kis_token_share).
 # 운영 선정·주문·시트와 무관. 지문 대상 파일이 아니다.
 # ==========================================================================
 import argparse
@@ -24,6 +24,7 @@ import sys
 import time
 
 import hyeoks_research_daily as R
+from kis_token_share import token_for_run
 
 VERSION = "kis-news-v3"
 BASE = "https://openapi.koreainvestment.com:9443"
@@ -228,7 +229,7 @@ def main(argv=None, env=None, get=None, post=None, clock=None, sleep=time.sleep,
         import requests
         get, post = get or requests.get, post or requests.post
     try:
-        tok = token(post, key, secret)
+        tok = token_for_run(get, post, key, secret, BASE, token)[0]
     except Exception as e:
         print(f"❌ {str(e)[:80]}")
         st = {"day": day, "runId": env.get("GITHUB_RUN_ID", ""), "version": VERSION, "status": "중단",

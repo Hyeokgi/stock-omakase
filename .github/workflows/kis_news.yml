@@ -42,7 +42,12 @@ jobs:
     - uses: actions/setup-python@v7
       with:
         python-version: '3.10'
-    - run: pip install requests
+    - run: pip install requests gspread oauth2client
+
+    - name: 🔑 시트 읽기 키(secret.json) — 스캐너의 오늘 한투 토큰을 읽기만 한다(kis_token_share)
+      env:
+        CREDENTIAL_JSON: ${{ secrets.GCP_CREDENTIALS }}
+      run: python -c 'import os,json,pathlib; pathlib.Path("secret.json").write_text(json.dumps(json.loads(os.environ["CREDENTIAL_JSON"])), encoding="utf-8")' || echo "ℹ️ 시트 키 없음 — 토큰을 따로 발급한다"
 
     - name: 🔄 최신 상태 받기
       run: |
@@ -55,6 +60,10 @@ jobs:
         UNTIL: ${{ github.event.inputs.until }}
       run: |
         python hyeoks_kis_news.py --until "${UNTIL:-15:08}"
+
+    - name: 🧹 secret.json 지우기
+      if: always()
+      run: python -c 'from pathlib import Path; Path("secret.json").unlink(missing_ok=True)'
 
     - name: 💾 공개 건수 커밋
       if: always()

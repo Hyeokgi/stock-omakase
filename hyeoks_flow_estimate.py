@@ -13,7 +13,8 @@
 #   --probe — 토큰 1회 + 시험 종목 2개 호출. 응답 **구조만** 출력(값·부호 없음). 저장·커밋 없음.
 #   --reconcile DIR — 판정 때 PC 에서 한 번. 비공개 원본 + 한투 일별 확정 순매수 → 일치율 요약(로컬, 공개 안 함).
 #     드라이브 창구는 쓰기 전용이라 러너가 지난 잠정치를 읽을 수 없다 — 그래서 대조는 매일이 아니라 판정 때 한다.
-# 운영 KIS 토큰(구글 시트 칸)은 읽지도 쓰지도 않는다 — 실행당 토큰을 따로 1회 발급한다(hyeoks_kis_news 와 같다).
+# 운영 KIS 토큰(구글 시트 칸)은 쓰지 않고 읽기만 한다 — 기록 실행은 오늘 것이 통하면 함께 쓰고, 아니면 실행당 1회 발급
+# (2026-10-30 사용자 결정 '알림 공유', kis_token_share). 시험 호출 · 대조는 그대로 따로 발급한다.
 # 하지 않는 것: 주문·시트·선정 변경. 공개 저장소·로그에 종목코드·종목명·수급 값을 남기지 않는다. 지문 대상이 아니다.
 # ==========================================================================
 import argparse
@@ -29,6 +30,7 @@ import sys
 import time
 
 import hyeoks_research_daily as R
+from kis_token_share import token_for_run
 from hyeoks_kis_news import BASE, token
 
 VERSION = "flow-estimate-v1"
@@ -250,7 +252,7 @@ def main_record(env, get, post, clock, sleep, uploader=None, runs_dir=R.RUNS_DIR
     tok = None
     for attempt in range(2):                     # 토큰 발급은 1분에 1회 — 다른 수집과 겹치면 한 번 기다렸다 다시
         try:
-            tok = token(post, key, secret)
+            tok = token_for_run(get, post, key, secret, BASE, token)[0]
             break
         except Exception as e:
             print(f"⚠️ {str(e)[:80]}")

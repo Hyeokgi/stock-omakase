@@ -23,6 +23,7 @@ import sys
 import time
 
 import hyeoks_research_daily as R
+from kis_token_share import token_for_run
 
 VERSION = "friday-dip-v1"
 BASE = "https://openapi.koreainvestment.com:9443"
@@ -264,7 +265,8 @@ def main(argv=None, env=None, get=None, post=None, clock=None, sleep=time.sleep,
         print(f"⏳ {a.check_at} 까지 {wait / 60:.0f}분 기다린다")
         sleep(wait)
     try:
-        kis = kis_getter(get, key, secret, token(post, key, secret), sleep)
+        # 2026-10-30 — 스캐너가 시트에 둔 오늘 토큰을 먼저 함께 쓴다(발급 알림 줄이기, kis_token_share)
+        kis = kis_getter(get, key, secret, token_for_run(get, post, key, secret, BASE, token)[0], sleep)
         rows, calls, cut = scan(lambda iscd, lo, hi, plo=None, phi=None: rank_band(kis, iscd, lo, hi, plo, phi))
         cands = prelist(rows)
         picks = pick([day_bar(kis, c, day8) for c in cands])
