@@ -1,0 +1,34 @@
+{
+ "code_sha": "66fc7ba0",
+ "cycle_date": "2026-10-29",
+ "emitted_at": "2026-10-29T21:33:48.866140+09:00",
+ "fingerprint": "3f49f73150c0",
+ "kind": "consensus",
+ "payload": {
+  "attempted": 181,
+  "empty": 26,
+  "expected_state": "reached",
+  "failed": 16,
+  "preflight": [
+   {
+    "code": "005930",
+    "secs": 2.1,
+    "state": "ok",
+    "why": ""
+   },
+   {
+    "code": "000660",
+    "secs": 1.9,
+    "state": "ok",
+    "why": ""
+   }
+  ],
+  "preflight_ok": true,
+  "state": "DEGRADED",
+  "success": 139,
+  "targets": 181,
+  "unprocessed": 0
+ },
+ "receipt_version": "receipt-v2",
+ "run_id": "40872606980"
+}
