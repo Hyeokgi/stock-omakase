@@ -673,6 +673,11 @@ const DEMO_SEARCHTOP = [
 ];
 
 let liveData = null;
+// 🆕 2026-10-29 — 첫 접속 때 GAS 응답(수 초~십수 초)을 기다리는 동안 '데모 · 연동 안 됨' 경고가 떠서 끊긴 것처럼 보였다.
+//    마지막으로 받은 실데이터를 기기에 저장해 두고 첫 화면에 바로 그린다. 처음 받는 중에는 경고 대신 '불러오는 중' 을 띄운다.
+let firstLoadPending = true;
+const LAST_LIVE_KEY = 'lastLive';
+let staleRefetchTimer = null;
 let currentTab = 'scanner';
 let currentFilter = 'all', sortMode = 'default', searchTerm = '', openCard = null;
 let favorites = []; // ★ 관심종목 코드 목록, 순서 유지 (기기에 영구 저장)
@@ -775,7 +780,11 @@ function changeSpan(change) {
 }
 
 function renderHeader() {
-  document.getElementById('demoModeBanner').style.display = liveData ? 'none' : 'block';
+  const demoBanner = document.getElementById('demoModeBanner');
+  demoBanner.style.display = liveData ? 'none' : 'block';
+  demoBanner.textContent = firstLoadPending
+    ? '⏳ 실시간 데이터를 불러오는 중입니다 — 지금 보이는 숫자는 예시입니다.'
+    : '⚠️ 데모 데이터 표시 중 — 실시간 연동이 안 된 상태입니다. ⚙에서 URL을 다시 확인해주세요.';
   const stage = D('stage', DEMO_STAGE);
   const sm = stageMeta(stage.level);
   document.getElementById('pulseBar').className = 'pulse-bar ' + sm.pulseCls;
@@ -1582,7 +1591,22 @@ function withCacheBust(url) {
 async function attemptFetchOnce(url) {
   const res = await fetch(withCacheBust(url), { cache: 'no-store' });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  const age = Number(res.headers.get('X-Data-Age'));
+  return { data: await res.json(), age: Number.isFinite(age) ? age : 0 };
+}
+
+function hhmm(t) { return new Date(t).toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'}); }
+
+// 마지막 실데이터 저장 · 불러오기 — 저장 공간이 모자라거나 막혀 있으면 조용히 건너뛴다(화면은 그대로 동작).
+async function saveLastLive(data) {
+  try { await safeSet(LAST_LIVE_KEY, JSON.stringify({ at: Date.now(), data })); } catch {}
+}
+async function loadLastLive() {
+  try {
+    const raw = await safeGet(LAST_LIVE_KEY);
+    const v = raw ? JSON.parse(raw) : null;
+    return (v && v.data && typeof v.data === 'object') ? v : null;
+  } catch { return null; }
 }
 
 async function fetchLive(url) {
@@ -1593,12 +1617,24 @@ async function fetchLive(url) {
   let lastErr = null;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    liveDot.textContent = attempt === 1 ? '🔄 갱신 중…' : `🔄 재시도 중…(${attempt}/${MAX_ATTEMPTS})`;
+    // 저장본을 보여 주는 중이면 그 표시('💾 … 저장본 · 갱신 중…')를 첫 시도 동안 유지한다
+    if (attempt > 1) liveDot.textContent = `🔄 재시도 중…(${attempt}/${MAX_ATTEMPTS})`;
+    else if (!liveDot.textContent.startsWith('💾')) liveDot.textContent = '🔄 갱신 중…';
     try {
-      const data = await attemptFetchOnce(url);
+      const { data, age } = await attemptFetchOnce(url);
       liveData = data;
-      liveDot.textContent = '🟢 실시간 · ' + new Date().toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'});
+      firstLoadPending = false;
+      const asOf = Date.now() - age * 1000;
+      if (age > 60) {
+        // Worker 가 GAS 를 기다리지 않고 직전 사본을 먼저 줬다 — 뒤에서 새로 받고 있으니 잠시 뒤 한 번만 다시 받는다.
+        liveDot.textContent = '🟡 ' + hhmm(asOf) + ' 자료 · 갱신 중…';
+        if (!staleRefetchTimer) staleRefetchTimer = setTimeout(() => { fetchLive(url); }, 8000);
+      } else {
+        clearTimeout(staleRefetchTimer); staleRefetchTimer = null;
+        liveDot.textContent = '🟢 실시간 · ' + hhmm(asOf);
+      }
       renderAll();
+      saveLastLive(data);
       return;
     } catch (err) {
       lastErr = err;
@@ -1611,6 +1647,7 @@ async function fetchLive(url) {
   // 이미 실시간 데이터를 받아본 적 있다면, 일시적 갱신 실패로 화면의 실제 데이터를 데모로 되돌리지 않음.
   const hadDataBefore = !!liveData;
   if (!hadDataBefore) liveData = null;
+  firstLoadPending = false;
   liveDot.textContent = '⚠️ 연동 실패(' + (hadDataBefore ? '이전 데이터 유지' : '데모') + ')';
   renderAll();
   console.error('fetchLive 최종 실패 (자동 재시도 3회 모두 실패):', lastErr);
@@ -1660,8 +1697,13 @@ document.getElementById('manualCloseBtn').addEventListener('click', closeManual)
   const savedTheme = await safeGet('themeMode');
   await applyTheme((savedTheme === 'light' || savedTheme === 'auto') ? savedTheme : 'dark');
 
-  // 🆕 [수정] 실제 데이터를 기다리지 않고, 화면부터 즉시 채움(데모 데이터로) — 체감 로딩 시간을 없앰.
-  //    실데이터는 아래에서 백그라운드로 이어 받아와서, 도착하는 즉시 자연스럽게 교체됨.
+  // 🆕 [수정] 실제 데이터를 기다리지 않고, 화면부터 즉시 채움 — 체감 로딩 시간을 없앰.
+  //    2026-10-29 — 데모 대신 마지막으로 받은 실데이터가 있으면 그것부터 그린다(처음 쓰는 기기만 예시).
+  const last = await loadLastLive();
+  if (last) {
+    liveData = last.data;
+    document.getElementById('liveDot').textContent = '💾 ' + hhmm(last.at) + ' 저장본 · 갱신 중…';
+  }
   renderAll();
 
   // 🔧 [수정] 즐겨찾기 로딩과 실제 데이터 fetch를 동시에 진행(기존엔 순차 대기라 그만큼 더 느렸음)

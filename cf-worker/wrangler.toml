@@ -5,3 +5,7 @@ compatibility_date = "2026-01-01"
 [assets]
 directory = "./public"
 binding = "ASSETS"
+
+# 🆕 2026-10-29 GAS 예열 — 평일 KST 08:00~19:55 5분마다(UTC 23시 일~목 · 00~10시 월~금)
+[triggers]
+crons = ["*/5 23 * * 0-4", "*/5 0-10 * * 1-5"]
