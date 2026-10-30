@@ -6,7 +6,6 @@ compatibility_date = "2026-01-01"
 directory = "./public"
 binding = "ASSETS"
 
-# 🆕 2026-10-29 GAS 예열 — 평일 KST 08:00~19:55 5분마다(UTC 23시 일~목 · 00~10시 월~금)
-[triggers]
-# Cloudflare 요일은 1~7(일=1)이라 0 을 쓰면 배포가 거부된다(10-29~10-30 main 배포 5회 실패) — 이름으로 쓴다.
-crons = ["*/5 23 * * SUN-THU", "*/5 0-10 * * MON-FRI"]
+# 2026-10-30 GAS 예열 cron 은 뺐다. 무료 계정은 cron 이 계정 전체 5개까지인데 다른 Worker(teum-reservation 등)가
+# 이미 다 써서 배포가 'Trigger configuration ... only partially updated' 로 실패 표시됐다(코드 업로드는 매번 성공).
+# 첫 접속 속도는 응답 캐시(SWR)와 브라우저 저장본으로 충분하다. src 의 scheduled() 는 cron 을 다시 켤 때를 위해 남긴다.
