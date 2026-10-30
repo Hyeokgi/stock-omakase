@@ -181,8 +181,9 @@ class Main(unittest.TestCase):
         rc, k, post, c = self.run_main(fri("19:05"))
         self.assertEqual(rc, 0)
         self.assertGreaterEqual(c.t, fri("19:40"))
-        self.assertEqual(len(post.sent), 1)
+        self.assertEqual(len(post.sent), 2, "19:40 + 20:02 확정(2026-10-31 E단계)")
         text = post.sent[0]["text"]
+        self.assertIn("20:00 확정", post.sent[1]["text"])
         self.assertIn("비밀종목111110", text)
         self.assertIn("비밀종목222220", text)
         self.assertNotIn("333330", text)
@@ -198,11 +199,13 @@ class Main(unittest.TestCase):
         rc, k, post, _ = self.run_main(fri("19:45"))
         self.assertEqual((rc, k.calls, post.sent), (0, [], []))
 
-    def test_no_drop_logs_without_sending(self):
+    def test_no_drop_still_sends_the_two_picks_once(self):
+        """2026-10-31 E단계 — 하락이 없어도 1~2위는 보낸다. 20:00 에도 해당 없으면 추가 메시지 없음."""
         s = world()
         s["111110"].update(nx=1150, after=1149)
         rc, _, post, _ = self.run_main(fri("19:41"), stocks=s)
-        self.assertEqual((rc, post.sent), (0, []))
+        self.assertEqual((rc, len(post.sent)), (0, 1))
+        self.assertIn("비밀종목222220", post.sent[0]["text"])
         self.assertIn("해당없음", self.log())
 
     def test_late_start_and_non_friday_skip(self):
@@ -226,7 +229,7 @@ class Main(unittest.TestCase):
         self.assertEqual(R.send_status(False, "HTTP 500"), "발송실패")
         # Codex 검토 — 재실행이 실제로 다시 보낸다
         rc, _, post, _ = self.run_main(fri("19:45"))
-        self.assertEqual((rc, len(post.sent)), (0, 1))
+        self.assertEqual((rc, len(post.sent)), (0, 2))
 
     def test_incomplete_scan_is_not_final(self):
         """2026-10-25 Codex — 가격으로도 못 나눈 구간이 남으면 '대상없음 · 해당없음' 으로 확정하지 않는다."""
@@ -241,9 +244,10 @@ class Main(unittest.TestCase):
         self.assertFalse(A.already_done("2026-10-23", self.dir))
 
     def test_no_send_after_deadline_even_if_started_in_time(self):
+        """19:40 알림은 늦으면 보내지 않는다. 20:02 확정은 매수 신호가 아니라 확인이라 그대로 보낸다(E단계)."""
         with mock.patch.object(A, "SEND_BY", "19:41"):
             rc, _, post, _ = self.run_main(fri("19:41"))
-        self.assertEqual((rc, post.sent), (0, []))
+        self.assertEqual((rc, [m["text"].split("]")[0] for m in post.sent]), (0, ["[금요일 밤 20:00 확정"]))
         self.assertIn("늦은발송생략", self.log())
 
     def test_picks_are_made_at_check_time_not_at_start(self):

@@ -29,7 +29,7 @@ class Main(unittest.TestCase):
 
     def test_hit_records_both_picks_after_2000(self):
         rc, post, c, sheet = self.run_main(fri("19:05"))
-        self.assertEqual((rc, len(post.sent)), (0, 1))
+        self.assertEqual((rc, len(post.sent)), (0, 2))
         self.assertGreaterEqual(c.t, fri("20:02"), "20:00 마감값은 20:00 이후에 읽는다")
         (day, rows), = sheet.calls
         self.assertEqual(day, "2026-10-23")
@@ -46,7 +46,7 @@ class Main(unittest.TestCase):
         s = world()
         s["111110"].update(nx=1150, after=1149)
         rc, post, _, sheet = self.run_main(fri("19:41"), stocks=s)
-        self.assertEqual((rc, post.sent), (0, []))
+        self.assertEqual((rc, len(post.sent)), (0, 1))
         self.assertEqual([r[-2] for r in sheet.calls[0][1]], ["해당없음", "해당없음"])
 
     def test_no_candidates_records_one_status_row(self):
@@ -64,7 +64,7 @@ class Main(unittest.TestCase):
 
     def test_sheet_failure_does_not_change_alert_result(self):
         rc, post, _, _ = self.run_main(fri("19:05"), sheet=Sheet(fail=True))
-        self.assertEqual((rc, len(post.sent)), (0, 1))
+        self.assertEqual((rc, len(post.sent)), (0, 2))
 
     def test_test_day_does_not_wait(self):
         _, _, c, sheet = self.run_main(fri("10:00"), ["--day", "2026-10-23"])
