@@ -1,0 +1,2 @@
+day,runId,version,startedAt,checkedAt,scanCalls,scanned,confirmed,events,hits,incomplete,status,sendStatus,note
+2026-10-30,41038203253,friday-dip-v1,2026-10-30T19:06:05+09:00,2026-10-30T19:44:41+09:00,344,2203,58,2,0,0,해당없음,,
