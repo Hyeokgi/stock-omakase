@@ -478,6 +478,28 @@
   .stage-tags { margin-top: 1px; gap: 4px; }
   #demoModeBanner { padding: 4px 12px !important; line-height: 1.4; }
   .tab-notice { margin-top: 6px; padding: 6px 10px; }
+  /* 🏠 2026-10-30 홈 — 발행 리포트 · 돈 몰리는 테마 · 리포트 후보 */
+  .home-sec { margin: 14px 16px 0; }
+  .home-sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  .home-sec-title { font-size: 15px; font-weight: 800; color: var(--text); }
+  .home-sec-sub { font-size: 12px; color: var(--text-3); }
+  .home-card { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); padding: 10px 12px; }
+  .home-card + .home-card { margin-top: 8px; }
+  .home-pick-label { font-size: 12px; font-weight: 700; color: var(--gold); }
+  .home-pick-name { font-size: 15px; font-weight: 800; margin: 2px 0; }
+  .home-reason { font-size: 13px; color: var(--text-2); line-height: 1.6; }
+  .home-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; padding: 6px 0;
+    border-top: 1px solid var(--border); cursor: pointer; }
+  .home-row:first-child { border-top: 0; }
+  .home-row-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .home-row-name { font-weight: 700; overflow-wrap: anywhere; }
+  .home-row-meta { font-size: 12px; color: var(--text-3); overflow-wrap: anywhere; }
+  .home-theme-head { display: flex; align-items: center; gap: 8px; }
+  .home-theme-sum { margin-left: auto; font-size: 12px; color: var(--text-2); white-space: nowrap; }
+  .home-more { display: block; width: 100%; min-height: 44px; margin-top: 8px; border: 1px solid var(--border); border-radius: 10px;
+    background: var(--surface-hi); color: var(--text-2); font-size: 13px; cursor: pointer; }
+  .home-empty { font-size: 13px; color: var(--text-3); line-height: 1.6; padding: 4px 0; }
+  .home-ch-title { font-size: 13px; font-weight: 800; margin: 2px 0 2px; }
   /* ⚖️ 2026-10-30 지인과 공유하므로 '개인 연구 기록 · 매매 권유 아님' 을 고정 노출한다. */
   .disclosure { margin: 14px 16px 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
     color: var(--text-2); font-size: 12px; line-height: 1.6; background: var(--surface); }
@@ -541,7 +563,14 @@
 </div>
 
 <div id="viewport">
-<div class="view active" id="view-scanner">
+<!-- 🏠 2026-10-30 첫 화면 — 사용자 요청 순서: (발행일) 발행 리포트 → 돈 몰리는 테마 → 리포트 후보 -->
+<div class="view active" id="view-home">
+  <div class="pull-indicator" id="pullIndicatorHome">⟳ 놓으면 새로고침</div>
+  <main id="homeBody" style="padding-top:0;"></main>
+  <div class="disclosure" role="note">⚖️ 개인 연구 기록입니다. 화면의 신호 · 점수 · 목표가 · 손절가는 기계적 계산 결과이며 특정 종목의 매수 · 매도 권유가 아닙니다. 과거 결과는 미래 수익을 보장하지 않고, 투자 판단과 손실 책임은 이용자 본인에게 있습니다. 이 앱은 금융투자업 · 유사투자자문 서비스가 아닙니다.</div>
+</div>
+
+<div class="view" id="view-scanner">
   <div class="controls">
     <div class="search-row">
       <div class="search-box"><span style="color:var(--text-3); font-size:13px;">⌕</span>
@@ -585,6 +614,9 @@
 <div class="view" id="view-theme">
   <div class="tab-header"><div class="tab-title">오늘의 테마</div></div>
   <main id="themeList"></main>
+  <!-- 🏠 2026-10-30 검색상위는 별도 탭 대신 테마 탭 아래(하단 탭 수 유지) -->
+  <div class="tab-header"><div class="tab-title">🔎 네이버 검색상위</div></div>
+  <main id="searchTopList"></main>
 </div>
 
 <div class="view" id="view-news">
@@ -604,10 +636,6 @@
   <main id="calDetail" style="padding-top:4px;"></main>
 </div>
 
-<div class="view" id="view-search">
-  <div class="tab-header"><div class="tab-title">네이버 검색상위</div></div>
-  <main id="searchTopList"></main>
-</div>
 </div>
 
 <!-- 🎨 2026-10-29 맨 위 이동과 매뉴얼 닫기 버튼에 명확한 이름을 제공한다. -->
@@ -624,13 +652,13 @@
 
 <!-- 🎨 2026-10-29 화면 이동 영역과 처음 선택된 화면을 명시한다. -->
 <div class="tabbar" id="tabbar" role="navigation" aria-label="주요 화면">
-  <button class="tab-btn active" data-tab="scanner" aria-current="page"><span class="tab-icon">☰</span><span class="tab-label">스캐너</span></button>
+  <button class="tab-btn active" data-tab="home" aria-current="page"><span class="tab-icon">⌂</span><span class="tab-label">홈</span></button>
+  <button class="tab-btn" data-tab="scanner"><span class="tab-icon">☰</span><span class="tab-label">스캐너</span></button>
   <button class="tab-btn" data-tab="watchlist"><span class="tab-icon">★</span><span class="tab-label">관심</span></button>
   <button class="tab-btn" data-tab="report"><span class="tab-icon">📄</span><span class="tab-label">리포트</span></button>
   <button class="tab-btn" data-tab="theme"><span class="tab-icon">📊</span><span class="tab-label">테마</span></button>
   <button class="tab-btn" data-tab="news"><span class="tab-icon">📰</span><span class="tab-label">뉴스</span></button>
   <button class="tab-btn" data-tab="calendar"><span class="tab-icon">📅</span><span class="tab-label">캘린더</span></button>
-  <button class="tab-btn" data-tab="search"><span class="tab-icon">🔎</span><span class="tab-label">검색</span></button>
 </div>
 
 <!-- 🎨 2026-10-29 ② 순서 조절 안내는 핸들에 키보드 초점을 두었을 때만 화면에 보인다. -->
@@ -793,7 +821,7 @@ let liveData = null;
 let firstLoadPending = true;
 const LAST_LIVE_KEY = 'lastLive';
 let staleRefetchTimer = null;
-let currentTab = 'scanner';
+let currentTab = 'home';
 let currentFilter = 'all', sortMode = 'default', searchTerm = '', openCard = null;
 let favorites = []; // ★ 관심종목 코드 목록, 순서 유지 (기기에 영구 저장)
 let prevPriceMap = {};     // 🆕 가격 변동 플래시용: 직전 갱신 시점의 종목별 현재가
@@ -909,7 +937,8 @@ function renderHeader() {
   const sm = stageMeta(stage.level);
   document.getElementById('pulseBar').className = 'pulse-bar ' + sm.pulseCls;
   const banner = document.getElementById('stageBanner');
-  banner.style.display = currentTab === 'scanner' ? 'flex' : 'none';
+  // 🏠 2026-10-30 홈에서도 시장 STAGE 를 먼저 보여 준다.
+  banner.style.display = (currentTab === 'scanner' || currentTab === 'home') ? 'flex' : 'none';
   banner.className = 'stage-banner ' + sm.cls;
   document.getElementById('stageTitle').textContent = sm.title;
   document.getElementById('stageDetail').textContent =
@@ -922,7 +951,7 @@ function renderHeader() {
   }
   // 🎨 2026-10-29 화면을 그린 시각을 자료의 기준 시각으로 오해하지 않게 구분한다.
   document.getElementById('timeMeta').textContent = '화면 ' + new Date().toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'});
-  const subs = { scanner:'오마카세 · 실시간 스캐너', watchlist:'내가 지켜보는 종목', report:'AI 심층 리서치 리포트', theme:'실시간 주도 테마', news:'네이버 증권 주요뉴스', calendar:'과거 테마 복기 · 미래 일정', search:'네이버 검색상위 종목' };
+  const subs = { home:'오늘 · 돈 몰리는 곳 · 리포트', scanner:'오마카세 · 실시간 스캐너', watchlist:'내가 지켜보는 종목', report:'AI 심층 리서치 리포트', theme:'실시간 주도 테마', news:'네이버 증권 주요뉴스', calendar:'과거 테마 복기 · 미래 일정', search:'네이버 검색상위 종목' };
   document.getElementById('brandSub').textContent = subs[currentTab] || '';
 }
 
@@ -1427,6 +1456,86 @@ function renderSearchTop() {
   });
 }
 
+// 🏠 2026-10-30 홈 — reportBoard 는 GAS 가 드라이브 동결 묶음에서 만든다(리포트 후보 · 발행 종목 · 선정 근거).
+//    후보는 'AI 선정 전 규칙상 후보' 이고 추천이 아니다. 발행 종목은 그날 리포트가 올라온 뒤에만 온다.
+function escHtml(v) {
+  return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+}
+function openNaver(code) { if (code) window.open(`https://m.stock.naver.com/domestic/stock/${code}/total`, '_blank'); }
+function homeRow(name, code, meta) {
+  return `<div class="home-row" data-code="${escHtml(code)}"><div class="home-row-main"><span class="home-row-name">${escHtml(name)}</span>`
+       + `<span class="home-row-meta">${meta}</span></div><span class="ext-icon" aria-hidden="true">↗</span></div>`;
+}
+function scoreMeta(c) {
+  const parts = [`V1 ${c.v1 ?? '-'}`, `V2 ${c.v2 ?? '-'}`, `V3 ${c.v3 ?? '-'}`];
+  if (c.rs != null) parts.push(`RS ${c.rs}`);
+  return escHtml(parts.join(' · ') + (c.theme ? ' · ' + String(c.theme).replace(/🆕\[당일\]\s*|🕰️\[과거\]\s*/g, '') : ''));
+}
+function renderHome() {
+  const body = document.getElementById('homeBody');
+  const board = liveData && liveData.reportBoard ? liveData.reportBoard : null;
+  const groups = D('theme', DEMO_THEME);
+  let html = '';
+
+  // ① 발행 리포트 — 발행된 날만 맨 위
+  if (board && board.published && board.picks) {
+    const lab = { short:'단기', mid:'중기 스윙', long:'장기 추세추종' };
+    // 아침에는 전날 발행분이 오므로 날짜가 오늘이 아니면 '최근' 으로 부른다.
+    const todayKst = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+    html += `<section class="home-sec"><div class="home-sec-head"><span class="home-sec-title">📄 ${board.date === todayKst ? '오늘' : '최근'} 발행 리포트</span>`
+          + `<span class="home-sec-sub">${escHtml(board.date)}</span></div>`;
+    ['short','mid','long'].forEach(k => {
+      const p = board.picks[k] || {};
+      html += `<div class="home-card${p.code ? ' home-pick' : ''}" ${p.code ? `data-code="${escHtml(p.code)}"` : ''}>`
+            + `<div class="home-pick-label">${lab[k]}</div>`
+            + (p.code ? `<div class="home-pick-name">${escHtml(p.name || p.code)} <span class="home-row-meta">${escHtml(p.code)}</span></div>`
+                      : `<div class="home-pick-name" style="color:var(--text-3);">선정 없음</div>`)
+            + (p.reason ? `<div class="home-reason">${escHtml(p.reason)}</div>` : '') + `</div>`;
+    });
+    html += `<button type="button" class="home-more" data-goto="report">리포트 원문 보기 ›</button></section>`;
+  }
+
+  // ② 지금 돈이 몰리는 테마 — 거래대금 순위 상위 5
+  html += `<section class="home-sec"><div class="home-sec-head"><span class="home-sec-title">💰 지금 돈이 몰리는 테마</span>`
+        + `<span class="home-sec-sub">거래대금 상위 5</span></div>`;
+  if (!groups.length) html += `<div class="home-card"><div class="home-empty">수집된 테마가 없습니다.</div></div>`;
+  groups.slice(0, 5).forEach(g => {
+    const top = (g.stocks || []).slice().sort((a, b) => (b.val || 0) - (a.val || 0)).slice(0, 3);
+    const name = (g.stocks && g.stocks[0] ? g.stocks[0].theme : '') || '';
+    html += `<div class="home-card"><div class="home-theme-head"><span class="theme-rank-badge">${escHtml(g.rank)}</span>`
+          + `<span class="home-row-name">${escHtml(name)}</span><span class="home-theme-sum mono">${fmtEok(g.sum)}</span></div>`
+          + top.map(s => homeRow(s.name, s.code, `${s.change >= 0 ? '▲' : '▼'} ${Math.abs(s.change || 0).toFixed(2)}% · ${fmtEok(s.val || 0)}`)).join('')
+          + `</div>`;
+  });
+  html += `<button type="button" class="home-more" data-goto="theme">테마 전체 보기 ›</button></section>`;
+
+  // ③ 리포트 후보 — 단기 · 중기 · 장기
+  html += `<section class="home-sec"><div class="home-sec-head"><span class="home-sec-title">🧭 리포트 후보</span>`
+        + `<span class="home-sec-sub">${board ? escHtml(board.date + ' ' + (board.capturedAt || '') + ' 기준') : ''}</span></div>`;
+  if (!board) {
+    html += `<div class="home-card"><div class="home-empty">리포트 후보 자료를 아직 받지 못했습니다. 다음 갱신 후 다시 확인해주세요.</div></div>`;
+  } else {
+    html += `<div class="home-sec-sub" style="margin:-4px 0 8px;">AI 선정 전, 리포트 규칙상 후보입니다(추천 아님). 리포트는 이 중 각 1개 이하를 고릅니다.</div>`;
+    [['short','단기 — 신규 테마 · 기술적 (NORMAL)'], ['mid','중기 스윙 — 과매도 반등 (SEED)'], ['long','장기 추세추종 — 바닥 · 코어픽, 실적 우선 (SEED)']].forEach(([k, t]) => {
+      const list = board[k] || [], n = (board.counts || {})[k] || 0;
+      html += `<div class="home-card"><div class="home-ch-title">${t} <span class="home-row-meta">${n}개${n > list.length ? ` 중 ${list.length}` : ''}</span></div>`
+            + (list.length ? list.map(c => homeRow(c.name, c.code, scoreMeta(c))).join('')
+                           : `<div class="home-empty">오늘은 규칙상 후보가 없습니다.</div>`)
+            + `</div>`;
+    });
+  }
+  html += `</section>`;
+  body.innerHTML = html;
+
+  body.querySelectorAll('[data-code]').forEach(el => {
+    const code = el.dataset.code;
+    if (!code) return;
+    enableRowKeyboard(el);
+    el.addEventListener('click', () => openNaver(code));
+  });
+  body.querySelectorAll('[data-goto]').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.goto)));
+}
+
 let openWatchlistCard = null;
 
 function flattenThemeStocks() {
@@ -1615,10 +1724,12 @@ async function renderWatchlist() {
   enableWatchlistDrag(list);
 }
 
-const RENDERERS = { scanner:renderScanner, watchlist:renderWatchlist, report:renderReport, theme:renderTheme, news:renderNews, calendar:renderCalendar, search:renderSearchTop };
+// 🏠 2026-10-30 홈 추가 · 검색상위는 테마 탭에서 함께 그린다.
+const RENDERERS = { home:renderHome, scanner:renderScanner, watchlist:renderWatchlist, report:renderReport,
+                    theme:() => { renderTheme(); renderSearchTop(); }, news:renderNews, calendar:renderCalendar };
 function renderAll() { renderHeader(); (RENDERERS[currentTab] || renderScanner)(); }
 
-const TAB_ORDER = ['scanner','watchlist','report','theme','news','calendar','search'];
+const TAB_ORDER = ['home','scanner','watchlist','report','theme','news','calendar'];
 let isTransitioning = false;
 // 🎨 2026-10-29 ② 실행 중 설정 변경도 읽어 탭 전환과 스크롤에 같은 모션 기준을 적용한다.
 const reducedMotionMQ = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -1730,13 +1841,14 @@ document.querySelectorAll('.chip').forEach(chip => {
   body.addEventListener('touchcancel', () => { tracking = false; }, {passive:true});
 })();
 
-/* ── 당겨서 새로고침 (스캐너 탭 최상단에서만) ── */
+/* ── 당겨서 새로고침 (홈 · 스캐너 탭 최상단에서만, 🏠 2026-10-30 홈 추가) ── */
+function pullIndicatorEl() { return document.getElementById(currentTab === 'home' ? 'pullIndicatorHome' : 'pullIndicator'); }
 (function enablePullToRefresh() {
   let startY = 0, pulling = false, pullDist = 0;
   const THRESHOLD = 70;
   document.body.addEventListener('touchstart', e => {
-    const indicator = document.getElementById('pullIndicator');
-    if (currentTab === 'scanner' && window.scrollY <= 0 && indicator) {
+    const indicator = pullIndicatorEl();
+    if ((currentTab === 'scanner' || currentTab === 'home') && window.scrollY <= 0 && indicator) {
       startY = e.touches[0].clientY;
       pulling = true;
     } else {
@@ -1746,7 +1858,7 @@ document.querySelectorAll('.chip').forEach(chip => {
   document.body.addEventListener('touchmove', e => {
     if (!pulling) return;
     pullDist = e.touches[0].clientY - startY;
-    const indicator = document.getElementById('pullIndicator');
+    const indicator = pullIndicatorEl();
     if (pullDist > 0 && window.scrollY <= 0 && indicator) {
       indicator.style.height = Math.min(pullDist, 90) + 'px';
       indicator.textContent = pullDist > THRESHOLD ? '⟳ 놓으면 새로고침' : '⇩ 당겨서 새로고침';
@@ -1757,7 +1869,7 @@ document.querySelectorAll('.chip').forEach(chip => {
   document.body.addEventListener('touchend', async () => {
     if (!pulling) return;
     pulling = false;
-    const indicator = document.getElementById('pullIndicator');
+    const indicator = pullIndicatorEl();
     const triggered = pullDist > THRESHOLD;
     if (indicator) indicator.style.height = '0px';
     if (triggered) {
