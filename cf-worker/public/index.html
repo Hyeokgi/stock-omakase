@@ -500,6 +500,16 @@
     background: var(--surface-hi); color: var(--text-2); font-size: 13px; cursor: pointer; }
   .home-empty { font-size: 13px; color: var(--text-3); line-height: 1.6; padding: 4px 0; }
   .home-ch-title { font-size: 13px; font-weight: 800; margin: 2px 0 2px; }
+  /* 🌙 2026-10-30 금요일 관측 탭(C단계) — 홈 카드 모양을 그대로 쓴다. */
+  .fri-badge { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 6px; font-size: 11px; font-weight: 800;
+    color: var(--down); border: 1px solid currentColor; }
+  .fri-count { display: flex; gap: 8px; }
+  .fri-count > div { flex: 1; text-align: center; border: 1px solid var(--border); border-radius: 10px; padding: 8px 4px; background: var(--surface); }
+  .fri-count b { display: block; font-size: 18px; color: var(--text); }
+  .fri-count span { font-size: 11px; color: var(--text-3); }
+  .fri-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .fri-table th, .fri-table td { padding: 6px 4px; border-top: 1px solid var(--border); text-align: left; vertical-align: top; }
+  .fri-table th { color: var(--text-3); font-weight: 700; white-space: nowrap; }
   /* ⚖️ 2026-10-30 지인과 공유하므로 '개인 연구 기록 · 매매 권유 아님' 을 고정 노출한다. */
   .disclosure { margin: 14px 16px 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
     color: var(--text-2); font-size: 12px; line-height: 1.6; background: var(--surface); }
@@ -611,6 +621,13 @@
   <main id="reportList"></main>
 </div>
 
+<!-- 🌙 2026-10-30 금요일 관측(C단계) — 후보 · 시간외 하락률 · 건수 · 봉인 전 탐색 결과만. 관측 기간 수익은 판정일 전 비공개. -->
+<div class="view" id="view-friday">
+  <div class="tab-header"><div class="tab-title">🌙 금요일 관측</div></div>
+  <main id="fridayBody" style="padding-top:0;"></main>
+  <div class="disclosure" role="note">⚖️ 개인 연구 기록입니다. 화면의 신호 · 점수 · 목표가 · 손절가는 기계적 계산 결과이며 특정 종목의 매수 · 매도 권유가 아닙니다. 과거 결과는 미래 수익을 보장하지 않고, 투자 판단과 손실 책임은 이용자 본인에게 있습니다. 이 앱은 금융투자업 · 유사투자자문 서비스가 아닙니다.</div>
+</div>
+
 <div class="view" id="view-theme">
   <div class="tab-header"><div class="tab-title">오늘의 테마</div></div>
   <main id="themeList"></main>
@@ -656,6 +673,7 @@
   <button class="tab-btn" data-tab="scanner"><span class="tab-icon">☰</span><span class="tab-label">스캐너</span></button>
   <button class="tab-btn" data-tab="watchlist"><span class="tab-icon">★</span><span class="tab-label">관심</span></button>
   <button class="tab-btn" data-tab="report"><span class="tab-icon">📄</span><span class="tab-label">리포트</span></button>
+  <button class="tab-btn" data-tab="friday"><span class="tab-icon">🌙</span><span class="tab-label">금요일</span></button>
   <button class="tab-btn" data-tab="theme"><span class="tab-icon">📊</span><span class="tab-label">테마</span></button>
   <button class="tab-btn" data-tab="news"><span class="tab-icon">📰</span><span class="tab-label">뉴스</span></button>
   <button class="tab-btn" data-tab="calendar"><span class="tab-icon">📅</span><span class="tab-label">캘린더</span></button>
@@ -1536,6 +1554,85 @@ function renderHome() {
   body.querySelectorAll('[data-goto]').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.goto)));
 }
 
+// 🌙 2026-10-30 금요일 관측(C단계). 자료는 금요일 알림이 시트 '🌙금요일관측' 탭에 남긴 것(GAS friday 키).
+//    관측 두 개(1~2위 반씩 · 밤 하락 20:00)는 판정일 전 결과를 보지 않기로 사전 등록했다 — 월요일 결과는 자료에도 없다.
+function fmtPct(v) { return v == null ? '–' : `${v > 0 ? '+' : ''}${Number(v).toFixed(1)}%`; }
+function renderFriday() {
+  const body = document.getElementById('fridayBody');
+  const fb = liveData && liveData.friday ? liveData.friday : null;
+  const weeks = fb ? fb.weeks || [] : [], c = fb ? fb.counts || {} : {};
+  let html = `<section class="home-sec"><div class="home-card"><div class="home-reason">관측 중입니다. 결과(월요일 시가 수익)는 `
+           + `<b>2027-04-26 중간 · 2027-10-25 최종 판정일</b> 전에는 보지 않기로 미리 정했습니다. 이 화면은 매주 후보와 금요일 밤 하락률만 보여 줍니다.</div></div></section>`;
+
+  // ① 이번 주(가장 최근 금요일)
+  const w = weeks[0];
+  html += `<section class="home-sec"><div class="home-sec-head"><span class="home-sec-title">이번 주 후보</span>`
+        + `<span class="home-sec-sub">${w ? escHtml(w.date) : ''}</span></div>`;
+  if (!w) {
+    html += `<div class="home-card"><div class="home-empty">아직 기록이 없습니다. 금요일 20시가 지나면 그날 후보가 올라옵니다.</div></div>`;
+  } else if (!(w.picks || []).length) {
+    html += `<div class="home-card"><div class="home-empty">조건(등락률 10% 이상 · 거래대금 500억 이상)에 맞는 종목이 없었습니다.</div></div>`;
+  } else {
+    html += `<div class="home-card">` + w.picks.map(p => homeRow(
+      `${p.rank}위 ${p.name || p.code}`, p.code,
+      escHtml(`금 ${fmtPct(p.ret)} · ${p.amount == null ? '–' : Number(p.amount).toLocaleString()}억 · 19:40 NXT ${fmtPct(p.nx1940)} · `
+            + `20:00 NXT ${fmtPct(p.nx2000)} (KRX 애프터 ${fmtPct(p.kr2000)})`) + (p.hit ? '<span class="fri-badge">−3% 이하</span>' : '')
+    )).join('') + `</div>`
+      + `<div class="home-sec-sub" style="margin-top:6px;">% 는 그날 KRX 종가 대비. NXT 거래가 없으면 –.</div>`;
+  }
+  html += `</section>`;
+
+  // ② 기록 건수 — 건수만(수익 없음)
+  html += `<section class="home-sec"><div class="home-sec-head"><span class="home-sec-title">기록 건수</span>`
+        + `<span class="home-sec-sub">기록 시작 뒤 누적</span></div>`
+        + `<div class="fri-count"><div><b>${c.fridays || 0}</b><span>금요일</span></div><div><b>${c.picks || 0}</b><span>후보 종목</span></div>`
+        + `<div><b>${c.hits || 0}</b><span>20:00 −3% 이하</span></div></div>`
+        + `<div class="home-sec-sub" style="margin-top:6px;">밤 하락 관측은 −3% 이하 사건이 10건 이상 모여야 판정할 수 있습니다.</div></section>`;
+
+  // ③ 지난 금요일
+  if (weeks.length > 1) {
+    html += `<section class="home-sec"><div class="home-sec-head"><span class="home-sec-title">지난 금요일</span>`
+          + `<span class="home-sec-sub">최근 ${weeks.length - 1}주</span></div><div class="home-card">`
+          + weeks.slice(1).map(x => (x.picks || []).length
+              ? x.picks.map(p => homeRow(`${x.date} · ${p.rank}위 ${p.name || p.code}`, p.code,
+                  escHtml(`금 ${fmtPct(p.ret)} · 20:00 NXT ${fmtPct(p.nx2000)}`) + (p.hit ? '<span class="fri-badge">−3% 이하</span>' : ''))).join('')
+              : `<div class="home-row"><div class="home-row-main"><span class="home-row-name">${escHtml(x.date)}</span>`
+                + `<span class="home-row-meta">대상 없음</span></div></div>`).join('')
+          + `</div></section>`;
+  }
+
+  // ④ 규칙
+  html += `<section class="home-sec"><div class="home-sec-head"><span class="home-sec-title">관측 규칙</span></div>`
+        + `<div class="home-card"><div class="home-ch-title">대상</div><div class="home-reason">금요일 KRX 등락률 10% 이상 29.5% 미만 · 거래대금 500억 이상 보통주 중 거래대금 1~2위.</div></div>`
+        + `<div class="home-card"><div class="home-ch-title">① 1~2위 반씩 종가 매수</div><div class="home-reason">금요일 종가에 두 종목을 반씩 사서 다음 거래일 시가에 모두 판다.</div></div>`
+        + `<div class="home-card"><div class="home-ch-title">② 밤 하락 20:00 매수</div><div class="home-reason">20:00 NXT 가격이 금요일 KRX 종가보다 3% 이상 낮으면 20:00 에 사서 다음 거래일 09:00 KRX 시가에 판다. `
+        + `19:40 에 해당 종목이 있으면 텔레그램으로 알립니다(참고 알림 · 자동주문 없음).</div></div></section>`;
+
+  // ⑤ 봉인 전 탐색 결과 — 관측을 등록하기 전 과거 자료. 결과를 보고 고른 조건이라 앞으로의 자료로 확인 중.
+  html += `<section class="home-sec"><div class="home-sec-head"><span class="home-sec-title">관측 등록 전 탐색 결과</span>`
+        + `<span class="home-sec-sub">과거 자료</span></div>`
+        + `<div class="home-card"><div class="home-ch-title">① 1~2위 반씩 — 계좌 월 환산 / 최대 낙폭</div><table class="fri-table">`
+        + `<tr><th>구간</th><th>월 환산</th><th>최대 낙폭</th></tr>`
+        + `<tr><td>2015~2022 (코로나 제외)</td><td class="mono">+1.50%</td><td class="mono">28%</td></tr>`
+        + `<tr><td>2023~2024</td><td class="mono">+2.49%</td><td class="mono">20%</td></tr>`
+        + `<tr><td>2025-01~2026-08</td><td class="mono">+2.15%</td><td class="mono">10%</td></tr></table>`
+        + `<div class="home-sec-sub" style="margin-top:6px;">2026-01~08 은 월 +3.99% 였지만 같은 기간 코스피는 월 +5.98% — 강세장에서는 지수에 질 수 있습니다.</div></div>`
+        + `<div class="home-card"><div class="home-ch-title">② 밤 하락 20:00 매수 — 2025-03~2026-08</div><table class="fri-table">`
+        + `<tr><th>대상</th><th>건수</th><th>평균</th></tr>`
+        + `<tr><td>금요일 급등주 중 20:00 NXT −3% 이하</td><td class="mono">51</td><td class="mono">+2.39% (승률 71%)</td></tr>`
+        + `<tr><td>대조 — 금요일 급등주 전체 20:00 매수</td><td class="mono">–</td><td class="mono">+1.57%</td></tr>`
+        + `<tr><td>같은 조건 월~목</td><td class="mono">–</td><td class="mono">+0.39%</td></tr></table>`
+        + `<div class="home-sec-sub" style="margin-top:6px;">−3% 문턱은 결과를 보고 고른 것이라, 앞으로의 자료로 다시 확인하는 중입니다. 탐색은 1~2위가 아닌 급등주 전체 기준입니다.</div></div></section>`;
+
+  body.innerHTML = html;
+  body.querySelectorAll('[data-code]').forEach(el => {
+    const code = el.dataset.code;
+    if (!code) return;
+    enableRowKeyboard(el);
+    el.addEventListener('click', () => openNaver(code));
+  });
+}
+
 let openWatchlistCard = null;
 
 function flattenThemeStocks() {
@@ -1725,11 +1822,11 @@ async function renderWatchlist() {
 }
 
 // 🏠 2026-10-30 홈 추가 · 검색상위는 테마 탭에서 함께 그린다.
-const RENDERERS = { home:renderHome, scanner:renderScanner, watchlist:renderWatchlist, report:renderReport,
+const RENDERERS = { home:renderHome, scanner:renderScanner, watchlist:renderWatchlist, report:renderReport, friday:renderFriday,
                     theme:() => { renderTheme(); renderSearchTop(); }, news:renderNews, calendar:renderCalendar };
 function renderAll() { renderHeader(); (RENDERERS[currentTab] || renderScanner)(); }
 
-const TAB_ORDER = ['home','scanner','watchlist','report','theme','news','calendar'];
+const TAB_ORDER = ['home','scanner','watchlist','report','friday','theme','news','calendar'];
 let isTransitioning = false;
 // 🎨 2026-10-29 ② 실행 중 설정 변경도 읽어 탭 전환과 스크롤에 같은 모션 기준을 적용한다.
 const reducedMotionMQ = window.matchMedia('(prefers-reduced-motion: reduce)');
