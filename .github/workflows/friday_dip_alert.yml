@@ -6,7 +6,8 @@ name: 🌙 금요일 밤 하락 알림 (참고 · 19:40)
 # 깃허브 예약은 몇 시간씩 늦을 수 있어(10/8 실측 5시간 44분) 18:00 · 19:15 를 백업으로 건다.
 # 같은 그룹에서 대기하다 앞 실행이 이미 확인했으면 아무것도 하지 않는다. 19:58 이 지나 시작하면 생략한다.
 # 실행당 KIS 토큰 1회 발급(운영 토큰 · 시트 칸은 건드리지 않는다). 공개 저장소에는 data/research_runs/friday_dip_runs.csv 의 건수만.
-# 참고 알림 전용: 선정 조건 · 주문 · 시트 · 운영 Gate 와 무관. 지문 대상 파일이 아니다.
+# 2026-10-30 웹앱 C단계 — 후보와 19:40 · 20:00 시간외 변화를 비공개 시트 '🌙금요일관측' 탭에 남긴다(20:02 까지 기다림).
+# 참고 알림 전용: 선정 조건 · 주문 · 운영 Gate 와 무관. 지문 대상 파일이 아니다.
 
 on:
   workflow_dispatch:
@@ -33,7 +34,7 @@ jobs:
         python-version: '3.10'
     - run: pip install requests gspread oauth2client
 
-    - name: 🔑 시트 읽기 키(secret.json) — 스캐너의 오늘 한투 토큰을 읽기만 한다(kis_token_share)
+    - name: 🔑 시트 키(secret.json) — 스캐너의 오늘 한투 토큰 읽기(kis_token_share) · 🌙금요일관측 탭 기록
       env:
         CREDENTIAL_JSON: ${{ secrets.GCP_CREDENTIALS }}
       run: python -c 'import os,json,pathlib; pathlib.Path("secret.json").write_text(json.dumps(json.loads(os.environ["CREDENTIAL_JSON"])), encoding="utf-8")' || echo "ℹ️ 시트 키 없음 — 토큰을 따로 발급한다"

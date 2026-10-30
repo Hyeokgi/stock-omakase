@@ -13,7 +13,10 @@
 #   (당일 저녁 일봉의 종가 자리도 애프터마켓 현재가다).
 # 19:40 가격: NXT 일봉(NX)의 현재 종가, KRX 애프터마켓(16:00~20:00 연속거래, 2026-09-14~)의 최근 1분봉.
 # 공개 저장소에는 data/research_runs/friday_dip_runs.csv 의 건수만 남긴다. 로그에 종목명 · 코드를 찍지 않는다.
-# 운영 선정 · 주문 · 시트와 무관. 지문 대상 파일이 아니다.
+# 🆕 2026-10-30 웹앱 C단계(사용자 "C단계 금요일 페이지 진행해") — 후보와 19:40 · 20:00 시간외 변화를 비공개 시트
+#   '🌙금요일관측' 탭에 남긴다(알림 뒤 20:02 까지 기다려 20:00 값을 읽는다). 월요일 시가 결과는 적지 않는다 —
+#   관측 판정일(2027-04 · 10) 전에는 결과를 보지 않기로 사전 등록했다. 시트 기록 실패는 알림에 영향을 주지 않는다.
+# 운영 선정 · 주문과 무관. 지문 대상 파일이 아니다.
 # ==========================================================================
 import argparse
 import csv
@@ -36,6 +39,10 @@ SCAN_LO, SCAN_HI = -5.0, 30.0     # 등락률 순위를 훑는 구간(%)
 PROXY_MIN = 3e10                  # 순위의 현재가 × 누적 거래량이 이 이상인 종목만 일봉으로 확인한다
 PAGE = 30                         # 등락률 순위 한 번에 오는 최대 종목 수
 CHECK_AT = "19:40"
+CLOSE_AT = "20:02"                # 20:00 마감값(NXT 종가 · KRX 애프터 마지막 봉)을 읽는 시각
+SHEET_NAME = "🌙금요일관측"
+SHEET_HEADER = ["날짜", "순위", "종목명", "코드", "KRX종가", "당일등락률(%)", "거래대금(억)", "19:40 NXT(%)",
+                "19:40 KRX애프터(%)", "20:00 NXT(%)", "20:00 KRX애프터(%)", "20:00 NXT −3%↓", "상태", "기록시각"]
 LATEST = "19:58"                  # 이 시각이 지나 시작하면 20:00 매수에 쓸 수 없어 아무것도 하지 않는다
 SEND_BY = "19:59"                 # 조회가 늦어져 이 시각을 넘기면 보내지 않는다(2026-10-25 Codex 검토)
 PAUSE = 0.07                      # 한투 호출 사이 쉼(초) — 초당 20건 제한
@@ -196,6 +203,64 @@ def message(day, hhmm, picks, names):
     return text, hits
 
 
+def pct(d):
+    return "" if d is None else round(d * 100, 2)
+
+
+def sheet_rows(day, picks, names, status, stamp):
+    """시트 '🌙금요일관측' 행. 후보가 없으면 그날 상태만 한 줄(금요일 수를 세기 위해)."""
+    if not picks:
+        return [[day] + [""] * 11 + [status, stamp]]
+    out = []
+    for k, r in enumerate(picks, 1):
+        n20 = chg(r.get("nx20"), r["close"])
+        out.append([day, k, names.get(r["code"], r["code"]), r["code"], r["close"], pct(r["ret"]),
+                    round(r["amount"] / 1e8), pct(chg(r.get("nx"), r["close"])), pct(chg(r.get("kr"), r["close"])),
+                    pct(n20), pct(chg(r.get("kr20"), r["close"])),
+                    "" if n20 is None else ("해당" if n20 <= DROP + 1e-12 else "-"), status, stamp])
+    return out
+
+
+def write_sheet(day, rows, keyfile="secret.json"):
+    """같은 날짜 행을 지우고 새로 붙인다(재실행해도 한 벌). 탭이 없으면 만든다."""
+    import gspread
+    from oauth2client.service_account import ServiceAccountCredentials
+    from kis_token_share import SHEET_URL
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    book = gspread.authorize(ServiceAccountCredentials.from_json_keyfile_name(keyfile, scope)).open_by_url(SHEET_URL)
+    try:
+        ws = book.worksheet(SHEET_NAME)
+    except gspread.WorksheetNotFound:
+        ws = book.add_worksheet(title=SHEET_NAME, rows=500, cols=len(SHEET_HEADER))
+        ws.append_row(SHEET_HEADER, value_input_option="RAW")
+    old = [i for i, r in enumerate(ws.get_all_values(), 1) if r and r[0] == day]
+    for i in reversed(old):
+        ws.delete_rows(i)
+    ws.append_rows(rows, value_input_option="RAW")
+
+
+def save_sheet(writer, day, rows):
+    try:
+        writer(day, rows)
+        print(f"🗒️ 시트 기록 {len(rows)}줄")
+    except Exception as e:                       # 키가 없거나 시트 오류 — 알림은 이미 끝났다
+        print(f"⚠️ 시트 기록 생략 {type(e).__name__}")
+
+
+def read_close(kis, picks, day8, wait, clock, sleep):
+    """20:00 마감값. 기다릴 때는 CLOSE_AT 까지. 실패한 종목은 빈칸."""
+    if wait:
+        s = (at(clock(), CLOSE_AT) - clock()).total_seconds()
+        if s > 0:
+            print(f"⏳ 20:00 마감값을 읽으려 {CLOSE_AT} 까지 {s / 60:.0f}분 기다린다")
+            sleep(s)
+    for r in picks:
+        try:
+            r["nx20"], r["kr20"] = nx_now(kis, r["code"], day8), krx_after_now(kis, r["code"], day8, "200000")
+        except Exception:
+            r["nx20"] = r["kr20"] = None
+
+
 def already_done(day, runs_dir=R.RUNS_DIR):
     path = os.path.join(runs_dir, "friday_dip_runs.csv")
     if not os.path.exists(path):
@@ -220,7 +285,7 @@ def at(now, hhmm):
     return now.replace(hour=hh, minute=mm, second=0, microsecond=0)
 
 
-def main(argv=None, env=None, get=None, post=None, clock=None, sleep=time.sleep, runs_dir=R.RUNS_DIR):
+def main(argv=None, env=None, get=None, post=None, clock=None, sleep=time.sleep, runs_dir=R.RUNS_DIR, sheet=write_sheet):
     ap = argparse.ArgumentParser()
     ap.add_argument("--check-at", default=CHECK_AT)
     ap.add_argument("--day", help="시험용 — 금요일 · 기록 확인 없이 그날로 본다(YYYY-MM-DD)")
@@ -233,6 +298,8 @@ def main(argv=None, env=None, get=None, post=None, clock=None, sleep=time.sleep,
     st = {"day": day, "runId": env.get("GITHUB_RUN_ID", ""), "version": VERSION,
           "startedAt": now.isoformat(timespec="seconds"), "incomplete": 0}
     record = (lambda: None) if a.dry_run else (lambda: log_run(st, runs_dir))
+    keep = (lambda rows: None) if a.dry_run else (lambda rows: save_sheet(sheet, day, rows))
+    stamp = lambda: clock().isoformat(timespec="seconds")
     if not a.day:
         if now.weekday() != 4:
             print(f"ℹ️ {day} 은 금요일이 아니다 — 생략")
@@ -282,6 +349,7 @@ def main(argv=None, env=None, get=None, post=None, clock=None, sleep=time.sleep,
         # 조회가 잘렸으면 '대상 없음' 으로 확정하지 않는다 — 뒤 실행이 다시 본다(DONE 에 없는 상태).
         st.update(status="조회불완전" if cut else "대상없음", checkedAt=clock().isoformat(timespec="seconds"), hits=0)
         record()
+        keep(sheet_rows(day, [], {}, st["status"], stamp()))
         return 0
     t = clock()
     hhmmss = min(t.strftime("%H%M%S"), "200000")
@@ -297,24 +365,28 @@ def main(argv=None, env=None, get=None, post=None, clock=None, sleep=time.sleep,
     text, hits = message(day, t.strftime("%H:%M"), picks, names)
     st.update(checkedAt=t.isoformat(timespec="seconds"), hits=hits)
     print(f"🌙 조건 해당 {hits}/{len(picks)}")        # 종목명 · 가격은 공개 로그에 찍지 않는다
+    rc = 0
     if not hits:
         st.update(status="조회불완전" if cut else "해당없음")
         record()
-        return 0
-    if a.dry_run:
+    elif a.dry_run:
         print("ℹ️ 시험 실행 — 보내지 않는다")
         return 0
     # 🔴 2026-10-25 Codex 검토 — 시작할 때만 19:58 을 보면, 조회가 늦어져 20:00 매수 뒤에 보낼 수 있다.
-    if not a.day and clock() >= at(clock(), SEND_BY):
+    elif not a.day and clock() >= at(clock(), SEND_BY):
         print(f"ℹ️ {SEND_BY} 이 지나 20:00 매수에 쓸 수 없어 보내지 않는다")
         st.update(status="늦은발송생략")
         record()
-        return 0
-    sent, err = R.send(text, post, env.get("TELEGRAM_BOT_TOKEN", ""))
-    st.update(status=R.send_status(sent, err), sendStatus=R.send_status(sent, err), note=err)
-    record()
-    print(f"📨 {st['status']}{(' — ' + err) if err else ''}")
-    return 0 if sent else 1
+    else:
+        sent, err = R.send(text, post, env.get("TELEGRAM_BOT_TOKEN", ""))
+        st.update(status=R.send_status(sent, err), sendStatus=R.send_status(sent, err), note=err)
+        record()
+        print(f"📨 {st['status']}{(' — ' + err) if err else ''}")
+        rc = 0 if sent else 1
+    if not a.dry_run:
+        read_close(kis, picks, day8, not a.day, clock, sleep)
+        keep(sheet_rows(day, picks, names, st["status"], stamp()))
+    return rc
 
 
 if __name__ == "__main__":
