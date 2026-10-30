@@ -346,6 +346,21 @@
   .cal-dot.future { background: var(--gold); }
   .cal-detail-empty { text-align:center; padding: 30px 20px; color: var(--text-3); font-size: 12.5px; }
   .cal-detail-head { font-size: 13px; font-weight: 800; color: var(--text-2); padding: 8px 2px 6px; }
+  /* 📅 2026-10-31 D단계 한눈에 보기 */
+  .cal-mode { display: flex; gap: 6px; padding: 8px 16px 0; }
+  .cal-mode button { flex: 1; min-height: 40px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface);
+    color: var(--text-2); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+  .cal-mode button[aria-pressed="true"] { color: var(--text); border-color: var(--gold); }
+  .agenda-day + .agenda-day { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .agenda-date { font-size: 12.5px; font-weight: 800; color: var(--text-2); margin-bottom: 4px; }
+  .agenda-date .soon { color: var(--gold); margin-left: 4px; }
+  .agenda-more { width: 100%; min-height: 40px; margin-top: 8px; border: 1px dashed var(--border); border-radius: 10px;
+    background: transparent; color: var(--text-2); font: inherit; font-size: 12.5px; cursor: pointer; }
+  #calAgenda .history-row { flex-direction: column; align-items: flex-start; gap: 4px; }
+  #calAgenda .history-date { width: auto; font-size: 12.5px; font-weight: 800; color: var(--text-2); }
+  .agenda-freq { display: flex; flex-wrap: wrap; gap: 6px; }
+  .agenda-freq span { font-size: 12px; padding: 4px 10px; border-radius: 999px; background: var(--surface-hi); border: 1px solid var(--border); }
+  .agenda-freq b { color: var(--text); margin-left: 4px; }
 
   .rank-num { width: 22px; font-size: 13px; font-weight: 800; color: var(--text-3); flex-shrink:0; }
   .rank-name { font-size: 14px; font-weight: 700; flex: 1; }
@@ -643,6 +658,13 @@
 
 <div class="view" id="view-calendar">
   <div class="tab-header"><div class="tab-title">📅 캘린더</div></div>
+  <!-- 📅 2026-10-31 D단계 — 첫 화면은 날짜를 누르지 않아도 보이는 '한눈에' 목록. 달력 격자는 버튼으로 전환. -->
+  <div class="cal-mode" role="group" aria-label="보기 방식">
+    <button type="button" data-mode="agenda" aria-pressed="true">한눈에</button>
+    <button type="button" data-mode="grid" aria-pressed="false">달력</button>
+  </div>
+  <main id="calAgenda" style="padding-top:0;"></main>
+  <div id="calGridWrap" hidden>
   <div class="cal-nav">
     <!-- 🎨 2026-10-29 월 이동 버튼의 방향을 말로 제공한다. -->
     <button id="calPrevBtn" aria-label="이전 달">‹</button>
@@ -651,6 +673,7 @@
   </div>
   <div class="cal-grid" id="calGrid"></div>
   <main id="calDetail" style="padding-top:4px;"></main>
+  </div>
 </div>
 
 </div>
@@ -1342,6 +1365,139 @@ function renderCalGrid(dataMap) {
   }
 }
 
+// 테마 태그 줄(누르면 그날 테마 종목 펼침) — 달력 상세와 한눈에 목록이 같이 쓴다.
+function themeRowHtml(label, historyDate, themes) {
+  const tagsHtml = themes.map((t, i) => {
+    const key = `${historyDate}|${t}`;
+    const isActive = openHistoryKey === key;
+    // 🎨 2026-10-29 ② 복기 태그를 펼침 상태가 있는 기본 버튼으로 바꾼다.
+    return `<button type="button" class="history-tag ${i===0?'r1':'r2'} ${isActive?'active-tag':''}" aria-expanded="${isActive}" data-key="${key}" data-date="${historyDate}" data-theme="${t}">${i+1}. ${t}</button>`;
+  }).join('');
+  let detailHtml = '';
+  if (openHistoryKey && openHistoryKey.startsWith(historyDate + '|') && themes.includes(openHistoryKey.split('|')[1])) {
+    const cached = historyDetailCache[openHistoryKey];
+    if (!cached) detailHtml = `<div class="history-detail open"><div class="history-loading">불러오는 중...</div></div>`;
+    else if (cached === 'nodemo') detailHtml = `<div class="history-detail open"><div class="history-nodata">⚙에서 실시간 연동하면 종목 목록이 표시됩니다.</div></div>`;
+    else if (cached === 'nodata' || cached === 'error') detailHtml = `<div class="history-detail open"><div class="history-nodata">종목 데이터를 불러오지 못했습니다.</div></div>`;
+    else {
+      const rowsHtml = cached.map(s => `<div class="history-stock-row" data-code="${s.code||''}"><span>${s.name}</span><div style="display:flex; gap:8px;">${s.val?`<span class="mono" style="color:var(--text-3);">${fmtEok(s.val)}</span>`:''}${changeSpan(s.change)}</div></div>`).join('');
+      detailHtml = `<div class="history-detail open">${rowsHtml}</div>`;
+    }
+  }
+  return `<div class="history-row"><span class="history-date has-data">${label}</span><div class="history-themes">${tagsHtml}</div></div>${detailHtml}`;
+}
+
+function bindThemeRow(item) {
+  item.querySelectorAll('.history-tag').forEach(tag => {
+    tag.addEventListener('click', () => {
+      const key = tag.dataset.key;
+      openHistoryKey = (openHistoryKey === key) ? null : key;
+      renderCalendar();
+      if (openHistoryKey === key) loadHistoryDetail(tag.dataset.date, tag.dataset.theme, key);
+    });
+  });
+  item.querySelectorAll('.history-stock-row').forEach(row => {
+    const code = row.dataset.code;
+    // 🎨 2026-10-29 ② 복기 상세 종목 링크도 키보드로 이동한다.
+    if (code) {
+      enableRowKeyboard(row);
+      row.addEventListener('click', () => window.open(`https://m.stock.naver.com/domestic/stock/${code}/total`, '_blank'));
+    }
+  });
+}
+
+// 그날 일정 목록(🧠 요약이 있으면 펼침) — 달력 상세와 한눈에 목록이 같이 쓴다.
+function eventsHtml(dateStr, events) {
+  return events.map((e, idx) => {
+    const key = `${dateStr}|${idx}`;
+    const hasBrief = !!e.brief;
+    const isOpen = openScheduleKey === key;
+    // 🎨 2026-10-29 ② 일정 제목은 기본 버튼으로, 접힌 본문은 초점 비활성 상태로 제공한다.
+    const titleTag = hasBrief ? `button type="button" aria-expanded="${isOpen}" data-key="${key}"` : 'div';
+    return `<div class="sched-event ${hasBrief ? 'has-brief' : ''}" data-key="${key}">
+        <${titleTag} class="sched-title"><span class="sched-pin">${hasBrief ? '🧠' : '📌'}</span>${e.title}${hasBrief ? '<span class="sched-chevron">▾</span>' : ''}</${hasBrief ? 'button' : 'div'}>
+        ${hasBrief ? `<div class="sched-brief ${isOpen ? 'open' : ''}" ${isOpen ? '' : 'inert'}><div class="sched-brief-inner">${e.brief}</div></div>` : ''}
+      </div>`;
+  }).join('');
+}
+
+function bindEvents(item) {
+  item.querySelectorAll('.sched-event.has-brief').forEach(el => {
+    el.addEventListener('click', () => {
+      const key = el.dataset.key;
+      openScheduleKey = (openScheduleKey === key) ? null : key;
+      renderCalendar();
+    });
+  });
+}
+
+// 📅 2026-10-31 D단계 '한눈에' — 날짜를 누르지 않아도 다가오는 일정과 최근 주도 테마가 한 화면에 보인다.
+//    자료 · 펼침 상태는 달력 격자와 같은 것(dataMap · openHistoryKey · openScheduleKey)을 쓴다.
+let calMode = 'agenda';
+let agendaShowAll = false;
+const AGENDA_DAYS = 14, THEME_ROWS = 10, FREQ_ROWS = 20;
+const DOW_KO = ['일','월','화','수','목','금','토'];
+function dashKey(d) { return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; }
+function agendaDateLabel(dateStr, todayStr) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const t = new Date(y, m - 1, d);
+  const tomorrow = new Date(t.getTime()); tomorrow.setDate(d - 1);
+  const soon = dateStr === todayStr ? '오늘' : dashKey(tomorrow) === todayStr ? '내일' : '';
+  return `${m}.${pad2(d)} (${DOW_KO[t.getDay()]})${soon ? `<span class="soon">${soon}</span>` : ''}`;
+}
+
+function renderCalAgenda(dataMap) {
+  const body = document.getElementById('calAgenda');
+  const now = new Date(), todayStr = dashKey(now);
+  const lastStr = dashKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() + AGENDA_DAYS - 1));
+  const keys = Object.keys(dataMap).sort();
+
+  // ① 다가오는 일정
+  const upcoming = keys.filter(k => k >= todayStr && dataMap[k].events && dataMap[k].events.length);
+  const near = upcoming.filter(k => k <= lastStr), later = upcoming.filter(k => k > lastStr);
+  const shown = agendaShowAll ? upcoming : near;
+  let html = `<section class="home-sec"><div class="home-sec-head"><span class="home-sec-title">다가오는 일정</span>`
+           + `<span class="home-sec-sub">${agendaShowAll ? '등록된 일정 전부' : `오늘부터 ${AGENDA_DAYS}일`}</span></div><div class="home-card">`
+           + (shown.length
+               ? shown.map(k => `<div class="agenda-day"><div class="agenda-date">${agendaDateLabel(k, todayStr)}</div>${eventsHtml(k, dataMap[k].events)}</div>`).join('')
+               : `<div class="home-empty">${AGENDA_DAYS}일 안에 등록된 일정이 없습니다.</div>`)
+           + `</div>`;
+  if (later.length && !agendaShowAll) {
+    const n = later.reduce((a, k) => a + dataMap[k].events.length, 0);
+    html += `<button type="button" class="agenda-more">그 뒤 일정 ${n}건 더 보기</button>`;
+  }
+  html += `</section>`;
+
+  // ② 최근 주도 테마 — 기록된 날(테마가 있는 날)만, 최근 것부터
+  const past = keys.filter(k => k <= todayStr && dataMap[k].themes && dataMap[k].themes.length).reverse();
+  html += `<section class="home-sec"><div class="home-sec-head"><span class="home-sec-title">최근 주도 테마</span>`
+        + `<span class="home-sec-sub">테마를 누르면 그날 종목</span></div>`;
+  if (!past.length) {
+    html += `<div class="home-card"><div class="home-empty">기록된 주도 테마가 없습니다.</div></div>`;
+  } else {
+    const count = {};
+    past.slice(0, FREQ_ROWS).forEach(k => dataMap[k].themes.forEach(t => { count[t] = (count[t] || 0) + 1; }));
+    const freq = Object.entries(count).sort((a, b) => b[1] - a[1]).slice(0, 6);
+    html += `<div class="home-card"><div class="home-ch-title">자주 나온 테마 · 최근 기록 ${Math.min(FREQ_ROWS, past.length)}일</div>`
+          + `<div class="agenda-freq">${freq.map(([t, n]) => `<span>${escHtml(t)}<b>${n}일</b></span>`).join('')}</div></div>`
+          + `<div class="home-card">` + past.slice(0, THEME_ROWS).map(k =>
+              `<div class="agenda-day">${themeRowHtml(agendaDateLabel(k, todayStr), dataMap[k].historyDate, dataMap[k].themes)}</div>`).join('')
+          + `</div><div class="home-sec-sub" style="margin-top:6px;">더 지난 날짜와 달 단위 보기는 위 '달력'에서.</div>`;
+  }
+  html += `</section>`;
+
+  body.innerHTML = html;
+  bindThemeRow(body);
+  bindEvents(body);
+  const more = body.querySelector('.agenda-more');
+  if (more) more.addEventListener('click', () => { agendaShowAll = true; renderCalendar(); });
+}
+
+document.querySelectorAll('.cal-mode button').forEach(b => b.addEventListener('click', () => {
+  calMode = b.dataset.mode;
+  renderCalendar();
+}));
+
 function renderCalDetail(dataMap) {
   const wrap = document.getElementById('calDetail');
   wrap.innerHTML = '';
@@ -1360,40 +1516,8 @@ function renderCalDetail(dataMap) {
     item.className = 'list-item';
     item.style.flexDirection = 'column';
     item.style.alignItems = 'stretch';
-    const tagsHtml = data.themes.map((t, i) => {
-      const key = `${historyDate}|${t}`;
-      const isActive = openHistoryKey === key;
-      // 🎨 2026-10-29 ② 복기 태그를 펼침 상태가 있는 기본 버튼으로 바꾼다.
-      return `<button type="button" class="history-tag ${i===0?'r1':'r2'} ${isActive?'active-tag':''}" aria-expanded="${isActive}" data-key="${key}" data-date="${historyDate}" data-theme="${t}">${i+1}. ${t}</button>`;
-    }).join('');
-    let detailHtml = '';
-    if (openHistoryKey && openHistoryKey.startsWith(historyDate + '|') && data.themes.includes(openHistoryKey.split('|')[1])) {
-      const cached = historyDetailCache[openHistoryKey];
-      if (!cached) detailHtml = `<div class="history-detail open"><div class="history-loading">불러오는 중...</div></div>`;
-      else if (cached === 'nodemo') detailHtml = `<div class="history-detail open"><div class="history-nodata">⚙에서 실시간 연동하면 종목 목록이 표시됩니다.</div></div>`;
-      else if (cached === 'nodata' || cached === 'error') detailHtml = `<div class="history-detail open"><div class="history-nodata">종목 데이터를 불러오지 못했습니다.</div></div>`;
-      else {
-        const rowsHtml = cached.map(s => `<div class="history-stock-row" data-code="${s.code||''}"><span>${s.name}</span><div style="display:flex; gap:8px;">${s.val?`<span class="mono" style="color:var(--text-3);">${fmtEok(s.val)}</span>`:''}${changeSpan(s.change)}</div></div>`).join('');
-        detailHtml = `<div class="history-detail open">${rowsHtml}</div>`;
-      }
-    }
-    item.innerHTML = `<div class="history-row"><span class="history-date has-data">주도 테마</span><div class="history-themes">${tagsHtml}</div></div>${detailHtml}`;
-    item.querySelectorAll('.history-tag').forEach(tag => {
-      tag.addEventListener('click', () => {
-        const key = tag.dataset.key;
-        openHistoryKey = (openHistoryKey === key) ? null : key;
-        renderCalendar();
-        if (openHistoryKey === key) loadHistoryDetail(tag.dataset.date, tag.dataset.theme, key);
-      });
-    });
-    item.querySelectorAll('.history-stock-row').forEach(row => {
-      const code = row.dataset.code;
-      // 🎨 2026-10-29 ② 복기 상세 종목 링크도 키보드로 이동한다.
-      if (code) {
-        enableRowKeyboard(row);
-        row.addEventListener('click', () => window.open(`https://m.stock.naver.com/domestic/stock/${code}/total`, '_blank'));
-      }
-    });
+    item.innerHTML = themeRowHtml('주도 테마', historyDate, data.themes);
+    bindThemeRow(item);
     wrap.appendChild(item);
   }
 
@@ -1404,25 +1528,8 @@ function renderCalDetail(dataMap) {
     item.style.flexDirection = 'column';
     item.style.alignItems = 'stretch';
     item.style.marginTop = (data.themes && data.themes.length) ? '8px' : '0';
-    const eventsHtml = data.events.map((e, idx) => {
-      const key = `${selectedCalDateStr}|${idx}`;
-      const hasBrief = !!e.brief;
-      const isOpen = openScheduleKey === key;
-      // 🎨 2026-10-29 ② 일정 제목은 기본 버튼으로, 접힌 본문은 초점 비활성 상태로 제공한다.
-      const titleTag = hasBrief ? `button type="button" aria-expanded="${isOpen}" data-key="${key}"` : 'div';
-      return `<div class="sched-event ${hasBrief ? 'has-brief' : ''}" data-key="${key}">
-          <${titleTag} class="sched-title"><span class="sched-pin">${hasBrief ? '🧠' : '📌'}</span>${e.title}${hasBrief ? '<span class="sched-chevron">▾</span>' : ''}</${hasBrief ? 'button' : 'div'}>
-          ${hasBrief ? `<div class="sched-brief ${isOpen ? 'open' : ''}" ${isOpen ? '' : 'inert'}><div class="sched-brief-inner">${e.brief}</div></div>` : ''}
-        </div>`;
-    }).join('');
-    item.innerHTML = eventsHtml;
-    item.querySelectorAll('.sched-event.has-brief').forEach(el => {
-      el.addEventListener('click', () => {
-        const key = el.dataset.key;
-        openScheduleKey = (openScheduleKey === key) ? null : key;
-        renderCalendar();
-      });
-    });
+    item.innerHTML = eventsHtml(selectedCalDateStr, data.events);
+    bindEvents(item);
     wrap.appendChild(item);
   }
 
@@ -1434,12 +1541,16 @@ function renderCalDetail(dataMap) {
 function renderCalendar() {
   // 🎨 2026-10-29 ② 동기·비동기 재렌더 때 아직 달력 안에 있는 초점만 같은 조작으로 복원한다.
   const focused = document.activeElement;
-  const focusKey = focused?.closest('#calDetail') ? focused.dataset.key : null;
+  const focusKey = focused?.closest('#calDetail, #calAgenda') ? focused.dataset.key : null;
   const focusDate = focused?.closest('#calGrid') ? focused.dataset.date : null;
   const dataMap = buildCalDataMap();
-  renderCalGrid(dataMap);
-  renderCalDetail(dataMap);
-  const controls = document.querySelectorAll('#calDetail button[data-key], #calGrid button[data-date]');
+  // 📅 2026-10-31 D단계 — 한눈에 / 달력 중 하나만 그린다.
+  document.getElementById('calAgenda').style.display = calMode === 'agenda' ? '' : 'none';
+  document.getElementById('calGridWrap').hidden = calMode !== 'grid';
+  document.querySelectorAll('.cal-mode button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.mode === calMode)));
+  if (calMode === 'agenda') renderCalAgenda(dataMap);
+  else { renderCalGrid(dataMap); renderCalDetail(dataMap); }
+  const controls = document.querySelectorAll('#calDetail button[data-key], #calAgenda button[data-key], #calGrid button[data-date]');
   const restore = [...controls].find(el => (focusKey && el.dataset.key === focusKey) || (focusDate && el.dataset.date === focusDate));
   if (restore) restore.focus({ preventScroll: true });
 }
