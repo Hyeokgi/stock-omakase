@@ -1,0 +1,31 @@
+name: 🔒 봉인 사본 감시 (만료 전 복원 알림)
+
+# 2026-11-01 전략 평가 우선순위 3 — 드라이브 업로드에 실패해 봉인 사본(artifact 14일)으로만 남은 후보 자료가 있으면
+# 실패로 끝나 깃허브 실패 메일이 가게 한다(사용자 결정 — 텔레그램 채널에는 보내지 않는다). 없으면 성공으로 조용히 끝난다.
+# 공개 색인 private_index.csv 와 artifact 목록만 읽는다. 쓰는 것 · 비밀값 없음(GITHUB_TOKEN 읽기 전용).
+# 참고 점검 전용: 선정 조건 · 운영 Gate 와 무관. 지문 대상 파일이 아니다.
+
+on:
+  schedule:
+    - cron: '0 10 * * 1-5'    # 평일 19:00 KST — 그날 스캐너 회차가 끝난 뒤
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.10'
+
+    - name: 🔒 봉인 사본 점검
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: python private_sealed_watch.py
