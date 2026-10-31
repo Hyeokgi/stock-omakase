@@ -367,7 +367,7 @@ def simulate(orders, sessions, prices, cfg):
         def exposures(field):
             codes,themes = {},{}
             for p in active:
-                value = p['qty']*bars[p['code']][field]
+                value = p['qty']*(field(p) if callable(field) else bars[p['code']][field])
                 codes[p['code']] = codes.get(p['code'],0)+value
                 for t in p['themes']:
                     themes[t] = themes.get(t,0)+value
@@ -398,17 +398,23 @@ def simulate(orders, sessions, prices, cfg):
 
         # ③ 15:05 매수 — 종베. 장중이므로 시가 이후다.
         #    거래 가능 판정은 그 시점 스냅샷 관측으로 한다(일별 tradable 로 대신하지 않는다).
+        # 🔧 2026-11-01 결함 I(10-25 전체 검토, Codex) — 한도 판단을 그날 종가로 했다. 15:05 에는 종가를 모른다.
+        #    보유 종목은 그 종목의 15:05 관측 가격, 없으면 그날 시가(15:05 전에 아는 값), 새 종목은 15:05 가격으로 잰다.
+        def mark_1505(p):
+            q = (snapshot_1505(prices, p['code'], day) or {}).get('price_1505')
+            ok = isinstance(q, (int, float)) and not isinstance(q, bool) and math.isfinite(q) and q > 0
+            return float(q) if ok else bars[p['code']]['open']
         for order in bet_now:
             px, why = entry_1505(prices, order['code'], day)
             if why:
                 rejected.append(dict(id=order['id'],date=day,reason=why))
                 continue
             bars.setdefault(order['code'], bar(prices, order['code'], day))
-            codes,themes = exposures('close')       # 15:05 는 종가 쪽에 가깝다
+            codes,themes = exposures(mark_1505)
             fill = px*(1+cfg.slippage)
             qty = math.floor(cfg.ticket_cash/(fill*(1+cfg.buy_fee)))
             debit = qty*fill*(1+cfg.buy_fee)
-            value = qty*bars[order['code']]['close']
+            value = qty*px
             nav_after = cash+sum(codes.values())-debit+value
             reason = None
             if qty<=0: reason='below_one_share'
