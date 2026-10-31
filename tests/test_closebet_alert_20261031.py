@@ -50,9 +50,14 @@ class Message(unittest.TestCase):
     def test_mark_footer_and_no_results(self):
         text = C.message("2026-10-30", "15:05", [cand("a", 0.2, 6e10, 3.35), cand("b", 0.18, 5e10, 3.4)],
                          [cand("a", 0.2, 6e10)])
-        self.assertIn("1. 이름a(a) +20.0% · 600억 · 거래량 3.4배 ✓", text)   # 경계 3.35 는 해당
-        self.assertIn("2. 이름b(b) +18.0% · 500억 · 거래량 3.4배\n", text)   # 3.4 > 3.35 → 표시 없음
+        # 2026-10-31 — 15:05 누적 배수는 관측 1(하루 전체 기준)과 달라 ✓ 를 붙이지 않는다
+        self.assertIn("1. 이름a(a) +20.0% · 600억 · 거래량 3.4배\n", text)
+        self.assertIn("2. 이름b(b) +18.0% · 500억 · 거래량 3.4배\n", text)
+        self.assertNotIn("✓", text)
+        self.assertIn("조건 표시는 하지 않습니다", text)
         self.assertIn("금요일 1·2위", text)
+        self.assertIn("30억 조건은 확인 안 함", text)
+        self.assertNotIn("빠진 종목", text)
         self.assertTrue(text.endswith(T.footer("home")))
         self.assertNotIn("수익률", text)
 

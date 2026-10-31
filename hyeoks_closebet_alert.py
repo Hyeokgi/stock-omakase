@@ -4,8 +4,9 @@
 # --------------------------------------------------------------------------
 # 사용자 답 2026-10-31(웹앱 E단계): "15:05 종베 후보 알림", "금요일 1,2등주 … 메시지를 전송해줘".
 # 평일 — KRX 등락률 15% 이상 29.5% 미만 · 거래대금(현재가 × 누적 거래량) 500억 이상 보통주, 거래대금 순 상위 5.
-#   거래량 배수(오늘 15:05 까지 ÷ 직전 20거래일 평균)와 허브 관측 1(거래량 배수 ≤ 3.35)의 조건 해당 여부를 함께 적는다.
-#   관측 1 의 테마 소속 · 시총 조건은 비공개 스냅샷이라 여기서는 보지 않는다(참고 표시일 뿐 채점은 허브 규칙).
+#   거래량 배수(오늘 15:05 까지 ÷ 직전 20거래일 하루 평균)를 함께 적는다.
+#   🔴 2026-10-31 전략 평가 후속 — 허브 관측 1(≤ 3.35배)은 하루 전체 거래량 기준이라 15:05 누적으로 재면 낮게 나온다.
+#   그래서 관측 1 조건 해당(✓) 표시는 뺐다. ETF · ETN 은 빼고 관리종목 · 시장경보 · 스팩은 표시만(F.top_stocks).
 # 금요일 — 위에 더해 10% 이상 29.5% 미만 · 500억 이상 거래대금 1~2위(허브 관측 5 · 6 의 대상, 15:05 잠정).
 # 관측 기간 결과(수익)는 판정일(2027-04 · 10) 전에는 어디에도 싣지 않는다 — 후보만 알린다.
 # 15:05 값은 잠정이다(종가 · 거래량은 15:30 까지 바뀐다). 15:18 이 지나면 종가 매수에 쓸 수 없어 보내지 않는다.
@@ -28,7 +29,6 @@ KST = R.KST
 START_AT, SEND_BY = "15:05", "15:18"
 HOT_LO, FRI_LO, RET_HI = 0.15, 0.10, 0.295
 AMOUNT_MIN = 5e10
-VOL_MULT_MAX = 3.35
 TOP_HOT, TOP_FRI = 5, 2
 
 
@@ -46,9 +46,10 @@ def rows_to_cands(rows):
     return out
 
 
-def choose(cands, lo, top):
-    ev = [c for c in cands if lo - 1e-9 <= c["ret"] < RET_HI and c["amount"] >= AMOUNT_MIN]
-    return sorted(ev, key=lambda c: -c["amount"])[:top]
+def choose(cands, lo, top=None):
+    ev = sorted((c for c in cands if lo - 1e-9 <= c["ret"] < RET_HI and c["amount"] >= AMOUNT_MIN),
+                key=lambda c: -c["amount"])
+    return ev[:top] if top else ev
 
 
 def vol_avg20(kis, code, day8):
@@ -64,23 +65,23 @@ def vol_avg20(kis, code, day8):
 
 def line(k, c):
     m = c.get("mult")
-    mult = "거래량 배수 –" if m is None else f"거래량 {m:.1f}배{' ✓' if m <= VOL_MULT_MAX + 1e-9 else ''}"
-    return f"{k}. {c['name']}({c['code']}) {c['ret'] * 100:+.1f}% · {c['amount'] / 1e8:,.0f}억 · {mult}"
+    mult = "거래량 배수 –" if m is None else f"거래량 {m:.1f}배"
+    return f"{k}. {c['name']}({c['code']}){F.tag_text(c, c['name'])} {c['ret'] * 100:+.1f}% · {c['amount'] / 1e8:,.0f}억 · {mult}"
 
 
-def message(day, hhmm, hot, fri):
+def message(day, hhmm, hot, fri, cut=False):
     wd = "월화수목금토일"[datetime.date.fromisoformat(day).weekday()]
     out = [f"[15:05 종베 후보 · 잠정] {day} ({wd}) {hhmm}",
            "급등 15% 이상 · 거래대금 500억 이상 · 거래대금 순 (KRX 지금 기준)"]
     out += [line(k, c) for k, c in enumerate(hot, 1)] or ["해당 종목 없음"]
     if hot:
-        out.append("✓ = 거래량이 직전 20일 평균의 3.35배 이하(관측 1 조건 · 테마 · 시총 확인은 안 함)")
+        out.append("거래량 배수 = 15:05 까지 거래량 ÷ 직전 20일 하루 평균. 하루 전체로 재는 관측 1(3.35배 이하)과 기준이 달라 조건 표시는 하지 않습니다.")
     if fri is not None:
-        out += ["", "금요일 1·2위 — 10% 이상 · 500억 이상 거래대금 순(관측 5 · 6 대상)"]
-        out += [f"{k}위 {c['name']}({c['code']}) {c['ret'] * 100:+.1f}% · {c['amount'] / 1e8:,.0f}억" for k, c in enumerate(fri, 1)] \
-            or ["해당 종목 없음"]
+        out += ["", "금요일 1·2위 — 10% 이상 · 500억 이상 거래대금 순(관측 5 · 6 대상, 관측 5 의 20일 평균 거래대금 30억 조건은 확인 안 함)"]
+        out += [f"{k}위 {c['name']}({c['code']}){F.tag_text(c, c['name'])} {c['ret'] * 100:+.1f}% · {c['amount'] / 1e8:,.0f}억"
+                for k, c in enumerate(fri, 1)] or ["해당 종목 없음"]
     out.append("\n종가 · 거래량은 15:30 까지 바뀝니다. 관측 결과(수익)는 판정일 전에는 싣지 않습니다.")
-    return "\n".join(out) + footer("home")
+    return "\n".join(out) + (F.CUT_NOTE if cut else "") + footer("home")
 
 
 def main(argv=None, env=None, get=None, post=None, clock=None, sleep=time.sleep):
@@ -118,8 +119,8 @@ def main(argv=None, env=None, get=None, post=None, clock=None, sleep=time.sleep)
         rows, calls, cut = F.scan(lambda iscd, lo, hi, plo=None, phi=None: F.rank_band(kis, iscd, lo, hi, plo, phi),
                                   lo=FRI_LO * 100, hi=30.0)
         cands = rows_to_cands(rows)
-        hot = choose(cands, HOT_LO, TOP_HOT)
-        fri = choose(cands, FRI_LO, TOP_FRI) if is_fri else None
+        hot = F.top_stocks(kis, choose(cands, HOT_LO), TOP_HOT)
+        fri = F.top_stocks(kis, choose(cands, FRI_LO), TOP_FRI) if is_fri else None
         for c in hot:
             try:
                 avg = vol_avg20(kis, c["code"], day8)
@@ -132,7 +133,7 @@ def main(argv=None, env=None, get=None, post=None, clock=None, sleep=time.sleep)
     t = clock()
     print(f"🔎 순위 호출 {calls}회 · 순위 종목 {len(rows)} · 15% 후보 {len(hot)}"
           + (f" · 금요일 1~2위 {len(fri)}" if fri is not None else "") + (f" · ⚠️ 잘린 구간 {len(cut)}" if cut else ""))
-    text = message(day, t.strftime("%H:%M"), hot, fri)
+    text = message(day, t.strftime("%H:%M"), hot, fri, cut=bool(cut))
     if a.dry_run:
         print("ℹ️ 시험 실행 — 보내지 않는다(본문은 종목 정보라 로그에 찍지 않는다)")
         return 0
