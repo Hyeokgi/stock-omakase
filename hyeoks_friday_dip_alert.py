@@ -164,9 +164,48 @@ def day_bar(kis, code, day8):
     return {"code": code, "close": c, "ret": c / pc - 1, "amount": c * v}
 
 
-def pick(bars):
-    ev = [b for b in bars if b and RET_LO - 1e-9 <= b["ret"] < RET_HI and b["amount"] >= AMOUNT_MIN]
-    return sorted(ev, key=lambda b: -b["amount"])[:TOP]
+def pick(bars, top=TOP):
+    ev = sorted((b for b in bars if b and RET_LO - 1e-9 <= b["ret"] < RET_HI and b["amount"] >= AMOUNT_MIN),
+                key=lambda b: -b["amount"])
+    return ev[:top] if top else ev
+
+
+WARN = {"01": "투자주의", "02": "투자경고", "03": "투자위험"}
+
+
+def stock_tags(kis, code):
+    """현재가 조회의 종목 상태 → (ETF · ETN 인가, 표시 태그).
+    🆕 2026-10-31 전략 평가 후속 — ETF · ETN 은 관측 대상(KIND 상장사 보통주)이 아니라 뺀다.
+    관리종목 · 시장경보는 관측 대상에 들어 있어 빼지 않고 표시만 한다(알림을 관측 정의와 맞춘다)."""
+    o = kis("/uapi/domestic-stock/v1/quotations/inquire-price", "FHKST01010100",
+            {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code}).get("output") or {}
+    fund = (o.get("rprs_mrkt_kor_name") or "") in ("ETF", "ETN") or (o.get("bstp_kor_isnm") or "").startswith(("ETF", "ETN"))
+    tags = (["관리종목"] if o.get("mang_issu_cls_code") == "Y" else []) + \
+        ([WARN[o.get("mrkt_warn_cls_code")]] if o.get("mrkt_warn_cls_code") in WARN else [])
+    return fund, tags
+
+
+def top_stocks(kis, ranked, top):
+    """거래대금 순 후보에서 ETF · ETN 을 건너뛰고 앞에서 top 개. 상태 조회가 실패한 종목은 빼지 않고 표시한다."""
+    out = []
+    for r in ranked:
+        if len(out) >= top:
+            break
+        try:
+            fund, tags = stock_tags(kis, r["code"])
+        except Exception:
+            fund, tags = False, ["상태 확인 못 함"]
+        if not fund:
+            out.append(dict(r, tags=tags))
+    return out
+
+
+def tag_text(r, name):
+    tags = list(r.get("tags") or []) + (["스팩"] if "스팩" in (name or "") else [])
+    return f" [{' · '.join(tags)}]" if tags else ""
+
+
+CUT_NOTE = "\n⚠️ 순위 조회 일부 구간을 끝까지 나누지 못했습니다 — 빠진 종목이 있을 수 있습니다."
 
 
 def nx_now(kis, code, day8):
@@ -189,7 +228,7 @@ def chg(p, close):
     return None if p is None else p / close - 1
 
 
-def message(day, hhmm, picks, names):
+def message(day, hhmm, picks, names, cut=False):
     """picks — day_bar 결과에 nx · kr(19:40 가격)를 더한 것. (본문, 조건 해당 수)."""
     lines, hits = [], 0
     for k, r in enumerate(picks, 1):
@@ -197,13 +236,17 @@ def message(day, hhmm, picks, names):
         flag = any(d is not None and d <= DROP + 1e-12 for d in (dn, dk))
         hits += flag
         f = lambda p, d: "거래 없음" if p is None else f"{p:,.0f}원 ({d * 100:+.1f}%)"
-        lines.append(f"{k}위 {names.get(r['code'], r['code'])}({r['code']}) — KRX 종가 {r['close']:,.0f}원"
+        name = names.get(r['code'], r['code'])
+        lines.append(f"{k}위 {name}({r['code']}){tag_text(r, name)} — KRX 종가 {r['close']:,.0f}원"
                      f"(당일 {r['ret'] * 100:+.1f}%, 거래대금 {r['amount'] / 1e8:,.0f}억)\n"
                      f"   NXT {f(r['nx'], dn)} · KRX 애프터 {f(r['kr'], dk)}{'  ← 3% 이상 하락' if flag else ''}")
     tail = ("\n\n조건(종가 대비 −3% 이하) 해당 종목이 있습니다. 관측 규칙은 20:00 NXT 종가 매수 → 다음 거래일 09:00 KRX 시가 매도. "
             "20:00 확정값은 20:02 에 한 번 더 알립니다."
             if hits else "\n\n지금은 조건(종가 대비 −3% 이하) 해당 없음. 20:00 에 해당하면 20:02 에 따로 알립니다.")
-    text = f"[금요일 1·2위 · 밤 하락 확인] {day} {hhmm}\n" + "\n".join(lines) + tail + footer("friday")
+    # 🆕 2026-10-31 — 관측 ⑥ 은 금요일 급등주 전체가 대상, 이 알림은 거래대금 1·2위만 본다(사용자 요청 '1,2등주')
+    tail += "\n관측 ⑥(금요일 밤 하락)은 10% 이상 · 500억 이상 급등주 전체가 대상이고, 이 알림은 그중 거래대금 1·2위만 봅니다."
+    text = (f"[금요일 1·2위 · 밤 하락 확인] {day} {hhmm}\n" + "\n".join(lines) + tail + (CUT_NOTE if cut else "")
+            + footer("friday"))
     return text, hits
 
 
@@ -223,7 +266,7 @@ def close_message(day, picks, names):
     if not (was or now):
         return None, 0
     f = lambda p, d: "거래 없음" if p is None else f"{p:,.0f}원 ({d * 100:+.1f}%)"
-    lines = [f"{k}위 {names.get(r['code'], r['code'])}({r['code']}) — 20:00 NXT {f(r.get('nx20'), chg(r.get('nx20'), r['close']))}"
+    lines = [f"{k}위 {names.get(r['code'], r['code'])}({r['code']}){tag_text(r, names.get(r['code']))} — 20:00 NXT {f(r.get('nx20'), chg(r.get('nx20'), r['close']))}"
              f" · KRX 애프터 {f(r.get('kr20'), chg(r.get('kr20'), r['close']))}{'  ← 조건 해당' if r['code'] in now else ''}"
              for k, r in enumerate(picks, 1)]
     tail = (f"\n\n20:00 NXT 종가 기준 조건(KRX 종가 대비 −3% 이하) 해당 {len(now)}종목." if now
@@ -364,7 +407,7 @@ def main(argv=None, env=None, get=None, post=None, clock=None, sleep=time.sleep,
         kis = kis_getter(get, key, secret, token_for_run(get, post, key, secret, BASE, token)[0], sleep)
         rows, calls, cut = scan(lambda iscd, lo, hi, plo=None, phi=None: rank_band(kis, iscd, lo, hi, plo, phi))
         cands = prelist(rows)
-        picks = pick([day_bar(kis, c, day8) for c in cands])
+        picks = top_stocks(kis, pick([day_bar(kis, c, day8) for c in cands], top=None), TOP)
     except Exception as e:
         print(f"❌ 후보 조회 실패 {str(e)[:80]}")
         st.update(status="오류", note="후보 조회 실패")
@@ -415,7 +458,7 @@ def main(argv=None, env=None, get=None, post=None, clock=None, sleep=time.sleep,
         record()
         return 1
     names = {c: (rows[c].get("hts_kor_isnm") or c) for c in rows}
-    text, hits = message(day, t.strftime("%H:%M"), picks, names)
+    text, hits = message(day, t.strftime("%H:%M"), picks, names, cut=bool(cut))
     st.update(checkedAt=t.isoformat(timespec="seconds"), hits=hits)
     print(f"🌙 조건 해당 {hits}/{len(picks)}")        # 종목명 · 가격은 공개 로그에 찍지 않는다
     if a.dry_run:

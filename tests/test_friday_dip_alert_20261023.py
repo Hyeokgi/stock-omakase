@@ -41,6 +41,9 @@ class FakeKis:
             return Resp({"rt_cd": "0", "output": rows[:A.PAGE]})
         code = p["FID_INPUT_ISCD"]
         s = self.stocks[code]
+        if tr == "FHKST01010100":            # 현재가 — 종목 상태(2026-10-31 ETF 제외 · 관리 · 경고 표시)
+            return Resp({"rt_cd": "0", "output": dict({"mrkt_warn_cls_code": "00", "mang_issu_cls_code": "N",
+                                                        "rprs_mrkt_kor_name": "KOSDAQ"}, **s.get("status", {}))})
         if tr == "FHKST03010100" and p["FID_COND_MRKT_DIV_CODE"] == "J":
             out = [{"stck_bsop_date": "20261022", "stck_clpr": str(s["prev"]), "acml_vol": "1"},
                    {"stck_bsop_date": DAY8, "stck_clpr": str(s["evening"]), "acml_vol": str(s["vol"])}]
