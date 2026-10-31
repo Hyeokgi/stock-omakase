@@ -278,9 +278,9 @@ def generate_deep_report(st_type, best_cand, is_warning_market=False, KIS_TOKEN=
     
     strategy_instruction = ""
     if is_warning_market:
-        strategy_instruction = "🚨 현재 국내 증시는 보수적 운영 및 방어적 매매가 요망되는 하락/조정 장세입니다. 리스크 관리를 극대화하는 관점으로 서술하십시오."
+        strategy_instruction = "🚨 현재 국내 증시는 하락/조정 장세입니다. 위험 요인과 손실 가능성을 중심으로 서술하십시오."
     else:
-        strategy_instruction = "✨ 현재 국내 증시는 공격적 운영이 가능한 지지 장세입니다. 주도주 돌파 및 적극적인 수익 극대화 관점으로 서술하십시오."
+        strategy_instruction = "✨ 현재 국내 증시는 지지 장세입니다. 주도주 돌파 가능성과 그 전제 조건을 중심으로 서술하십시오."
 
     eng_strategy = {"short": "AGGRESSIVE TREND MOMENTUM STRATEGY", "mid": "TECHNICAL OVERSOLD SWING REVERSAL",
                      "long": "DEFENSIVE PLATFORM ACCUMULATION LONG-TERM"}.get(st_type, "AGGRESSIVE TREND MOMENTUM STRATEGY")
@@ -338,7 +338,8 @@ def generate_deep_report(st_type, best_cand, is_warning_market=False, KIS_TOKEN=
 [HYEOKS 딥리딩 절대 지침 - 명심하십시오]
 1. 분량 및 깊이: 귀하의 최고 수준의 통찰력을 발휘하여 논리적으로 서술하되, 전체 분량이 A4 최대 2페이지를 넘지 않도록 하십시오.
 2. 🚨 [할루시네이션(거짓 정보) 엄격 금지]: 차트를 판독하여 지지/저항선을 제시할 때, 반드시 위 [입력 데이터]에 제공된 ★확정 현재가({best_cand['curr_p']:,}원)를 기준으로 상/하단 가격을 논리적으로 계산하십시오.
-3. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'O' if st_type=='long' else 'X'} 형식으로 숫자로만 출력하십시오.
+3. 표현: 독자에게 매수·매도를 지시하는 명령형, 수익 단정, '강력 권고' 같은 과장 표현을 쓰지 말고 관찰한 사실과 조건('~이면 ~할 수 있다')으로 서술하십시오. 이 리포트는 개인 연구 기록이며 매매 권유가 아닙니다.
+4. 가상계좌 규칙: 리포트 마지막 줄에만 [DATA] 목표가:00000, 손절가:00000, 분할매수:{'O' if st_type=='long' else 'X'} 형식으로 숫자로만 출력하십시오.
    목표가·손절가는 원 단위 정수이며 반드시 손절가 < 확정 현재가({best_cand['curr_p']:,}원) < 목표가 여야 합니다. 시스템이 이 값을 자동 검증합니다.
 {price_band_instruction}{earnings_instruction}
 
@@ -492,7 +493,7 @@ try:
         #    → 오독 위험이 큰 단어는 제거, 텍스트 조건은 시장요약이 실제로 채워져 있을 때만 적용,
         #    실시간 수치는 코스피 단독이 아니라 코스피·코스닥 중 더 나쁜 쪽(worst_live_rate)으로 판단.
         market_stage = 3
-        stage_text = "STAGE 3 (패닉 장세 - 서킷 위험 임계점 돌파,전원 사격 중지)"
+        stage_text = "STAGE 3 (패닉 장세 - 서킷 위험 임계점 돌파, 신규 매수 중단 구간)"
     print(f"📡 [실시간 시장 위험도 연산 판독 완료]: {stage_text} (상태: {korean_market_status or '미확인'} / 코스피:{kospi_rate_fallback:.2f}%)")
  
     # ── [복원] 주요일정 이슈브리핑 — 굵직한 일정을 골라 AI가 섹터영향/체크포인트 분석 (주 1회) ──
@@ -605,19 +606,19 @@ try:
         
         if market_stage == 3:
             market_context = "🚨 [비상 국면] 국내 증시는 현재 무차별 패닉 투매가 발생하는 극단적 고위험 상태입니다."
-            veto_template = "⚠️ [매수 보류] 시장 패닉셀 국면 진입으로 인해 전 종목 매수 보류 및 현금 100% 관망을 강력 권고합니다."
+            veto_template = "⚠️ [매수 보류] 시장 급락(패닉) 구간이라 이 시스템은 오늘 모든 종목의 신규 매수를 보류합니다."
         elif market_stage == 2:
             market_context = "⚠️ [주의 국면] 국내 증시는 현재 변동성이 큰 하락/횡보 장세입니다."
-            veto_template = "⚠️ [매수 보류] 하락 장세로 인한 시장 리스크 과다 및 단기 상승 동력 부족으로 관망 권장"
+            veto_template = "⚠️ [매수 보류] 하락 장세로 시장 위험이 크고 단기 상승 동력이 약해 이 시스템 기준으로 매수를 보류합니다."
         else:
             market_context = "🟢 [정상 국면] 국내 증시는 현재 정상적인 추세 매매 및 돌파 랠리가 가능한 양호한 장세입니다."
-            veto_template = "⚠️ [매수 보류] 지수 장세는 양호하나, 본 종목의 독자적인 단기 기술적 과열(이격 과다) 또는 상단 매물 저항으로 인해 관망을 권장합니다."
+            veto_template = "⚠️ [매수 보류] 지수 장세는 양호하나, 본 종목의 단기 기술적 과열(이격 과다) 또는 상단 매물 저항으로 이 시스템 기준 매수를 보류합니다."
  
         if market_stage == 3:
             guide_text = f"""
-            🚨🚨 [EMERGENCY: 시스템 전원 사격 중지 명령] 🚨🚨
+            🚨🚨 [EMERGENCY: 시스템 신규 매수 중단] 🚨🚨
             현재 시장은 {stage_text} 상태입니다. 기술적 지표나 개별 종목의 모멘텀 유무와 상관없이 무차별 연쇄 패닉 투매가 발생하는 고위험 국면입니다.
-            1. 어떠한 낙관론이나 억지 매수 타점 시나리오도 전개하지 마십시오. 무조건 강력한 '매수 보류(Veto)' 조치를 집행해야 합니다.
+            1. 어떠한 낙관론이나 억지 매수 타점 시나리오도 전개하지 마십시오. 모든 종목을 '매수 보류(Veto)'로 처리합니다.
             2. briefing 본문은 반드시 토씨 하나 틀리지 않고 정확하게 다음 문장으로만 출력하십시오: "{veto_template}"
             3. target_price와 stop_loss는 어떠한 계산값도 출력하지 말고 반드시 0으로 처리하십시오.
             """
@@ -647,7 +648,7 @@ try:
             1. 제공된 데이터를 분석했을 때, 단기 모멘텀이 빠르게 소멸할 위험이 있거나, 윗꼬리가 너무 길어 리스크가 크다고 판단되면 과감히 관망(Veto)을 지시하십시오.
                - 🚨 [중요]: 만약 매수 보류(Veto)를 선언할 경우, briefing 문구는 반드시 다음 규칙을 준수하여 장세 판독과 모순되지 않게 작성하십시오:
                  - 장세가 정상(STAGE 1)일 때 보류하는 경우: "{veto_template}"
-                 - 장세가 하락/주의(STAGE 2)일 때 보류하는 경우: "⚠️ [매수 보류] 하락 장세로 인한 시장 리스크 과다 및 단기 상승 동력 부족으로 관망 권장"
+                 - 장세가 하락/주의(STAGE 2)일 때 보류하는 경우: "⚠️ [매수 보류] 하락 장세로 시장 위험이 크고 단기 상승 동력이 약해 이 시스템 기준으로 매수를 보류합니다."
                - 이 경우 target_price와 stop_loss는 반드시 0으로 처리하십시오.
             2. 가격 튜닝: 진입이 가능하다고 판단될 경우 손절을 매우 타이트하게 잡고, 익절(목표가) 역시 짧게 끊어치는 보수적인 타점을 제시하십시오.
             """
@@ -1205,13 +1206,13 @@ try:
     # ==========================================
     print("▶ [2단계] 딥리딩 분석 및 PDF 리포트 본문 생성...")
     today_korean = datetime.datetime.now(KST).strftime('%Y년 %m월 %d일')
-    status_txt = "코스닥 20일선 이탈 (보수적 운영 요망)" if is_warning_market else "코스피/코스닥 지지 (공격적 운영 가능)" 
-    if market_stage == 3: status_txt = "🚨 역대급 패닉셀 투매 장세 돌입 (전원 사격 중지 및 현금 100% 관망 요망)"
+    status_txt = "코스닥 20일선 이탈 (보수적 판단 구간)" if is_warning_market else "코스피/코스닥 지지 구간" 
+    if market_stage == 3: status_txt = "🚨 패닉셀 투매 장세 (이 시스템은 신규 매수 중단)"
  
     if market_stage == 3:
         macro_prompt = f"""귀하는 HYEOKS 리서치 센터의 최고 심의위원이자 수석 애널리스트입니다.
-        현재 국내 증시는 역대급 패닉 폭락 장세인 [{korean_market_status}] 상태입니다.
-        자산을 사수하기 위한 강력한 경고 메시지와 전원 사격 중지(현금 100% 관망)의 당위성을 거시 매크로 분석과 함께 1페이지 분량으로 묵직하게 작성하십시오. 정중한 하십시오체를 사용하십시오. 작성일: {today_korean}"""
+        현재 국내 증시는 급락 장세인 [{korean_market_status}] 상태입니다.
+        급락의 원인과 위험 요인을 거시 매크로 분석과 함께 1페이지 분량으로 차분하게 정리하십시오. 이 시스템이 오늘 신규 매수를 멈춘 이유를 설명하되, 독자에게 매매를 지시하거나 결과를 단정하지 마십시오. 정중한 하십시오체를 사용하십시오. 작성일: {today_korean}"""
     else:
         # 🔧 [수정] 예전엔 "1페이지 분량으로"라는 느슨한 지시만 있어서 실제로는 자주 2페이지를 넘겨
         #    추천주 리포트가 3페이지부터 시작하는 문제가 있었음. 열린 산문 대신 불릿·문장수 상한을 강제하는
@@ -1477,7 +1478,7 @@ try:
     html += "<div class='broker-name'>HYEOKS SECURITIES | DAILY MARKET REPORT</div>"
     
     if market_stage == 3:
-        html += "<div class='alert-box'>🚨 [HYEOKS EMERGENCY SYSTEM ALERT] 시장 극단적 패닉 국면 판독으로 인해 전체 투자 알고리즘의 '전원 사격 중지(Ceasefire)' 프로토콜이 발동되었습니다. 현 포지션의 무리한 물타기 및 신규 진입을 전면 금지하며 100% 현금 보존 관망 스탠스를 엄격히 권고합니다.</div>"
+        html += "<div class='alert-box'>🚨 [시스템 알림] 시장 급락(패닉) 구간으로 판정되어 이 시스템은 오늘 신규 매수 후보를 내지 않습니다. 개인 연구 기록이며 매매 권유가 아닙니다.</div>"
         
     html += f"<h2>글로벌 매크로 및 시황 요약</h2>{markdown.markdown(market_summary)}"
  
