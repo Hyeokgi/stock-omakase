@@ -16,6 +16,9 @@
 # 🆕 2026-10-30 웹앱 C단계(사용자 "C단계 금요일 페이지 진행해") — 후보와 19:40 · 20:00 시간외 변화를 비공개 시트
 #   '🌙금요일관측' 탭에 남긴다(알림 뒤 20:02 까지 기다려 20:00 값을 읽는다). 월요일 시가 결과는 적지 않는다 —
 #   관측 판정일(2027-04 · 10) 전에는 결과를 보지 않기로 사전 등록했다. 시트 기록 실패는 알림에 영향을 주지 않는다.
+# 🆕 2026-10-31 웹앱 E단계(사용자 "금요일 1,2등주와 야간 하락시 추가 메시지를 전송해줘") — 19:40 에 1~2위와 시간외 변화를
+#   하락 여부와 상관없이 보내고(대상이 없으면 한 줄), 20:02 에 20:00 NXT 종가가 −3% 이하인 종목이 있거나 19:40 에 해당했던
+#   종목이 있으면 '20:00 확정' 을 한 번 더 보낸다. 끝에 고지 · 웹앱 금요일 탭 링크(telegram_target.footer).
 # 운영 선정 · 주문과 무관. 지문 대상 파일이 아니다.
 # ==========================================================================
 import argparse
@@ -27,6 +30,7 @@ import time
 
 import hyeoks_research_daily as R
 from kis_token_share import token_for_run
+from telegram_target import footer
 
 VERSION = "friday-dip-v1"
 BASE = "https://openapi.koreainvestment.com:9443"
@@ -196,11 +200,35 @@ def message(day, hhmm, picks, names):
         lines.append(f"{k}위 {names.get(r['code'], r['code'])}({r['code']}) — KRX 종가 {r['close']:,.0f}원"
                      f"(당일 {r['ret'] * 100:+.1f}%, 거래대금 {r['amount'] / 1e8:,.0f}억)\n"
                      f"   NXT {f(r['nx'], dn)} · KRX 애프터 {f(r['kr'], dk)}{'  ← 3% 이상 하락' if flag else ''}")
-    tail = ("\n\n조건(종가 대비 −3% 이하) 해당 종목이 있습니다. 관측 규칙은 20:00 NXT 종가 매수 → 다음 거래일 09:00 KRX 시가 매도."
-            if hits else "\n\n조건 해당 없음.")
-    text = (f"[금요일 밤 하락 확인] {day} {hhmm}\n" + "\n".join(lines) + tail +
-            "\n참고 알림 · 자동주문 없음 · 매수 추천 아님")
+    tail = ("\n\n조건(종가 대비 −3% 이하) 해당 종목이 있습니다. 관측 규칙은 20:00 NXT 종가 매수 → 다음 거래일 09:00 KRX 시가 매도. "
+            "20:00 확정값은 20:02 에 한 번 더 알립니다."
+            if hits else "\n\n지금은 조건(종가 대비 −3% 이하) 해당 없음. 20:00 에 해당하면 20:02 에 따로 알립니다.")
+    text = f"[금요일 1·2위 · 밤 하락 확인] {day} {hhmm}\n" + "\n".join(lines) + tail + footer("friday")
     return text, hits
+
+
+def empty_message(day):
+    return (f"[금요일 1·2위] {day}\n오늘은 조건(KRX 등락률 10% 이상 29.5% 미만 · 거래대금 500억 이상 보통주) 종목이 없습니다."
+            + footer("friday"))
+
+
+def is_drop(d):
+    return d is not None and d <= DROP + 1e-12
+
+
+def close_message(day, picks, names):
+    """🆕 2026-10-31 E단계 — 20:02 추가 메시지(20:00 NXT 종가 기준). 19:40 에도 20:00 에도 −3% 이하가 없으면 (None, 0)."""
+    was = any(is_drop(chg(r.get(k), r["close"])) for r in picks for k in ("nx", "kr"))
+    now = [r["code"] for r in picks if is_drop(chg(r.get("nx20"), r["close"]))]
+    if not (was or now):
+        return None, 0
+    f = lambda p, d: "거래 없음" if p is None else f"{p:,.0f}원 ({d * 100:+.1f}%)"
+    lines = [f"{k}위 {names.get(r['code'], r['code'])}({r['code']}) — 20:00 NXT {f(r.get('nx20'), chg(r.get('nx20'), r['close']))}"
+             f" · KRX 애프터 {f(r.get('kr20'), chg(r.get('kr20'), r['close']))}{'  ← 조건 해당' if r['code'] in now else ''}"
+             for k, r in enumerate(picks, 1)]
+    tail = (f"\n\n20:00 NXT 종가 기준 조건(KRX 종가 대비 −3% 이하) 해당 {len(now)}종목." if now
+            else "\n\n19:40 에 −3% 이하였던 종목이 20:00 NXT 종가로는 조건 밖에서 끝났습니다.")
+    return f"[금요일 밤 20:00 확정] {day}\n" + "\n".join(lines) + tail + footer("friday"), len(now)
 
 
 def pct(d):
@@ -345,12 +373,37 @@ def main(argv=None, env=None, get=None, post=None, clock=None, sleep=time.sleep,
     st.update(scanCalls=calls, scanned=len(rows), confirmed=len(cands), events=len(picks), incomplete=len(cut))
     print(f"🔎 순위 호출 {calls}회 · 순위 종목 {len(rows)} · 일봉 확인 {len(cands)} · 조건 1~{TOP}위 {len(picks)}"
           + (f" · ⚠️ 가격으로도 못 나눈 구간 {len(cut)}" if cut else ""))
-    if not picks:
-        # 조회가 잘렸으면 '대상 없음' 으로 확정하지 않는다 — 뒤 실행이 다시 본다(DONE 에 없는 상태).
-        st.update(status="조회불완전" if cut else "대상없음", checkedAt=clock().isoformat(timespec="seconds"), hits=0)
+
+    def deliver(text, ok_status):
+        """🆕 2026-10-31 E단계 — 19:40 메시지는 하락 여부와 상관없이 보낸다(사용자 "금요일 1,2등주 … 메시지를 전송해줘").
+        보낸 뒤 status 는 결과(대상없음 · 해당없음 · 발송성공), 못 보냈으면 발송실패(재시도) · 응답불명."""
+        if a.dry_run:
+            print("ℹ️ 시험 실행 — 보내지 않는다")
+            return 0
+        # 🔴 2026-10-25 Codex 검토 — 시작할 때만 19:58 을 보면, 조회가 늦어져 20:00 매수 뒤에 보낼 수 있다.
+        if not a.day and clock() >= at(clock(), SEND_BY):
+            print(f"ℹ️ {SEND_BY} 이 지나 20:00 매수에 쓸 수 없어 보내지 않는다")
+            st.update(status="늦은발송생략")
+            record()
+            return 0
+        sent, err = R.send(text, post, env.get("TELEGRAM_BOT_TOKEN", ""))
+        s = R.send_status(sent, err)
+        st.update(status=ok_status if sent else s, sendStatus=s, note=err)
         record()
+        print(f"📨 {s}{(' — ' + err) if err else ''}")
+        return 0 if sent else 1
+
+    if not picks:
+        st.update(checkedAt=clock().isoformat(timespec="seconds"), hits=0)
+        if cut:
+            # 조회가 잘렸으면 '대상 없음' 으로 확정하지 않는다 — 뒤 실행이 다시 본다(DONE 에 없는 상태).
+            st.update(status="조회불완전")
+            record()
+            rc = 0
+        else:
+            rc = deliver(empty_message(day), "대상없음")
         keep(sheet_rows(day, [], {}, st["status"], stamp()))
-        return 0
+        return rc
     t = clock()
     hhmmss = min(t.strftime("%H%M%S"), "200000")
     try:
@@ -365,27 +418,22 @@ def main(argv=None, env=None, get=None, post=None, clock=None, sleep=time.sleep,
     text, hits = message(day, t.strftime("%H:%M"), picks, names)
     st.update(checkedAt=t.isoformat(timespec="seconds"), hits=hits)
     print(f"🌙 조건 해당 {hits}/{len(picks)}")        # 종목명 · 가격은 공개 로그에 찍지 않는다
-    rc = 0
-    if not hits:
-        st.update(status="조회불완전" if cut else "해당없음")
-        record()
-    elif a.dry_run:
+    if a.dry_run:
         print("ℹ️ 시험 실행 — 보내지 않는다")
         return 0
-    # 🔴 2026-10-25 Codex 검토 — 시작할 때만 19:58 을 보면, 조회가 늦어져 20:00 매수 뒤에 보낼 수 있다.
-    elif not a.day and clock() >= at(clock(), SEND_BY):
-        print(f"ℹ️ {SEND_BY} 이 지나 20:00 매수에 쓸 수 없어 보내지 않는다")
-        st.update(status="늦은발송생략")
+    if not hits and cut:
+        # 숨은 종목이 1~2위일 수 있으니 확정하지 않는다 — 뒤 실행이 다시 본다
+        st.update(status="조회불완전")
         record()
+        rc = 0
     else:
-        sent, err = R.send(text, post, env.get("TELEGRAM_BOT_TOKEN", ""))
-        st.update(status=R.send_status(sent, err), sendStatus=R.send_status(sent, err), note=err)
-        record()
-        print(f"📨 {st['status']}{(' — ' + err) if err else ''}")
-        rc = 0 if sent else 1
-    if not a.dry_run:
-        read_close(kis, picks, day8, not a.day, clock, sleep)
-        keep(sheet_rows(day, picks, names, st["status"], stamp()))
+        rc = deliver(text, "발송성공" if hits else "해당없음")
+    read_close(kis, picks, day8, not a.day, clock, sleep)
+    keep(sheet_rows(day, picks, names, st["status"], stamp()))
+    extra, hits20 = close_message(day, picks, names)
+    if extra:
+        sent, err = R.send(extra, post, env.get("TELEGRAM_BOT_TOKEN", ""))
+        print(f"📨 20:00 확정 — 조건 해당 {hits20} · {R.send_status(sent, err)}{(' — ' + err) if err else ''}")
     return rc
 
 

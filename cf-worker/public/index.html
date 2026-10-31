@@ -2009,6 +2009,14 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => switchTab(btn.dataset.tab));
 });
 
+// 📱 2026-10-31 E단계 — 텔레그램 메시지 끝 링크(…/#friday 등)로 열면 그 탭부터 보여 준다.
+function openHashTab() {
+  const t = decodeURIComponent(location.hash.slice(1));
+  if (TAB_ORDER.includes(t)) switchTab(t);
+}
+window.addEventListener('hashchange', openHashTab);
+setTimeout(openHashTab, 0);
+
 document.getElementById('searchInput').addEventListener('input', e => { searchTerm = e.target.value.trim(); renderScanner(); });
 document.getElementById('sortSelect').addEventListener('change', e => { sortMode = e.target.value; renderScanner(); });
 document.querySelectorAll('.chip').forEach(chip => {

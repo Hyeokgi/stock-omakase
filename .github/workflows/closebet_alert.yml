@@ -1,0 +1,45 @@
+name: ⏰ 15:05 종베 후보 알림 (참고 · 잠정)
+
+# 사용자 답 2026-10-31(웹앱 E단계) — 15:05 KRX 기준 급등 15% 이상 · 500억 이상 후보(거래량 배수 · 관측 1 조건 표시)와
+# 금요일에는 10% 이상 · 500억 이상 1~2위(관측 5 · 6 대상)를 텔레그램 채널로 한 번 보낸다. 관측 결과(수익)는 싣지 않는다.
+# 발사는 GAS 15:05 스냅샷 트리거(dispatchSnapshot 1505)가 함께 한다. 깃허브 예약은 몇 시간씩 늦어 걸지 않는다.
+# 15:05 전에 도착하면 15:05 까지 기다리고, 15:18 이 지나면 보내지 않는다. 공개 저장소에 남기는 파일 없음.
+# 참고 알림 전용: 선정 조건 · 주문 · 운영 Gate 와 무관. 지문 대상 파일이 아니다.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: closebet-alert
+  cancel-in-progress: false
+
+jobs:
+  alert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.10'
+    - run: pip install requests gspread oauth2client
+
+    - name: 🔑 시트 키(secret.json) — 스캐너의 오늘 한투 토큰 읽기(kis_token_share)
+      env:
+        CREDENTIAL_JSON: ${{ secrets.GCP_CREDENTIALS }}
+      run: python -c 'import os,json,pathlib; pathlib.Path("secret.json").write_text(json.dumps(json.loads(os.environ["CREDENTIAL_JSON"])), encoding="utf-8")' || echo "ℹ️ 시트 키 없음 — 토큰을 따로 발급한다"
+
+    - name: ⏰ 15:05 후보 → 알림
+      env:
+        KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+        KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      run: python hyeoks_closebet_alert.py
+
+    - name: 🧹 secret.json 지우기
+      if: always()
+      run: python -c 'from pathlib import Path; Path("secret.json").unlink(missing_ok=True)'

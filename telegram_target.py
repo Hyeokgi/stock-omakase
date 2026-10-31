@@ -26,6 +26,16 @@ CHAT_ID = "-1003778485916"
 
 OVERRIDE_ENV = "TELEGRAM_CHAT_ID_OVERRIDE"
 
+# 🆕 2026-10-31 웹앱 E단계 — 지인 몇 명과 같이 보는 채널이라 메시지 끝에 같은 고지 한 줄과 웹앱 바로가기를 붙인다.
+#    웹앱은 Cloudflare Access 뒤에 있어 허락된 사람만 열린다. #탭 이름으로 그 탭이 바로 열린다.
+WEBAPP_URL = "https://stock-omakase.hyeoks.workers.dev/"
+NOTICE = "개인 연구 기록 · 매매 권유 아님 · 자동주문 없음"
+
+
+def footer(tab=None):
+    """메시지 끝 두 줄 — 고지 · 웹앱 링크(tab 이 있으면 그 탭)."""
+    return f"\n\n{NOTICE}\n📱 {WEBAPP_URL}{('#' + tab) if tab else ''}"
+
 
 def chat_id():
     """상시 목적지는 CHAT_ID. 명시적 override 가 있을 때만 그쪽으로 보낸다."""
