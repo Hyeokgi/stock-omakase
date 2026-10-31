@@ -1,10 +1,26 @@
 """모닝 브리핑 E단계 말투 — 지시문에 관찰 · 조건형 규칙이 있고 명령형 소제목('오늘의 대응' · '관망 권고' · '실전 액션 플랜')이 없다."""
+import importlib
 import os
 import sys
+import types
 import unittest
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# CI 에는 google-genai 가 없다(2026-10-31 PR #24 병합 뒤 test_ci_wiring 실패) — 설치돼 있으면 진짜,
+# 없으면 test_morning_fred.py 와 같은 스텁. 순수 지시문 조립만 본다.
+try:
+    importlib.import_module("google.genai")
+except ImportError:
+    for name, attrs in (("google", {}), ("google.genai", {"Client": object})):
+        if name not in sys.modules:
+            m = types.ModuleType(name)
+            for k, v in attrs.items():
+                setattr(m, k, v)
+            sys.modules[name] = m
+    sys.modules["google"].genai = sys.modules["google.genai"]
+
 import hyeoks_morning as M  # noqa: E402
 
 
