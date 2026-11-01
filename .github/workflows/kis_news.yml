@@ -61,6 +61,25 @@ jobs:
       run: |
         python hyeoks_kis_news.py --until "${UNTIL:-15:08}"
 
+    - name: 🔒 원자료 봉인 사본 — 테마 일지용(hyeoks_theme_layers, 3일)
+      # 드라이브 창구는 쓰기 전용이라 분류 작업이 다시 읽을 수 없다. private_store 와 같은 설정으로 봉인해 넘긴다(2026-11-01).
+      if: always()
+      continue-on-error: true
+      env:
+        PRIVATE_STORE_KEY: ${{ secrets.PRIVATE_STORE_KEY }}
+      run: python hyeoks_theme_layers.py seal --kind kisnews --out sealed
+
+    - name: 🔒 봉인 사본 올리기
+      if: always()
+      continue-on-error: true
+      timeout-minutes: 2
+      uses: actions/upload-artifact@v7
+      with:
+        name: material-kisnews-${{ github.run_id }}
+        path: sealed
+        retention-days: 3
+        if-no-files-found: ignore
+
     - name: 🧹 secret.json 지우기
       if: always()
       run: python -c 'from pathlib import Path; Path("secret.json").unlink(missing_ok=True)'
