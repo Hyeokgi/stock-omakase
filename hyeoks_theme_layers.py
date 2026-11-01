@@ -29,6 +29,7 @@ MOVER = 5.0              # 테마 안에서 '오른 종목' 의 등락률 문턱
 MAX_MOVERS = 10          # 테마당 재료를 찾는 오른 종목 수 상한(등락률 순)
 TOP_VALUE, TOP_RATE = 20, 10   # 고르는 테마 — 거래대금 상위 · 등락률 상위의 합집합
 LIST_NEWS = 5            # 관련 종목이 이만큼 이상인 뉴스는 '목록 뉴스' 로 보고 재료 낱말 집계에서 뺀다
+LIFT = 2.0               # 테마 안 오른 종목 중 비율이 테마 밖 오른 종목 중 비율의 이 배수 이상인 낱말만 재료로 본다
 MIN_TOKEN = 2
 JOSA = ("에서", "으로", "까지", "부터", "에게", "은", "는", "이", "가", "을", "를", "의", "에", "도", "로", "와", "과", "만")
 STOP = set("""
@@ -39,6 +40,17 @@ STOP = set("""
 억원 조원 만원 천만 백만 이상 이하 미만 사상 역대 최초 올해 내년 지난해 분기 상반기 하반기 매출 영업이익 순이익 실적 흑자 적자
 주요공시 기업공시 시간외 단일가 프로그램 체결 호가 상위 하위 리포트 증권 연구원 애널리스트 의견 유지 커버리지
 """.split())
+# 2026-11-01 시제품(10/19~10/30)에서 재료 대신 잡힌 시장 움직임 낱말을 더했다. 시제품 뒤 고정.
+STOP |= set("""
+가격제한폭 도달 상한 진입 출발 오전장 오후장 장마감 소폭 상승폭 하락폭 상승률 하락률 기록중 발동 주식선물 시장 시대 동시
+확대요건 주식옵션 전일대비 대량보유자 소유주식수 변동 목표 증가 감소 개선 동반 훈풍 집중 공략 분석 규모 차세대 매수강세
+수익성 테마동향 지속 주식등 업종 논란
+""".split())
+# 한투 뉴스 제공처 중 거래소 · 공시 알림(시제품 10/27 · 10/28 표본으로 확인한 제목 꼴). 공시처럼 근거 수로만 센다.
+#   F · G — '(정정)연결재무제표기준영업(잠정)실적(공정공시)' 같은 공시 알림, H · N — 지정 · IR 안내.
+#   I — '주식선물 2단계 가격제한폭 확대요건 도달(상승)' 처럼 가격이 움직인 결과라 근거로도 치지 않는다.
+NOTICE_PROVIDERS = {"F", "G", "H", "N"}
+MECHANICAL_PROVIDERS = {"I"}
 TOKEN_RE = re.compile(r"[0-9A-Za-z가-힣]+")
 
 
@@ -112,7 +124,7 @@ def tokens(title, drop=()):
                 break
         if len(w) < MIN_TOKEN or w.isdigit() or w in STOP or w in drop:
             continue
-        if re.fullmatch(r"[0-9]+[가-힣A-Za-z%]{0,2}", w):        # 3분기 · 10배 · 30% 같은 숫자 낱말
+        if w[0].isdigit():                                       # 3분기 · 10배 · 4거래일만 같은 숫자 낱말
             continue
         out.add(w)
     return out
@@ -176,11 +188,15 @@ def evidence_index(news, dart):
     """종목코드 → [(시각, 출처, 키, 제목, 목록뉴스 여부)]."""
     idx = {}
     for x in news:
+        prov = str(x.get("news_ofer_entp_code") or "").strip()
+        if prov in MECHANICAL_PROVIDERS:
+            continue
+        src = "notice" if prov in NOTICE_PROVIDERS else "news"
         codes = news_codes(x)
         listy = len(codes) >= LIST_NEWS
         for c in codes:
             idx.setdefault(c, []).append((x["received_at"] if x["received_at"] > x["published_at"] else x["published_at"],
-                                          "news", x.get("key") or "", x.get("hts_pbnt_titl_cntt") or "", listy))
+                                          src, x.get("key") or "", x.get("hts_pbnt_titl_cntt") or "", listy))
     for x in dart:
         c = str(x.get("stock_code") or "").strip()
         if c:
@@ -191,38 +207,85 @@ def evidence_index(news, dart):
     return idx
 
 
-def material(theme_name, movers, idx):
-    """층 ②. movers = 오른 종목(등락률 순). 공통 낱말이 오른 종목 둘 이상에 나오면 '확인'."""
+def stock_words(name, ev, drop_names=frozenset()):
+    """(근거 있음, 낱말 집합, 낱말별 첫 근거, 낱말별 (기사 키, 제목)). 목록 뉴스는 근거로 치지 않는다.
+    DART 공시 · 거래소 알림은 근거 수로만 센다 — 제목이 '현금배당결정' · 'IR 개최' 같은 정해진 문구라 테마를 가르지 못한다(시제품)."""
+    drop = tokens(name) | {name} | set(drop_names)
+    has, words, first, keys = False, set(), {}, {}
+    for at, src, key, title, listy in ev:
+        if listy:
+            continue
+        has = True
+        if src != "news":
+            continue
+        for w in tokens(title, drop):
+            words.add(w)
+            keys.setdefault(w, set()).add((key, title))
+            if w not in first or at < first[w][0]:
+                first[w] = (at, src, key)
+    return has, words, first, keys
+
+
+def base_rates(words_by_code):
+    """시장 전체 오른 종목 중 낱말이 있는 종목 수 → (낱말별 종목 수, 분모)."""
+    rows = [v[1] for v in words_by_code.values() if v[1]]
+    cnt = {}
+    for ws in rows:
+        for w in ws:
+            cnt[w] = cnt.get(w, 0) + 1
+    return cnt, len(rows)
+
+
+def material(theme_name, movers, W, base=None):
+    """층 ②. movers = 오른 종목(등락률 순), W = {코드: stock_words(...)}, base = base_rates(...).
+    같은 낱말이 오른 종목 둘 이상에 나오고, 테마 밖 오른 종목보다 이 테마에서 LIFT 배 이상 흔하면 '확인'.
+    테마 밖에 낱말 있는 오른 종목이 없으면 비교하지 않는다(그날 한 테마만 움직인 경우)."""
+    cnt, n_base = base or ({}, 0)
+    inside = [W[s["code"]][1] for s in movers if s["code"] in W and W[s["code"]][1]]   # 상한 자르기 전 테마 전체
+    out_n = n_base - len(inside)
     movers = movers[:MAX_MOVERS]
-    per, first = {}, {}
-    with_ev = 0
+    per, first, with_ev, kmap = {}, {}, 0, {}
     for s in movers:
-        ev = idx.get(s["code"], [])
-        if any(not listy for *_, listy in ev):          # 목록 뉴스만 걸린 종목은 근거 없음으로 센다
-            with_ev += 1
-        drop = tokens(s["name"]) | {s["name"]}
-        mine = set()
-        for at, src, key, title, listy in ev:
-            if listy:
-                continue
-            for w in tokens(title, drop):
-                mine.add(w)
-                if w not in first or at < first[w][0]:
-                    first[w] = (at, src, key)
-        per[s["code"]] = mine
+        has, ws, fw, ks = W.get(s["code"], (False, set(), {}, {}))
+        with_ev += has
+        per[s["code"]] = ws
+        kmap[s["code"]] = ks
+        for w, f in fw.items():
+            if w not in first or f[0] < first[w][0]:
+                first[w] = f
     support = {}
     for code, ws in per.items():
         for w in ws:
             support.setdefault(w, set()).add(code)
-    ranked = sorted(((len(c), w) for w, c in support.items() if len(c) >= 2), key=lambda x: (-x[0], first[x[1]][0], x[1]))
+    n_words = sum(1 for ws in per.values() if ws)
+
+    def specific(w, k):
+        if out_n <= 0:
+            return True
+        out_k = cnt.get(w, 0) - sum(1 for ws in inside if w in ws)
+        return k / n_words >= LIFT * out_k / out_n
+
+    ranked = sorted(((len(c), w) for w, c in support.items() if len(c) >= 2 and specific(w, len(c))),
+                    key=lambda x: (-x[0], first[x[1]][0], x[1]))
     name_words = tokens(theme_name)
     out = {"movers": len(movers), "moversWithEvidence": with_ev, "keywords": [], "support": 0, "firstAt": "",
            "themeNameHit": sum(1 for ws in per.values() if ws & name_words)}
     if ranked:
         top = ranked[0][1]
+        # 같은 기사가 오른 종목 둘 이상을 함께 다뤘나 — 같은 기사 키이거나 제목에 다른 종목 이름이 있으면 묶인 것으로 본다.
+        # 아니면 흔한 낱말이 서로 다른 기사에서 우연히 겹쳤을 수 있다(시제품 대조). 한투는 함께 다룬 종목에도 코드를 하나만 붙이곤 한다.
+        name = {s["code"]: s["name"] for s in movers}
+        sup = sorted(support[top])
+        linked = {a: {b for b in sup if b != a and any(
+            k in {kk for kk, _ in kmap[b].get(top, ())} or (len(name[b]) >= 2 and name[b] in t)
+            for k, t in kmap[a].get(top, ()))} for a in sup}
+        shared = 1 + max((len(v) for v in linked.values()), default=0)
         out.update(status="확인", keywords=[w for _, w in ranked[:3]], support=ranked[0][0],
+                   sharedArticle=shared,
                    firstAt=first[top][0], firstSource=first[top][1], firstKey=first[top][2],
                    supporters=sorted(support[top]))
+    elif not movers:
+        out["status"] = "오른 종목 없음"
     elif with_ev:
         out["status"] = "단일"
     else:
@@ -247,13 +310,16 @@ def build_day(day, snap, theme_rows, news, dart, snap1300=None, theme1300=None, 
         top = str(t.get("topByTradingValue") or "").split("|")[0].split(":")[0]
         prev[t["code"]] = top
     idx = evidence_index(news, dart)
+    all_names = {s["name"] for s in stocks.values() if len(s["name"]) >= 2}
+    W = {c: stock_words(s["name"], idx.get(c, []), all_names) for c, s in stocks.items() if s["rate"] >= MOVER}
+    base = base_rates(W)
     themes, by_stock = [], {}
     for t in pick_themes(theme_rows):
         ms = mem.get(t["code"], [])
         movers = sorted([s for s in ms if s["rate"] >= MOVER], key=lambda s: -s["rate"])
         row = {"day": day, "themeNo": t["code"], "themeName": names[t["code"]], "members": len(ms),
                **reaction(t, ms, before.get(t["code"]), prev.get(t["code"], "")),
-               **{f"m_{k}": v for k, v in material(names[t["code"]], movers, idx).items()}}
+               **{f"m_{k}": v for k, v in material(names[t["code"]], movers, W, base).items()}}
         themes.append(row)
         for s in movers:
             by_stock.setdefault(s["code"], []).append(row)
@@ -268,8 +334,10 @@ def build_day(day, snap, theme_rows, news, dart, snap1300=None, theme1300=None, 
                            "evidence": len(idx.get(code, []))})
     st = {"day": day, "version": VERSION, "themes": len(themes),
           "confirmed": sum(1 for r in themes if r["m_status"] == "확인"),
+          "confirmedShared": sum(1 for r in themes if r["m_status"] == "확인" and r.get("m_sharedArticle", 0) >= 2),
           "single": sum(1 for r in themes if r["m_status"] == "단일"),
           "unknown": sum(1 for r in themes if r["m_status"] == "미확인"),
+          "noMovers": sum(1 for r in themes if r["m_status"] == "오른 종목 없음"),
           "movers": len(stocks_out), "moversWithMaterialTheme": sum(1 for r in stocks_out if r["materialThemes"]),
           "topThemeIsMaterial": sum(1 for r in stocks_out if r["topThemeIsMaterial"]),
           "news1505": len(news), "dart1505": len(dart)}
@@ -328,7 +396,7 @@ WORKFLOWS = {"kisnews": "kis_news.yml", "dart": "dart_disclosures.yml"}
 GH_API = "https://api.github.com"
 RUN_COLS = ["day", "runId", "version", "startedAt", "finishedAt", "status", "reason", "newsRuns", "newsArtifacts",
             "dartRuns", "dartArtifacts", "news1505", "dart1505", "newsFrom", "newsTo", "dartCoverage", "snapshotStatus",
-            "themes", "confirmed", "single", "unknown", "movers", "moversWithMaterialTheme", "topThemeIsMaterial",
+            "themes", "confirmed", "confirmedShared", "single", "unknown", "noMovers", "movers", "moversWithMaterialTheme", "topThemeIsMaterial",
             "privateFile", "privateStatus"]
 
 

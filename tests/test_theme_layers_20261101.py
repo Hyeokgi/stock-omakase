@@ -57,6 +57,10 @@ class Tokens(unittest.TestCase):
         self.assertEqual(got, {"원전", "수주", "체코원전"})
 
 
+def words(movers, idx):
+    return {m["code"]: L.stock_words(m["name"], idx.get(m["code"], [])) for m in movers}
+
+
 class Material(unittest.TestCase):
     def setUp(self):
         self.m = [{"code": "000010", "name": "가나", "rate": 20}, {"code": "000020", "name": "다라", "rate": 12},
@@ -67,22 +71,50 @@ class Material(unittest.TestCase):
                                 news("n2", "다라도 원전 부품 공급", ["000020"], "09:30:00"),
                                 news("n3", "코스닥 상승률 상위 원전 바이오 로봇", ["000010", "000020", "000030", "000040", "000050"],
                                      "09:00:00")], [])
-        got = L.material("원자력발전", self.m, idx)
+        got = L.material("원자력발전", self.m, words(self.m, idx))
         self.assertEqual((got["status"], got["keywords"], got["support"]), ("확인", ["원전"], 2))
         self.assertEqual(got["firstAt"][11:19], "09:30:00")           # 목록 뉴스(09:00)는 집계에서 뺀다
         self.assertEqual(got["supporters"], ["000010", "000020"])
+        self.assertEqual(got["sharedArticle"], 1)                        # 원전은 서로 다른 기사에서 나왔다
         self.assertEqual(got["moversWithEvidence"], 2)
 
     def test_dart_counts_and_single(self):
         idx = L.evidence_index([news("n1", "가나 원전 수주", ["000010"], "10:00:00")],
                                [{"rcept_no": "r1", "stock_code": "000030", "report_nm": "단일판매ㆍ공급계약체결",
                                  "first_seen_at": f"{D}T09:20:00+09:00"}])
-        got = L.material("원자력발전", self.m, idx)
+        got = L.material("원자력발전", self.m, words(self.m, idx))
         self.assertEqual(got["status"], "단일")                       # 근거는 있으나 공통 낱말 없음
         self.assertEqual(got["moversWithEvidence"], 2)
 
-    def test_unknown(self):
+    def test_unknown_and_no_movers(self):
         self.assertEqual(L.material("x", self.m, {})["status"], "미확인")
+        self.assertEqual(L.material("x", [], {})["status"], "오른 종목 없음")
+
+    def test_notice_and_mechanical_providers(self):
+        idx = L.evidence_index([dict(news("n1", "가나 주식선물 2단계 가격제한폭 확대요건 도달 원전", ["000010"], "10:00:00"),
+                                     news_ofer_entp_code="I"),
+                                dict(news("n2", "다라 연결재무제표기준영업(잠정)실적 원전", ["000020"], "10:00:00"),
+                                     news_ofer_entp_code="F"),
+                                dict(news("n3", "마바 원전 수주", ["000030"], "10:00:00"), news_ofer_entp_code="7")], [])
+        self.assertNotIn("000010", idx)                                   # 가격이 움직인 결과 알림은 근거도 아니다
+        got = L.material("x", self.m, words(self.m, idx))
+        self.assertEqual((got["status"], got["moversWithEvidence"]), ("단일", 2))   # 공시 알림은 근거만, 낱말 없음
+
+    def test_market_wide_word_is_not_material(self):
+        idx = L.evidence_index([news("n1", "가나 원전 수주 반사이익", ["000010"], "10:00:00"),
+                                news("n2", "다라 원전 반사이익", ["000020"], "10:00:00")]
+                               + [news(f"o{i}", f"기타{i} 반사이익", [f"10000{i}"], "10:00:00") for i in range(6)], [])
+        market = self.m[:2] + [{"code": f"10000{i}", "name": f"기타{i}", "rate": 9} for i in range(6)]
+        W = words(market, idx)
+        got = L.material("x", self.m[:2], W, L.base_rates(W))
+        self.assertEqual(got["keywords"], ["원전"])                      # 반사이익은 테마 밖 6종목에도 다 있다 — 테마 특유가 아님
+        idx2 = L.evidence_index([news("n9", "가나·다라 원전 수주", ["000010", "000020"], "10:00:00")], [])
+        self.assertEqual(L.material("x", self.m[:2], words(self.m[:2], idx2))["sharedArticle"], 2)   # 한 기사가 둘을 함께
+        idx3 = L.evidence_index([news("n7", "가나·다라, 원전 수주", ["000010"], "10:00:00"),
+                                 news("n8", "다라 원전 공급", ["000020"], "10:10:00")], [])
+        self.assertEqual(L.material("x", self.m[:2], words(self.m[:2], idx3))["sharedArticle"], 2)   # 코드는 하나, 제목에 이름
+        self.assertEqual(L.material("x", self.m[:2], words(self.m[:2], idx), L.base_rates(words(self.m[:2], idx)))["keywords"],
+                         ["반사이익", "원전"])                             # 테마 밖 비교 대상이 없으면 거르지 않는다
 
 
 class Day(unittest.TestCase):
@@ -101,7 +133,8 @@ class Day(unittest.TestCase):
         self.assertEqual((t1["m_status"], t1["m_keywords"]), ("확인", ["원전"]))
         s1 = next(s for s in stocks if s["code"] == "000010")
         self.assertEqual((s1["materialThemes"], s1["topTheme"], s1["topThemeIsMaterial"]), ("1", "2", False))
-        self.assertEqual((st["themes"], st["confirmed"], st["movers"], st["topThemeIsMaterial"]), (2, 1, 3, 1))   # 다라는 대표 테마 = 재료 테마
+        self.assertEqual((st["themes"], st["confirmed"], st["movers"], st["topThemeIsMaterial"]), (2, 1, 3, 1))
+        self.assertEqual(st["noMovers"], 0)   # 다라는 대표 테마 = 재료 테마
 
 
 class Snapshot(unittest.TestCase):
@@ -194,6 +227,10 @@ class Github(unittest.TestCase):
         self.assertEqual(body["themes"][0]["m_keywords"], ["원전"])
         L.log_run(st, self.d)
         self.assertIsNone(self.run_())                                    # 그날 완료가 있으면 다시 하지 않는다
+        import hyeoks_research_daily as R
+        line = R.materials_summary(D, self.d)                             # [연구] 보고 재료 줄 — 건수만
+        self.assertIn("테마 일지 테마 1개(재료 확인 1 · 같은 기사 0 · 단일 0 · 미확인 0 · 오른 종목 없음 0 · 완료)", line)
+        self.assertNotIn("원전", line)
 
     def test_partial_when_artifact_or_coverage_missing(self):
         write_ledgers(self.d, dart_cov="불완전")

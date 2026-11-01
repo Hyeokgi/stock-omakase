@@ -599,6 +599,13 @@ def materials_summary(day, runs_dir=RUNS_DIR):
         parts.append(f"한투 뉴스 {sum(n(r, 'news') for r in news)}건({per}15:05까지 {sum(n(r, 'publishedBy1505') for r in news)} · "
                      f"종목코드 {sum(n(r, 'withStockCode') for r in news)} · {news[-1].get('status') or '?'}){runs_note(news)}"
                      + (f" ⚠️ 넘침 의심 {over}회 — 그 구간은 못 받았을 수 있음" if over else ""))
+    tl = rows("theme_layers_runs.csv")
+    if tl:
+        # 2026-11-01 — 테마 3층 분류(hyeoks_theme_layers). 그날 마지막 기록의 건수만(테마 이름 · 낱말 없음).
+        r = tl[-1]
+        parts.append(f"테마 일지 테마 {n(r, 'themes')}개(재료 확인 {n(r, 'confirmed')} · 같은 기사 {n(r, 'confirmedShared')} · "
+                     f"단일 {n(r, 'single')} · 미확인 {n(r, 'unknown')} · 오른 종목 없음 {n(r, 'noMovers')} · "
+                     f"{r.get('status') or '?'})" + (f" ⚠️ {r['reason']}" if r.get("reason") else ""))
     return " · ".join(parts)
 
 
