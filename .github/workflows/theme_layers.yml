@@ -1,0 +1,70 @@
+name: 🧭 테마 3층 분류 — 테마 일지 (연구)
+
+# 허브 §3 #10 · 사용자 결정 2026-11-01 — 규칙 기반 키워드, 원자료는 봉인 사본으로 넘긴다.
+# 15:05 스냅샷(①소속 · ③반응)과 그날 15:05 까지 본 한투 뉴스 제목 · DART 공시(②재료)로 상위 테마마다 한 줄을 남긴다.
+# 원자료와 결과(테마 이름 · 종목 · 뉴스 제목)는 드라이브 비공개, 공개 저장소에는 data/research_runs/ 의 건수만.
+# 수집 실행이 끝날 때마다 깨어나 15:08 전이면 그냥 끝나고, 그날 '완료' 가 있으면 다시 하지 않는다('부분' 은 다음 실행이 다시 한다).
+# 연구 전용: 수익률 계산 · 선정 조건 · 주문 · 시트 · 운영 Gate 와 무관. 지문 대상 파일이 아니다.
+
+on:
+  workflow_dispatch:
+    inputs:
+      day:
+        description: '대상 날짜 YYYY-MM-DD (비우면 오늘, 봉인 사본은 3일 보관)'
+        required: false
+        default: ''
+  workflow_run:
+    workflows: ["📰 한투 시황·공시 제목 수집 (연구 · 5분·40건)", "🗞️ OpenDART 공시 재료 수집 (연구 · 처음 본 시각)"]
+    types: [completed]
+  schedule:
+    - cron: '30 7 * * 1-5'    # 16:30 KST (백업)
+    - cron: '30 10 * * 1-5'   # 19:30 KST (백업)
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: theme-layers
+  cancel-in-progress: false
+
+jobs:
+  classify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
+      with:
+        python-version: '3.10'
+    - run: pip install requests
+
+    - name: 🔄 최신 상태 받기 (그날 스냅샷 · 수집 장부)
+      run: |
+        git pull --ff-only origin main || echo "⚠️ 최신 main 으로 빨리감기 실패 — 이벤트 시점 상태로 진행"
+
+    - name: 🧭 분류 (결과 → 드라이브 비공개)
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        PRIVATE_STORE_KEY: ${{ secrets.PRIVATE_STORE_KEY }}
+        DAY: ${{ github.event.inputs.day }}
+      run: |
+        python hyeoks_theme_layers.py github --day "${DAY:-}"
+
+    - name: 💾 공개 건수 커밋
+      if: always()
+      run: |
+        mkdir -p data/research_runs
+        if [ -z "$(git status --porcelain data/research_runs)" ]; then
+          echo "ℹ️ 바뀐 파일 없음 — 커밋 생략"; exit 0
+        fi
+        git config user.name  "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add data/research_runs
+        git commit -m "data: 테마 일지 건수 $(TZ=Asia/Seoul date +%Y-%m-%d) run ${GITHUB_RUN_ID} [skip ci]"
+        for i in 1 2 3; do
+          git pull --rebase --autostash origin main && git push origin HEAD:main && exit 0
+          echo "⚠️ 푸시 재시도 $i/3"; sleep 5
+        done
+        echo "::error::공개 건수 커밋 푸시 실패"; exit 1
