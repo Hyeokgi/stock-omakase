@@ -296,6 +296,11 @@ class Wiring(unittest.TestCase):
         self.assertIn("actions: read", tl)
         self.assertIn("python hyeoks_theme_layers.py github", tl)
 
+    def test_ai_report_wakes_it(self):
+        import re
+        name = re.search(r"^name: (.+)$", self.read("ai_report.yml"), re.M).group(1).strip()
+        self.assertIn(f'"{name}"', self.read("theme_layers.yml"))     # 15:00 리포트가 15:08 뒤에 끝나며 깨운다
+
 
 if __name__ == "__main__":
     unittest.main()
