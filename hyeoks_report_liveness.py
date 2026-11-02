@@ -112,11 +112,19 @@ def manifest_ids(payload):
 
     중복분은 대조에서 **빼는** 것이 맞다 — 원본이 이미 수집·분석됐으므로
     미수집도 미분석도 아니다.
+
+    🔴 2026-11-03 — 10/17 manifest 부터 같은 쌍의 `duplicate_of` 가 null 로 바뀌었다.
+    연결은 `drive_file_name` 에 남아 있다(`2220_1288680_1` 기록이 원본 `…679_1` 파일을 가리킨다).
+    `duplicate_of` 만 보면 10/19·10/26·11/02 처럼 '삭제·이동 의심' 으로 매주 실패한다.
+    그래서 **Drive 보관 파일명이 다른 source_id 의 것**이어도 중복으로 본다.
+    원본 기록은 자기 파일명을 가리키므로, 원본 파일이 지워지면 여전히 gap 으로 잡힌다.
     """
     reports = (payload or {}).get("reports") or []
     allids = {r.get("source_id") for r in reports if r.get("source_id")}
     dups = {r["source_id"] for r in reports
-            if r.get("source_id") and r.get("duplicate_of")}
+            if r.get("source_id") and (
+                r.get("duplicate_of")
+                or source_id_of(r.get("drive_file_name") or "") not in (None, r["source_id"]))}
     cov = ((payload or {}).get("coverage_start"), (payload or {}).get("coverage_end"))
     return allids, dups, cov
 
@@ -283,6 +291,19 @@ def self_test():
     chk("빈 payload 도 견딘다", manifest_ids({}) == (set(), set(), (None, None)))
     chk("None 도 견딘다", manifest_ids(None)[0] == set())
     chk("source_id 없는 항목은 무시", manifest_ids({"reports": [{"x": 1}]})[0] == set())
+    #  10/17 manifest 부터의 실제 모양 — duplicate_of 는 null, 연결은 drive_file_name 에만 있다.
+    drift = {"reports": [
+        {"source_id": "2220_1288679_1", "duplicate_of": None,
+         "drive_file_name": "20260906_hana_industry_2220_1288679_1_3e38e58bfea2.pdf"},
+        {"source_id": "2220_1288680_1", "duplicate_of": None,
+         "drive_file_name": "20260906_hana_industry_2220_1288679_1_3e38e58bfea2.pdf"}]}
+    dmids, ddups, _ = manifest_ids(drift)
+    chk("duplicate_of 가 null 이어도 다른 건의 Drive 파일을 가리키면 중복 (11/3)",
+        ddups == {"2220_1288680_1"}, ddups)
+    chk("그 경우 manifest 불일치로 부르지 않는다",
+        manifest_gap(dmids, ddups, {"2220_1288679_1"}) == set())
+    chk("원본 파일이 지워지면 여전히 gap 으로 잡는다",
+        manifest_gap(dmids, ddups, set()) == {"2220_1288679_1"})
 
     #  실제로 났던 오탐을 재현해 막혔는지 본다.
     due_real = {"2220_1288679_1": 1, "2220_1288680_1": 1}
