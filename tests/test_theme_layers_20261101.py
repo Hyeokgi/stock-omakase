@@ -242,6 +242,22 @@ class Github(unittest.TestCase):
         write_ledgers(self.d)                                             # 늦게 끝난 DART 오후 실행이 장부를 채웠다
         self.assertEqual(self.run_()["status"], "완료")                   # '부분' 은 다음 실행이 다시 한다
 
+    def test_unchanged_partial_is_not_redone(self):
+        write_ledgers(self.d, dart_cov="불완전")                         # 11/03 — 오후 DART 실행이 러너 끊김으로 죽었다
+        st = self.run_(arts=("11", "21"))
+        L.log_run(st, self.d)
+        self.assertIsNone(self.run_(arts=("11", "21")))                    # 새 사본 · 수집이 없으면 다시 하지 않는다
+        self.assertEqual(len(self.uploaded), 1)
+        st = self.run_()                                                  # 뉴스 사본이 하나 더 생겼다 → 다시 한다
+        self.assertEqual((st["status"], st["newsArtifacts"]), ("부분", 2))
+        self.assertEqual(len(self.uploaded), 2)
+
+    def test_membership_partial_is_still_redone(self):
+        write_ledgers(self.d)
+        L.log_run({"day": D, "status": "부분", "reason": "테마 구성 미상", "newsRuns": 2, "newsArtifacts": 2,
+                   "dartRuns": 1, "dartArtifacts": 1, "dartCoverage": "완전"}, self.d)
+        self.assertEqual(self.run_()["status"], "완료")                   # 스냅샷이 고쳐졌을 수 있어 비교하지 않는다
+
     def test_guards(self):
         write_ledgers(self.d)
         self.assertIsNone(self.run_(now=self.now.replace(hour=12, minute=13)))   # 아침 수집 끝 — 15:08 전

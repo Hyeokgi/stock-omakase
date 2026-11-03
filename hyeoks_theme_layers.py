@@ -483,6 +483,20 @@ def done_today(day, runs_dir=RUNS_DIR):
     return any(r.get("status") == "완료" for r in ledger("theme_layers_runs.csv", day, runs_dir))
 
 
+def unchanged_partial(day, want, have, cov, runs_dir=RUNS_DIR):
+    """그날 마지막 '부분' 행과 쓸 자료가 같은가 — 같으면 다시 분류해도 같은 결과다(2026-11-03, 6번 반복).
+
+    사본 · 수집 장부는 하루 안에서 늘기만 하므로 건수가 같으면 같은 자료다. 테마 구성 탓의 '부분' 은
+    스냅샷이 고쳐질 수 있어 비교하지 않고 다시 한다."""
+    rows = ledger("theme_layers_runs.csv", day, runs_dir)
+    last = rows[-1] if rows else None
+    if not last or last.get("status") != "부분" or "테마 구성" in (last.get("reason") or ""):
+        return False
+    now = (len(want["kisnews"]), len(have["kisnews"]), len(want["dart"]), len(have["dart"]), cov)
+    return now == (num(last.get("newsRuns")), num(last.get("newsArtifacts")), num(last.get("dartRuns")),
+                   num(last.get("dartArtifacts")), last.get("dartCoverage"))
+
+
 def log_run(st, runs_dir=RUNS_DIR):
     os.makedirs(runs_dir, exist_ok=True)
     path = os.path.join(runs_dir, "theme_layers_runs.csv")
@@ -510,6 +524,9 @@ def run_github(day, get, repo, token, key, now, uploader, run_id="", runs_dir=RU
         return st
     want, (morning, afternoon), cov = expected_runs(day, runs_dir)
     have = day_artifacts(get, repo, token, day)
+    if unchanged_partial(day, want, have, cov, runs_dir):
+        print(f"ℹ️ {day} 테마 일지는 '부분' 이고 새 사본 · 수집이 없다 — 생략")
+        return None
     news_rows, dart_rows = [], []
     for kind, bucket in (("kisnews", news_rows), ("dart", dart_rows)):
         for _, url in sorted(have[kind].items()):
