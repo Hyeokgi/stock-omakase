@@ -1,0 +1,99 @@
+{
+ "code_sha": "9e506fa7",
+ "cycle_date": "2026-11-03",
+ "emitted_at": "2026-11-03T15:06:09.286670+09:00",
+ "fingerprint": "7cf2c0477861",
+ "kind": "scanner",
+ "payload": {
+  "ci_conclusion": "success",
+  "cycle_date_matches": true,
+  "expected_state": "reached",
+  "feature_store": {
+   "date": "2026-11-03",
+   "dropped": 0,
+   "fingerprint": "7cf2c0477861",
+   "rows": 758,
+   "run_id": "41587298172"
+  },
+  "features": {
+   "v1": {
+    "errors": 0,
+    "measured": true,
+    "parsed": 38
+   },
+   "v2": {
+    "errors": 0,
+    "measured": true,
+    "parsed": 38
+   },
+   "v3": {
+    "errors": 0,
+    "measured": true,
+    "out_of_range": 0,
+    "schema_reason": "",
+    "unparsable": 0,
+    "used": 327
+   }
+  },
+  "ledger": {
+   "expected_trade_ids": [
+    "9cb9ad0cd36560e1",
+    "0e37267f9fe7f881",
+    "a23cfa3d4639b124",
+    "8e6c7e091054bb42",
+    "1c9cbd7dff90c9cf",
+    "1395ece85c38a747",
+    "c2f254d213da4f37",
+    "87152bd87b06b8c1",
+    "1744714ee99ea447"
+   ],
+   "expected_zero_reason": "",
+   "found_trade_ids": [
+    "9cb9ad0cd36560e1",
+    "0e37267f9fe7f881",
+    "a23cfa3d4639b124",
+    "8e6c7e091054bb42",
+    "1c9cbd7dff90c9cf",
+    "1395ece85c38a747",
+    "c2f254d213da4f37",
+    "87152bd87b06b8c1",
+    "1744714ee99ea447"
+   ],
+   "id_hash": "hmac-sha256-16"
+  },
+  "rank_pool": {
+   "by_channel_dropped": {
+    "수급TOP2": 0,
+    "차트TOP2": 0
+   },
+   "candidates": {
+    "수급TOP2": 1,
+    "차트TOP2": 38
+   },
+   "date": "2026-11-03",
+   "expected_zero_reason": "",
+   "fingerprint": "7cf2c0477861",
+   "rows": 11,
+   "total_dropped": 0
+  },
+  "scanned": 758,
+  "telemetry": {
+   "by_feature": {},
+   "gate_blocking_total": 0,
+   "reasons": {},
+   "samples": {}
+  },
+  "theme_source": {
+   "failed": 0,
+   "requested": 20,
+   "status": "OK",
+   "success": 20
+  },
+  "today_str": "2026-11-03",
+  "v1_parse_errors": 0,
+  "v2_parse_errors": 0,
+  "v3_parse_errors": 0
+ },
+ "receipt_version": "receipt-v2",
+ "run_id": "41587298172"
+}
