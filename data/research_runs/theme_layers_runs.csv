@@ -1,2 +1,3 @@
 day,runId,version,startedAt,finishedAt,status,reason,newsRuns,newsArtifacts,dartRuns,dartArtifacts,news1505,dart1505,newsFrom,newsTo,dartCoverage,snapshotStatus,themes,confirmed,confirmedShared,single,unknown,noMovers,movers,moversWithMaterialTheme,topThemeIsMaterial,privateFile,privateStatus
 2026-11-02,41419863645,theme-layers-v1,2026-11-02T18:21:15+09:00,2026-11-02T18:21:26+09:00,완료,,3,3,3,3,4427,859,09:03,15:04,완전,OK,30,6,3,20,0,4,87,8,5,research_themelayers_2026-11-02_41419863645.json.gz,접수
+2026-11-03,41588109216,theme-layers-v1,2026-11-03T15:09:38+09:00,2026-11-03T15:09:46+09:00,부분,DART 15:05 범위 불완전,2,2,1,1,4049,435,09:03,15:04,불완전,OK,30,0,0,8,1,21,8,0,0,research_themelayers_2026-11-03_41588109216.json.gz,접수
