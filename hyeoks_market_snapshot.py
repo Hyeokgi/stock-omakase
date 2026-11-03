@@ -674,11 +674,10 @@ def main():
     today = now.strftime('%Y-%m-%d')
     print(f"📸 [시장 스냅샷] slot={a.slot}  {now.strftime('%Y-%m-%d %H:%M:%S')} KST")
 
-    if not a.force and not is_trading_day(today):
-        print(f"🚫 {today} 는 거래일이 아님 — 저장하지 않고 종료")
-        return 0
-
     # ⏰ 시간 창 검사 — 늦게 도착한 실행은 조용히 버린다(빈손이 오염보다 낫다).
+    #    개장 확인보다 먼저 한다(2026-11-02). 15:07 백업 cron 이 9시간 반 늦게 자정을 넘겨
+    #    도착하자 날짜가 다음 거래일(개장 전)이 되어 '지수 봉 없음'으로 실패했다(10/12 도 같음).
+    #    창 밖이면 개장 여부와 무관하게 저장하지 않으니, 확인할 필요도 없다.
     if not a.force and a.slot in SLOTS:
         (sh, sm), (eh, em) = SLOTS[a.slot]
         cur = now.hour * 60 + now.minute
@@ -687,6 +686,10 @@ def main():
                   f"{sh:02d}:{sm:02d}~{eh:02d}:{em:02d}, 현재 {now.strftime('%H:%M')}")
             print("   (늦게 도착한 실행은 저장하지 않는다. 오염된 표본보다 결측이 낫다)")
             return 0
+
+    if not a.force and not is_trading_day(today):
+        print(f"🚫 {today} 는 거래일이 아님 — 저장하지 않고 종료")
+        return 0
 
     # 같은 슬롯을 이미 찍었으면 덮어쓰지 않는다 (트리거 중복 발사 대비)
     dup = f"{OUT_DIR}/{today}_{a.slot}.csv.gz"
