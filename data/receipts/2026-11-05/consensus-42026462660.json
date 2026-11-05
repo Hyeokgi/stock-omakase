@@ -1,0 +1,34 @@
+{
+ "code_sha": "b2227142",
+ "cycle_date": "2026-11-05",
+ "emitted_at": "2026-11-05T21:33:24.199091+09:00",
+ "fingerprint": "7cf2c0477861",
+ "kind": "consensus",
+ "payload": {
+  "attempted": 179,
+  "empty": 19,
+  "expected_state": "reached",
+  "failed": 17,
+  "preflight": [
+   {
+    "code": "005930",
+    "secs": 2.4,
+    "state": "ok",
+    "why": ""
+   },
+   {
+    "code": "000660",
+    "secs": 2.5,
+    "state": "ok",
+    "why": ""
+   }
+  ],
+  "preflight_ok": true,
+  "state": "DEGRADED",
+  "success": 143,
+  "targets": 179,
+  "unprocessed": 0
+ },
+ "receipt_version": "receipt-v2",
+ "run_id": "42026462660"
+}
