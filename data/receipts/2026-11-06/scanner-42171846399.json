@@ -1,0 +1,111 @@
+{
+ "code_sha": "cb9bf4f6",
+ "cycle_date": "2026-11-06",
+ "emitted_at": "2026-11-06T15:05:16.724408+09:00",
+ "fingerprint": "7cf2c0477861",
+ "kind": "scanner",
+ "payload": {
+  "ci_conclusion": "success",
+  "cycle_date_matches": true,
+  "expected_state": "degraded",
+  "feature_store": {
+   "date": "2026-11-06",
+   "dropped": 0,
+   "fingerprint": "7cf2c0477861",
+   "rows": 763,
+   "run_id": "42171846399"
+  },
+  "features": {
+   "v1": {
+    "errors": 0,
+    "measured": true,
+    "parsed": 7
+   },
+   "v2": {
+    "errors": 0,
+    "measured": true,
+    "parsed": 7
+   },
+   "v3": {
+    "errors": 0,
+    "measured": true,
+    "out_of_range": 0,
+    "schema_reason": "",
+    "unparsable": 0,
+    "used": 342
+   }
+  },
+  "ledger": {
+   "expected_trade_ids": [
+    "ce8593d747d99f0f",
+    "f6ddb55b637d9cd0",
+    "577c457165ffae48",
+    "9007ac1b7f6e27e5",
+    "84833e3e6db7de35",
+    "29a978425875982f",
+    "dea409a9e43effd0",
+    "15f5020a9099bb7a",
+    "9750005b674c17f9",
+    "706bf39b1da05809"
+   ],
+   "expected_zero_reason": "",
+   "found_trade_ids": [
+    "ce8593d747d99f0f",
+    "f6ddb55b637d9cd0",
+    "577c457165ffae48",
+    "9007ac1b7f6e27e5",
+    "84833e3e6db7de35",
+    "29a978425875982f",
+    "dea409a9e43effd0",
+    "15f5020a9099bb7a",
+    "9750005b674c17f9",
+    "706bf39b1da05809"
+   ],
+   "id_hash": "hmac-sha256-16"
+  },
+  "rank_pool": {
+   "by_channel_dropped": {
+    "수급TOP2": 0,
+    "차트TOP2": 0
+   },
+   "candidates": {
+    "수급TOP2": 2,
+    "차트TOP2": 7
+   },
+   "date": "2026-11-06",
+   "expected_zero_reason": "",
+   "fingerprint": "7cf2c0477861",
+   "rows": 9,
+   "total_dropped": 0
+  },
+  "scanned": 763,
+  "telemetry": {
+   "by_feature": {
+    "theme_membership": {
+     "CRITICAL": 1
+    }
+   },
+   "gate_blocking_total": 1,
+   "reasons": {
+    "theme_membership": {
+     "FAILED": 1
+    }
+   },
+   "samples": {
+    "theme_membership": 0
+   }
+  },
+  "theme_source": {
+   "failed": 0,
+   "requested": 0,
+   "status": "FAILED",
+   "success": 0
+  },
+  "today_str": "2026-11-06",
+  "v1_parse_errors": 0,
+  "v2_parse_errors": 0,
+  "v3_parse_errors": 0
+ },
+ "receipt_version": "receipt-v2",
+ "run_id": "42171846399"
+}
