@@ -261,3 +261,4 @@ at,kind,runId,name,bytes,sha256,driveId,status,error,verified
 2026-11-05T19:57:26+09:00,bars,42013595203,research_bars_2026-11-05_42013595203_part2of2.csv.gz,2223413,42eb10a3e921213d7d5a0d9103d5b98d13f8e178b7e058a8670a9c99e7157bb6,1iOf-F_zmwadofNv82yvtRrBkU8qvTweB,접수,,
 2026-11-05T19:57:34+09:00,bars,42013595203,research_bars_2026-11-05_42013595203_status.json.gz,7603,af22d21f041a9f99538b5ecdc6d14b5df4e1bc80b1446dd4de2713bc577a5bfd,1phtGHuhttque0jlmvaA8eZRiXQ84b1lE,접수,,
 2026-11-06T12:13:34+09:00,dart,42133977105,research_dart_2026-11-06_42133977105.json.gz,17058,c5d28f6bc0cd63085cc63d412e2d574ab5b8e1cfe8c3a2f04c3b398065c4212d,19TvlBdOuORiZtaTWajH9W2P44qmEOyXn,접수,,
+2026-11-06T12:13:43+09:00,kisnews,42133980163,research_kisnews_2026-11-06_42133980163.json.gz,204753,001d5d6e4b20ed47c3c418124927e9a03a9b72f7ee14ab4c1cf72ba209ef6efd,1XYa62nznwghRjf5eYRoU4jJGv0a6HmPI,접수,,
