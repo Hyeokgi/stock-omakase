@@ -26,3 +26,9 @@ date,item,reason
 2026-10-23,1505 upjong 구성 PARTIAL,'기타' 업종 가격 연결 부족을 구성 불완전으로 쳐서 업종 연결 전체 삭제 — PR #3 수정 (2026-10-24 Claude)
 2026-10-26,1505 upjong 구성 PARTIAL,업종 1개(기타) 구성 조회 중 중복 코드 → 그 업종만 비움 · 나머지 78 정상. 등락률 정렬 커서가 장중 순위 변동으로 같은 종목을 두 페이지에 준 것으로 추정(미확인) (2026-10-27 Claude)
 2026-10-27,1300 upjong 구성 PARTIAL,업종 1개(자동차부품) 구성 조회 중 중복 코드 → 그 업종만 비움 · 나머지 78 정상. 등락률 정렬 커서가 장중 순위 변동으로 같은 종목을 두 페이지에 준 것으로 추정(미확인) (2026-10-27 Claude)
+2026-11-06,1300 upjong 구성 FAILED,네이버 구 목록 market/{upjong|group}/list 가 11/06 아침부터 404(경로 폐지) — v2 rankings 목록으로 교체(2026-11-08 Claude · PR 참고). 스냅샷은 사후 복원 불가
+2026-11-06,1300 group 구성 FAILED,네이버 구 목록 market/{upjong|group}/list 가 11/06 아침부터 404(경로 폐지) — v2 rankings 목록으로 교체(2026-11-08 Claude · PR 참고). 스냅샷은 사후 복원 불가
+2026-11-06,1505 upjong 구성 FAILED,네이버 구 목록 market/{upjong|group}/list 가 11/06 아침부터 404(경로 폐지) — v2 rankings 목록으로 교체(2026-11-08 Claude · PR 참고). 스냅샷은 사후 복원 불가
+2026-11-06,1505 group 구성 FAILED,네이버 구 목록 market/{upjong|group}/list 가 11/06 아침부터 404(경로 폐지) — v2 rankings 목록으로 교체(2026-11-08 Claude · PR 참고). 스냅샷은 사후 복원 불가
+2026-11-06,upjong 집계,네이버 구 목록 market/{upjong|group}/list 가 11/06 아침부터 404(경로 폐지) — v2 rankings 목록으로 교체(2026-11-08 Claude · PR 참고). 스냅샷은 사후 복원 불가
+2026-11-06,group 집계,네이버 구 목록 market/{upjong|group}/list 가 11/06 아침부터 404(경로 폐지) — v2 rankings 목록으로 교체(2026-11-08 Claude · PR 참고). 스냅샷은 사후 복원 불가

@@ -17,7 +17,7 @@ MKT = {"000010": {"tradeAmount": "5000000000", "prevChangeRate": "2.0", "marketS
 
 def fetch(sectors, members, kind="upjong"):
     session = Mock()
-    session.get.return_value.json.return_value = sectors
+    session.get.return_value.json.return_value = {"items": sectors, "hasNext": False}
     with patch.object(M, "SESSION", session), patch.dict(M.SECTORS, {kind: ("업종", 1)}), \
          patch.object(M, "fetch_members", side_effect=members), patch.object(M.time, "sleep"):
         return M.fetch_sector_data(kind, MKT)
@@ -26,7 +26,7 @@ def fetch(sectors, members, kind="upjong"):
 class SectorStatus(unittest.TestCase):
     def test_unpriced_members_blank_only_that_sector(self):
         rows, mapping = fetch(
-            [{"no": "1", "name": "반도체", "totalCnt": 2}, {"no": "2", "name": "기타", "totalCnt": 3}],
+            [{"code": "1", "name": "반도체", "unchangedCount": 2}, {"code": "2", "name": "기타", "unchangedCount": 3}],
             [[{"itemcode": "000010"}, {"itemcode": "000020"}],
              [{"itemcode": "000010"}, {"itemcode": "999990"}, {"itemcode": "999980"}]])
         by = {r["name"]: r for r in rows}
@@ -37,9 +37,9 @@ class SectorStatus(unittest.TestCase):
         self.assertEqual(sorted(n for _, n in mapping["000010"]), ["기타", "반도체"], "종목의 업종 연결은 남는다")
 
     def test_truncated_or_failed_list_still_wipes_links(self):
-        rows, mapping = fetch([{"no": "1", "name": "반도체", "totalCnt": 3}], [[{"itemcode": "000010"}]])
+        rows, mapping = fetch([{"code": "1", "name": "반도체", "unchangedCount": 3}], [[{"itemcode": "000010"}]])
         self.assertEqual((rows[0]["membershipStatus"], mapping), ("PARTIAL", {}))
-        rows, mapping = fetch([{"no": "1", "name": "반도체", "totalCnt": 2}], [N.MembershipError("upjong HTTP 400")])
+        rows, mapping = fetch([{"code": "1", "name": "반도체", "unchangedCount": 2}], [N.MembershipError("upjong HTTP 400")])
         self.assertEqual((rows[0]["membershipStatus"], mapping), ("FAILED", {}))
 
 
@@ -100,12 +100,12 @@ class MainEndToEnd(unittest.TestCase):
 
         rows = [{"itemcode": f"{i:06d}", "itemname": f"종목{i}", "tradeAmount": str(10_000 + i),
                  "nowPrice": "1000", "openPrice": "990", "prevChangeRate": "1.0"} for i in range(M.MIN_ROWS)]
-        lists = {"upjong": [{"no": "1", "name": "반도체", "totalCnt": 2}, {"no": "2", "name": "기타", "totalCnt": 2}],
-                 "group": [{"no": "7", "name": "그룹가", "totalCnt": 1}, {"no": "8", "name": "그룹나", "totalCnt": 1}]}
+        lists = {"upjong": [{"code": "1", "name": "반도체", "unchangedCount": 2}, {"code": "2", "name": "기타", "unchangedCount": 2}],
+                 "group": [{"code": "7", "name": "그룹가", "unchangedCount": 1}, {"code": "8", "name": "그룹나", "unchangedCount": 1}]}
         real = M.fetch_sector_data
 
         def sector(kind, mkt):
-            with patch.object(M.SESSION, "get", return_value=Mock(json=Mock(return_value=lists[kind]))):
+            with patch.object(M.SESSION, "get", return_value=Mock(json=Mock(return_value={"items": lists[kind], "hasNext": False}))):
                 return real(kind, mkt)
 
         out = io.StringIO()
