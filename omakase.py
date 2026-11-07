@@ -299,6 +299,8 @@ def get_kospi_fluctuation_rate():
 # ==========================================================================
 NAVER_JSON_BASE = "https://stock.naver.com/api/domestic"
 _JSON_HEADERS = {'Accept': 'application/json, text/plain, */*', 'Referer': 'https://stock.naver.com/'}
+THEME_V2_URL = ("https://stock.naver.com/api/stockSecurity/rankings/v2/domestic/themes"
+                "?sortType=changeRate&size=100&period=daily")
 
 
 def _json_get(path, timeout=15):
@@ -313,11 +315,20 @@ def _json_get(path, timeout=15):
 
 
 def fetch_theme_list_json(limit=20):
-    """테마 순위 — [{'no','name'}]. 실패/빈배열이면 빈 리스트."""
-    d = _json_get("/market/theme/list")
-    if not isinstance(d, list) or not d:
+    """테마 순위 — [{'no','name'}]. 실패/빈배열이면 빈 리스트.
+    🔴 2026-11-06 구 `/market/theme/list` 가 404 로 사라져(구 HTML 표는 그 전에 이미 없음) 테마 수집이 매 회차 실패했다.
+    rankings v2 등락률 순(시장 스냅샷과 같은 경로)으로 바꿨다. 테마 번호 체계 · 구성종목 경로는 그대로다."""
+    try:
+        r = GLOBAL_SESSION.get(THEME_V2_URL, headers=_JSON_HEADERS, verify=False, timeout=15)
+        d = r.json() if r.status_code == 200 else None
+    except Exception as e:
+        print(f"⚠️ [JSON 폴백 실패] 테마 v2 :: {e}")
+        d = None
+    items = d.get("items") if isinstance(d, dict) else None
+    if not isinstance(items, list) or not items:
         return []
-    return [{'no': str(x.get('no')), 'name': str(x.get('name', '')).strip()} for x in d[:limit] if x.get('no')]
+    return [{'no': str(x.get('code')), 'name': str(x.get('name', '')).strip()}
+            for x in items[:limit] if isinstance(x, dict) and x.get('code')]
 
 
 def fetch_theme_stocks_json(theme_no):

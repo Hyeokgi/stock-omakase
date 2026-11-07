@@ -87,12 +87,14 @@ def chk_theme():
 
 
 def chk_theme_json():
-    """테마 순위 JSON 대체재 (신규 PC 사이트가 실제로 쓰는 API)"""
-    d = _get("https://stock.naver.com/api/domestic/market/theme/list").json()
-    if not isinstance(d, list) or not d:
-        return False, "빈 배열(캐치올 주의)"
-    need = {'no', 'name', 'changeRate', 'totalAccAmount', 'leadingItem'}
-    return need.issubset(set(d[0].keys())), f"테마 {len(d)}개"
+    """테마 순위 JSON 대체재 — rankings v2 등락률 순(omakase.fetch_theme_list_json 과 같은 경로).
+    구 `market/theme/list` 는 2026-11-06 에 404 로 사라졌다."""
+    d = _get("https://stock.naver.com/api/stockSecurity/rankings/v2/domestic/themes?sortType=changeRate&size=100&period=daily").json()
+    items = d.get('items') if isinstance(d, dict) else None
+    if not isinstance(items, list) or not items:
+        return False, "빈 목록"
+    need = {'code', 'name', 'changeRate'}
+    return need.issubset(set(items[0].keys())), f"테마 {len(items)}개(첫 페이지)"
 
 
 def chk_theme_detail():
@@ -267,10 +269,10 @@ def chk_risk_json():
 
 def chk_theme_stocks_json():
     """테마 구성종목 JSON 대체재 (HTML td[8]과 단위 동일: 백만원)"""
-    tl = _get("https://stock.naver.com/api/domestic/market/theme/list").json()
+    tl = (_get("https://stock.naver.com/api/stockSecurity/rankings/v2/domestic/themes?sortType=changeRate&size=100&period=daily").json() or {}).get('items')
     if not isinstance(tl, list) or not tl:
         return False, "테마목록 비어있음"
-    no = tl[0].get('no')
+    no = tl[0].get('code')
     d = fetch_members("theme", no, SESSION)
     return isinstance(d, list) and len(d) >= 2, f"테마{no} 구성 {len(d) if isinstance(d, list) else 0}종목"
 
