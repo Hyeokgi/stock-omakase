@@ -292,25 +292,30 @@ def chk_ranking_json():
 def _chk_sector_list(kind, min_n, big_min):
     """업종·그룹사 목록 + 구성종목 (시장 스냅샷의 무리 축).
 
-    ⚠️ 이 경로는 **없는 이름에도 200 + `[]`** 를 주고(docs/네이버개편_대응.md §3),
-       pageSize 를 빠뜨리면 조용히 **20건**으로 잘린다. 그래서 상태코드가 아니라
-       건수·필수필드·구성종목까지 봐야 '껍데기 200'을 거를 수 있다.
-    목록은 pageSize=200, 구성종목은 size/cursor 로 끝까지 확인한다.
+    목록은 rankings v2(`industries` · `groups`) 한 페이지(100건)로 다 온다(2026-11-08 실측 79 · 61).
+    구 `market/{kind}/list` 는 2026-11-06 에 404 로 사라졌다(hyeoks_market_snapshot SECTORS 주석).
+    v2 는 totalCnt 가 없어 rising + falling + unchanged(시세가 있는 구성 수)를 하한으로 본다.
+    구성종목은 size/cursor 로 끝까지 확인한다.
     """
-    d = _get(f"https://stock.naver.com/api/domestic/market/{kind}/list?pageSize=200").json()
-    if not isinstance(d, list) or len(d) < min_n:
-        n = len(d) if isinstance(d, list) else '?'
-        return False, f"{n}건(임계 {min_n} — 캐치올이거나 pageSize 무시)"
-    if not {'no', 'name', 'totalCnt'}.issubset(set(d[0].keys())):
-        return False, f"{len(d)}건이지만 필수필드 없음: {sorted(d[0].keys())[:6]}"
+    name = {"upjong": "industries", "group": "groups"}[kind]
+    d = _get(f"https://stock.naver.com/api/stockSecurity/rankings/v2/domestic/{name}"
+             "?sortType=changeRate&size=100&period=daily").json()
+    items = d.get("items") if isinstance(d, dict) else None
+    if not isinstance(items, list) or len(items) < min_n:
+        return False, f"{len(items) if isinstance(items, list) else '?'}건(임계 {min_n})"
+    need = {'code', 'name', 'risingCount', 'fallingCount', 'unchangedCount'}
+    if not need.issubset(set(items[0].keys())):
+        return False, f"{len(items)}건이지만 필수필드 없음: {sorted(items[0].keys())[:6]}"
 
     # 가장 큰 분류의 구성종목을 받아 본다. 목록만 200 을 주고 상세가 죽은 경우를 잡는다.
-    big = max(d, key=lambda x: int(float(str(x.get('totalCnt') or 0))))
-    st = fetch_members(kind, big['no'], SESSION)
+    def priced(x):
+        return sum(int(float(str(x.get(k) or 0))) for k in ('risingCount', 'fallingCount', 'unchangedCount'))
+    big = max(items, key=priced)
+    st = fetch_members(kind, big['code'], SESSION)
     n = len(st) if isinstance(st, list) else 0
-    if n < max(big_min, int(float(str(big.get('totalCnt') or 0)))):
-        return False, f"{len(d)}개지만 최대분류 {big.get('name')} 구성 {n}종목(임계 {big_min})"
-    return True, f"{len(d)}개 · 최대 {big.get('name')} {n}종목(totalCnt {big.get('totalCnt')})"
+    if n < max(big_min, priced(big)):
+        return False, f"{len(items)}개지만 최대분류 {big.get('name')} 구성 {n}종목(임계 {big_min})"
+    return True, f"{len(items)}개 · 최대 {big.get('name')} {n}종목(시세 있는 구성 {priced(big)})"
 
 
 def chk_upjong_json():

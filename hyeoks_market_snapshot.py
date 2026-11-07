@@ -170,29 +170,31 @@ THEME_TOPS = ["topByChangeRate", "topByTradingValue", "topByMarketCap", "topByTr
 #    어느 정의가 맞는지는 표본이 쌓인 뒤 정한다. 그래서 지금은 네 기준을 다 저장만 한다.
 THEME_COLS = ["themeNos", "topThemeNo"]
 
-# 🏭 업종 · 🏢 그룹사 — 구(classic) `market/{종류}/list` 계열을 쓴다.
-#    v2 랭킹 API 는 테마에만 있는 것으로 보여(다른 종류는 미확인) 검증된 구 경로를 택했다.
-#    목록 스키마는 테마와 동일하다: no / name / changeRate / totalAccAmount / leadingItem
-#    (omakase.fetch_theme_list_json · healthcheck.chk_theme_json 에서 검증된 필드들이다.)
+# 🏭 업종 · 🏢 그룹사 — 목록은 테마와 같은 rankings v2(`industries` · `groups`), 구성종목은 구 경로
+#    (`market/{upjong|group}/{번호}/stocklist`, naver_membership) 를 쓴다.
+# 🔴 2026-11-06 — 쓰던 구 목록 `market/{upjong|group}/list` 가 404 'Route … not found' 로 사라져
+#    11/06 13:00 · 15:05 업종 · 그룹 구성이 통째로 빠졌다(스냅샷은 사후 복원 불가). 11/08 실측 —
+#    v2 의 code · name 이 11/05 파일의 no · name 과 업종 79 · 그룹 61 모두 같고, 구성 경로는 그대로 산다.
+#    v2 는 totalCnt 를 주지 않는다. rising + falling + unchanged 는 시세가 있는 구성 수라
+#    totalCnt 보다 조금 작을 수 있다(업종 39곳 · 그룹 2곳에서 1~9 작음). 그래서 잘림 판정의 하한으로만 쓴다.
 #
-# ⚠️ 캐치올 함정 — `market/{이름}/list` 는 **존재하지 않는 이름에도 HTTP 200 + `[]`** 를 준다
-#    (docs/네이버개편_대응.md §3). `industry` 도 `completelyBogusName123` 도 똑같이 200/[] 다.
-#    그래서 200 을 성공으로 믿으면 안 되고 **건수와 필수 필드를 반드시 검증**해야 한다.
-#
-# ⚠️ 최소 건수를 실측(업종 79 · 그룹사 61)보다 넉넉히 낮추되 **기본 응답(20건)보다는 높게** 잡는다.
-#    pageSize 를 빠뜨리면 목록이 조용히 20건으로 잘리는데, 임계가 20 이하면 그걸 못 잡는다.
+# ⚠️ 최소 건수를 실측(업종 79 · 그룹사 61)보다 넉넉히 낮추되 **한 페이지 크기(20건)보다는 높게** 잡는다.
+#    size 를 빠뜨리면 목록이 조용히 20건으로 잘리는데, 임계가 20 이하면 그걸 못 잡는다.
 SECTORS = {
     "upjong": ("🏭 업종",   40),   # 실측 79
     "group":  ("🏢 그룹사", 30),   # 실측 61
 }
-# 목록은 기존 pageSize 형식, 구성종목은 2026-10-20부터 별도 size/cursor 형식이다.
-SECTOR_LIST_URL = "https://stock.naver.com/api/domestic/market/{kind}/list?pageSize=200"
+SECTOR_V2_URL = ("https://stock.naver.com/api/stockSecurity/rankings/v2/domestic/{name}"
+                 "?sortType=changeRate&size=100&period=daily")
+SECTOR_V2_NAME = {"upjong": "industries", "group": "groups"}
 
 # 업종·그룹사 집계 필드.
-#   raw* — 네이버가 준 원본 그대로. 필드명이 테마 v2 와 다르다(riseCnt/fallCnt/…, 실측 확인).
+#   raw* — 네이버가 준 원본 그대로. 2026-11-06 까지는 구 목록 값이다.
 #     ⚠️ rawTotalAccAmount 는 **단위가 확인되지 않았다**(구 API 는 백만원 단위인 곳이 있다).
 #        그래서 이 값으로 판정하지 말고, 아래 sum* 을 쓸 것.
 #     rawTotalCnt 는 네이버가 말하는 진짜 구성종목 수다. fetchedCount 와 다르면 잘린 것이다.
+#     2026-11-09 부터(v2 목록)는 뜻이 같은 rawChangeRate · rawRiseCnt · rawFallCnt · rawSteadyCnt 만 채우고
+#     나머지 raw* · type · leadingItem 은 빈칸이다(v2 에 없거나 단위가 달라 같은 열에 섞지 않는다).
 #   뒤쪽 — **같은 스냅샷의 종목 행에서 직접 집계**한 값이다. 네이버 집계를 믿지 않고
 #     우리가 방금 받은 2,877행으로 다시 세는 이유는 두 가지다:
 #       ① 단위가 확실하다 — 종목 행의 tradeAmount 와 같은 '원'이다.
@@ -207,12 +209,10 @@ SECTOR_FIELDS = ["no", "name", "type",
                  "risingCount", "fallingCount", "unchangedCount",
                  "topByTradingValue", "topByChangeRate", "membershipStatus", "membershipError"]
 
-# 네이버 원본 필드명 → 우리 열 이름. (테마 v2 와 이름 체계가 다르다는 것이 실측으로 확인됐다)
+# 네이버 v2 원본 필드명 → 우리 열 이름. 뜻이 구 목록과 같은 것만 잇는다.
 SECTOR_RAW_MAP = {
-    "rawChangeRate": "changeRate", "rawRecent3daysChangeRate": "recent3daysChangeRate",
-    "rawTotalAccAmount": "totalAccAmount", "rawTotalAccQuant": "totalAccQuant",
-    "rawTotalMarketSum": "totalMarketSum", "rawTotalCnt": "totalCnt",
-    "rawRiseCnt": "riseCnt", "rawFallCnt": "fallCnt", "rawSteadyCnt": "steadyCnt",
+    "rawChangeRate": "changeRate",
+    "rawRiseCnt": "risingCount", "rawFallCnt": "fallingCount", "rawSteadyCnt": "unchangedCount",
 }
 
 # 종목 행에 덧붙이는 업종·그룹사 열.
@@ -375,16 +375,24 @@ def fetch_sector_data(kind, mkt):
        저장돼야 한다 — 관측이 통째로 끊기는 것이 최악이다.
     """
     label, min_n = SECTORS[kind]
+    d, cursor = [], None
     try:
-        d = SESSION.get(SECTOR_LIST_URL.format(kind=kind), verify=False, timeout=20).json()
+        for _ in range(5):                     # 안전장치 — 실측 1페이지(100건 안)
+            url = SECTOR_V2_URL.format(name=SECTOR_V2_NAME[kind]) + (f"&cursor={cursor}" if cursor else "")
+            page = SESSION.get(url, verify=False, timeout=20).json()
+            d += [x for x in page.get("items", []) if isinstance(x, dict) and x.get("code")]
+            cursor = page.get("cursor")
+            if not page.get("hasNext") or not cursor:
+                break
+            time.sleep(0.1)
     except Exception as e:
         print(f"⚠️ {label} 목록 조회 실패: {e} — {label} 없이 진행한다")
         return [], {}
+    d = list({str(x["code"]): x for x in d}.values())    # 커서가 겹쳐 같은 분류가 두 번 올 수 있다
 
-    # 캐치올 가드 — 200/[] 도, pageSize 를 빠뜨려 20건으로 잘린 응답도 여기서 걸린다.
-    if not isinstance(d, list) or len(d) < min_n:
-        print(f"⚠️ {label} 목록 {len(d) if isinstance(d, list) else '?'}건 — 임계 {min_n} 미달. "
-              f"캐치올(200+[]) 이거나 pageSize 누락일 수 있다. {label} 없이 진행한다")
+    # 건수 가드 — 빈 응답도, 페이지가 잘린 응답도 여기서 걸린다.
+    if len(d) < min_n:
+        print(f"⚠️ {label} 목록 {len(d)}건 — 임계 {min_n} 미달. {label} 없이 진행한다")
         return [], {}
 
     def _amt(x):
@@ -397,23 +405,22 @@ def fetch_sector_data(kind, mkt):
     for it in d:
         if not isinstance(it, dict):
             continue
-        no = str(it.get("no") or it.get("code") or "").strip()
+        no = str(it.get("code") or "").strip()
         name = str(it.get("name") or "").strip()
-        if not no:
-            continue
+        # 시세가 있는 구성 수 — totalCnt 보다 작을 수 있어 하한으로만 쓴다(위 SECTORS 주석).
+        total = int(sum(_f(it.get(k)) for k in ("risingCount", "fallingCount", "unchangedCount")))
 
         codes, member_error = [], ""
         try:
             codes = [x["itemcode"] for x in _members(kind, no)]
-            if not codes and _f(it.get("totalCnt")) > 0:
+            if not codes and total > 0:
                 raise MembershipError(f"{kind} constituents unexpectedly empty")
         except Exception as error:
             fails += 1
             member_error = str(error)[:120]
         time.sleep(0.08)
 
-        # 커서 완료 후에도 목록이 알린 구성 수와 다르면 완전 집계가 아니다.
-        total = int(_f(it.get("totalCnt")))
+        # 커서 완료 후에도 목록이 알린 구성 수보다 적으면 완전 집계가 아니다.
         truncated = total > len(codes)
         if truncated:
             cut.append(f"{name}({len(codes)}/{total})")

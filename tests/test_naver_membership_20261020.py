@@ -163,7 +163,7 @@ class SnapshotFailureTests(unittest.TestCase):
 
     def test_sector_failure_is_not_numeric_zero(self):
         session = Mock()
-        session.get.return_value.json.return_value = [{"no": "1", "name": "시험", "totalCnt": 2}]
+        session.get.return_value.json.return_value = {"items": [{"code": "1", "name": "시험", "unchangedCount": 2}], "hasNext": False}
         with patch.object(M, "SESSION", session), patch.dict(M.SECTORS, {"group": ("그룹", 1)}), \
              patch.object(M, "fetch_members", side_effect=N.MembershipError("group HTTP 400")), \
              patch.object(M.time, "sleep"):
@@ -188,7 +188,7 @@ class SnapshotFailureTests(unittest.TestCase):
     def test_duplicate_code_is_retried_once_and_recovers(self):
         # 2026-10-27 — 등락률 정렬 커서의 페이지 사이 순위 변동(추정)으로 생긴 중복은 한 번 다시 받으면 풀린다.
         session = Mock()
-        session.get.return_value.json.return_value = [{"no": "1", "name": "시험", "totalCnt": 1}]
+        session.get.return_value.json.return_value = {"items": [{"code": "1", "name": "시험", "unchangedCount": 1}], "hasNext": False}
         mkt = {"005930": {"tradeAmount": "5", "prevChangeRate": "1"}}
         fm = Mock(side_effect=[N.MembershipError("upjong constituents invalid/duplicate code"),
                                [{"itemcode": "005930"}]])
@@ -201,7 +201,7 @@ class SnapshotFailureTests(unittest.TestCase):
 
     def test_retry_is_only_once_and_only_for_cursor_races(self):
         session = Mock()
-        session.get.return_value.json.return_value = [{"no": "1", "name": "시험", "totalCnt": 1}]
+        session.get.return_value.json.return_value = {"items": [{"code": "1", "name": "시험", "unchangedCount": 1}], "hasNext": False}
         dup = N.MembershipError("upjong constituents invalid/duplicate code")
         fm = Mock(side_effect=[dup, dup])
         with patch.object(M, "SESSION", session), patch.dict(M.SECTORS, {"group": ("그룹", 1)}), \
@@ -217,7 +217,7 @@ class SnapshotFailureTests(unittest.TestCase):
 
     def test_sector_complete_zero_is_a_real_zero(self):
         session = Mock()
-        session.get.return_value.json.return_value = [{"no": "1", "name": "시험", "totalCnt": 1}]
+        session.get.return_value.json.return_value = {"items": [{"code": "1", "name": "시험", "unchangedCount": 1}], "hasNext": False}
         mkt = {"005930": {"tradeAmount": "0", "prevChangeRate": "0"}}
         with patch.object(M, "SESSION", session), patch.dict(M.SECTORS, {"group": ("그룹", 1)}), \
              patch.object(M, "fetch_members", return_value=[{"itemcode": "005930"}]), \
@@ -229,7 +229,7 @@ class SnapshotFailureTests(unittest.TestCase):
 
     def test_sector_missing_price_does_not_create_partial_zero(self):
         session = Mock()
-        session.get.return_value.json.return_value = [{"no": "1", "name": "시험", "totalCnt": 1}]
+        session.get.return_value.json.return_value = {"items": [{"code": "1", "name": "시험", "unchangedCount": 1}], "hasNext": False}
         with patch.object(M, "SESSION", session), patch.dict(M.SECTORS, {"group": ("그룹", 1)}), \
              patch.object(M, "fetch_members", return_value=[{"itemcode": "005930"}]), \
              patch.object(M.time, "sleep"):
