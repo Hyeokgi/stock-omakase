@@ -26,7 +26,9 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install google-genai gspread oauth2client google-api-python-client # 💡 google-genai 로 최신 패키지 이름 수정
+          # 🔴 2026-11-08 — google-genai 3.0.0(11/06)이 기본 API 를 v1 로 바꿔 JSON 모드(response_mime_type)가 400.
+          #    11/07 실행이 이것으로 실패했다. hyeoks_trend.py 를 바꾸지 않고 2.x 로 묶는다.
+          pip install "google-genai<3" gspread oauth2client google-api-python-client
 
       # Secret is passed via environment, never interpolated into shell source.
       - name: Create secret.json
