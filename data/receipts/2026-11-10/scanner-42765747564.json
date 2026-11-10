@@ -1,0 +1,99 @@
+{
+ "code_sha": "718b7462",
+ "cycle_date": "2026-11-10",
+ "emitted_at": "2026-11-10T15:05:55.334827+09:00",
+ "fingerprint": "621b6f8f5c6e",
+ "kind": "scanner",
+ "payload": {
+  "ci_conclusion": "success",
+  "cycle_date_matches": true,
+  "expected_state": "reached",
+  "feature_store": {
+   "date": "2026-11-10",
+   "dropped": 0,
+   "fingerprint": "621b6f8f5c6e",
+   "rows": 764,
+   "run_id": "42765747564"
+  },
+  "features": {
+   "v1": {
+    "errors": 0,
+    "measured": true,
+    "parsed": 10
+   },
+   "v2": {
+    "errors": 0,
+    "measured": true,
+    "parsed": 10
+   },
+   "v3": {
+    "errors": 0,
+    "measured": true,
+    "out_of_range": 0,
+    "schema_reason": "",
+    "unparsable": 0,
+    "used": 345
+   }
+  },
+  "ledger": {
+   "expected_trade_ids": [
+    "bfb18a4c427cd7b5",
+    "df90f14208a10bb8",
+    "ab1004d011507ba9",
+    "7abbfbd36457a9d1",
+    "44742dc506a68d5a",
+    "962dc3a87c4b5f7f",
+    "8909c39bcf0132d3",
+    "2c6bd3d1c124b35a",
+    "9da536867aa585c7"
+   ],
+   "expected_zero_reason": "",
+   "found_trade_ids": [
+    "bfb18a4c427cd7b5",
+    "df90f14208a10bb8",
+    "ab1004d011507ba9",
+    "7abbfbd36457a9d1",
+    "44742dc506a68d5a",
+    "962dc3a87c4b5f7f",
+    "8909c39bcf0132d3",
+    "2c6bd3d1c124b35a",
+    "9da536867aa585c7"
+   ],
+   "id_hash": "hmac-sha256-16"
+  },
+  "rank_pool": {
+   "by_channel_dropped": {
+    "수급TOP2": 0,
+    "차트TOP2": 0
+   },
+   "candidates": {
+    "수급TOP2": 1,
+    "차트TOP2": 10
+   },
+   "date": "2026-11-10",
+   "expected_zero_reason": "",
+   "fingerprint": "621b6f8f5c6e",
+   "rows": 11,
+   "total_dropped": 0
+  },
+  "scanned": 764,
+  "telemetry": {
+   "by_feature": {},
+   "gate_blocking_total": 0,
+   "reasons": {},
+   "samples": {}
+  },
+  "theme_source": {
+   "failed": 0,
+   "requested": 20,
+   "status": "OK",
+   "success": 20
+  },
+  "today_str": "2026-11-10",
+  "v1_parse_errors": 0,
+  "v2_parse_errors": 0,
+  "v3_parse_errors": 0
+ },
+ "receipt_version": "receipt-v2",
+ "run_id": "42765747564"
+}
