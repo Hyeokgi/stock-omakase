@@ -1,0 +1,101 @@
+{
+ "code_sha": "a5959e75",
+ "cycle_date": "2026-11-11",
+ "emitted_at": "2026-11-11T15:05:02.313063+09:00",
+ "fingerprint": "621b6f8f5c6e",
+ "kind": "scanner",
+ "payload": {
+  "ci_conclusion": "success",
+  "cycle_date_matches": true,
+  "expected_state": "reached",
+  "feature_store": {
+   "date": "2026-11-11",
+   "dropped": 0,
+   "fingerprint": "621b6f8f5c6e",
+   "rows": 766,
+   "run_id": "42969535823"
+  },
+  "features": {
+   "v1": {
+    "errors": 0,
+    "measured": true,
+    "parsed": 125
+   },
+   "v2": {
+    "errors": 0,
+    "measured": true,
+    "parsed": 125
+   },
+   "v3": {
+    "errors": 0,
+    "measured": true,
+    "out_of_range": 0,
+    "schema_reason": "",
+    "unparsable": 0,
+    "used": 349
+   }
+  },
+  "ledger": {
+   "expected_trade_ids": [
+    "d45422c2786ff066",
+    "b89750fd2f36b6cd",
+    "1637ce5ce283eaa2",
+    "7ca5e34506c7dc97",
+    "e974ac1b35537649",
+    "f9beb877a6d355c5",
+    "62d23c16a5ac2dd4",
+    "1fc2ca5a624d6109",
+    "c49cce7bfe36d3f3",
+    "9945021979d5d1c2"
+   ],
+   "expected_zero_reason": "",
+   "found_trade_ids": [
+    "d45422c2786ff066",
+    "b89750fd2f36b6cd",
+    "1637ce5ce283eaa2",
+    "7ca5e34506c7dc97",
+    "e974ac1b35537649",
+    "f9beb877a6d355c5",
+    "62d23c16a5ac2dd4",
+    "1fc2ca5a624d6109",
+    "c49cce7bfe36d3f3",
+    "9945021979d5d1c2"
+   ],
+   "id_hash": "hmac-sha256-16"
+  },
+  "rank_pool": {
+   "by_channel_dropped": {
+    "수급TOP2": 0,
+    "차트TOP2": 0
+   },
+   "candidates": {
+    "수급TOP2": 3,
+    "차트TOP2": 125
+   },
+   "date": "2026-11-11",
+   "expected_zero_reason": "",
+   "fingerprint": "621b6f8f5c6e",
+   "rows": 13,
+   "total_dropped": 0
+  },
+  "scanned": 766,
+  "telemetry": {
+   "by_feature": {},
+   "gate_blocking_total": 0,
+   "reasons": {},
+   "samples": {}
+  },
+  "theme_source": {
+   "failed": 0,
+   "requested": 20,
+   "status": "OK",
+   "success": 20
+  },
+  "today_str": "2026-11-11",
+  "v1_parse_errors": 0,
+  "v2_parse_errors": 0,
+  "v3_parse_errors": 0
+ },
+ "receipt_version": "receipt-v2",
+ "run_id": "42969535823"
+}
