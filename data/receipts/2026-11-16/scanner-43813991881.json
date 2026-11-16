@@ -1,0 +1,97 @@
+{
+ "code_sha": "fd4587c1",
+ "cycle_date": "2026-11-16",
+ "emitted_at": "2026-11-16T15:05:58.469916+09:00",
+ "fingerprint": "621b6f8f5c6e",
+ "kind": "scanner",
+ "payload": {
+  "ci_conclusion": "success",
+  "cycle_date_matches": true,
+  "expected_state": "reached",
+  "feature_store": {
+   "date": "2026-11-16",
+   "dropped": 0,
+   "fingerprint": "621b6f8f5c6e",
+   "rows": 769,
+   "run_id": "43813991881"
+  },
+  "features": {
+   "v1": {
+    "errors": 0,
+    "measured": true,
+    "parsed": 9
+   },
+   "v2": {
+    "errors": 0,
+    "measured": true,
+    "parsed": 9
+   },
+   "v3": {
+    "errors": 0,
+    "measured": true,
+    "out_of_range": 0,
+    "schema_reason": "",
+    "unparsable": 0,
+    "used": 369
+   }
+  },
+  "ledger": {
+   "expected_trade_ids": [
+    "219af3b65f06cf34",
+    "0af272219f34689f",
+    "fccf6a02ee724812",
+    "b4cfcc5d44a2aab4",
+    "5e880d422f5df8d9",
+    "1f2a91a5a992bbaa",
+    "20195a46fcab2915",
+    "53ffef00a4e21dbd"
+   ],
+   "expected_zero_reason": "",
+   "found_trade_ids": [
+    "219af3b65f06cf34",
+    "0af272219f34689f",
+    "fccf6a02ee724812",
+    "b4cfcc5d44a2aab4",
+    "5e880d422f5df8d9",
+    "1f2a91a5a992bbaa",
+    "20195a46fcab2915",
+    "53ffef00a4e21dbd"
+   ],
+   "id_hash": "hmac-sha256-16"
+  },
+  "rank_pool": {
+   "by_channel_dropped": {
+    "수급TOP2": 0,
+    "차트TOP2": 0
+   },
+   "candidates": {
+    "수급TOP2": 0,
+    "차트TOP2": 9
+   },
+   "date": "2026-11-16",
+   "expected_zero_reason": "",
+   "fingerprint": "621b6f8f5c6e",
+   "rows": 9,
+   "total_dropped": 0
+  },
+  "scanned": 769,
+  "telemetry": {
+   "by_feature": {},
+   "gate_blocking_total": 0,
+   "reasons": {},
+   "samples": {}
+  },
+  "theme_source": {
+   "failed": 0,
+   "requested": 20,
+   "status": "OK",
+   "success": 20
+  },
+  "today_str": "2026-11-16",
+  "v1_parse_errors": 0,
+  "v2_parse_errors": 0,
+  "v3_parse_errors": 0
+ },
+ "receipt_version": "receipt-v2",
+ "run_id": "43813991881"
+}
