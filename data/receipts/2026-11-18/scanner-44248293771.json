@@ -1,0 +1,99 @@
+{
+ "code_sha": "f7034bdd",
+ "cycle_date": "2026-11-18",
+ "emitted_at": "2026-11-18T15:05:28.891593+09:00",
+ "fingerprint": "621b6f8f5c6e",
+ "kind": "scanner",
+ "payload": {
+  "ci_conclusion": "success",
+  "cycle_date_matches": true,
+  "expected_state": "reached",
+  "feature_store": {
+   "date": "2026-11-18",
+   "dropped": 0,
+   "fingerprint": "621b6f8f5c6e",
+   "rows": 770,
+   "run_id": "44248293771"
+  },
+  "features": {
+   "v1": {
+    "errors": 0,
+    "measured": true,
+    "parsed": 7
+   },
+   "v2": {
+    "errors": 0,
+    "measured": true,
+    "parsed": 7
+   },
+   "v3": {
+    "errors": 0,
+    "measured": true,
+    "out_of_range": 0,
+    "schema_reason": "",
+    "unparsable": 0,
+    "used": 372
+   }
+  },
+  "ledger": {
+   "expected_trade_ids": [
+    "51725bdf169d9385",
+    "3cc20f41f3e38029",
+    "68265d91e88e7f30",
+    "ba4d79ec145d483a",
+    "4dac6d56f7b4cdd6",
+    "6616fa35781c9674",
+    "4e547f9f2a38b0c5",
+    "cada669eb03f342b",
+    "cc1f559a94396b10"
+   ],
+   "expected_zero_reason": "",
+   "found_trade_ids": [
+    "51725bdf169d9385",
+    "3cc20f41f3e38029",
+    "68265d91e88e7f30",
+    "ba4d79ec145d483a",
+    "4dac6d56f7b4cdd6",
+    "6616fa35781c9674",
+    "4e547f9f2a38b0c5",
+    "cada669eb03f342b",
+    "cc1f559a94396b10"
+   ],
+   "id_hash": "hmac-sha256-16"
+  },
+  "rank_pool": {
+   "by_channel_dropped": {
+    "수급TOP2": 0,
+    "차트TOP2": 0
+   },
+   "candidates": {
+    "수급TOP2": 1,
+    "차트TOP2": 7
+   },
+   "date": "2026-11-18",
+   "expected_zero_reason": "",
+   "fingerprint": "621b6f8f5c6e",
+   "rows": 8,
+   "total_dropped": 0
+  },
+  "scanned": 770,
+  "telemetry": {
+   "by_feature": {},
+   "gate_blocking_total": 0,
+   "reasons": {},
+   "samples": {}
+  },
+  "theme_source": {
+   "failed": 0,
+   "requested": 20,
+   "status": "OK",
+   "success": 20
+  },
+  "today_str": "2026-11-18",
+  "v1_parse_errors": 0,
+  "v2_parse_errors": 0,
+  "v3_parse_errors": 0
+ },
+ "receipt_version": "receipt-v2",
+ "run_id": "44248293771"
+}
