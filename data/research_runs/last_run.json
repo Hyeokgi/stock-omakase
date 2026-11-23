@@ -1,62 +1,62 @@
 {
- "avgFetchMs": 666,
+ "avgFetchMs": 559,
  "completeness": {
-  "검사탈락": 41,
+  "검사탈락": 42,
   "대상일없음": 7,
-  "완전": 932,
+  "완전": 935,
   "짧은응답": 79
  },
- "covered": 1052,
+ "covered": 1056,
  "failed": 0,
- "finishedAt": "2026-11-20T20:00:13+09:00",
- "maxFetchMs": 1096,
+ "finishedAt": "2026-11-23T19:58:21+09:00",
+ "maxFetchMs": 5688,
  "missingTarget": 7,
  "nextPriorityResumeOffset": 0,
  "nextResumeOffset": 0,
  "notAttempted": 0,
- "p95FetchMs": 818,
- "plannedCodes": 1059,
- "priorityCodes": 716,
+ "p95FetchMs": 675,
+ "plannedCodes": 1063,
+ "priorityCodes": 723,
  "priorityResumeOffset": 0,
  "privateFiles": [
   {
-   "bytes": 2328142,
-   "driveId": "1gHX8V_Lp9_YI09kJHfiCOtSnnkSs9-SY",
+   "bytes": 2332104,
+   "driveId": "1UqRktafw8cEMsJteRCchqC1zreJOnhmS",
    "error": "",
-   "name": "research_bars_2026-11-20_44722157839_part1of2.csv.gz",
-   "sha256": "5c11d6fda68b615c81a901cf1f4e3d5f0d96d4aa247b04b457081f2837e8255c",
+   "name": "research_bars_2026-11-23_45159259820_part1of2.csv.gz",
+   "sha256": "c858d92d2591c10851b85f0191f8cee3dbe5803e92a66a7a3067600e19ccc5b9",
    "status": "접수"
   },
   {
-   "bytes": 2349372,
-   "driveId": "1y8bECIUWZKPn5FYYAikeBCEeP0EdArXi",
+   "bytes": 2353344,
+   "driveId": "17lq83dqEP-jG3bnorEmjMl_SJpAk7cYZ",
    "error": "",
-   "name": "research_bars_2026-11-20_44722157839_part2of2.csv.gz",
-   "sha256": "699ea83d4917f9231eea723526f92a4a8270981f23c86a8b619d972c8313159f",
+   "name": "research_bars_2026-11-23_45159259820_part2of2.csv.gz",
+   "sha256": "bfc8cd70cbdbd61d02de53a03f56446e6d6685a4ef54f8b1680debb57f6c8ce7",
    "status": "접수"
   },
   {
-   "bytes": 8404,
-   "driveId": "1o2smgyXGC3SzGcCVOwbh4hW9tuM1Cvnc",
+   "bytes": 8195,
+   "driveId": "15f8lrz939Nu4kYtMEzlrSFzujIElvmMb",
    "error": "",
-   "name": "research_bars_2026-11-20_44722157839_status.json.gz",
-   "sha256": "38b7eb47606f701bdd39349e105b98b4a85adf8ace8eb66a36ab62a96b1aecb5",
+   "name": "research_bars_2026-11-23_45159259820_status.json.gz",
+   "sha256": "b364aa741fbf4962c840b442100462f25b7f7ad949a93c21758ad14f732ef80c",
    "status": "접수"
   }
  ],
  "privateStatus": "보관 완료",
  "rejected": {
-  "0가격": 522
+  "0가격": 571
  },
- "requested": 1059,
- "responded": 1059,
+ "requested": 1063,
+ "responded": 1063,
  "resumeOffset": 0,
- "rowsStored": 302497,
- "runId": "44722157839",
- "startedAt": "2026-11-20T19:47:31+09:00",
- "stateCommit": "81c9bb8",
+ "rowsStored": 303727,
+ "runId": "45159259820",
+ "startedAt": "2026-11-23T19:47:31+09:00",
+ "stateCommit": "093d282",
  "status": "OK",
- "targetDay": "2026-11-20",
+ "targetDay": "2026-11-23",
  "unsettledSkipped": 0,
- "zeroVolume": 1408
+ "zeroVolume": 1435
 }
