@@ -1,0 +1,109 @@
+{
+ "code_sha": "be85b917",
+ "cycle_date": "2026-11-24",
+ "emitted_at": "2026-11-24T15:05:09.133199+09:00",
+ "fingerprint": "621b6f8f5c6e",
+ "kind": "scanner",
+ "payload": {
+  "ci_conclusion": "success",
+  "cycle_date_matches": true,
+  "expected_state": "degraded",
+  "feature_store": {
+   "date": "2026-11-24",
+   "dropped": 0,
+   "fingerprint": "621b6f8f5c6e",
+   "rows": 779,
+   "run_id": "45337377693"
+  },
+  "features": {
+   "v1": {
+    "errors": 0,
+    "measured": true,
+    "parsed": 15
+   },
+   "v2": {
+    "errors": 0,
+    "measured": true,
+    "parsed": 15
+   },
+   "v3": {
+    "errors": 0,
+    "measured": true,
+    "out_of_range": 0,
+    "schema_reason": "",
+    "unparsable": 0,
+    "used": 388
+   }
+  },
+  "ledger": {
+   "expected_trade_ids": [
+    "bca7aed0c6e61acc",
+    "efd173815e532f19",
+    "eaee4633c11f65fa",
+    "9ece1c8a22068201",
+    "d7a5540177989c44",
+    "3698d23f69edc296",
+    "8926b3c9dee9d894",
+    "9637aa168b9f594a",
+    "1cfea77df59c151f"
+   ],
+   "expected_zero_reason": "",
+   "found_trade_ids": [
+    "bca7aed0c6e61acc",
+    "efd173815e532f19",
+    "eaee4633c11f65fa",
+    "9ece1c8a22068201",
+    "d7a5540177989c44",
+    "3698d23f69edc296",
+    "8926b3c9dee9d894",
+    "9637aa168b9f594a",
+    "1cfea77df59c151f"
+   ],
+   "id_hash": "hmac-sha256-16"
+  },
+  "rank_pool": {
+   "by_channel_dropped": {
+    "수급TOP2": 0,
+    "차트TOP2": 0
+   },
+   "candidates": {
+    "수급TOP2": 1,
+    "차트TOP2": 15
+   },
+   "date": "2026-11-24",
+   "expected_zero_reason": "",
+   "fingerprint": "621b6f8f5c6e",
+   "rows": 11,
+   "total_dropped": 0
+  },
+  "scanned": 779,
+  "telemetry": {
+   "by_feature": {
+    "theme_membership": {
+     "CRITICAL": 1
+    }
+   },
+   "gate_blocking_total": 1,
+   "reasons": {
+    "theme_membership": {
+     "PARTIAL": 1
+    }
+   },
+   "samples": {
+    "theme_membership": 0
+   }
+  },
+  "theme_source": {
+   "failed": 1,
+   "requested": 20,
+   "status": "PARTIAL",
+   "success": 19
+  },
+  "today_str": "2026-11-24",
+  "v1_parse_errors": 0,
+  "v2_parse_errors": 0,
+  "v3_parse_errors": 0
+ },
+ "receipt_version": "receipt-v2",
+ "run_id": "45337377693"
+}
