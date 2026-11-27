@@ -1,0 +1,57 @@
+{
+ "code_sha": "1ccd42b7",
+ "cycle_date": "2026-11-27",
+ "emitted_at": "2026-11-27T15:12:59.491691+09:00",
+ "fingerprint": "621b6f8f5c6e",
+ "kind": "analyst",
+ "payload": {
+  "excluded": {
+   "invalid_rows": 0,
+   "reasons": {},
+   "theme_money_missing": 0
+  },
+  "expected_state": "reached",
+  "features": {
+   "v1": {
+    "errors": 0,
+    "measured": true,
+    "parsed": 794
+   },
+   "v2": {
+    "errors": 0,
+    "measured": true,
+    "parsed": 794
+   },
+   "v3": {
+    "errors": 0,
+    "measured": true,
+    "out_of_range": 0,
+    "schema_reason": "",
+    "unparsable": 0,
+    "used": 398
+   }
+  },
+  "ledger": {
+   "expected_trade_ids": [
+    "ca6b4065dfcd125e",
+    "64a06e3d4aece06f"
+   ],
+   "expected_zero_reason": "",
+   "found_trade_ids": [
+    "ca6b4065dfcd125e",
+    "64a06e3d4aece06f"
+   ],
+   "id_hash": "hmac-sha256-16"
+  },
+  "pdf": "HYEOKS_Daily_20261127.pdf",
+  "stage": "final",
+  "telemetry": {
+   "by_feature": {},
+   "gate_blocking_total": 0,
+   "reasons": {},
+   "samples": {}
+  }
+ },
+ "receipt_version": "receipt-v2",
+ "run_id": "45949105671"
+}
