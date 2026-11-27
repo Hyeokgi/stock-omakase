@@ -44,3 +44,4 @@ cycle_date,run_id,source,verdict,fingerprint,ci_green,earnings_schema_ok,dart_co
 2026-11-23,45121249224+45121391818+45167249181+45173554936,cycle,PASS,621b6f8f5c6e,Y,Y,Y,Y,Y,Y,Y,DEGRADED,,stability-gate-v3
 2026-11-24,45337218621+45337377693+45386278417+45392751780,cycle,FAIL,621b6f8f5c6e,Y,Y,Y,Y,Y,Y,N,DEGRADED,no_unexplained_failure:영수증없음=[] 기대상태미달=['scanner'] 최종아님=[] workflow=ok 깨진파일=0,stability-gate-v3
 2026-11-25,45557419212+45557578010+45606561193+45613006297,cycle,PASS,621b6f8f5c6e,Y,Y,Y,Y,Y,Y,Y,DEGRADED,,stability-gate-v3
+2026-11-26,45765210153+45765360755+45812644019+45818927590,cycle,PASS,621b6f8f5c6e,Y,Y,Y,Y,Y,Y,Y,DEGRADED,,stability-gate-v3
